@@ -648,7 +648,9 @@ public enum TermExtractor {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `swift test --filter TermExtractorTests`
-Expected: PASS (3 tests). If NLTagger tags differ on this OS build and a specific assertion is brittle, keep the `resource`/cap/`minFrequency` assertions (robust) and relax only the noun-phrase `||` branch — do not weaken the frequency or cap guarantees.
+Expected: PASS (4 tests).
+
+If a test fails, the implementation is wrong — do not weaken the assertion to make it pass. The one genuine uncertainty is which *specific* surface form `NLTagger` returns for a noun phrase on a given OS build, which is why `extractsRepeatedContentTermsInFrequencyOrder` accepts either `"resource"` alone or the phrase containing it. Every other assertion — frequency floor, cap, sentence-boundary containment — is a hard guarantee.
 
 - [ ] **Step 5: Commit**
 
@@ -2239,6 +2241,11 @@ for name in corpus {
         print("    markup: expected \(String(describing: diff.expected)) actual \(String(describing: diff.actual))")
     }
 
+    // A chunked text with nothing to measure is a silent failure, not a pass: it means
+    // the glossary was empty or no term recurred, so the mechanism did nothing at all.
+    if outcome.chunks.count > 1 && applicable == 0 {
+        failures.append("\(name): chunked into \(outcome.chunks.count) but no term was measurable — document glossary did nothing")
+    }
     if applicable > 0 && adherence < 85 { failures.append("\(name): adherence \(String(format: "%.1f%%", adherence)) < 85%") }
     if !markupOK { failures.append("\(name): \(outcome.markupDiffs.count) markup diffs, expected 0") }
     if ttft >= 1000 { failures.append("\(name): TTFT \(Int(ttft)) ms >= 1000 ms") }
