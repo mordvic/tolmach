@@ -19,8 +19,18 @@ import Testing
             GlossaryEntry(term: "profile server", translations: ["ru": "сервер профилей"]),
         ])
     let system = PromptBuilder.systemPrompt(for: request)
+    #expect(system.contains("Terminology"))
     #expect(system.contains("FHIR"))
     #expect(system.contains("сервер профилей"))
+}
+
+@Test func terminologyHeaderIsOmittedWhenNoEntryResolvesForTheTarget() {
+    // Entry matched the text by substring but says nothing about Russian.
+    let request = TranslationRequest(
+        text: "the profile server", source: .en, target: .ru, tone: .neutral,
+        glossaryEntries: [GlossaryEntry(term: "profile server", translations: ["de": "Profilserver"])])
+    let system = PromptBuilder.systemPrompt(for: request)
+    #expect(!system.contains("Terminology"))
 }
 
 @Test func termListPromptDemandsEchoedTermFormat() {

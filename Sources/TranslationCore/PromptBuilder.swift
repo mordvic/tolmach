@@ -32,14 +32,18 @@ public enum PromptBuilder {
             "- \(request.tone.instruction)",
         ]
         if !request.glossaryEntries.isEmpty {
-            lines.append("")
-            lines.append("Terminology you MUST follow:")
+            var bullets: [String] = []
             for entry in request.glossaryEntries {
                 if entry.doNotTranslate {
-                    lines.append("- \"\(entry.term)\" — leave untranslated, exactly as written.")
+                    bullets.append("- \"\(entry.term)\" — leave untranslated, exactly as written.")
                 } else if let required = entry.translations[request.target.rawValue] {
-                    lines.append("- \"\(entry.term)\" — translate as \"\(required)\".")
+                    bullets.append("- \"\(entry.term)\" — translate as \"\(required)\".")
                 }
+            }
+            if !bullets.isEmpty {
+                lines.append("")
+                lines.append("Terminology you MUST follow:")
+                lines.append(contentsOf: bullets)
             }
         }
         return lines.joined(separator: "\n")
