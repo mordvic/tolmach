@@ -46,3 +46,27 @@ import Testing
     #expect(GlossaryStatus.missing != GlossaryStatus.unverifiable)
     #expect(GlossaryStatus.satisfied != GlossaryStatus.unverifiable)
 }
+
+@Test func aTermInsideAURLIsNotReportedMissing() {
+    // "FHIR" is present inside "fhir.org" but NLTagger sees one token, not two.
+    let entries = [GlossaryEntry(term: "FHIR", doNotTranslate: true)]
+    let checks = GlossaryVerifier.check(translation: "Смотри fhir.org для деталей.",
+                                        entries: entries, target: .ru)
+    #expect(checks.count == 1)
+    #expect(checks[0].status != .missing)
+}
+
+@Test func aGenuinelyAbsentTermIsStillReportedMissing() {
+    // The suppression must not swallow real violations.
+    let entries = [GlossaryEntry(term: "profile server", translations: ["ru": "сервер профилей"])]
+    let checks = GlossaryVerifier.check(translation: "База данных перезапустилась ночью.",
+                                        entries: entries, target: .ru)
+    #expect(checks[0].status == .missing)
+}
+
+@Test func caseDiffersButTheFormIsPresent() {
+    let entries = [GlossaryEntry(term: "FHIR", doNotTranslate: true)]
+    let checks = GlossaryVerifier.check(translation: "См. Fhir.org и далее.",
+                                        entries: entries, target: .ru)
+    #expect(checks[0].status != .missing)
+}

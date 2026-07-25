@@ -17,9 +17,16 @@ public enum GlossaryVerifier {
             guard let expected = entry.requiredTranslation(for: target) else { return nil }
             let status: GlossaryStatus
             switch LemmaMatcher.matches(expected: expected, in: translation, language: target) {
-            case true: status = .satisfied
-            case false: status = .missing
-            case nil: status = .unverifiable
+            case true:
+                status = .satisfied
+            case false:
+                // Lemma matching found no token sequence, but the text may still contain the
+                // form inside a URL, identifier or filename, where NLTagger tokenises
+                // differently ("fhir.org" is one token). That is ambiguous, not absent —
+                // and an ambiguous case must not produce a warning.
+                status = translation.lowercased().contains(expected.lowercased()) ? .unverifiable : .missing
+            case nil:
+                status = .unverifiable
             }
             return GlossaryCheck(term: entry.term, expected: expected, status: status)
         }
