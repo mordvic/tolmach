@@ -35,11 +35,6 @@ public enum Chunker {
             }
         }
         flush()
-
-        if chunks.isEmpty {
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { chunks = [Chunk(index: 0, text: trimmed, containsCodeFence: false)] }
-        }
         return chunks
     }
 

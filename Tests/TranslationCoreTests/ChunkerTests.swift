@@ -38,3 +38,25 @@ Final paragraph after the code, closing the document out with a few more words.
     #expect(chunks.count == 1)
     #expect(chunks[0].containsCodeFence == false)
 }
+
+@Test func whitespaceOnlyInputYieldsNoChunks() {
+    #expect(Chunker.chunk("   \n\n  \t ", maxCharacters: 900).isEmpty)
+    #expect(Chunker.chunk("", maxCharacters: 900).isEmpty)
+}
+
+@Test func unterminatedFenceIsKeptWholeAndNotSplit() {
+    let doc = """
+    Intro paragraph before the code that is long enough to matter here.
+
+    ```swift
+    let a = 1
+    let b = 2
+
+    let c = 3
+    """
+    let chunks = Chunker.chunk(doc, maxCharacters: 60)
+    let fenceChunks = chunks.filter(\.containsCodeFence)
+    #expect(fenceChunks.count == 1)
+    #expect(fenceChunks[0].text.contains("let a = 1"))
+    #expect(fenceChunks[0].text.contains("let c = 3"))
+}
