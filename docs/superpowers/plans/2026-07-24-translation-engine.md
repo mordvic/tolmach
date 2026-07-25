@@ -2,13 +2,18 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the headless translation engine — `OllamaKit` (HTTP client) plus `TranslationCore` (domain logic) plus a thin `translate-cli` harness — that translates text through a local Ollama model end to end.
+**Goal:** Build the headless translation engine — `OllamaKit` (HTTP client) plus `TranslationCore` (domain logic), a thin `translate-cli` harness, and an `acceptance` run that holds the engine to the prototype's measured baseline.
 
 **Architecture:** `TranslationCore` depends only on the `LLMClient` protocol, never on Ollama or SwiftUI, so it is fully unit-tested with a fake client. `OllamaKit` implements `LLMClient` over the Ollama HTTP API. `translate-cli` wires them together for manual end-to-end smoke tests against a live model. This is Plan 1 of 2; the macOS app shell (menu bar, popup panel, main window, text capture, permissions, settings persistence) is Plan 2 and consumes this engine unchanged.
 
 **Tech Stack:** Swift, Swift Package Manager, Foundation, NaturalLanguage (`NLLanguageRecognizer`, `NLTagger`), Swift Testing (`import Testing`). No external package dependencies — native frameworks only.
 
 **Provenance:** A throwaway prototype on the `prototype/translation-engine` git branch validated the engine's shape and produced the measurements this design rests on. Components marked *(lift from prototype)* have a validated reference implementation there; adapt it to the interfaces below. Components marked *(new)* did not exist in the prototype and are the spec's fixes to defects the prototype exposed.
+
+A second experiment (same branch, `swift run Experiment`) settled the two mechanisms this plan previously took on faith:
+
+- **Document glossary — adopted.** Cross-chunk term adherence rose from 64–68% to 88% over two runs, fixing the exact drift originally measured. Its known cost is roughly one wrong entry in eleven; three attempts to fix that by feeding context into the term list all failed, because the cause is the term being translated in isolation rather than any lack of information. Mitigation is to surface the glossary in the UI (Plan 2), not more prompt engineering.
+- **Second pass — cut.** The corrector framing removed the destructive behaviour of the editor framing but replaced it with uselessness: one edited letter in one run, nothing at all in the other, at 2× the wall clock.
 
 ## Global Constraints
 
@@ -18,7 +23,9 @@ Every task's requirements implicitly include this section. Values are copied ver
 - **No external dependencies.** Foundation, NaturalLanguage, and Swift Testing only.
 - **Ollama base URL:** `http://127.0.0.1:11434`.
 - **Target languages (all equal):** RU, EN, DE, FR, ES, PT, IT, ZH, JA.
-- **Defaults:** `keep_alive` = `"30m"`; chunk size = `900` characters; temperature = `0.2`; two-pass length-guard threshold = `15%`; term-extraction cap = `40` terms; minimum term frequency = `2`.
+- **Defaults:** `keep_alive` = `"30m"`; chunk size = `900` characters; temperature = `0.2`; term-extraction cap = `20` terms; minimum term frequency = `2`.
+- **No second pass.** Both framings were measured and both failed; `refineMessages`, `TwoPassGuard` and the length guard are out of v1 entirely. Do not add them back.
+- **Document glossary rules**, all three validated by experiment: the model returns `source term => translation` and pairings are matched by the **echoed term, never by line position**; **every** document term is injected into **every** chunk with no occurrence filtering; the preparatory pass is skipped when the source language is not recognised.
 - **Ollama request rule (empirically required):** never send the `think` parameter; always read and **discard** `message.thinking` from responses. Sending `"think": false` moves reasoning into `message.content` and corrupts the translation.
 - **Ollama durations** arrive in nanoseconds and are converted to milliseconds at the `OllamaKit` boundary.
 - **Sendable:** all value types crossing the `LLMClient` boundary (`ChatMessage`, `ChatOptions`, `ChatEvent`, `ChatStats`, requests, outcomes) are `Sendable`.
@@ -42,13 +49,16 @@ Sources/
     MarkupSkeleton.swift      # structural token sequence + diff
     ModelPolicy.swift         # role→model mapping + blacklist with reasons
     LLMClient.swift           # LLMClient protocol + ChatMessage/ChatOptions/ChatEvent/ChatStats
-    Translator.swift          # orchestration + TranslationOutcome + TwoPassGuard
+    Translator.swift          # orchestration + TranslationOutcome
   OllamaKit/
     OllamaStreamParser.swift  # pure NDJSON-line → ChatEvent parser (thinking discarded)
     OllamaClient.swift        # OllamaClient: LLMClient (models(), chat())
     OllamaError.swift         # typed errors
   translate-cli/
     main.swift                # thin end-to-end harness
+  acceptance/
+    main.swift                # corpus run enforcing the prototype baseline
+corpus/                       # committed acceptance texts, three content types
 Tests/
   TranslationCoreTests/       # one file per component
   OllamaKitTests/
@@ -487,9 +497,11 @@ git commit -m "feat(core): user glossary with occurrence filtering"
 - Test: `Tests/TranslationCoreTests/TermExtractorTests.swift`
 
 **Interfaces:**
-- Produces: `enum TermExtractor { static func extract(from text: String, language: Language, max: Int = 40, minFrequency: Int = 2) -> [String] }`. Returns surface terms (original casing of first occurrence), ordered by descending lemma-frequency.
+- Produces: `enum TermExtractor { static func extract(from text: String, language: Language, max: Int = 20, minFrequency: Int = 2) -> [String] }`. Returns surface terms (original casing of first occurrence), ordered by descending lemma-frequency.
 
 Behaviour (spec 4.4): use `NLTagger` over `.lexicalClass` and `.lemma` to collect candidates — single nouns/adjectives plus 2–3-word noun phrases; count occurrences by lemma so inflected forms collapse; drop stop-words and candidates under `minFrequency`; sort by descending frequency; cap at `max`.
+
+**Punctuation must not be omitted from the tag enumeration.** A noun phrase may never span a sentence or clause boundary, so punctuation tokens are kept and act as separators. Enumerating with `.omitPunctuation` silently joins `…on a laptop. Local language models…` into a phantom phrase. The implementation below materialises the token stream first, with `nil` marking a boundary — this is the shape validated in the experiment.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -518,8 +530,18 @@ import Testing
 
 @Test func resultIsCappedAtMax() {
     let words = (0..<60).map { "alpha\($0) alpha\($0)" }.joined(separator: " ")
-    let terms = TermExtractor.extract(from: words, language: .en, max: 40, minFrequency: 2)
-    #expect(terms.count <= 40)
+    let terms = TermExtractor.extract(from: words, language: .en, max: 20, minFrequency: 2)
+    #expect(terms.count <= 20)
+}
+
+@Test func nounPhrasesDoNotSpanSentenceBoundaries() {
+    // "laptop" ends one sentence, "Local" starts the next — never one phrase.
+    let text = """
+    Running a model on a laptop. Local models crossed a threshold. \
+    Running a model on a laptop. Local models crossed a threshold.
+    """
+    let terms = TermExtractor.extract(from: text, language: .en, minFrequency: 2)
+    #expect(!terms.contains { $0.lowercased().contains("laptop local") })
 }
 ```
 
@@ -538,72 +560,87 @@ import NaturalLanguage
 public enum TermExtractor {
     // Minimal multi-language stop set; extend as needed. Lowercased.
     static let stopWords: Set<String> = [
-        "the", "a", "an", "of", "to", "and", "or", "is", "are", "be", "in", "on", "for", "that", "this", "with", "as", "it", "each", "an",
-        "и", "в", "на", "с", "по", "не", "что", "как", "это", "для", "от",
+        "the", "a", "an", "of", "to", "and", "or", "is", "are", "be", "been", "was", "were",
+        "in", "on", "for", "that", "this", "with", "as", "it", "its", "by", "at", "from",
+        "not", "no", "but", "than", "then", "so", "such", "which", "what", "who", "when",
+        "have", "has", "had", "do", "does", "did", "can", "will", "would", "many", "much",
+        "more", "most", "other", "same", "own", "one", "two", "first", "last", "new", "old",
+        "и", "в", "на", "с", "по", "не", "что", "как", "это", "для", "от", "или", "но",
     ]
 
-    public static func extract(from text: String, language: Language, max: Int = 40, minFrequency: Int = 2) -> [String] {
+    struct Token {
+        let surface: String
+        let lemma: String
+        let isNoun: Bool
+        let isAdjective: Bool
+        var isContent: Bool { isNoun || isAdjective }
+    }
+
+    /// Content words in document order. `nil` marks anything else — punctuation, verbs,
+    /// determiners — and acts as a hard boundary so no noun phrase spans one.
+    static func tokens(of text: String, language: Language) -> [Token?] {
         let tagger = NLTagger(tagSchemes: [.lexicalClass, .lemma])
         tagger.string = text
         tagger.setLanguage(language.nlLanguage, range: text.startIndex..<text.endIndex)
 
-        // key = lemma (lowercased); value = (count, first surface form)
-        var counts: [String: (count: Int, surface: String)] = [:]
-        var order: [String] = []
+        var out: [Token?] = []
+        tagger.enumerateTags(in: text.startIndex..<text.endIndex, unit: .word, scheme: .lexicalClass,
+                             options: [.omitWhitespace]) { tag, range in
+            let surface = String(text[range])
+            guard let tag, tag == .noun || tag == .adjective else { out.append(nil); return true }
+            let lemma = tagger.tag(at: range.lowerBound, unit: .word, scheme: .lemma).0?.rawValue
+            out.append(Token(surface: surface,
+                             lemma: ((lemma?.isEmpty == false) ? lemma! : surface).lowercased(),
+                             isNoun: tag == .noun,
+                             isAdjective: tag == .adjective))
+            return true
+        }
+        return out
+    }
 
-        func note(lemmaKey: String, surface: String) {
-            guard lemmaKey.count > 1, !stopWords.contains(lemmaKey) else { return }
-            if let existing = counts[lemmaKey] {
-                counts[lemmaKey] = (existing.count + 1, existing.surface)
+    public static func extract(from text: String, language: Language, max: Int = 20, minFrequency: Int = 2) -> [String] {
+        let stream = tokens(of: text, language: language)
+        // key = lemma (lowercased) -> (occurrences, first surface form, discovery order)
+        var counts: [String: (count: Int, surface: String, order: Int)] = [:]
+
+        func note(_ key: String, _ surface: String) {
+            guard key.count > 2, !stopWords.contains(key) else { return }
+            if let existing = counts[key] {
+                counts[key] = (existing.count + 1, existing.surface, existing.order)
             } else {
-                counts[lemmaKey] = (1, surface); order.append(lemmaKey)
+                counts[key] = (1, surface, counts.count)
             }
         }
 
-        let range = text.startIndex..<text.endIndex
-        let options: NLTagger.Options = [.omitPunctuation, .omitWhitespace, .omitOther]
-
         // Single nouns and adjectives.
-        tagger.enumerateTags(in: range, unit: .word, scheme: .lexicalClass, options: options) { tag, tokenRange in
-            guard let tag, tag == .noun || tag == .adjective else { return true }
-            let surface = String(text[tokenRange])
-            let lemma = tagger.tag(at: tokenRange.lowerBound, unit: .word, scheme: .lemma).0?.rawValue
-            note(lemmaKey: (lemma ?? surface).lowercased(), surface: surface)
-            return true
+        for case let token? in stream where token.isContent {
+            note(token.lemma, token.surface)
         }
 
-        // 2–3-word noun phrases (adjective/noun runs ending in a noun).
-        var run: [(surface: String, lemma: String, isNoun: Bool)] = []
-        func flushRun() {
+        // 2–3-word noun phrases: runs of noun/adjective ending in a noun.
+        var run: [Token] = []
+        func flush() {
             guard run.count >= 2 else { run = []; return }
-            for windowSize in [2, 3] where run.count >= windowSize {
-                for start in 0...(run.count - windowSize) {
-                    let window = run[start..<(start + windowSize)]
+            for size in [2, 3] where run.count >= size {
+                for start in 0...(run.count - size) {
+                    let window = Array(run[start..<(start + size)])
                     guard window.last!.isNoun else { continue }
-                    let surface = window.map(\.surface).joined(separator: " ")
-                    let lemmaKey = window.map(\.lemma).joined(separator: " ").lowercased()
-                    note(lemmaKey: lemmaKey, surface: surface)
+                    note(window.map(\.lemma).joined(separator: " "),
+                         window.map(\.surface).joined(separator: " "))
                 }
             }
             run = []
         }
-        tagger.enumerateTags(in: range, unit: .word, scheme: .lexicalClass, options: options) { tag, tokenRange in
-            let surface = String(text[tokenRange])
-            let lemma = (tagger.tag(at: tokenRange.lowerBound, unit: .word, scheme: .lemma).0?.rawValue ?? surface)
-            if tag == .noun || tag == .adjective {
-                run.append((surface, lemma, tag == .noun))
-            } else {
-                flushRun()
-            }
-            return true
+        for entry in stream {
+            if let token = entry, token.isContent { run.append(token) } else { flush() }
         }
-        flushRun()
+        flush()
 
-        return order
-            .filter { counts[$0]!.count >= minFrequency }
-            .sorted { counts[$0]!.count > counts[$1]!.count }
+        return counts
+            .filter { $0.value.count >= minFrequency }
+            .sorted { ($0.value.count, $1.value.order) > ($1.value.count, $0.value.order) }
             .prefix(max)
-            .map { counts[$0]!.surface }
+            .map(\.value.surface)
     }
 }
 ```
@@ -825,10 +862,12 @@ git commit -m "feat(core): three-state glossary verifier over lemma matching"
 - Test: `Tests/TranslationCoreTests/DocumentGlossaryTests.swift`
 
 **Interfaces:**
-- Produces: `struct DocumentGlossary: Sendable { let entries: [GlossaryEntry]; init(sourceTerms: [String], translations: [String], target: Language) }` — pairs each source term with its translation positionally, skipping blanks, into `GlossaryEntry`s keyed by target language.
+- Produces: `enum DocumentGlossary { static func parse(_ raw: String, knownTerms: [String], target: Language) -> [GlossaryEntry] }` — reads the model's `source term => translation` lines and pairs them **by the echoed term**, case-insensitively, against `knownTerms`. Lines that do not parse, name an unknown term, repeat a term, or carry an empty translation are dropped.
 - Produces: `enum GlossaryMerge { static func merge(user: [GlossaryEntry], document: [GlossaryEntry]) -> [GlossaryEntry] }` — user entries win on term collision (case-insensitive).
 
-The LLM call that produces `translations` lives in `Translator` (Task 12); this type is pure so it stays unit-testable.
+Matching by echoed term rather than by line position is a safety property, not a style choice: a model that drops one line mid-list would otherwise shift every later pairing, and the resulting wrong terminology is then forced into every chunk. Dropping unparseable lines degrades to a smaller glossary; misalignment degrades to silently wrong output. The experiment exercised this — when a prompt variant broke the format completely, the parser returned nothing instead of thirteen mismatched pairs.
+
+The LLM call that produces `raw` lives in `Translator` (Task 12); this type is pure so it stays unit-testable.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -837,19 +876,47 @@ The LLM call that produces `translations` lives in `Translator` (Task 12); this 
 import Testing
 @testable import TranslationCore
 
-@Test func pairsTermsWithTranslationsPositionally() {
-    let doc = DocumentGlossary(sourceTerms: ["profile server", "changelog"],
-                               translations: ["сервер профилей", "журнал изменений"],
-                               target: .ru)
-    #expect(doc.entries.count == 2)
-    #expect(doc.entries[0].requiredTranslation(for: .ru) == "сервер профилей")
+@Test func pairsTermsByEchoedSourceTerm() {
+    let raw = """
+    profile server => сервер профилей
+    changelog => журнал изменений
+    """
+    let entries = DocumentGlossary.parse(raw, knownTerms: ["profile server", "changelog"], target: .ru)
+    #expect(entries.count == 2)
+    #expect(entries.first { $0.term == "profile server" }?.requiredTranslation(for: .ru) == "сервер профилей")
 }
 
-@Test func skipsBlankOrMissingTranslations() {
-    let doc = DocumentGlossary(sourceTerms: ["a", "b", "c"],
-                               translations: ["alpha", "   "], // c has no pair
-                               target: .en)
-    #expect(doc.entries.map(\.term) == ["a"])
+@Test func aDroppedLineCannotShiftLaterPairings() {
+    // The model skipped "changelog" entirely. The survivors must keep their own
+    // translations — never inherit the next line's.
+    let raw = """
+    profile server => сервер профилей
+    resource => ресурс
+    """
+    let entries = DocumentGlossary.parse(raw, knownTerms: ["profile server", "changelog", "resource"], target: .ru)
+    #expect(entries.count == 2)
+    #expect(entries.first { $0.term == "resource" }?.requiredTranslation(for: .ru) == "ресурс")
+    #expect(entries.contains { $0.term == "changelog" } == false)
+}
+
+@Test func dropsUnparseableUnknownDuplicateAndEmptyLines() {
+    let raw = """
+    Here is the glossary:
+    profile server => сервер профилей
+    profile server => дубликат
+    unknown term => что-то
+    changelog =>
+    """
+    let entries = DocumentGlossary.parse(raw, knownTerms: ["profile server", "changelog"], target: .ru)
+    #expect(entries.map(\.term) == ["profile server"])
+    #expect(entries[0].requiredTranslation(for: .ru) == "сервер профилей")
+}
+
+@Test func matchingTheEchoedTermIsCaseInsensitive() {
+    let entries = DocumentGlossary.parse("Profile Server => сервер профилей",
+                                         knownTerms: ["profile server"], target: .ru)
+    // The canonical term from knownTerms is kept, not the model's echo.
+    #expect(entries.map(\.term) == ["profile server"])
 }
 
 @Test func userEntriesWinOnCollision() {
@@ -874,18 +941,23 @@ Expected: FAIL — `DocumentGlossary` not defined.
 // Sources/TranslationCore/DocumentGlossary.swift
 import Foundation
 
-public struct DocumentGlossary: Sendable {
-    public let entries: [GlossaryEntry]
+public enum DocumentGlossary {
+    public static func parse(_ raw: String, knownTerms: [String], target: Language) -> [GlossaryEntry] {
+        // Canonical spelling comes from knownTerms, so the model's echo may differ in case.
+        let canonical = Dictionary(knownTerms.map { ($0.lowercased(), $0) }, uniquingKeysWith: { first, _ in first })
+        var seen = Set<String>()
+        var out: [GlossaryEntry] = []
 
-    public init(sourceTerms: [String], translations: [String], target: Language) {
-        var built: [GlossaryEntry] = []
-        for (index, term) in sourceTerms.enumerated() {
-            guard index < translations.count else { break }
-            let translated = translations[index].trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !translated.isEmpty else { continue }
-            built.append(GlossaryEntry(term: term, translations: [target.rawValue: translated]))
+        for line in raw.components(separatedBy: .newlines) {
+            let parts = line.components(separatedBy: "=>")
+            guard parts.count == 2 else { continue }
+            let key = parts[0].trimmingCharacters(in: .whitespaces).lowercased()
+            let translated = parts[1].trimmingCharacters(in: .whitespaces)
+            guard let term = canonical[key], !translated.isEmpty, !seen.contains(key) else { continue }
+            seen.insert(key)
+            out.append(GlossaryEntry(term: term, translations: [target.rawValue: translated]))
         }
-        self.entries = built
+        return out
     }
 }
 
@@ -917,15 +989,15 @@ git commit -m "feat(core): document glossary and user-wins merge"
 - Create: `Sources/TranslationCore/PromptBuilder.swift`
 - Test: `Tests/TranslationCoreTests/PromptBuilderTests.swift`
 
-**Interfaces:**
-- Produces: `struct ChatMessage` — **defined here is wrong; it is defined in Task 12's LLMClient.swift.** PromptBuilder *consumes* `ChatMessage` from `LLMClient.swift`. To keep tasks orderable, define `ChatMessage` in this task's file if `LLMClient.swift` does not yet exist, then Task 12 moves it. **Simpler:** create `LLMClient.swift` value types here (Task 8) and let Task 12 add only the protocol. Adopt that: this task creates `Sources/TranslationCore/LLMClient.swift` with `ChatMessage`, `ChatOptions`, `ChatEvent`, `ChatStats`; Task 12 appends the `LLMClient` protocol.
-- Produces: `struct TranslationRequest: Sendable { text; source: Language?; target: Language; tone: Tone; glossaryEntries: [GlossaryEntry] }` — **note:** no `precedingContext` (removed; replaced by document glossary per spec 4.4).
-- Produces: `enum PromptBuilder { static func messages(for: TranslationRequest) -> [ChatMessage]; static func systemPrompt(for: TranslationRequest) -> String; static func userPrompt(for: TranslationRequest) -> String; static func refineMessages(original: String, translation: String, request: TranslationRequest) -> [ChatMessage]; static func termListMessages(terms: [String], target: Language) -> [ChatMessage] }`.
-
-**Files (revised):**
-- Create: `Sources/TranslationCore/LLMClient.swift` (value types only; protocol added in Task 12)
+**Files:**
+- Create: `Sources/TranslationCore/LLMClient.swift` — value types only; the `LLMClient` protocol itself is appended in Task 12
 - Create: `Sources/TranslationCore/PromptBuilder.swift`
 - Test: `Tests/TranslationCoreTests/PromptBuilderTests.swift`
+
+**Interfaces:**
+- Produces: `struct ChatMessage: Sendable, Equatable { let role: String; let content: String }`, `struct ChatOptions: Sendable`, `struct ChatStats: Sendable`, `enum ChatEvent: Sendable`. These live in `LLMClient.swift` alongside the protocol that Task 12 adds; they are created here because `PromptBuilder` returns `[ChatMessage]` and this task comes first.
+- Produces: `struct TranslationRequest: Sendable { text: String; source: Language?; target: Language; tone: Tone; glossaryEntries: [GlossaryEntry] }`. There is deliberately **no** `precedingContext` — the prototype had one and it failed to hold terminology together; the document glossary replaces it (spec 4.4).
+- Produces: `enum PromptBuilder { static func messages(for: TranslationRequest) -> [ChatMessage]; static func systemPrompt(for: TranslationRequest) -> String; static func userPrompt(for: TranslationRequest) -> String; static func termListMessages(terms: [String], target: Language) -> [ChatMessage] }`. There is deliberately **no** `refineMessages` — the second pass is cut from v1 (see Global Constraints).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -955,19 +1027,17 @@ import Testing
     #expect(system.contains("сервер профилей"))
 }
 
-@Test func correctorPromptForbidsParaphrase() {
-    let request = TranslationRequest(text: "x", source: .en, target: .ru, tone: .neutral)
-    let messages = PromptBuilder.refineMessages(original: "source", translation: "перевод", request: request)
-    let system = messages.first { $0.role == "system" }!.content.lowercased()
-    #expect(system.contains("correct"))    // corrector framing
-    #expect(system.contains("do not") || system.contains("without")) // forbids rewriting/shortening
-    #expect(messages.last!.content.contains("перевод"))
-}
-
-@Test func termListPromptRequestsAlignedList() {
+@Test func termListPromptDemandsEchoedTermFormat() {
     let messages = PromptBuilder.termListMessages(terms: ["profile server", "changelog"], target: .ru)
-    #expect(messages.last!.content.contains("profile server"))
-    #expect(messages.last!.content.contains("changelog"))
+    let system = messages.first { $0.role == "system" }!.content
+    // The "=>" contract is what makes the parser immune to line shifts.
+    #expect(system.contains("=>"))
+    #expect(system.lowercased().contains("echo"))
+    let user = messages.last!.content
+    #expect(user.contains("profile server"))
+    #expect(user.contains("changelog"))
+    // No numbering: a numbered reply would put "1. " inside the parsed term.
+    #expect(!user.contains("1."))
 }
 ```
 
@@ -1074,41 +1144,22 @@ public enum PromptBuilder {
         """
     }
 
-    public static func refineMessages(original: String, translation: String, request: TranslationRequest) -> [ChatMessage] {
-        var system = """
-        You are a translation corrector, not an editor. You are given a source text and its \
-        translation into \(request.target.englishName). Fix only outright errors: mistranslations, \
-        wrong grammar, dropped content, broken markup, terminology inconsistencies.
-
-        Rules:
-        - Output ONLY the corrected translation. No commentary.
-        - Make the MINIMUM changes needed. Do NOT paraphrase, shorten, merge sentences, or restructure.
-        - If a sentence is already correct, reproduce it unchanged.
-        - Preserve code blocks, inline code, URLs and identifiers exactly as in the source.
-        - \(request.tone.instruction)
-        """
-        if !request.glossaryEntries.isEmpty {
-            system += "\n\nTerminology that MUST appear as specified:"
-            for entry in request.glossaryEntries {
-                if entry.doNotTranslate {
-                    system += "\n- \"\(entry.term)\" — leave untranslated."
-                } else if let required = entry.translations[request.target.rawValue] {
-                    system += "\n- \"\(entry.term)\" — must be \"\(required)\"."
-                }
-            }
-        }
-        let user = "<source>\n\(original)\n</source>\n\n<translation>\n\(translation)\n</translation>"
-        return [ChatMessage(role: "system", content: system), ChatMessage(role: "user", content: user)]
-    }
-
+    /// The `=>` echo contract is load-bearing: it lets the parser match by term instead
+    /// of by line position, so a dropped line costs one entry rather than corrupting
+    /// every later pairing. Verbatim from the validated experiment prompt.
     public static func termListMessages(terms: [String], target: Language) -> [ChatMessage] {
         let system = """
-        You translate a glossary of terms into \(target.englishName). Output ONLY the translations, \
-        one per line, in the SAME ORDER as the input, with the SAME NUMBER of lines. No numbering, \
-        no source terms, no commentary. Keep product names and identifiers untranslated if they have \
-        no established target-language form.
+        You translate a list of glossary terms into \(target.englishName).
+
+        Output one line per input term, in exactly this format:
+        source term => translation
+
+        Echo the source term exactly as given in English, then " => ", then the translation. \
+        No numbering, no commentary, no extra lines. Do not translate anything except the terms. \
+        Keep identifiers and product names untranslated when they have no established \
+        target-language form.
         """
-        let user = terms.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
+        let user = terms.joined(separator: "\n")
         return [ChatMessage(role: "system", content: system), ChatMessage(role: "user", content: user)]
     }
 }
@@ -1255,11 +1306,16 @@ git commit -m "feat(core): response cleaner strips preambles and stray fences"
 - Test: `Tests/TranslationCoreTests/MarkupSkeletonTests.swift`
 
 **Interfaces:**
-- Produces: `enum MarkupToken: Sendable, Equatable { case heading(level: Int); case listItem(depth: Int); case blockquote; case codeBlock(hash: Int, lang: String); case inlineCode(String); case url(bare: Bool); case paragraphBreak }`.
-- Produces: `struct MarkupDiff: Sendable, Equatable { let expected: MarkupToken?; let actual: MarkupToken?; let note: String }`.
+- Produces: `enum MarkupToken: Sendable, Equatable, Hashable { case heading(level: Int); case listItem(depth: Int); case blockquote; case codeBlock(hash: Int, lang: String); case inlineCode(String); case url(bare: Bool); case paragraphBreak; case hardLineBreak }`.
+- Produces: `struct MarkupDiff: Sendable, Equatable { let expected: MarkupToken?; let actual: MarkupToken?; let note: String }` — `expected == nil` means the translation added a token, `actual == nil` means it dropped one.
 - Produces: `enum MarkupSkeleton { static func tokens(of text: String) -> [MarkupToken]; static func diff(source: String, translation: String) -> [MarkupDiff] }`.
 
-Rationale (spec 4.7): presence-only checks missed bare→linked URL conversion, a broken blockquote, and trailing-space line splits. Structural token comparison catches all three.
+Rationale (spec 4.7): presence-only checks missed all three real defects — a bare URL rewritten as a markdown link, a broken blockquote, and a paragraph split by trailing double-spaces. Structural token comparison catches them.
+
+**Two requirements that distinguish this from the naive version:**
+
+1. **Diff by sequence alignment (LCS), not by index.** Comparing position *i* to position *i* means one dropped token shifts everything after it, turning a single defect into a cascade of spurious warnings. That is precisely the cry-wolf failure the glossary verifier was made cautious to avoid, and it must not be reintroduced here.
+2. **`paragraphBreak` and `hardLineBreak` are separate tokens, and neither is filtered out.** The `gpt-oss` defect was trailing double-spaces creating hard breaks inside a paragraph — it *looked* like a shattered paragraph but is a different token. Filtering paragraph structure out of the comparison would drop the ability to catch the very defect that motivated the checker.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1297,6 +1353,25 @@ import Testing
     let tr = "## Заголовок\n\nТекст с `code` и https://x.org без ссылки."
     #expect(MarkupSkeleton.diff(source: src, translation: tr).isEmpty)
 }
+
+@Test func detectsHardLineBreaksAddedInsideAParagraph() {
+    // The gpt-oss defect: trailing double-spaces shatter one paragraph into lines.
+    let src = "One flowing paragraph that stays whole."
+    let tr = "Одна строка,  \nразорванная  \nжёсткими переносами."
+    let diffs = MarkupSkeleton.diff(source: src, translation: tr)
+    #expect(diffs.contains { $0.actual == .hardLineBreak })
+}
+
+@Test func oneDroppedTokenProducesOneDiffNotACascade() {
+    // Four inline codes, the second dropped. A positional comparison would report
+    // three mismatches; alignment must report exactly one deletion.
+    let src = "`alpha` then `beta` then `gamma` then `delta`."
+    let tr = "`alpha` затем затем `gamma` затем `delta`."
+    let diffs = MarkupSkeleton.diff(source: src, translation: tr)
+    #expect(diffs.count == 1)
+    #expect(diffs[0].expected == .inlineCode("beta"))
+    #expect(diffs[0].actual == nil)
+}
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1310,7 +1385,7 @@ Expected: FAIL — `MarkupSkeleton` not defined.
 // Sources/TranslationCore/MarkupSkeleton.swift
 import Foundation
 
-public enum MarkupToken: Sendable, Equatable {
+public enum MarkupToken: Sendable, Equatable, Hashable {
     case heading(level: Int)
     case listItem(depth: Int)
     case blockquote
@@ -1318,6 +1393,7 @@ public enum MarkupToken: Sendable, Equatable {
     case inlineCode(String)
     case url(bare: Bool)
     case paragraphBreak
+    case hardLineBreak
 }
 
 public struct MarkupDiff: Sendable, Equatable {
@@ -1352,25 +1428,48 @@ public enum MarkupSkeleton {
             if trimmed.hasPrefix(">") { tokens.append(.blockquote) }
             if let depth = listDepth(line) { tokens.append(.listItem(depth: depth)) }
             tokens.append(contentsOf: inlineTokens(in: line))
+            // Markdown hard break: two or more trailing spaces on a non-blank line.
+            if line.hasSuffix("  ") { tokens.append(.hardLineBreak) }
         }
         if insideFence { tokens.append(.codeBlock(hash: fenceBuffer.joined(separator: "\n").hashValue, lang: fenceLang)) }
         return tokens
     }
 
+    /// Aligns the two token sequences and reports the minimal edit script. Index-wise
+    /// comparison is wrong here: one dropped token would shift every later position and
+    /// bury a single real defect under a cascade of false ones.
     public static func diff(source: String, translation: String) -> [MarkupDiff] {
-        // Compare only structure-bearing tokens; paragraph breaks are advisory and skipped
-        // to avoid noise from legitimate reflow, EXCEPT their count is checked separately.
-        let want = tokens(of: source).filter { $0 != .paragraphBreak }
-        let got = tokens(of: translation).filter { $0 != .paragraphBreak }
-        var diffs: [MarkupDiff] = []
-        let count = max(want.count, got.count)
-        for index in 0..<count {
-            let expected = index < want.count ? want[index] : nil
-            let actual = index < got.count ? got[index] : nil
-            if expected != actual {
-                diffs.append(MarkupDiff(expected: expected, actual: actual,
-                                        note: "structure mismatch at position \(index)"))
+        let want = tokens(of: source)
+        let got = tokens(of: translation)
+
+        // Longest common subsequence lengths.
+        var lcs = Array(repeating: Array(repeating: 0, count: got.count + 1), count: want.count + 1)
+        if !want.isEmpty && !got.isEmpty {
+            for i in stride(from: want.count - 1, through: 0, by: -1) {
+                for j in stride(from: got.count - 1, through: 0, by: -1) {
+                    lcs[i][j] = want[i] == got[j] ? lcs[i + 1][j + 1] + 1
+                                                  : max(lcs[i + 1][j], lcs[i][j + 1])
+                }
             }
+        }
+
+        var diffs: [MarkupDiff] = []
+        var i = 0, j = 0
+        while i < want.count && j < got.count {
+            if want[i] == got[j] { i += 1; j += 1 }
+            else if lcs[i + 1][j] >= lcs[i][j + 1] {
+                diffs.append(MarkupDiff(expected: want[i], actual: nil, note: "dropped in translation"))
+                i += 1
+            } else {
+                diffs.append(MarkupDiff(expected: nil, actual: got[j], note: "added in translation"))
+                j += 1
+            }
+        }
+        while i < want.count {
+            diffs.append(MarkupDiff(expected: want[i], actual: nil, note: "dropped in translation")); i += 1
+        }
+        while j < got.count {
+            diffs.append(MarkupDiff(expected: nil, actual: got[j], note: "added in translation")); j += 1
         }
         return diffs
     }
@@ -1509,22 +1608,27 @@ git commit -m "feat(core): model policy with measured defaults and blacklist"
 
 ---
 
-### Task 12: LLMClient protocol, FakeLLMClient, TwoPassGuard, Translator *(orchestration — lift + extend)*
+### Task 12: LLMClient protocol, FakeLLMClient, Translator *(orchestration — lift + extend)*
 
 **Files:**
 - Modify: `Sources/TranslationCore/LLMClient.swift` (append the `LLMClient` protocol)
-- Create: `Sources/TranslationCore/Translator.swift` (`TwoPassGuard`, `Translator`, `TranslationOutcome`)
+- Create: `Sources/TranslationCore/Translator.swift` (`Translator`, `TranslationOutcome`)
 - Create: `Tests/TranslationCoreTests/FakeLLMClient.swift` (test double)
-- Test: `Tests/TranslationCoreTests/TranslatorTests.swift`, `Tests/TranslationCoreTests/TwoPassGuardTests.swift`
+- Test: `Tests/TranslationCoreTests/TranslatorTests.swift`
 
 **Interfaces:**
 - Consumes: every component from Tasks 1–11.
 - Produces: `protocol LLMClient: Sendable { func chat(messages: [ChatMessage], options: ChatOptions) -> AsyncThrowingStream<ChatEvent, Error> }`.
-- Produces: `enum TwoPassGuard { static func accept(pass1: String, pass2: String, threshold: Double = 0.15) -> Bool }`.
-- Produces: `struct TranslationOutcome: Sendable { final; pass1; pass2: String?; twoPassRejected: Bool; chunks: [Chunk]; documentGlossaryEntries: [GlossaryEntry]; detectedSource: Language?; checks: [GlossaryCheck]; markupDiffs: [MarkupDiff]; stats: [ChatStats]; timeToFirstTokenMS: Double; totalMS: Double }`.
-- Produces: `struct Translator { init(client: LLMClient); func translate(text:target:tone:userGlossary:options:twoPass:maxChunkCharacters:ignoredTerms:onToken:) async throws -> TranslationOutcome }`.
+- Produces: `struct TranslationOutcome: Sendable { let final: String; let chunks: [Chunk]; let documentGlossary: [GlossaryEntry]; let detectedSource: Language?; let checks: [GlossaryCheck]; let markupDiffs: [MarkupDiff]; let stats: [ChatStats]; let timeToFirstTokenMS: Double; let totalMS: Double }`. `documentGlossary` is surfaced deliberately — Plan 2's UI shows it so a human can spot a wrongly translated term, which is the agreed mitigation for that known defect.
+- Produces: `struct Translator { init(client: LLMClient); func translate(text:target:tone:userGlossary:options:maxChunkCharacters:ignoredTerms:onToken:) async throws -> TranslationOutcome }`.
 
-**Orchestration order (spec 3.6, 4.4):** detect source → if >1 chunk, extract terms → translate term list (one call) → build `DocumentGlossary` → merge with user glossary (user wins) → per chunk: build prompt with merged relevant entries, stream, clean → join pass1 → if `twoPass`: refine, clean, apply `TwoPassGuard` (reject if length delta > threshold) → run `GlossaryVerifier` and `MarkupSkeleton.diff` on the final text.
+**Orchestration order (spec 3.6, 4.4):** detect source → build the document glossary, but **only when there is more than one chunk and the source language was recognised** (extract terms → one term-list call → parse by echoed term) → per chunk: merge the *filtered* user entries with **all** document entries, build prompt, stream, clean → join → run `GlossaryVerifier` and `MarkupSkeleton.diff` on the result.
+
+Three details are load-bearing and each has a test below:
+
+- **Document entries are never filtered by occurrence.** They come from this document and are capped at 20, so there is nothing irrelevant to filter; filtering by surface form would drop a term in exactly the chunks where it appears in another inflected form — the chunks that need it most.
+- **The preparatory pass is skipped when `LanguageDetector` returns nil.** Otherwise the source text is parsed with the *target* language's tagger, producing garbage terms that are then forced into every chunk. Note that detection returns nil both for unrecognisable input and for a language outside our nine — Ukrainian or Polish source text is realistic. Translation itself proceeds normally; only the glossary is skipped.
+- **The user glossary still filters by occurrence**, exactly as in Task 3. The two glossaries deliberately obey opposite rules; `CONTEXT.md` records why.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1553,57 +1657,76 @@ final class FakeLLMClient: LLMClient, @unchecked Sendable {
 ```
 
 ```swift
-// Tests/TranslationCoreTests/TwoPassGuardTests.swift
-import Testing
-@testable import TranslationCore
-
-@Test func acceptsSmallCorrections() {
-    #expect(TwoPassGuard.accept(pass1: "abcdefghij", pass2: "abcdefghiJ", threshold: 0.15))
-}
-
-@Test func rejectsLargeLengthCollapse() {
-    #expect(TwoPassGuard.accept(pass1: String(repeating: "x", count: 100),
-                                pass2: String(repeating: "x", count: 50), threshold: 0.15) == false)
-}
-```
-
-```swift
 // Tests/TranslationCoreTests/TranslatorTests.swift
 import Testing
 @testable import TranslationCore
+
+private let multiChunkText = """
+The resource is valid and the resource is published by the server. \
+The server validates the resource before publishing the resource.
+
+Another paragraph about the resource and the server, long enough to force a split \
+so the resource and the server both recur across chunks.
+"""
 
 @Test func singleChunkSkipsTermExtractionAndReturnsCleanedText() async throws {
     let fake = FakeLLMClient(responses: ["Here is the translation:\nПривет, мир."])
     let translator = Translator(client: fake)
     let outcome = try await translator.translate(
         text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
-        options: ChatOptions(model: "test"), twoPass: false, maxChunkCharacters: 900)
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900)
     #expect(outcome.final == "Привет, мир.")
     #expect(fake.receivedMessages.count == 1) // no term-list call for a single chunk
     #expect(outcome.detectedSource == .en)
+    #expect(outcome.documentGlossary.isEmpty)
 }
 
 @Test func multiChunkRunsTermListCallFirst() async throws {
-    let long = String(repeating: "The resource is valid. ", count: 20)
-        + "\n\n" + String(repeating: "Another paragraph here. ", count: 20)
-    // response 0 = term list, then one per chunk
-    let fake = FakeLLMClient(responses: ["ресурс", "перевод один", "перевод два", "перевод три"])
+    // response 0 = the term list, then one response per chunk
+    let fake = FakeLLMClient(responses: [
+        "resource => ресурс\nserver => сервер",
+        "перевод один", "перевод два", "перевод три", "перевод четыре",
+    ])
     let translator = Translator(client: fake)
     let outcome = try await translator.translate(
-        text: long, target: .ru, tone: .neutral, userGlossary: nil,
-        options: ChatOptions(model: "test"), twoPass: false, maxChunkCharacters: 200)
+        text: multiChunkText, target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 200)
     #expect(outcome.chunks.count > 1)
     #expect(fake.receivedMessages.count == outcome.chunks.count + 1) // +1 term-list call
+    #expect(outcome.documentGlossary.contains { $0.term.lowercased() == "resource" })
 }
 
-@Test func twoPassRejectedWhenCorrectionCollapsesLength() async throws {
-    let fake = FakeLLMClient(responses: ["Полный перевод предложения без потерь содержания.", "Кратко."])
+@Test func everyDocumentTermGoesIntoEveryChunkPrompt() async throws {
+    let fake = FakeLLMClient(responses: [
+        "resource => ресурс\nserver => сервер",
+        "один", "два", "три", "четыре",
+    ])
     let translator = Translator(client: fake)
     let outcome = try await translator.translate(
-        text: "A full sentence.", target: .ru, tone: .neutral, userGlossary: nil,
-        options: ChatOptions(model: "test"), twoPass: true, maxChunkCharacters: 900)
-    #expect(outcome.twoPassRejected)
-    #expect(outcome.final == "Полный перевод предложения без потерь содержания.")
+        text: multiChunkText, target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 200)
+    // Skip index 0 (the term-list call); every remaining prompt carries every term.
+    let chunkPrompts = fake.receivedMessages.dropFirst().map { $0.first!.content }
+    #expect(chunkPrompts.count == outcome.chunks.count)
+    for prompt in chunkPrompts {
+        #expect(prompt.contains("ресурс"))
+        #expect(prompt.contains("сервер"))
+    }
+}
+
+@Test func unrecognisedSourceLanguageSkipsTheGlossaryButStillTranslates() async throws {
+    // Ukrainian: recognised by NLLanguageRecognizer, absent from our nine targets.
+    let ukrainian = String(repeating: "Сервер перевіряє ресурс перед публікацією ресурсу. ", count: 12)
+        + "\n\n" + String(repeating: "Ще один абзац про ресурс і сервер для поділу. ", count: 12)
+    let fake = FakeLLMClient(responses: ["one", "two", "three", "four", "five"])
+    let translator = Translator(client: fake)
+    let outcome = try await translator.translate(
+        text: ukrainian, target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 200)
+    #expect(outcome.detectedSource == nil)
+    #expect(outcome.documentGlossary.isEmpty)
+    #expect(fake.receivedMessages.count == outcome.chunks.count) // no term-list call
+    #expect(!outcome.final.isEmpty)
 }
 
 @Test func reportsGlossaryAndMarkupChecks() async throws {
@@ -1612,7 +1735,7 @@ import Testing
     let glossary = Glossary(entries: [GlossaryEntry(term: "x", translations: ["en": "x"])])
     let outcome = try await translator.translate(
         text: "See https://x.org here.", target: .en, tone: .neutral, userGlossary: glossary,
-        options: ChatOptions(model: "test"), twoPass: false, maxChunkCharacters: 900)
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900)
     #expect(outcome.markupDiffs.isEmpty)
     #expect(outcome.checks.allSatisfy { $0.status != .missing })
 }
@@ -1620,8 +1743,8 @@ import Testing
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `swift test --filter TranslatorTests` and `swift test --filter TwoPassGuardTests`
-Expected: FAIL — `LLMClient` protocol / `Translator` / `TwoPassGuard` not defined.
+Run: `swift test --filter TranslatorTests`
+Expected: FAIL — `LLMClient` protocol / `Translator` not defined.
 
 - [ ] **Step 3: Write the implementation**
 
@@ -1636,21 +1759,13 @@ public protocol LLMClient: Sendable {
 // Sources/TranslationCore/Translator.swift
 import Foundation
 
-public enum TwoPassGuard {
-    public static func accept(pass1: String, pass2: String, threshold: Double = 0.15) -> Bool {
-        let base = Double(pass1.count)
-        guard base > 0 else { return !pass2.isEmpty }
-        return abs(Double(pass2.count) - base) / base <= threshold
-    }
-}
-
 public struct TranslationOutcome: Sendable {
     public let final: String
-    public let pass1: String
-    public let pass2: String?
-    public let twoPassRejected: Bool
     public let chunks: [Chunk]
-    public let documentGlossaryEntries: [GlossaryEntry]
+    /// Cleaned translation of each chunk, index-aligned with `chunks`. Needed to measure
+    /// whether a term renders the same way in every chunk — see the acceptance task.
+    public let translatedChunks: [String]
+    public let documentGlossary: [GlossaryEntry]
     public let detectedSource: Language?
     public let checks: [GlossaryCheck]
     public let markupDiffs: [MarkupDiff]
@@ -1665,7 +1780,7 @@ public struct Translator {
 
     public func translate(
         text: String, target: Language, tone: Tone, userGlossary: Glossary?,
-        options: ChatOptions, twoPass: Bool, maxChunkCharacters: Int,
+        options: ChatOptions, maxChunkCharacters: Int,
         ignoredTerms: Set<String> = [],
         onToken: @escaping @Sendable (String) -> Void = { _ in }
     ) async throws -> TranslationOutcome {
@@ -1689,54 +1804,44 @@ public struct Translator {
             return buffer
         }
 
-        // Document glossary (only when there is more than one chunk).
+        // Document glossary. Needs more than one chunk to be worth anything, and a known
+        // source language — parsing the source with the target's tagger yields garbage
+        // terms that would then be forced into every chunk.
         var documentEntries: [GlossaryEntry] = []
-        if chunks.count > 1 {
-            let terms = TermExtractor.extract(from: text, language: detected ?? target)
+        if chunks.count > 1, let source = detected {
+            let terms = TermExtractor.extract(from: text, language: source)
             if !terms.isEmpty {
-                let raw = try await stream(PromptBuilder.termListMessages(terms: terms, target: target), markFirstToken: false)
-                let translations = raw.components(separatedBy: .newlines)
-                    .map { $0.trimmingCharacters(in: .whitespaces) }
-                    .filter { !$0.isEmpty }
-                documentEntries = DocumentGlossary(sourceTerms: terms, translations: translations, target: target).entries
+                let raw = try await stream(PromptBuilder.termListMessages(terms: terms, target: target),
+                                           markFirstToken: false)
+                documentEntries = DocumentGlossary.parse(raw, knownTerms: terms, target: target)
             }
         }
 
-        // Per-chunk translation with merged glossary.
+        // Per-chunk translation. The user glossary is filtered by occurrence; the document
+        // glossary is not — see the task notes for why the two rules differ.
         var translatedChunks: [String] = []
         for chunk in chunks {
             let relevantUser = userGlossary?.relevantEntries(for: chunk.text) ?? []
-            let relevantDoc = documentEntries.filter { chunk.text.lowercased().contains($0.term.lowercased()) }
-            let merged = GlossaryMerge.merge(user: relevantUser, document: relevantDoc)
-            let request = TranslationRequest(text: chunk.text, source: detected, target: target, tone: tone, glossaryEntries: merged)
+            let merged = GlossaryMerge.merge(user: relevantUser, document: documentEntries)
+            let request = TranslationRequest(text: chunk.text, source: detected, target: target,
+                                             tone: tone, glossaryEntries: merged)
             let raw = try await stream(PromptBuilder.messages(for: request), markFirstToken: true)
             translatedChunks.append(ResponseCleaner.clean(raw).text)
         }
-        let pass1 = translatedChunks.joined(separator: "\n\n")
+        let final = translatedChunks.joined(separator: "\n\n")
 
-        // Optional corrector pass with the length guard.
-        var pass2: String? = nil
-        var twoPassRejected = false
-        var final = pass1
-        if twoPass {
-            let relevantUser = userGlossary?.relevantEntries(for: text) ?? []
-            let merged = GlossaryMerge.merge(user: relevantUser, document: documentEntries)
-            let request = TranslationRequest(text: text, source: detected, target: target, tone: tone, glossaryEntries: merged)
-            let raw = try await stream(PromptBuilder.refineMessages(original: text, translation: pass1, request: request), markFirstToken: false)
-            let candidate = ResponseCleaner.clean(raw).text
-            pass2 = candidate
-            if TwoPassGuard.accept(pass1: pass1, pass2: candidate) { final = candidate }
-            else { twoPassRejected = true }
-        }
-
-        let relevantAll = GlossaryMerge.merge(user: userGlossary?.relevantEntries(for: text) ?? [], document: documentEntries)
-        let checks = GlossaryVerifier.check(translation: final, entries: relevantAll, target: target, ignored: ignoredTerms)
-        let markupDiffs = MarkupSkeleton.diff(source: text, translation: final)
-
+        let allEntries = GlossaryMerge.merge(user: userGlossary?.relevantEntries(for: text) ?? [],
+                                             document: documentEntries)
         return TranslationOutcome(
-            final: final, pass1: pass1, pass2: pass2, twoPassRejected: twoPassRejected,
-            chunks: chunks, documentGlossaryEntries: documentEntries, detectedSource: detected,
-            checks: checks, markupDiffs: markupDiffs, stats: stats,
+            final: final,
+            chunks: chunks,
+            translatedChunks: translatedChunks,
+            documentGlossary: documentEntries,
+            detectedSource: detected,
+            checks: GlossaryVerifier.check(translation: final, entries: allEntries,
+                                           target: target, ignored: ignoredTerms),
+            markupDiffs: MarkupSkeleton.diff(source: text, translation: final),
+            stats: stats,
             timeToFirstTokenMS: (firstTokenAt ?? Date()).timeIntervalSince(started) * 1000,
             totalMS: Date().timeIntervalSince(started) * 1000)
     }
@@ -1745,14 +1850,14 @@ public struct Translator {
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `swift test --filter TranslatorTests` then `swift test --filter TwoPassGuardTests`
-Expected: PASS (4 + 2 tests). Then run the full core suite: `swift test` — all green.
+Run: `swift test --filter TranslatorTests`
+Expected: PASS (5 tests). Then run the full core suite: `swift test` — all green.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/TranslationCore/LLMClient.swift Sources/TranslationCore/Translator.swift Tests/TranslationCoreTests/FakeLLMClient.swift Tests/TranslationCoreTests/TranslatorTests.swift Tests/TranslationCoreTests/TwoPassGuardTests.swift
-git commit -m "feat(core): translator orchestration with document glossary and two-pass guard"
+git add Sources/TranslationCore/LLMClient.swift Sources/TranslationCore/Translator.swift Tests/TranslationCoreTests/FakeLLMClient.swift Tests/TranslationCoreTests/TranslatorTests.swift
+git commit -m "feat(core): translator orchestration with document glossary"
 ```
 
 ---
@@ -1964,7 +2069,7 @@ git commit -m "feat(ollama): stream parser discarding thinking, and HTTP client"
 **Interfaces:**
 - Consumes: `OllamaClient`, `Translator`, `Language`, `Tone`, `ModelPolicy` from the two library modules.
 
-CLI contract: `translate-cli --to <lang> [--from <lang>] [--tone <tone>] [--model <name>] [--two-pass] [--chunk <n>] [text]`. If `text` is omitted, read stdin. Streams tokens to stdout as they arrive; prints a metrics footer (TTFT, total ms, tok/s, chunk count, glossary checks, markup diffs) to stderr so stdout stays a clean translation.
+CLI contract: `translate-cli --to <lang> [--from <lang>] [--tone <tone>] [--model <name>] [--chunk <n>] [text]`. If `text` is omitted, read stdin. Streams tokens to stdout as they arrive; prints a metrics footer (TTFT, total ms, chunk count, document glossary size, glossary checks, markup diffs) to stderr so stdout stays a clean translation.
 
 - [ ] **Step 1: Write the implementation**
 
@@ -1981,13 +2086,13 @@ func value(for flag: String, in args: [String]) -> String? {
 
 let args = Array(CommandLine.arguments.dropFirst())
 guard let toRaw = value(for: "--to", in: args), let target = Language(rawValue: toRaw) else {
-    FileHandle.standardError.write(Data("usage: translate-cli --to <ru|en|de|fr|es|pt|it|zh|ja> [--from L] [--tone neutral|formal|casual|technical|literal] [--model NAME] [--two-pass] [--chunk N] [text]\n".utf8))
+    FileHandle.standardError.write(Data("usage: translate-cli --to <ru|en|de|fr|es|pt|it|zh|ja> [--from L] [--tone neutral|formal|casual|technical|literal] [--model NAME] [--chunk N] [text]\n".utf8))
     exit(2)
 }
 let source = value(for: "--from", in: args).flatMap(Language.init(rawValue:))
 let tone = value(for: "--tone", in: args).flatMap(Tone.init(rawValue:)) ?? .neutral
 let model = value(for: "--model", in: args) ?? ModelPolicy.defaultModel(for: .interactive)
-let twoPass = args.contains("--two-pass")
+// No --two-pass flag: the second pass is cut from v1 (see Global Constraints).
 let chunk = value(for: "--chunk", in: args).flatMap(Int.init) ?? 900
 
 let positional = args.filter { !$0.hasPrefix("--") }
@@ -2007,11 +2112,11 @@ let options = ChatOptions(model: model, temperature: 0.2, keepAlive: "30m")
 do {
     let outcome = try await translator.translate(
         text: text, target: target, tone: tone, userGlossary: nil,
-        options: options, twoPass: twoPass, maxChunkCharacters: chunk,
+        options: options, maxChunkCharacters: chunk,
         onToken: { FileHandle.standardOutput.write(Data($0.utf8)) })
     FileHandle.standardOutput.write(Data("\n".utf8))
     var footer = "\n— \(Int(outcome.timeToFirstTokenMS))ms TTFT · \(Int(outcome.totalMS))ms total · \(outcome.chunks.count) chunk(s)"
-    if outcome.twoPassRejected { footer += " · two-pass rejected (length guard)" }
+    if !outcome.documentGlossary.isEmpty { footer += " · \(outcome.documentGlossary.count) document terms" }
     let missing = outcome.checks.filter { $0.status == .missing }
     if !missing.isEmpty { footer += " · glossary misses: \(missing.map(\.term).joined(separator: ", "))" }
     if !outcome.markupDiffs.isEmpty { footer += " · \(outcome.markupDiffs.count) markup diff(s)" }
@@ -2053,6 +2158,122 @@ git commit -m "feat(cli): end-to-end translate harness over the engine"
 
 ---
 
+### Task 15: Acceptance harness — does the engine actually fix the measured defects? *(new)*
+
+**Files:**
+- Create: `corpus/techdoc-en.md`, `corpus/techdoc-ru.md`, `corpus/email-en.md`, `corpus/article-en.md`
+- Create: `Sources/acceptance/main.swift`
+- Modify: `Package.swift` (add the `acceptance` executable target, depending on `TranslationCore` and `OllamaKit`)
+- Manual only — needs a live Ollama, never runs in CI.
+
+**Interfaces:**
+- Consumes: `Translator`, `TranslationOutcome.translatedChunks`, `LemmaMatcher`, `MarkupSkeleton`, `ModelPolicy`, `OllamaClient`.
+
+Unit tests prove each component behaves; nothing so far proves the *engine* fixed the defects that justified rebuilding it. This task closes that gap by re-running the original measurements against the real engine and failing loudly if they regress.
+
+**Thresholds**, taken from the prototype's measured baseline:
+
+| Check | Threshold | Baseline it comes from |
+|---|---|---|
+| Cross-chunk term adherence, chunked texts | ≥ 85% | prototype scored 88% twice; below 85% means the document glossary regressed |
+| Markup diffs on `techdoc-*` | 0 | code blocks, inline code and URLs survived every prototype run |
+| Time to first token, interactive model | < 1000 ms | prototype measured 330–570 ms warm |
+
+Adherence is the experiment's metric: for every (term, chunk) pair where the *source* chunk contains a document-glossary term, does the *translated* chunk carry that term's agreed translation? Matching is by lemma, so inflection does not produce false failures.
+
+- [ ] **Step 1: Write the corpus**
+
+Four files. `article-en.md` must exceed 2000 characters so it chunks at the default budget — an acceptance run where nothing chunks would silently skip the glossary entirely. `techdoc-en.md` and `techdoc-ru.md` must each contain a fenced code block, at least two inline code spans, a bare URL and a blockquote. Reuse the prototype's sample texts as a starting point; they are known to exercise the defects.
+
+- [ ] **Step 2: Write the harness**
+
+```swift
+// Sources/acceptance/main.swift
+import Foundation
+import OllamaKit
+import TranslationCore
+
+let model = ModelPolicy.defaultModel(for: .interactive)
+let client = OllamaClient()
+let translator = Translator(client: client)
+let corpus = try FileManager.default
+    .contentsOfDirectory(atPath: "corpus")
+    .filter { $0.hasSuffix(".md") }
+    .sorted()
+
+var failures: [String] = []
+
+for name in corpus {
+    let text = try String(contentsOfFile: "corpus/\(name)", encoding: .utf8)
+    let target: Language = name.hasSuffix("-ru.md") ? .en : .ru
+    let outcome = try await translator.translate(
+        text: text, target: target, tone: .technical, userGlossary: nil,
+        options: ChatOptions(model: model), maxChunkCharacters: 900)
+
+    // 1. Cross-chunk term adherence.
+    var honoured = 0, applicable = 0
+    if outcome.chunks.count > 1, let source = outcome.detectedSource {
+        for entry in outcome.documentGlossary {
+            guard let expected = entry.requiredTranslation(for: target) else { continue }
+            for (index, chunk) in outcome.chunks.enumerated() {
+                guard LemmaMatcher.matches(expected: entry.term, in: chunk.text, language: source) == true
+                else { continue }
+                applicable += 1
+                if LemmaMatcher.matches(expected: expected, in: outcome.translatedChunks[index],
+                                        language: target) == true { honoured += 1 }
+            }
+        }
+    }
+    let adherence = applicable == 0 ? 100.0 : Double(honoured) / Double(applicable) * 100
+
+    // 2. Markup integrity on the technical documents.
+    let markupOK = !name.hasPrefix("techdoc") || outcome.markupDiffs.isEmpty
+
+    // 3. Latency.
+    let ttft = outcome.timeToFirstTokenMS
+
+    print("\(name): adherence \(String(format: "%.1f%%", adherence)) (\(honoured)/\(applicable)) · " +
+          "\(outcome.chunks.count) chunks · \(outcome.documentGlossary.count) terms · " +
+          "\(outcome.markupDiffs.count) markup diffs · TTFT \(Int(ttft)) ms")
+    for diff in outcome.markupDiffs {
+        print("    markup: expected \(String(describing: diff.expected)) actual \(String(describing: diff.actual))")
+    }
+
+    if applicable > 0 && adherence < 85 { failures.append("\(name): adherence \(String(format: "%.1f%%", adherence)) < 85%") }
+    if !markupOK { failures.append("\(name): \(outcome.markupDiffs.count) markup diffs, expected 0") }
+    if ttft >= 1000 { failures.append("\(name): TTFT \(Int(ttft)) ms >= 1000 ms") }
+}
+
+if failures.isEmpty {
+    print("\nACCEPTED — engine meets the prototype baseline")
+} else {
+    print("\nFAILED")
+    failures.forEach { print("  - \($0)") }
+    exit(1)
+}
+```
+
+- [ ] **Step 3: Build**
+
+Run: `swift build`
+Expected: `Build complete!`
+
+- [ ] **Step 4: Run the acceptance harness**
+
+Ensure `ollama serve` is running with `aya-expanse:8b` pulled.
+
+Run: `swift run acceptance`
+Expected: every corpus file reported, then `ACCEPTED`. If a check fails the harness exits non-zero and names the file and metric — that is a real regression, not flakiness to retry away. Investigate before proceeding.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add corpus Sources/acceptance/main.swift Package.swift
+git commit -m "feat(acceptance): corpus harness enforcing the prototype baseline"
+```
+
+---
+
 ## Self-Review
 
 **Spec coverage** (spec section → task):
@@ -2060,19 +2281,22 @@ git commit -m "feat(cli): end-to-end translate harness over the engine"
 - 3.2 TranslationCore components → Tasks 1–12 (every row of the spec table has a task). ✅
 - 3.6 hotkey data flow (engine portion: detect→extract→chunk→prompt→clean→verify) → Task 12. ✅ Capture/panel portion is Plan 2.
 - 4.1 prompt rules → Task 8. 4.2 tone → Task 1. 4.3 chunking → Task 2. ✅
-- 4.4 terminology continuity (extract → term-list call → doc glossary → per-chunk injection) → Tasks 4, 7, 12. ✅
+- 4.4 terminology continuity (extract → term-list call → doc glossary → unfiltered per-chunk injection, skipped when the source language is unknown) → Tasks 4, 7, 12. ✅
 - 4.5 user glossary occurrence filtering → Task 3. 4.6 three-state verifier → Tasks 5, 6. ✅
-- 4.7 MarkupSkeleton → Task 10. 4.8 corrector prompt + 15% length guard + default-off → Tasks 8, 12 (default-off is a UI/settings default, Plan 2). ✅
+- 4.7 MarkupSkeleton with LCS alignment, `paragraphBreak` and `hardLineBreak` → Task 10. ✅
+- 4.8 second pass → **removed from the spec and from this plan**; both framings were measured and both failed. Nothing to implement.
 - 4.9 streaming + cancellation → Task 12 (`onToken`, `AsyncThrowingStream`) and Task 13 (`onTermination` cancels the URLSession task). ✅
 - 5 ModelPolicy defaults + blacklist with reasons → Task 11. ✅ 5.1 keep_alive default in `ChatOptions` → Task 8; launch warmup deferred to Plan 2.
 - 8 error handling: `OllamaError` (not running, http status) → Task 13; 120s timeout → Task 13 `URLSessionConfiguration`. ✅ Retry/UI flows are Plan 2.
-- 10 testing: core with fake client → Tasks 1–12; OllamaKit fixture parsing → Task 13; live-model quality harness → the CLI (Task 14) is the seed. ✅
+- 10 testing: core with fake client → Tasks 1–12; OllamaKit fixture parsing → Task 13; live-model acceptance run → Task 15. ✅
 
-**Gaps found and resolved:** two-pass "default off," keep_alive launch warmup, `pull()`/`ps()`, and all capture/permission/UI behaviour are Plan-2 concerns; each is explicitly labelled deferred rather than silently dropped. No engine requirement is left without a task.
+**Gaps found and resolved:** keep_alive launch warmup, `pull()`/`ps()`, showing the document glossary in the UI (spec 7.3, the agreed mitigation for a wrongly translated term), and all capture/permission/UI behaviour are Plan-2 concerns; each is labelled deferred rather than silently dropped. `TranslationOutcome.documentGlossary` is exposed here specifically so Plan 2 can display it. No engine requirement is left without a task.
 
 **Placeholder scan:** no TBD/TODO/"handle edge cases"/"similar to Task N"; every code step carries real code. ✅
 
-**Type consistency:** `ChatMessage`/`ChatOptions`/`ChatEvent`/`ChatStats` are created in Task 8 (`LLMClient.swift`) and the `LLMClient` protocol appended in Task 12 — the plan states this split explicitly so no task references an undefined type. `TranslationRequest` has no `precedingContext` (removed vs. prototype), and `Translator.translate` uses `userGlossary:`/`documentEntries` consistently across Task 12 and Task 14. `GlossaryCheck.status` (`.satisfied/.missing/.unverifiable`) is used identically in Tasks 6, 12, 14. ✅
+**Type consistency:** `ChatMessage`/`ChatOptions`/`ChatEvent`/`ChatStats` are created in Task 8 (`LLMClient.swift`) and the `LLMClient` protocol appended in Task 12 — Task 8 states this split up front, so no task references an undefined type. `TranslationRequest` has no `precedingContext` and `PromptBuilder` has no `refineMessages`; both absences are stated explicitly where a reader would expect them. `DocumentGlossary.parse(_:knownTerms:target:)` has one signature across Tasks 7 and 12. `TranslationOutcome` fields (`final`, `chunks`, `translatedChunks`, `documentGlossary`, `detectedSource`, `checks`, `markupDiffs`, `stats`, `timeToFirstTokenMS`, `totalMS`) are used identically in Tasks 12, 14 and 15. `GlossaryCheck.status` (`.satisfied/.missing/.unverifiable`) is used identically in Tasks 6, 12, 14. ✅
+
+**Experiment traceability:** every mechanism this plan builds is either lifted from validated prototype code or backed by a measurement recorded in the prototype README — the document glossary's three rules (echo-matching, no filtering, skip on unknown language), the LCS diff, and the removal of the second pass all trace to a specific run.
 
 ---
 
