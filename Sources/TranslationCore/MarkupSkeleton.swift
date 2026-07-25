@@ -124,12 +124,12 @@ public enum MarkupSkeleton {
         let whole = NSRange(location: 0, length: ns.length)
         var linkRanges: [NSRange] = []
 
-        if let linkRegex = try? NSRegularExpression(pattern: #"\[[^\]]*\]\(([^)\s]+)\)"#) {
+        if let linkRegex = try? NSRegularExpression(pattern: #"\[[^\]]*\]\(\s*([^)\s]+)(?:\s+["'][^"']*["'])?\s*\)"#) {
             for match in linkRegex.matches(in: line, range: whole) {
                 linkRanges.append(match.range)
                 let target = ns.substring(with: match.range(at: 1))
                 // A relative or anchor target is a link but not a URL.
-                if target.contains("://") { found.append((match.range.location, .url(bare: false))) }
+                if targetIsURL(target) { found.append((match.range.location, .url(bare: false))) }
             }
         }
 
@@ -142,5 +142,16 @@ public enum MarkupSkeleton {
 
         tokens.append(contentsOf: found.sorted { $0.location < $1.location }.map(\.token))
         return tokens
+    }
+
+    // A link target counts as a URL when the detector recognises the whole of it.
+    // This accepts "https://x.org" and "www.example.com" while rejecting
+    // "./file.md" and "#section", which are links but not URLs.
+    static func targetIsURL(_ target: String) -> Bool {
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+        else { return target.contains("://") }
+        let ns = target as NSString
+        let whole = NSRange(location: 0, length: ns.length)
+        return detector.matches(in: target, range: whole).contains { $0.range == whole }
     }
 }

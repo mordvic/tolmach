@@ -78,3 +78,22 @@ import Testing
     }
     #expect(urls == [true, false])
 }
+
+@Test func aTitledLinkIsStillALink() {
+    let tokens = MarkupSkeleton.tokens(of: #"See [source](https://x.org "The Title") here."#)
+    #expect(tokens.filter { if case .url = $0 { return true }; return false }.count == 1)
+    #expect(tokens.contains(.url(bare: false)))
+}
+
+@Test func bareURLRewrittenAsATitledLinkIsDetected() {
+    let diffs = MarkupSkeleton.diff(
+        source: "See https://x.org for more.",
+        translation: #"Смотри [источник](https://x.org "Заголовок") для деталей."#)
+    #expect(!diffs.isEmpty)
+}
+
+@Test func aSchemelessLinkTargetStillCountsAsALink() {
+    let tokens = MarkupSkeleton.tokens(of: "Visit [our site](www.example.com) today.")
+    #expect(tokens.contains(.url(bare: false)))
+    #expect(!tokens.contains(.url(bare: true)))
+}
