@@ -117,17 +117,30 @@ public enum MarkupSkeleton {
             } else if current != nil { current?.append(character) }
         }
 
-        // URLs, flagged bare vs. inside a markdown link
-        if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) {
-            let ns = line as NSString
-            for match in detector.matches(in: line, range: NSRange(location: 0, length: ns.length)) {
-                let start = match.range.location
-                // "](" immediately before the URL, or "[" ... "](" wrapping → linked
-                let precededByLinkParen = start >= 2 && ns.substring(with: NSRange(location: start - 2, length: 2)) == "]("
-                let precededByParen = start >= 1 && ns.substring(with: NSRange(location: start - 1, length: 1)) == "("
-                tokens.append(.url(bare: !(precededByLinkParen || precededByParen)))
+        // Markdown links are located first so a URL sitting inside one is never also
+        // counted as a bare URL. A URL merely wrapped in parentheses is NOT a link.
+        var found: [(location: Int, token: MarkupToken)] = []
+        let ns = line as NSString
+        let whole = NSRange(location: 0, length: ns.length)
+        var linkRanges: [NSRange] = []
+
+        if let linkRegex = try? NSRegularExpression(pattern: #"\[[^\]]*\]\(([^)\s]+)\)"#) {
+            for match in linkRegex.matches(in: line, range: whole) {
+                linkRanges.append(match.range)
+                let target = ns.substring(with: match.range(at: 1))
+                // A relative or anchor target is a link but not a URL.
+                if target.contains("://") { found.append((match.range.location, .url(bare: false))) }
             }
         }
+
+        if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) {
+            for match in detector.matches(in: line, range: whole) {
+                let insideLink = linkRanges.contains { NSIntersectionRange($0, match.range).length > 0 }
+                if !insideLink { found.append((match.range.location, .url(bare: true))) }
+            }
+        }
+
+        tokens.append(contentsOf: found.sorted { $0.location < $1.location }.map(\.token))
         return tokens
     }
 }

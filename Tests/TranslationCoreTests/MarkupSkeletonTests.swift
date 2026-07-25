@@ -50,3 +50,31 @@ import Testing
     #expect(diffs[0].expected == .inlineCode("beta"))
     #expect(diffs[0].actual == nil)
 }
+
+@Test func aParentheticalBareURLStaysBare() {
+    let tokens = MarkupSkeleton.tokens(of: "See the spec (https://example.com) for more.")
+    #expect(tokens.filter { $0 == .url(bare: true) }.count == 1)
+    #expect(!tokens.contains(.url(bare: false)))
+}
+
+@Test func aLinkWhoseTextIsTheURLCountsOnce() {
+    let tokens = MarkupSkeleton.tokens(of: "See [https://x.org](https://x.org).")
+    #expect(tokens.filter { if case .url = $0 { return true }; return false }.count == 1)
+    #expect(tokens.contains(.url(bare: false)))
+}
+
+@Test func parentheticalURLRewrittenAsALinkIsDetected() {
+    // The defect this task exists to catch, in the shape that previously slipped through.
+    let diffs = MarkupSkeleton.diff(source: "For details (https://example.com) see docs.",
+                                    translation: "Подробности [источник](https://example.com) см. документацию.")
+    #expect(!diffs.isEmpty)
+}
+
+@Test func urlTokensKeepDocumentOrder() {
+    let tokens = MarkupSkeleton.tokens(of: "Bare https://a.org then [link](https://b.org) after.")
+    let urls = tokens.compactMap { token -> Bool? in
+        if case .url(let bare) = token { return bare }
+        return nil
+    }
+    #expect(urls == [true, false])
+}
