@@ -33,3 +33,7 @@ public enum ChatEvent: Sendable {
     case token(String)
     case done(ChatStats)
 }
+
+public protocol LLMClient: Sendable {
+    func chat(messages: [ChatMessage], options: ChatOptions) -> AsyncThrowingStream<ChatEvent, Error>
+}
