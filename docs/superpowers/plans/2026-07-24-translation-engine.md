@@ -129,13 +129,12 @@ let package = Package(
     platforms: [.macOS(.v14)],
     targets: [
         .target(name: "TranslationCore", swiftSettings: [.swiftLanguageMode(.v5)]),
-        .target(name: "OllamaKit", dependencies: ["TranslationCore"], swiftSettings: [.swiftLanguageMode(.v5)]),
-        .executableTarget(name: "translate-cli", dependencies: ["TranslationCore", "OllamaKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
         .testTarget(name: "TranslationCoreTests", dependencies: ["TranslationCore"], swiftSettings: [.swiftLanguageMode(.v5)]),
-        .testTarget(name: "OllamaKitTests", dependencies: ["OllamaKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
     ]
 )
 ```
+
+**Declare a target only in the task that creates its sources.** SwiftPM errors on a declared target whose directory does not exist, and git does not track empty directories — so declaring `OllamaKit`, `translate-cli` or `acceptance` here would leave every commit until Task 13 unbuildable from a fresh clone. Tasks 13, 14 and 15 each add their own target declaration alongside their first source file.
 
 ```swift
 // Sources/TranslationCore/Language.swift
@@ -1871,6 +1870,11 @@ git commit -m "feat(core): translator orchestration with document glossary"
 - Create: `Sources/OllamaKit/OllamaError.swift`
 - Create: `Sources/OllamaKit/OllamaClient.swift`
 - Test: `Tests/OllamaKitTests/OllamaStreamParserTests.swift`
+- Modify: `Package.swift` — add both targets here, in the task that creates their sources:
+  ```swift
+  .target(name: "OllamaKit", dependencies: ["TranslationCore"], swiftSettings: [.swiftLanguageMode(.v5)]),
+  .testTarget(name: "OllamaKitTests", dependencies: ["OllamaKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
+  ```
 
 **Interfaces:**
 - Consumes: `ChatMessage`, `ChatOptions`, `ChatEvent`, `ChatStats`, `LLMClient` from `TranslationCore`.
@@ -2066,6 +2070,10 @@ git commit -m "feat(ollama): stream parser discarding thinking, and HTTP client"
 
 **Files:**
 - Create: `Sources/translate-cli/main.swift`
+- Modify: `Package.swift` — add the target here, in the task that creates its source:
+  ```swift
+  .executableTarget(name: "translate-cli", dependencies: ["TranslationCore", "OllamaKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
+  ```
 - Manual test only (exercises a live Ollama; not in CI).
 
 **Interfaces:**
