@@ -23,5 +23,11 @@ let package = Package(
             dependencies: ["TranslationEngine", "OllamaClient"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
+        // Throwaway A/B harness: document glossary and corrector second pass.
+        .executableTarget(
+            name: "Experiment",
+            dependencies: ["TranslationEngine", "OllamaClient"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
     ]
 )

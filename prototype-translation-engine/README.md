@@ -70,6 +70,70 @@ constrained to a corrector before this feature earns its cost.
 41–46 tok/s, a 700-char doc in 5.7 s. Cold load costs ~2000 ms versus ~155 ms warm, so
 `keep_alive` is load-bearing, not an optimisation.
 
+## Second experiment: document glossary and corrector (2026-07-25)
+
+Run via `swift run Experiment`. Two mechanisms designed after the first experiment but never
+validated, tested here before committing them to the implementation plan. Same article, same
+5-chunk split at 600 characters, `aya-expanse:8b`, EN → RU. Two runs.
+
+**A. Document glossary — WORKS, adopt.**
+
+Metric: for every (term, chunk) pair where the source chunk contains a glossary term, does the
+translated chunk carry that term's agreed translation? That is precisely "does the same term
+render the same way everywhere".
+
+| | arm A (no glossary) | arm B (document glossary) | delta |
+|---|---|---|---|
+| run 1 | 68.0% (17/25) | 88.0% (22/25) | **+20.0** |
+| run 2 | 64.0% (16/25) | 88.0% (22/25) | **+24.0** |
+
+Arm B landed on exactly 88.0% twice, so the effect is stable rather than a lucky sample. It
+fixes the exact defect the first experiment measured: `Local` went from ✗✓✗✗ to ✓✓✓✓, and the
+opening sentence went from «**Местные** языковые модели» (arm A) to «**Локальные** языковые
+модели» (arm B).
+
+Injecting every term into every chunk — no occurrence filtering — is what makes this work. The
+terms come from this document and are capped, so unlike the user glossary there is nothing
+irrelevant to filter out, and filtering by surface form would drop terms in chunks where they
+appear in another case.
+
+**B. The forced-wrong-terminology risk is real but was contained.**
+
+10 of 11 terms were translated correctly. The exception: `output => выход`, where this context
+needs «вывод» — «выход» means a physical exit. The model largely ignored the bad entry (both
+arms produced one «вывода» and one «выход…» form), so the damage did not compound, but the
+failure mode is demonstrated, not theoretical: a term translated out of context can be wrong,
+and the mechanism then pushes it into every chunk.
+
+Also minor: `TermExtractor` returns the surface form of the first occurrence, so a
+sentence-initial word enters the glossary capitalised (`Local => Локальный`).
+
+**C. Corrector second pass — FAILS, cut from v1.**
+
+The rewritten minimum-edit prompt plus the 15% length guard was measured over arm B's output:
+
+| | paragraphs edited | what changed | cost |
+|---|---|---|---|
+| run 1 | 1 of 5 | one letter: «сломанн**ым**» → «сломанн**ый**» | 2.02× |
+| run 2 | 0 of 5 | nothing at all | 1.99× |
+
+The guard accepted both (0.0% length delta) and paragraph structure survived — so the redesign
+did fix the *destructive* behaviour of the editor-framed version. But it overcorrected into
+uselessness: in run 1 it left obvious calques untouched in the very sentence it edited
+(«Латентность», «доминируется», «была выселена»), and in run 2 it changed nothing while costing
+twice the wall clock.
+
+Verdict: the second pass is not worth building for v1 in either framing. The editor version
+damaged content; the corrector version does nothing. The earlier finding stands — quality comes
+from a better model, not from a second pass by the same one.
+
+**Measurement caveat.** Adherence uses lemma matching, which under-counts adjectival derivations:
+`language => язык` scores ✗ where the translation legitimately reads «языковые» (lemma
+«языковой»). This depresses both arms equally, so the comparison holds, but the absolute
+percentages are a floor, not a true rate.
+
+---
+
 **7. Model shortlist — all four installed candidates measured.**
 
 | Model | TTFT warm | Total (700-char doc → DE) | Verdict |
