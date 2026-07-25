@@ -283,7 +283,7 @@ Expected: FAIL — `Chunker` not defined.
 
 - [ ] **Step 3: Write the implementation**
 
-Adapt the prototype's validated `Chunker` (branch `prototype/translation-engine`, `Sources/TranslationEngine/Chunker.swift`). Behaviour required: split on blank lines into paragraph blocks; keep a ```` ``` ```` fenced block whole even when it exceeds `maxCharacters` and even when it contains blank lines; a non-code block larger than the budget is split on sentence boundaries via `enumerateSubstrings(..., options: .bySentences)`; accumulate blocks into chunks under the budget; a chunk is flagged `containsCodeFence` if any block folded into it was a fence; empty input yields no chunks, non-empty-but-blank yields one chunk.
+Adapt the prototype's validated `Chunker` (branch `prototype/translation-engine`, `Sources/TranslationEngine/Chunker.swift`). Behaviour required: split on blank lines into paragraph blocks; keep a ```` ``` ```` fenced block whole even when it exceeds `maxCharacters` and even when it contains blank lines; a non-code block larger than the budget is split on sentence boundaries via `enumerateSubstrings(..., options: .bySentences)`; accumulate blocks into chunks under the budget; a chunk is flagged `containsCodeFence` if any block folded into it was a fence; input that is empty or contains only whitespace yields no chunks at all — there is nothing to translate, and emitting a whitespace chunk would send it to the model.
 
 ```swift
 // Sources/TranslationCore/Chunker.swift
