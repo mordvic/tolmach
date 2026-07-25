@@ -127,6 +127,33 @@ Verdict: the second pass is not worth building for v1 in either framing. The edi
 damaged content; the corrector version does nothing. The earlier finding stands — quality comes
 from a better model, not from a second pass by the same one.
 
+**D. Translating terms with context does NOT fix a wrong term — and the reason matters.**
+
+Round 2 tested whether giving the model context when it translates the term list would fix
+`output => выход`. Three prompt shapes, all parsing cleanly 11/11:
+
+| variant | `output` |
+|---|---|
+| bare term list (baseline) | «выход» ✗ |
+| list plus a topic sentence describing the document | «выход» ✗ |
+| list plus a verbatim excerpt of the document | «выход» ✗ |
+
+None helped. A fourth, per-term shape (`term` followed by an indented `context:` line) broke the
+echo-back contract entirely — the model translated the source terms and the context sentences
+instead of echoing them, and the parser dropped all 13 lines rather than misaligning them, which
+is the safety property behaving exactly as designed.
+
+But that broken run is the informative one: it returned «вывод» — the correct sense. The same
+model writes «принятие вывода» whenever it translates the *sentence*, and «выход» whenever it
+translates the *word*. So the defect is caused by the term being isolated, not by the model
+lacking information about the document, and no amount of context bolted onto a term list will
+fix it.
+
+Practical consequence: the bare-term glossary is as good as a term-list approach gets. Its
+observed cost is roughly one wrong entry in eleven, partially ignored by the model in prose.
+Weighed against a stable +20 points of cross-chunk consistency, the trade is clearly worth
+taking; the residual risk needs a different mitigation than prompt engineering.
+
 **Measurement caveat.** Adherence uses lemma matching, which under-counts adjectival derivations:
 `language => язык` scores ✗ where the translation legitimately reads «языковые» (lemma
 «языковой»). This depresses both arms equally, so the comparison holds, but the absolute

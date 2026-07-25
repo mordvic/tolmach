@@ -5,20 +5,21 @@ import TranslationEngine
 
 // PROTOTYPE — throwaway.
 //
-// Question 1: does a document glossary fix cross-chunk terminology drift, and are
-//             the terms it forces actually correct?
-// Question 2: does a corrector-framed second pass (minimum edits, length guard)
-//             earn its cost, where the earlier editor-framed one did not?
+// Round 1 answered: a document glossary lifts cross-chunk term adherence from ~66% to 88%,
+// and the corrector second pass is not worth its 2× cost. Both recorded in the README.
 //
-// Arm A = plain per-chunk translation (what we ship if the glossary fails)
-// Arm B = same, with the document glossary injected into every chunk
+// Round 2 asks: translating the term list WITH the sentence each term came from — does it
+// fix the one wrong entry we saw (`output => выход`, where the sense needs «вывод»)?
+//
+// Arm A = no glossary            Arm B = glossary built from bare terms
+// Arm C = glossary built from terms plus their context sentence
 
 let bold = "\u{1B}[1m", dim = "\u{1B}[2m", reset = "\u{1B}[0m"
 let green = "\u{1B}[32m", red = "\u{1B}[31m", yellow = "\u{1B}[33m", cyan = "\u{1B}[36m"
 
 func header(_ text: String) {
     print("\n\(bold)\(cyan)\(text)\(reset)")
-    print(String(repeating: "─", count: 72))
+    print(String(repeating: "─", count: 76))
 }
 
 // The article that exposed the drift, verbatim from the prototype's Sample 4.
@@ -62,38 +63,56 @@ let client = OllamaClient()
 let chunks = Chunker.chunk(article, maxCharacters: chunkSize)
 let sourceChunks = chunks.map(\.text)
 
-print("\(bold)DOCUMENT GLOSSARY + CORRECTOR EXPERIMENT\(reset)")
+print("\(bold)TERM-CONTEXT EXPERIMENT\(reset)")
 print("\(dim)model \(model) · EN → \(target.flag) · chunk \(chunkSize) → \(chunks.count) chunks · terms capped at \(termCap)\(reset)")
 
-// ── Step 1: extract repeated terms ────────────────────────────────────────────
+// ── 1. Extract repeated terms ─────────────────────────────────────────────────
 header("1. EXTRACTED TERMS")
 let terms = Terms.extract(from: article, language: .english, cap: termCap, minFrequency: 2)
-print(terms.enumerated().map { "  \($0.offset + 1). \($0.element)" }.joined(separator: "\n"))
-guard !terms.isEmpty else {
-    print("\(red)no repeated terms found — experiment cannot proceed\(reset)")
-    exit(1)
+print("  " + terms.joined(separator: ", "))
+guard !terms.isEmpty else { print("\(red)no repeated terms\(reset)"); exit(1) }
+
+// ── 2. Two glossaries ─────────────────────────────────────────────────────────
+header("2. BUILDING GLOSSARIES")
+
+let bareStart = Date()
+let bareRaw = try await LLM.complete(DocGlossary.messages(terms: terms, target: target), model: model, client: client)
+let bareGlossary = DocGlossary.parse(bareRaw, knownTerms: terms)
+let bareMS = Date().timeIntervalSince(bareStart) * 1000
+print("  bare terms      \(bareGlossary.count)/\(terms.count) parsed · \(Int(bareMS)) ms")
+
+let withContext = terms.map { (term: $0, context: Sentences.first(containing: $0, in: article) ?? "") }
+let missingContext = withContext.filter(\.context.isEmpty).count
+let contextStart = Date()
+let contextRaw = try await LLM.complete(DocGlossary.contextMessages(terms: withContext, target: target), model: model, client: client)
+let contextGlossary = DocGlossary.parse(contextRaw, knownTerms: terms)
+let contextMS = Date().timeIntervalSince(contextStart) * 1000
+print("  with context    \(contextGlossary.count)/\(terms.count) parsed · \(Int(contextMS)) ms" +
+      (missingContext > 0 ? " \(yellow)(\(missingContext) terms had no sentence)\(reset)" : ""))
+
+// ── 3. Side-by-side, for the human half of the criterion ──────────────────────
+header("3. GLOSSARY COMPARISON  \(dim)(differences marked; are the context ones better?)\(reset)")
+let bareByTerm = Dictionary(uniqueKeysWithValues: bareGlossary.map { ($0.source.lowercased(), $0.translated) })
+let contextByTerm = Dictionary(uniqueKeysWithValues: contextGlossary.map { ($0.source.lowercased(), $0.translated) })
+var differing = 0
+for term in terms {
+    let key = term.lowercased()
+    let bare = bareByTerm[key] ?? "\(dim)—\(reset)"
+    let ctx = contextByTerm[key] ?? "\(dim)—\(reset)"
+    let same = bareByTerm[key] == contextByTerm[key]
+    if !same { differing += 1 }
+    let marker = same ? "\(dim)  \(reset)" : "\(yellow)≠ \(reset)"
+    let label = term.padding(toLength: 22, withPad: " ", startingAt: 0)
+    let bareCol = bare.padding(toLength: 26, withPad: " ", startingAt: 0)
+    print("  \(marker)\(label)\(bareCol)\(bold)\(ctx)\(reset)")
 }
+print("\n  \(dim)\(differing) of \(terms.count) terms differ between the two glossaries\(reset)")
 
-// ── Step 2: translate the term list ───────────────────────────────────────────
-header("2. DOCUMENT GLOSSARY  \(dim)(human check: are these translations correct?)\(reset)")
-let glossaryStart = Date()
-let rawGlossary = try await LLM.complete(DocGlossary.messages(terms: terms, target: target), model: model, client: client)
-let glossary = DocGlossary.parse(rawGlossary, knownTerms: terms)
-let glossaryMS = Date().timeIntervalSince(glossaryStart) * 1000
-
-for term in glossary {
-    print("  \(term.source)  \(dim)=>\(reset)  \(bold)\(term.translated)\(reset)")
-}
-let dropped = terms.count - glossary.count
-print("\n  \(dim)parsed \(glossary.count)/\(terms.count) terms" + (dropped > 0 ? ", \(dropped) unparseable (dropped, not misaligned)" : "") + " · \(Int(glossaryMS)) ms\(reset)")
-
-// ── Step 3: two arms ──────────────────────────────────────────────────────────
-func translate(withGlossary: Bool) async throws -> ([String], Double) {
+// ── 4. Three arms ─────────────────────────────────────────────────────────────
+func translate(using glossary: [DocTerm]) async throws -> ([String], Double) {
     let started = Date()
+    let entries = glossary.map { GlossaryEntry(term: $0.source, translations: [target.rawValue: $0.translated]) }
     var out: [String] = []
-    let entries = withGlossary
-        ? glossary.map { GlossaryEntry(term: $0.source, translations: [target.rawValue: $0.translated]) }
-        : []
     for chunk in chunks {
         // Every document term goes into every chunk — no occurrence filtering.
         let request = TranslationRequest(text: chunk.text, source: .en, target: target, tone: tone,
@@ -104,120 +123,58 @@ func translate(withGlossary: Bool) async throws -> ([String], Double) {
     return (out, Date().timeIntervalSince(started) * 1000)
 }
 
-header("3. TRANSLATING")
-print("  arm A \(dim)(no glossary)\(reset)…")
-let (armA, armAMS) = try await translate(withGlossary: false)
-print("  arm B \(dim)(document glossary)\(reset)…")
-let (armB, armBMS) = try await translate(withGlossary: true)
-print("  \(dim)A: \(Int(armAMS)) ms · B: \(Int(armBMS)) ms\(reset)")
+header("4. TRANSLATING")
+print("  arm A \(dim)no glossary\(reset)…")
+let (armA, armAMS) = try await translate(using: [])
+print("  arm B \(dim)bare-term glossary\(reset)…")
+let (armB, armBMS) = try await translate(using: bareGlossary)
+print("  arm C \(dim)context glossary\(reset)…")
+let (armC, armCMS) = try await translate(using: contextGlossary)
+print("  \(dim)A \(Int(armAMS)) ms · B \(Int(armBMS)) ms · C \(Int(armCMS)) ms\(reset)")
 
-// ── Step 4: adherence ─────────────────────────────────────────────────────────
-header("4. CONSISTENCY  \(dim)(does each term render the same way in every chunk it appears in?)\(reset)")
+// ── 5. Adherence ──────────────────────────────────────────────────────────────
+// Each arm is scored against the glossary that steered it; the no-glossary arm is
+// scored against both, so each steered arm has its own honest baseline.
+header("5. CONSISTENCY")
 
-let (scoreA, detailA) = Measure.adherence(sourceChunks: sourceChunks, translatedChunks: armA,
-                                          glossary: glossary, source: .english, target: .russian)
-let (scoreB, detailB) = Measure.adherence(sourceChunks: sourceChunks, translatedChunks: armB,
-                                          glossary: glossary, source: .english, target: .russian)
-
-func bar(_ score: Adherence) -> String {
-    let colour = score.percent >= 80 ? green : (score.percent >= 50 ? yellow : red)
-    return "\(colour)\(String(format: "%5.1f%%", score.percent))\(reset) \(dim)(\(score.honoured)/\(score.applicable))\(reset)"
+func score(_ translated: [String], against glossary: [DocTerm]) -> (Adherence, [String: [Bool]]) {
+    Measure.adherence(sourceChunks: sourceChunks, translatedChunks: translated,
+                      glossary: glossary, source: .english, target: .russian)
 }
-print("  arm A, no glossary        \(bar(scoreA))")
-print("  arm B, document glossary  \(bar(scoreB))")
-let delta = scoreB.percent - scoreA.percent
-print("\n  \(bold)delta: \(delta >= 0 ? "+" : "")\(String(format: "%.1f", delta)) points\(reset)")
+let (baseBare, _) = score(armA, against: bareGlossary)
+let (steerBare, detailB) = score(armB, against: bareGlossary)
+let (baseContext, detailABase) = score(armA, against: contextGlossary)
+let (steerContext, detailC) = score(armC, against: contextGlossary)
 
-// Per-term detail for terms that appear in more than one chunk — that is where drift lives.
-header("5. PER-TERM DETAIL  \(dim)(only terms spanning 2+ chunks; ✓ = agreed translation present)\(reset)")
-print("  \(dim)term".padding(toLength: 40, withPad: " ", startingAt: 0) + "arm A      arm B\(reset)")
-for term in glossary {
-    guard let a = detailA[term.source], a.count >= 2 else { continue }
-    let b = detailB[term.source] ?? []
+func fmt(_ a: Adherence) -> String {
+    let colour = a.percent >= 80 ? green : (a.percent >= 50 ? yellow : red)
+    return "\(colour)\(String(format: "%5.1f%%", a.percent))\(reset) \(dim)(\(a.honoured)/\(a.applicable))\(reset)"
+}
+print("  bare glossary      baseline A \(fmt(baseBare))   steered B \(fmt(steerBare))   " +
+      "\(bold)\(String(format: "%+.1f", steerBare.percent - baseBare.percent))\(reset)")
+print("  context glossary   baseline A \(fmt(baseContext))   steered C \(fmt(steerContext))   " +
+      "\(bold)\(String(format: "%+.1f", steerContext.percent - baseContext.percent))\(reset)")
+_ = detailABase
+
+// ── 6. Per-term detail ────────────────────────────────────────────────────────
+header("6. PER-TERM  \(dim)(terms spanning 2+ chunks · ✓ agreed translation present)\(reset)")
+print("  \(dim)\("term".padding(toLength: 22, withPad: " ", startingAt: 0))arm B          arm C\(reset)")
+for term in terms {
+    let b = detailB[term] ?? []
+    let c = detailC[term] ?? []
+    guard max(b.count, c.count) >= 2 else { continue }
     func render(_ flags: [Bool]) -> String {
         flags.map { $0 ? "\(green)✓\(reset)" : "\(red)✗\(reset)" }.joined()
     }
-    // Pad on VISIBLE width — render() carries ANSI escapes that must not be counted.
-    let label = "  \(term.source)".padding(toLength: 40, withPad: " ", startingAt: 0)
-    let gap = String(repeating: " ", count: max(2, 12 - a.count))
-    print(label + render(a) + gap + render(b))
+    let gap = String(repeating: " ", count: max(2, 15 - b.count))
+    print("  \(term.padding(toLength: 22, withPad: " ", startingAt: 0))\(render(b))\(gap)\(render(c))")
 }
 
-// ── Step 6: corrector ─────────────────────────────────────────────────────────
-header("6. CORRECTOR PASS  \(dim)(minimum-edit prompt + 15% length guard, over arm B)\(reset)")
-let pass1 = armB.joined(separator: "\n\n")
-let correctorRequest = TranslationRequest(
-    text: article, source: .en, target: target, tone: tone,
-    glossaryEntries: glossary.map { GlossaryEntry(term: $0.source, translations: [target.rawValue: $0.translated]) },
-    precedingContext: nil)
-
-let correctorSystem = """
-You are a translation corrector, not an editor. You are given a source text and its \
-translation into \(target.englishName). Fix only outright errors: mistranslations, wrong \
-grammar, dropped content, broken markup, terminology inconsistencies.
-
-Rules:
-- Output ONLY the corrected translation. No commentary.
-- Make the MINIMUM changes needed. Do NOT paraphrase, shorten, merge sentences, or restructure.
-- If a sentence is already correct, reproduce it unchanged.
-- Preserve every paragraph break exactly as in the translation you are given.
-"""
-let correctorMessages = [
-    ChatMessage(role: "system", content: correctorSystem),
-    ChatMessage(role: "user", content: "<source>\n\(article)\n</source>\n\n<translation>\n\(pass1)\n</translation>"),
-]
-_ = correctorRequest
-
-let correctorStart = Date()
-let rawPass2 = try await LLM.complete(correctorMessages, model: model, client: client)
-let pass2 = ResponseCleaner.clean(rawPass2).text
-let correctorMS = Date().timeIntervalSince(correctorStart) * 1000
-
-let lengthDelta = abs(Double(pass2.count) - Double(pass1.count)) / Double(pass1.count)
-let accepted = lengthDelta <= 0.15
-print("  pass 1: \(pass1.count) chars \(dim)(\(Int(armBMS)) ms)\(reset)")
-print("  pass 2: \(pass2.count) chars \(dim)(+\(Int(correctorMS)) ms)\(reset)")
-print("  length delta: \(String(format: "%.1f%%", lengthDelta * 100)) → " +
-      (accepted ? "\(green)ACCEPTED\(reset)" : "\(red)REJECTED by guard\(reset)"))
-print("  total cost of second pass: \(String(format: "%.2f×", (armBMS + correctorMS) / armBMS))")
-
-// Paragraph-count check: the earlier editor prompt collapsed content.
-let paras1 = pass1.components(separatedBy: "\n\n")
-let paras2 = pass2.components(separatedBy: "\n\n")
-print("  paragraphs: \(paras1.count) → \(paras2.count)" +
-      (paras1.count == paras2.count ? " \(green)✓\(reset)" : " \(red)✗ structure changed\(reset)"))
-
-// What did the corrector actually change? A pass that costs 2× and edits nothing
-// is as much a failure as one that rewrites everything.
-func words(_ text: String) -> [String] {
-    text.components(separatedBy: CharacterSet.whitespacesAndNewlines).filter { !$0.isEmpty }
-}
-var changedParagraphs = 0
-var edits: [(String, String)] = []
-for index in 0..<min(paras1.count, paras2.count) where paras1[index] != paras2[index] {
-    changedParagraphs += 1
-    let before = Set(words(paras1[index])), after = Set(words(paras2[index]))
-    let removed = before.subtracting(after).sorted().prefix(6)
-    let added = after.subtracting(before).sorted().prefix(6)
-    edits.append((removed.joined(separator: " "), added.joined(separator: " ")))
-}
-print("  paragraphs edited: \(changedParagraphs)/\(paras1.count)" +
-      (changedParagraphs == 0 ? "  \(yellow)corrector changed nothing\(reset)" : ""))
-for (removed, added) in edits {
-    print("    \(red)− \(removed)\(reset)")
-    print("    \(green)+ \(added)\(reset)")
-}
-
-// ── Compact summary, for comparing across runs ────────────────────────────────
+// ── 7. Summary ────────────────────────────────────────────────────────────────
 header("SUMMARY")
-print("  adherence      A \(String(format: "%.1f%%", scoreA.percent))  →  B \(String(format: "%.1f%%", scoreB.percent))   delta \(delta >= 0 ? "+" : "")\(String(format: "%.1f", delta))")
-print("  glossary       \(glossary.count)/\(terms.count) terms parsed, \(Int(glossaryMS)) ms")
-print("  corrector      \(changedParagraphs)/\(paras1.count) paragraphs edited, \(String(format: "%.2f×", (armBMS + correctorMS) / armBMS)) cost, guard \(accepted ? "accepted" : "rejected")")
+print("  glossaries differ on \(differing)/\(terms.count) terms · context cost +\(Int(contextMS)) ms once per document")
+print("  bare      \(String(format: "%.1f%%", baseBare.percent)) → \(String(format: "%.1f%%", steerBare.percent))")
+print("  context   \(String(format: "%.1f%%", baseContext.percent)) → \(String(format: "%.1f%%", steerContext.percent))")
 
-// ── Output for human reading ──────────────────────────────────────────────────
-header("7. ARM A  \(dim)(no glossary)\(reset)")
-print(armA.joined(separator: "\n\n"))
-header("8. ARM B  \(dim)(document glossary)\(reset)")
-print(pass1)
-header("9. AFTER CORRECTOR")
-print(pass2)
+header("ARM C OUTPUT  \(dim)(context glossary)\(reset)")
+print(armC.joined(separator: "\n\n"))

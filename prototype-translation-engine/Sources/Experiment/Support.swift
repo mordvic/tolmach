@@ -149,6 +149,29 @@ enum DocGlossary {
                 ChatMessage(role: "user", content: terms.joined(separator: "\n"))]
     }
 
+    /// Same echo-back contract, but each term arrives with the sentence it was found in.
+    /// A term translated in isolation can be plain wrong — "output" became «выход» (a physical
+    /// exit) where this document needs «вывод».
+    static func contextMessages(terms: [(term: String, context: String)], target: Language) -> [ChatMessage] {
+        let system = """
+        You translate glossary terms into \(target.englishName). Each item gives a term and the \
+        sentence it appears in. Translate the TERM as it must read in that context — the sentence \
+        is there to disambiguate the sense, and must NOT itself be translated.
+
+        Output one line per item, in exactly this format:
+        source term => translation
+
+        Echo the source term exactly as given. No numbering, no commentary, no extra lines. \
+        Keep identifiers and product names untranslated when they have no established \
+        target-language form.
+        """
+        let user = terms
+            .map { "\($0.term)\n    context: \($0.context)" }
+            .joined(separator: "\n")
+        return [ChatMessage(role: "system", content: system),
+                ChatMessage(role: "user", content: user)]
+    }
+
     static func parse(_ raw: String, knownTerms: [String]) -> [DocTerm] {
         let bySource = Dictionary(uniqueKeysWithValues: knownTerms.map { ($0.lowercased(), $0) })
         var seen = Set<String>()
@@ -163,6 +186,24 @@ enum DocGlossary {
             out.append(DocTerm(source: canonical, translated: translated))
         }
         return out
+    }
+}
+
+// MARK: - Sentence lookup
+
+enum Sentences {
+    /// The first sentence containing the term, trimmed. Used to give the model the
+    /// sense in which a term is actually used in this document.
+    static func first(containing term: String, in text: String) -> String? {
+        var found: String? = nil
+        let needle = term.lowercased()
+        text.enumerateSubstrings(in: text.startIndex..<text.endIndex, options: .bySentences) { substring, _, _, stop in
+            guard let substring, substring.lowercased().contains(needle) else { return }
+            found = substring.trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "\n", with: " ")
+            stop = true
+        }
+        return found
     }
 }
 
