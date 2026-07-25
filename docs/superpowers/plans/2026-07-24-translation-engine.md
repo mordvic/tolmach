@@ -973,7 +973,7 @@ public enum GlossaryMerge {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `swift test --filter DocumentGlossaryTests`
-Expected: PASS (3 tests).
+Expected: PASS (5 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -1169,7 +1169,7 @@ public enum PromptBuilder {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `swift test --filter PromptBuilderTests`
-Expected: PASS (4 tests).
+Expected: PASS (3 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -1521,7 +1521,7 @@ public enum MarkupSkeleton {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `swift test --filter MarkupSkeletonTests`
-Expected: PASS (5 tests).
+Expected: PASS (7 tests).
 
 - [ ] **Step 5: Commit**
 
