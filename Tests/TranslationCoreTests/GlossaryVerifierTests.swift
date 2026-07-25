@@ -70,3 +70,11 @@ import Testing
                                         entries: entries, target: .ru)
     #expect(checks[0].status != .missing)
 }
+
+@Test func aCoincidentalSubstringDoesNotForgiveARealViolation() {
+    // "id" appears inside "valid", but the required "ID" was never rendered.
+    let entries = [GlossaryEntry(term: "ID", doNotTranslate: true)]
+    let checks = GlossaryVerifier.check(translation: "Это утверждение является valid для всех случаев.",
+                                        entries: entries, target: .ru)
+    #expect(checks[0].status == .missing)
+}

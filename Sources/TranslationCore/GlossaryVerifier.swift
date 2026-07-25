@@ -20,11 +20,10 @@ public enum GlossaryVerifier {
             case true:
                 status = .satisfied
             case false:
-                // Lemma matching found no token sequence, but the text may still contain the
-                // form inside a URL, identifier or filename, where NLTagger tokenises
-                // differently ("fhir.org" is one token). That is ambiguous, not absent —
-                // and an ambiguous case must not produce a warning.
-                status = translation.lowercased().contains(expected.lowercased()) ? .unverifiable : .missing
+                // Present as a bounded occurrence but not as a lemma sequence — the form is
+                // there, inside a URL or identifier where NLTagger tokenises differently.
+                // Ambiguous, not absent, so it must not warn.
+                status = Glossary.occurs(expected, in: translation) ? .unverifiable : .missing
             case nil:
                 status = .unverifiable
             }

@@ -45,6 +45,7 @@ public struct Glossary: Sendable {
             let openRight = found.upperBound == text.endIndex
                 || !isWordCharacter(text[found.upperBound])
             if openLeft && openRight { return true }
+            // Advance past lowerBound rather than upperBound to keep overlapping candidates reachable.
             searchStart = text.index(after: found.lowerBound)
         }
         return false
@@ -52,15 +53,23 @@ public struct Glossary: Sendable {
 
     /// False when the term contains Han, Hiragana or Katakana characters.
     static func usesWordSeparation(_ term: String) -> Bool {
-        !term.unicodeScalars.contains { scalar in
-            (0x4E00...0x9FFF).contains(scalar.value)    // CJK Unified Ideographs
-                || (0x3400...0x4DBF).contains(scalar.value)  // CJK Extension A
-                || (0x3040...0x309F).contains(scalar.value)  // Hiragana
-                || (0x30A0...0x30FF).contains(scalar.value)  // Katakana
-        }
+        !term.unicodeScalars.contains(where: isWordSeparationless)
     }
 
     static func isWordCharacter(_ character: Character) -> Bool {
-        character.isLetter || character.isNumber
+        guard character.isLetter || character.isNumber else { return false }
+        // Scripts that write no spaces cannot close a word boundary — otherwise a
+        // Latin term embedded in Japanese would be invisible to the boundary path.
+        return !character.unicodeScalars.contains(where: isWordSeparationless)
+    }
+
+    /// Han, Hiragana or Katakana — scripts that separate no words.
+    static func isWordSeparationless(_ scalar: Unicode.Scalar) -> Bool {
+        (0x4E00...0x9FFF).contains(scalar.value)        // CJK Unified Ideographs
+            || (0x3400...0x4DBF).contains(scalar.value) // CJK Extension A
+            || (0xF900...0xFAFF).contains(scalar.value) // CJK Compatibility Ideographs
+            || (0x20000...0x2FA1F).contains(scalar.value) // Extensions B+ (supplementary)
+            || (0x3040...0x309F).contains(scalar.value) // Hiragana
+            || (0x30A0...0x30FF).contains(scalar.value) // Katakana
     }
 }

@@ -53,3 +53,9 @@ private let glossary = Glossary(entries: [
     let glossary = Glossary(entries: [GlossaryEntry(term: "翻訳", translations: ["en": "translation"])])
     #expect(glossary.relevantEntries(for: "この翻訳は正しい").map(\.term) == ["翻訳"])
 }
+
+@Test func aLatinTermEmbeddedInCJKTextIsStillFound() {
+    let glossary = Glossary(entries: [GlossaryEntry(term: "FHIR", doNotTranslate: true)])
+    #expect(glossary.relevantEntries(for: "FHIRサーバーの設定を行う").map(\.term) == ["FHIR"])
+    #expect(glossary.relevantEntries(for: "このFHIRは正しい").map(\.term) == ["FHIR"])
+}
