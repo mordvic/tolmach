@@ -46,7 +46,16 @@ public enum ResponseCleaner {
             .replacingOccurrences(of: "#", with: "").replacingOccurrences(of: "_", with: "")
             .trimmingCharacters(in: .whitespaces).lowercased()
         guard normalized.count <= 60 else { return false }
-        let core = normalized.trimmingCharacters(in: CharacterSet(charactersIn: ":.!— -"))
-        return preamblePatterns.contains(core)
+        let preamblePunctuation = CharacterSet(charactersIn: ":.!— -")
+        // Check punctuation against the line before the trailing characters are trimmed
+        // away, since that trailing punctuation (e.g. a colon) is the signal we key on.
+        let endsInPreamblePunctuation = normalized.unicodeScalars.last.map(preamblePunctuation.contains) ?? false
+        let core = normalized.trimmingCharacters(in: preamblePunctuation)
+        guard preamblePatterns.contains(core) else { return false }
+        // A bare single word with no trailing punctuation reads as genuine content
+        // (e.g. a document heading), not as a model's preamble. Only strip when the
+        // line is multi-word or carries an explicit preamble punctuation marker.
+        let isMultiWord = core.contains(" ")
+        return isMultiWord || endsInPreamblePunctuation
     }
 }

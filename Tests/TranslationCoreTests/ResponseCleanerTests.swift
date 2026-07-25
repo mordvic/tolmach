@@ -25,3 +25,17 @@ import Testing
     #expect(cleaned.text == raw)
     #expect(cleaned.unwrappedCodeFence == false)
 }
+
+@Test func aBareOneWordHeadingIsNotStrippedAsPreamble() {
+    // A document may legitimately open with this word as a heading.
+    let raw = "Перевод\n\nПервый абзац документа."
+    let cleaned = ResponseCleaner.clean(raw)
+    #expect(cleaned.text == raw)
+    #expect(cleaned.strippedPreamble == nil)
+}
+
+@Test func aOneWordPreambleWithPunctuationIsStillStripped() {
+    let cleaned = ResponseCleaner.clean("Перевод:\nПервый абзац документа.")
+    #expect(cleaned.text == "Первый абзац документа.")
+    #expect(cleaned.strippedPreamble != nil)
+}
