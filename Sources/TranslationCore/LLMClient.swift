@@ -37,3 +37,14 @@ public enum ChatEvent: Sendable {
 public protocol LLMClient: Sendable {
     func chat(messages: [ChatMessage], options: ChatOptions) -> AsyncThrowingStream<ChatEvent, Error>
 }
+
+extension ChatStats: Equatable {}
+extension ChatEvent: Equatable {
+    public static func == (lhs: ChatEvent, rhs: ChatEvent) -> Bool {
+        switch (lhs, rhs) {
+        case let (.token(a), .token(b)): a == b
+        case let (.done(a), .done(b)): a == b
+        default: false
+        }
+    }
+}
