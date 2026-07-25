@@ -24,3 +24,14 @@ private let glossary = Glossary(entries: [
     #expect(server.requiredTranslation(for: .ru) == "сервер профилей")
     #expect(server.requiredTranslation(for: .de) == nil)
 }
+
+@Test func shortTermsMatchInsideLongerWords() {
+    // Documented limitation, not a defect — see relevantEntries(for:).
+    let glossary = Glossary(entries: [GlossaryEntry(term: "ID", translations: ["ru": "идентификатор"])])
+    #expect(glossary.relevantEntries(for: "the request is valid").map(\.term) == ["ID"])
+}
+
+@Test func doNotTranslateWinsOverAnExistingTranslation() {
+    let entry = GlossaryEntry(term: "FHIR", doNotTranslate: true, translations: ["ru": "ФХИР"])
+    #expect(entry.requiredTranslation(for: .ru) == "FHIR")
+}
