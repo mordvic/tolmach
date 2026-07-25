@@ -35,3 +35,22 @@ import Testing
     let terms = TermExtractor.extract(from: text, language: .en, minFrequency: 2)
     #expect(!terms.contains { $0.lowercased().contains("laptop local") })
 }
+
+@Test func stopWordsAreExcludedAsStandaloneTerms() {
+    let text = "The most other thing. The most other thing. The most other thing."
+    let terms = TermExtractor.extract(from: text, language: .en, minFrequency: 2)
+    let lowered = terms.map { $0.lowercased() }
+    #expect(!lowered.contains("most"))
+    #expect(!lowered.contains("other"))
+}
+
+@Test func phrasesAnchoredOnAStopWordAreExcluded() {
+    let text = """
+    The same resource is returned. The same resource is cached. \
+    The same resource is validated once more.
+    """
+    let terms = TermExtractor.extract(from: text, language: .en, minFrequency: 2)
+    #expect(!terms.contains { $0.lowercased() == "same resource" })
+    // "resource" itself still qualifies — only the stop-word-anchored phrase is dropped.
+    #expect(terms.contains { $0.lowercased() == "resource" })
+}

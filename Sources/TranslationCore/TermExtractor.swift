@@ -70,6 +70,7 @@ public enum TermExtractor {
                 for start in 0...(run.count - size) {
                     let window = Array(run[start..<(start + size)])
                     guard window.last!.isNoun else { continue }
+                    guard !window.contains(where: { stopWords.contains($0.lemma) }) else { continue }
                     note(window.map(\.lemma).joined(separator: " "),
                          window.map(\.surface).joined(separator: " "))
                 }
