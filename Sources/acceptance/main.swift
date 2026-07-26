@@ -6,10 +6,22 @@ import TranslationCore
 let model = ModelPolicy.defaultModel(for: .interactive)
 let client = OllamaClient()
 let translator = Translator(client: client)
-let corpus = try FileManager.default
-    .contentsOfDirectory(atPath: "corpus")
-    .filter { $0.hasSuffix(".md") }
-    .sorted()
+// A missing or unreadable corpus directory must become a legible line naming the
+// cause and the expected working directory, not an uncaught throw that dies with
+// "Fatal error: Error raised at top level" and says nothing about why — the same
+// convention the per-file transport-error handling below already follows.
+let corpus: [String]
+do {
+    corpus = try FileManager.default
+        .contentsOfDirectory(atPath: "corpus")
+        .filter { $0.hasSuffix(".md") }
+        .sorted()
+} catch {
+    print("Cannot list corpus directory — \(error)")
+    print("Expected a \"corpus\" directory under the current working directory " +
+          "(currently \(FileManager.default.currentDirectoryPath)) — run this from the package root.")
+    exit(1)
+}
 
 /// Model behaviours already measured and accepted. A diff outside this set is a
 /// regression; a diff inside it is the checker correctly reporting something we
