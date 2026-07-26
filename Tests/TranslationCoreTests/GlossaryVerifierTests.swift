@@ -24,6 +24,16 @@ import Testing
     #expect(checks.isEmpty)
 }
 
+@Test func ignoredTermsMatchRegardlessOfCase() {
+    // CC-6: term surfaces come from first occurrence, so a sentence-initial term
+    // carries a capital the ignore-list entry may not. "Ignore" must still exclude
+    // it permanently, not only when the case happens to line up.
+    let entries = [GlossaryEntry(term: "Profile Server", translations: ["en": "profile server"])]
+    let checks = GlossaryVerifier.check(translation: "The database cluster restarted.",
+                                        entries: entries, target: .en, ignored: ["profile server"])
+    #expect(checks.isEmpty)
+}
+
 @Test func entriesWithNoRequiredTranslationAreSkipped() {
     let entries = [GlossaryEntry(term: "profile server", translations: ["de": "Profilserver"])] // no .en
     let checks = GlossaryVerifier.check(translation: "text", entries: entries, target: .en)

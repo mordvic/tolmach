@@ -12,8 +12,13 @@ public struct GlossaryCheck: Sendable, Equatable {
 public enum GlossaryVerifier {
     public static func check(translation: String, entries: [GlossaryEntry], target: Language,
                              ignored: Set<String> = []) -> [GlossaryCheck] {
-        entries.compactMap { entry in
-            guard !ignored.contains(entry.term) else { return nil }
+        // Compare lowercased on both sides. Term surfaces come from first occurrence in
+        // the source (see TermExtractor / DocumentGlossary), so a sentence-initial term
+        // carries a capital the user's ignore-list entry may not — "ignore" is supposed
+        // to exclude a term permanently, not only when the two happen to match case.
+        let ignoredLowercased = Set(ignored.map { $0.lowercased() })
+        return entries.compactMap { entry in
+            guard !ignoredLowercased.contains(entry.term.lowercased()) else { return nil }
             guard let expected = entry.requiredTranslation(for: target) else { return nil }
             let status: GlossaryStatus
             switch LemmaMatcher.matches(expected: expected, in: translation, language: target) {

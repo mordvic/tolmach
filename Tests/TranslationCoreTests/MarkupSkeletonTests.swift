@@ -105,6 +105,21 @@ import Testing
     #expect(MarkupSkeleton.diff(source: source, translation: translation).isEmpty)
 }
 
+@Test func aRelativeLinkTargetContributesNoURLToken() {
+    // targetIsURL must reject, not just accept: "./file.md" is a link but not a URL.
+    // This exact invariant regressed twice during construction and was pinned by
+    // nothing until now.
+    let tokens = MarkupSkeleton.tokens(of: "See [the doc](./file.md) for details.")
+    #expect(!tokens.contains(.url(bare: true)))
+    #expect(!tokens.contains(.url(bare: false)))
+}
+
+@Test func anAnchorLinkTargetContributesNoURLToken() {
+    let tokens = MarkupSkeleton.tokens(of: "See [the section](#section) for details.")
+    #expect(!tokens.contains(.url(bare: true)))
+    #expect(!tokens.contains(.url(bare: false)))
+}
+
 @Test func aGenuineParagraphBreakDifferenceIsStillReported() {
     // The normalisation must not swallow a real structural change.
     let source = "One paragraph only."
