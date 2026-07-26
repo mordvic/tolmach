@@ -8,6 +8,6 @@ let package = Package(
         .target(name: "TranslationCore", swiftSettings: [.swiftLanguageMode(.v5)]),
         .testTarget(name: "TranslationCoreTests", dependencies: ["TranslationCore"], swiftSettings: [.swiftLanguageMode(.v5)]),
         .target(name: "OllamaKit", dependencies: ["TranslationCore"], swiftSettings: [.swiftLanguageMode(.v5)]),
-        .testTarget(name: "OllamaKitTests", dependencies: ["OllamaKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
+        .testTarget(name: "OllamaKitTests", dependencies: ["OllamaKit", "TranslationCore"], swiftSettings: [.swiftLanguageMode(.v5)]),
     ]
 )

@@ -21,7 +21,13 @@ public struct OllamaClient: LLMClient {
     }
 
     public func models() async throws -> [OllamaModel] {
-        let (data, response) = try await session.data(from: baseURL.appendingPathComponent("api/tags"))
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(from: baseURL.appendingPathComponent("api/tags"))
+        } catch {
+            throw Self.mapTransportError(error)
+        }
         guard let http = response as? HTTPURLResponse else { throw OllamaError.notRunning }
         guard http.statusCode == 200 else { throw OllamaError.httpStatus(http.statusCode, String(data: data, encoding: .utf8) ?? "") }
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -29,6 +35,20 @@ public struct OllamaClient: LLMClient {
         return raw.compactMap { entry in
             guard let name = entry["name"] as? String else { return nil }
             return OllamaModel(name: name, sizeBytes: (entry["size"] as? NSNumber)?.int64Value ?? 0)
+        }
+    }
+
+    /// A connection-level failure means nothing is listening — that is the
+    /// "Ollama isn't running" case, and it must surface as such rather than as a
+    /// raw URLError. Timeouts are deliberately excluded: those mean Ollama IS
+    /// running and is too slow, which the caller handles differently.
+    static func mapTransportError(_ error: Error) -> Error {
+        guard let urlError = error as? URLError else { return error }
+        switch urlError.code {
+        case .cannotConnectToHost, .cannotFindHost, .networkConnectionLost, .dnsLookupFailed:
+            return OllamaError.notRunning
+        default:
+            return error
         }
     }
 
@@ -51,7 +71,7 @@ public struct OllamaClient: LLMClient {
                         if let event = OllamaStreamParser.parse(line: line) { continuation.yield(event) }
                     }
                     continuation.finish()
-                } catch { continuation.finish(throwing: error) }
+                } catch { continuation.finish(throwing: Self.mapTransportError(error)) }
             }
             continuation.onTermination = { _ in task.cancel() }
         }
