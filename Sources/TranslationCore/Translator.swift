@@ -67,6 +67,10 @@ public struct Translator {
         // glossary is not — see the task notes for why the two rules differ.
         var translatedChunks: [String] = []
         for chunk in chunks {
+            // Chunks are joined with a blank line in `final`; the stream must carry the
+            // same separator, or a consumer rendering tokens live reconstructs a
+            // different document from the one `final` describes.
+            if !translatedChunks.isEmpty { onToken("\n\n") }
             let relevantUser = userGlossary?.relevantEntries(for: chunk.text) ?? []
             let merged = GlossaryMerge.merge(user: relevantUser, document: documentEntries)
             let request = TranslationRequest(text: chunk.text, source: detected, target: target,

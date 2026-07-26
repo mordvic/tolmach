@@ -98,5 +98,20 @@ so the resource and the server both recur across chunks.
     // The glossary was built, yet none of its raw wire format reached the consumer.
     #expect(!box.text.contains("=>"))
     #expect(!box.text.contains("ресурс"))
-    #expect(box.text == outcome.final.replacingOccurrences(of: "\n\n", with: ""))
+}
+
+@Test func theStreamReconstructsExactlyWhatFinalContains() async throws {
+    let fake = FakeLLMClient(responses: [
+        "resource => ресурс\nserver => сервер",
+        "первый", "второй", "третий", "четвёртый",
+    ])
+    let translator = Translator(client: fake)
+    final class Box: @unchecked Sendable { var text = "" }
+    let box = Box()
+    let outcome = try await translator.translate(
+        text: multiChunkText, target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 200,
+        onToken: { box.text += $0 })
+    #expect(outcome.chunks.count > 1)
+    #expect(box.text == outcome.final)
 }
