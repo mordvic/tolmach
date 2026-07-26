@@ -44,7 +44,7 @@ Sources/
     LemmaMatcher.swift        # lemma-sequence matching for inflected languages
     GlossaryVerifier.swift    # 3-state glossary check over LemmaMatcher
     DocumentGlossary.swift    # per-document term glossary + merge with user glossary
-    PromptBuilder.swift       # TranslationRequest + system/user/corrector/term-list messages
+    PromptBuilder.swift       # TranslationRequest + system/user/term-list messages
     ResponseCleaner.swift     # strip preambles + unwrap whole-answer code fence
     MarkupSkeleton.swift      # structural token sequence + diff
     ModelPolicy.swift         # role→model mapping + blacklist with reasons
