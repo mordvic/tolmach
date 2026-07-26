@@ -146,7 +146,7 @@ for name in corpus {
             }
         } else {
             let ttftDescription = first.timeToFirstTokenMS.map { String(Int($0)) } ?? "—"
-            print("\(name): adherence 100.0% (single chunk, document glossary not applicable) · 1 chunk · " +
+            print("\(name): adherence n/a (single chunk, document glossary not applicable) · 1 chunk · " +
                   "\(first.documentGlossary.count) terms · TTFT \(ttftDescription) ms")
             checkMarkup(first, label: "")
             // Absent and slow are different failures. Before, a nil TTFT was measured
