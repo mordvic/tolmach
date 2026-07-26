@@ -79,3 +79,24 @@ so the resource and the server both recur across chunks.
     #expect(outcome.markupDiffs.isEmpty)
     #expect(outcome.checks.allSatisfy { $0.status != .missing })
 }
+
+@Test func onTokenNeverReceivesTermListOutput() async throws {
+    let fake = FakeLLMClient(responses: [
+        "resource => ресурс\nserver => сервер",
+        "один", "два", "три", "четыре",
+    ])
+    let translator = Translator(client: fake)
+    // Collected from a @Sendable closure, so use a lock-free append via an actor-free box.
+    final class Box: @unchecked Sendable { var text = "" }
+    let box = Box()
+    let outcome = try await translator.translate(
+        text: multiChunkText, target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 200,
+        onToken: { box.text += $0 })
+    #expect(outcome.chunks.count > 1)
+    #expect(outcome.documentGlossary.isEmpty == false)
+    // The glossary was built, yet none of its raw wire format reached the consumer.
+    #expect(!box.text.contains("=>"))
+    #expect(!box.text.contains("ресурс"))
+    #expect(box.text == outcome.final.replacingOccurrences(of: "\n\n", with: ""))
+}

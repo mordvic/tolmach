@@ -33,13 +33,17 @@ public struct Translator {
         let detected = LanguageDetector.detect(text)
         let chunks = Chunker.chunk(text, maxCharacters: maxChunkCharacters)
 
-        func stream(_ messages: [ChatMessage], markFirstToken: Bool) async throws -> String {
+        func stream(_ messages: [ChatMessage], isTranslationOutput: Bool) async throws -> String {
             var buffer = ""
             for try await event in client.chat(messages: messages, options: options) {
                 switch event {
                 case .token(let token):
-                    if markFirstToken && firstTokenAt == nil { firstTokenAt = Date() }
-                    buffer += token; onToken(token)
+                    buffer += token
+                    // The term-list call is internal scaffolding: its tokens must never
+                    // reach the consumer, and must not set the first-token timestamp.
+                    guard isTranslationOutput else { continue }
+                    if firstTokenAt == nil { firstTokenAt = Date() }
+                    onToken(token)
                 case .done(let s): stats.append(s)
                 }
             }
@@ -54,7 +58,7 @@ public struct Translator {
             let terms = TermExtractor.extract(from: text, language: source)
             if !terms.isEmpty {
                 let raw = try await stream(PromptBuilder.termListMessages(terms: terms, target: target),
-                                           markFirstToken: false)
+                                           isTranslationOutput: false)
                 documentEntries = DocumentGlossary.parse(raw, knownTerms: terms, target: target)
             }
         }
@@ -67,7 +71,7 @@ public struct Translator {
             let merged = GlossaryMerge.merge(user: relevantUser, document: documentEntries)
             let request = TranslationRequest(text: chunk.text, source: detected, target: target,
                                              tone: tone, glossaryEntries: merged)
-            let raw = try await stream(PromptBuilder.messages(for: request), markFirstToken: true)
+            let raw = try await stream(PromptBuilder.messages(for: request), isTranslationOutput: true)
             translatedChunks.append(ResponseCleaner.clean(raw).text)
         }
         let final = translatedChunks.joined(separator: "\n\n")
