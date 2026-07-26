@@ -245,6 +245,139 @@ private struct FakeTermListFailure: Error {}
     #expect(box.text == outcome.final)
 }
 
+// MARK: - Fix 1: incremental delivery restores a TTFT a consumer can actually observe.
+//
+// `Translator` used to buffer a whole chunk, clean it, and hand the result to
+// `onToken` in one call — so `timeToFirstTokenMS`, stamped at the first *raw*
+// token off the wire, measured an event nobody watching `onToken` could ever
+// see. These tests pin the replacement design: a chunk streams incrementally
+// once its first line is settled (buffering only until then), unless that
+// first line opens a code fence — in which case the whole-answer unwrap might
+// apply and deciding it needs the end of the response, so the chunk falls back
+// to the pre-existing buffer-then-clean-then-emit-once behaviour. A reply with
+// no newline at all falls back the same way once the stream ends.
+//
+// The concatenation-equals-`final` invariant these tests also check was
+// already true under the pre-Fix-1 design (which called `onToken` exactly
+// once, with the fully cleaned chunk) — so on its own it does not distinguish
+// old from new. What DOES distinguish them is call *count*: the old design
+// always called `onToken` exactly once per chunk; true incremental delivery
+// must call it more than once. Every test below that claims the incremental
+// path asserts `callCount > 1` for exactly that reason — asserted to fail
+// against the pre-Fix-1 implementation, see the report for the revert
+// evidence.
+private final class TokenBox: @unchecked Sendable {
+    var text = ""
+    var callCount = 0
+    func onToken(_ token: String) { text += token; callCount += 1 }
+}
+
+@Test func theStreamReconstructsExactlyWhatFinalContainsOnTheIncrementalPathWithNoPreamble() async throws {
+    // No preamble, no fence, multiple lines: the chunk settles into incremental
+    // delivery on its first line and every subsequent token streams straight
+    // through — proven by `callCount > 1`, not just by the reconstructed text,
+    // since a single buffered emit would reconstruct the same text too. This is
+    // also the exact shape that regressed during development when the first
+    // line was dropped instead of being included in the first emission.
+    let fake = FakeLLMClient(responses: ["First line of content.\nSecond line of content.\nThird line."])
+    let translator = Translator(client: fake)
+    let box = TokenBox()
+    let outcome = try await translator.translate(
+        text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900,
+        onToken: box.onToken)
+    #expect(outcome.final == "First line of content.\nSecond line of content.\nThird line.")
+    #expect(box.text == outcome.final)
+    #expect(box.callCount > 1)
+}
+
+@Test func aPreambleIsStrippedOnTheIncrementalPathAndNeverReachesOnToken() async throws {
+    // Multi-line, so this genuinely exercises the incremental path (not the
+    // single-line fallback, confirmed by `callCount > 1`): the preamble
+    // decision is made on the first line before anything is emitted, using the
+    // same `ResponseCleaner.isPreambleLine` rule the buffered cleaner uses, and
+    // the dropped line must never reach `onToken` — not even fleetingly, the
+    // way forwarding raw tokens would.
+    let fake = FakeLLMClient(responses: [
+        "Here is the translation:\nFirst line of content.\nSecond line of content.",
+    ])
+    let translator = Translator(client: fake)
+    let box = TokenBox()
+    let outcome = try await translator.translate(
+        text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900,
+        onToken: box.onToken)
+    #expect(!box.text.contains("Here is the translation"))
+    #expect(outcome.final == "First line of content.\nSecond line of content.")
+    #expect(box.text == outcome.final)
+    #expect(box.callCount > 1)
+}
+
+@Test func theStreamReconstructsExactlyWhatFinalContainsOnTheBufferedFencePath() async throws {
+    // The model over-wrapped a plain-prose reply in a spurious code fence. The
+    // first line opens a fence, so — per the design — this chunk abandons
+    // incremental delivery entirely and falls back to buffering to the end,
+    // then one full `ResponseCleaner.clean` call (which unwraps the spurious
+    // fence) emitted in a single `onToken` call (`callCount == 1`), exactly as
+    // before incremental delivery existed. The source chunk itself contains no
+    // fence, so the unwrap is allowed.
+    let fake = FakeLLMClient(responses: [
+        "```\nHello there, this spans multiple lines.\nSecond line here.\n```",
+    ])
+    let translator = Translator(client: fake)
+    let box = TokenBox()
+    let outcome = try await translator.translate(
+        text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900,
+        onToken: box.onToken)
+    #expect(outcome.final == "Hello there, this spans multiple lines.\nSecond line here.")
+    #expect(box.text == outcome.final)
+    #expect(box.callCount == 1)
+}
+
+@Test func theStreamReconstructsExactlyWhatFinalContainsForASingleLineReply() async throws {
+    // No "\n" ever appears in the reply, so the chunk never leaves buffering
+    // and the stream ends before a delivery decision was ever made — the third
+    // fallback path (alongside the buffered-fence path above), one `onToken`
+    // call, and the third shape the invariant must hold on.
+    let fake = FakeLLMClient(responses: ["Привет, мир."])
+    let translator = Translator(client: fake)
+    let box = TokenBox()
+    let outcome = try await translator.translate(
+        text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900,
+        onToken: box.onToken)
+    #expect(outcome.final == "Привет, мир.")
+    #expect(box.text == outcome.final)
+    #expect(box.callCount == 1)
+}
+
+@Test func timeToFirstTokenIsMeasuredFromTheFirstEmissionNotChunkCompletion() async throws {
+    // The first line is long enough that its arrival is a meaningfully late,
+    // measurable event (not indistinguishable from "the first token"), and the
+    // tail that follows is longer still, so completion is later again. Under
+    // the old design TTFT is stamped at the very first raw wire token
+    // regardless of chunk shape — near-zero here, and near-zero as a fraction
+    // of `totalMS`. Under the fixed design it is stamped when the first line's
+    // content is actually handed to `onToken`, landing at a real, non-trivial
+    // fraction of `totalMS` — closer to that first emission than to
+    // completion, but decisively far from zero. Both bounds below are needed
+    // to pin the exact stamp point: the lower bound fails against the old
+    // wire-token stamp (see the revert evidence in the report), the upper
+    // bound fails if TTFT were instead smeared out to chunk completion.
+    let firstLine = String(repeating: "A", count: 20)
+    let tail = String(repeating: "x", count: 60)
+    let fake = FakeLLMClient(responses: ["\(firstLine)\n\(tail)"], delayPerToken: .milliseconds(4))
+    let translator = Translator(client: fake)
+    let outcome = try await translator.translate(
+        text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900)
+    #expect(outcome.timeToFirstTokenMS != nil)
+    let ttft = outcome.timeToFirstTokenMS ?? .infinity
+    #expect(ttft > outcome.totalMS * 0.1)
+    #expect(ttft < outcome.totalMS * 0.5)
+}
+
 // Both tests below synchronize on `FakeLLMClient.onCallStart` rather than a sleep
 // duration: cancelling is triggered the instant a *specific* call begins, so which
 // call cancellation lands inside is a fact about which call index the test picked,

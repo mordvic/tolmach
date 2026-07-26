@@ -18,11 +18,22 @@ public struct TranslationOutcome: Sendable {
     /// covers wall-clock time including that preparatory call, so nothing the
     /// consumer needs is lost by leaving it out here.
     public let stats: [ChatStats]
-    /// Nil when no translation token ever arrived (an empty model reply). Treating
-    /// the absence as a sentinel — e.g. measuring elapsed time up to `Date()`
-    /// instead — made TTFT read as roughly equal to `totalMS`, which blamed
-    /// latency for what was actually an absent response. `totalMS` still covers
-    /// wall-clock time regardless, so no information is lost by making this optional.
+    /// Time from the start of the call to the first `onToken` call that carried
+    /// actual chunk content — i.e. the first moment a consumer of `onToken`
+    /// could have shown the user something. This is deliberately NOT the first
+    /// raw token off the wire: a chunk whose whole-answer shape is undecided
+    /// (see `Translator.streamChunkTranslation`) is buffered until its first
+    /// line settles or its stream ends, so timing the wire instead would
+    /// measure an event nobody watching `onToken` can ever observe. The "\n\n"
+    /// chunk separator and the internal term-list call never count either: the
+    /// separator carries no content, and the term-list call never reaches
+    /// `onToken` at all.
+    /// Nil when no translation token was ever emitted (an empty model reply, or
+    /// every chunk's cleaned output was empty). Treating the absence as a
+    /// sentinel — e.g. measuring elapsed time up to `Date()` instead — made TTFT
+    /// read as roughly equal to `totalMS`, which blamed latency for what was
+    /// actually an absent response. `totalMS` still covers wall-clock time
+    /// regardless, so no information is lost by making this optional.
     public let timeToFirstTokenMS: Double?
     public let totalMS: Double
 }
@@ -50,30 +61,103 @@ public struct Translator: Sendable {
         let detected = LanguageDetector.detect(text)
         let chunks = Chunker.chunk(text, maxCharacters: maxChunkCharacters)
 
-        func stream(_ messages: [ChatMessage], isTranslationOutput: Bool) async throws -> String {
+        // The term-list call is internal scaffolding: its output must never reach
+        // the consumer, so this never touches `onToken`, `firstTokenAt`, or `stats`
+        // — it exists purely to accumulate the raw reply for `DocumentGlossary.parse`.
+        func streamTermList(_ messages: [ChatMessage]) async throws -> String {
             var buffer = ""
+            for try await event in client.chat(messages: messages, options: options) {
+                if case .token(let token) = event { buffer += token }
+            }
+            return buffer
+        }
+
+        // Streams one chunk's translation call, delivering content to `onToken` as
+        // early as it safely can instead of only after the whole chunk finishes.
+        //
+        // `ResponseCleaner` changes exactly two things about a raw reply: the first
+        // line (a preamble) and the outermost fence markers (the whole-answer
+        // unwrap, which only ever applies when the *entire* reply is one fenced
+        // block). Everything between is passed through untouched — which is what
+        // makes incremental delivery safe: once the first line is settled, nothing
+        // later in the reply can change what should have already been sent.
+        //
+        // So tokens are buffered only until the first "\n" appears. At that point:
+        //   - if the first line opens a fence ("```..."), the unwrap might apply,
+        //     and deciding it needs the *end* of the response — so this chunk falls
+        //     back to buffering to the end, then a single full `ResponseCleaner.clean`
+        //     call, exactly as before incremental delivery existed;
+        //   - otherwise, the preamble decision is made right there (the same
+        //     `ResponseCleaner.isPreambleLine` rule the buffered cleaner uses, so
+        //     the two can't drift), the line is dropped if it's a preamble, and
+        //     everything from here on is forwarded to `onToken` as it arrives.
+        // A reply that never produces a "\n" at all (a single-line reply) falls
+        // back to the same buffered path once the stream ends.
+        //
+        // On the incremental path, no unwrap is ever applied — but that's not a
+        // loss: a chunk that reaches the incremental path did not open with a
+        // fence, so the unwrap could never have applied to it anyway. Its
+        // contribution to `final` is therefore exactly what was sent to `onToken`,
+        // which is the invariant `theStreamReconstructsExactlyWhatFinalContains`
+        // pins for every path.
+        func streamChunkTranslation(_ messages: [ChatMessage], chunk: Chunk) async throws -> String {
+            enum Mode: Equatable { case buffering, bufferedFence, incremental }
+            var mode = Mode.buffering
+            var buffer = ""    // raw text seen so far; meaningful only outside .incremental
+            var collected = "" // exactly what has been handed to `onToken` for this chunk
+
+            func emit(_ text: String) {
+                guard !text.isEmpty else { return }
+                // Measures perceived latency, so it is stamped here — the moment
+                // content actually reaches the consumer — not at the first raw
+                // wire token, which on the buffered paths can arrive well before
+                // anything is decided to be worth showing.
+                if firstTokenAt == nil { firstTokenAt = Date() }
+                onToken(text)
+                collected += text
+            }
+
             for try await event in client.chat(messages: messages, options: options) {
                 switch event {
                 case .token(let token):
+                    if mode == .incremental { emit(token); continue }
                     buffer += token
-                    // The term-list call is internal scaffolding: its tokens must never
-                    // reach the consumer, and must not set the first-token timestamp.
-                    // The timestamp is taken here, from the first *raw* token off the
-                    // wire, because it measures perceived latency — cleaning happens
-                    // only after the chunk finishes (see onToken below) and must not
-                    // push this mark later.
-                    guard isTranslationOutput else { continue }
-                    if firstTokenAt == nil { firstTokenAt = Date() }
-                case .done(let s):
-                    // Gated the same as token forwarding and the first-token
-                    // timestamp above, so `stats` means "the translation calls"
-                    // consistently — otherwise a three-chunk translation returns
-                    // four ChatStats, the first belonging to the internal
-                    // term-list call, with nothing documenting that.
-                    if isTranslationOutput { stats.append(s) }
+                    guard mode == .buffering, let newline = buffer.firstIndex(of: "\n") else { continue }
+                    let firstLine = String(buffer[buffer.startIndex..<newline])
+                    if firstLine.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+                        mode = .bufferedFence
+                    } else {
+                        mode = .incremental
+                        // Only a genuine preamble line is dropped. Anything else on
+                        // the first line is real content and must be emitted along
+                        // with it — not just the text after the newline, which
+                        // would silently lose the first line whenever it wasn't a
+                        // preamble.
+                        let rest: String
+                        if ResponseCleaner.isPreambleLine(firstLine) {
+                            rest = String(buffer[buffer.index(after: newline)...])
+                                .trimmingCharacters(in: .whitespacesAndNewlines)
+                        } else {
+                            rest = buffer
+                        }
+                        emit(rest)
+                    }
+                case .done(let chatStats):
+                    // `streamChunkTranslation` is only ever used for the per-chunk
+                    // translation calls, so — unlike the term-list call — every
+                    // call here contributes to `stats`.
+                    stats.append(chatStats)
                 }
             }
-            return buffer
+
+            if mode == .incremental { return collected }
+            // Either the reply's first line opened a fence (unwrap deferred to the
+            // end, exactly as documented above), or the stream ended without ever
+            // producing a "\n" (a single-line reply). Both fall back to the same
+            // buffered path: one full clean, emitted in one `onToken` call.
+            let cleaned = ResponseCleaner.clean(buffer, allowFenceUnwrap: !chunk.containsCodeFence).text
+            emit(cleaned)
+            return collected
         }
 
         // Document glossary. Needs more than one chunk to be worth anything, and a known
@@ -85,12 +169,11 @@ public struct Translator: Sendable {
             if !terms.isEmpty {
                 do {
                     try Task.checkCancellation()
-                    let raw = try await stream(PromptBuilder.termListMessages(terms: terms, target: target),
-                                               isTranslationOutput: false)
+                    let raw = try await streamTermList(PromptBuilder.termListMessages(terms: terms, target: target))
                     // AsyncThrowingStream's iterator finishes silently on task cancellation
-                    // rather than throwing, so `stream()` can return a partial (or empty)
-                    // buffer instead of surfacing the cancellation. Check explicitly right
-                    // after it returns so a cancellation that landed mid-stream is not
+                    // rather than throwing, so `streamTermList` can return a partial (or
+                    // empty) buffer instead of surfacing the cancellation. Check explicitly
+                    // right after it returns so a cancellation that landed mid-stream is not
                     // mistaken for a completed — if truncated — response.
                     try Task.checkCancellation()
                     documentEntries = DocumentGlossary.parse(raw, knownTerms: terms, target: target)
@@ -114,10 +197,10 @@ public struct Translator: Sendable {
         // glossary is not — see the task notes for why the two rules differ.
         var translatedChunks: [String] = []
         for chunk in chunks {
-            // Checked at the top of every iteration, not just after `stream()` returns,
-            // so a cancellation that lands in the synchronous work between chunks (or
-            // before the very first request) is caught too, instead of issuing one more
-            // request it will just throw away.
+            // Checked at the top of every iteration, not just after
+            // `streamChunkTranslation` returns, so a cancellation that lands in the
+            // synchronous work between chunks (or before the very first request) is
+            // caught too, instead of issuing one more request it will just throw away.
             try Task.checkCancellation()
             // Chunks are joined with a blank line in `final`; the stream must carry the
             // same separator, or a consumer rendering tokens live reconstructs a
@@ -135,26 +218,21 @@ public struct Translator: Sendable {
             let merged = GlossaryMerge.merge(user: relevantUser, document: documentEntries)
             let request = TranslationRequest(text: chunk.text, source: detected, target: target,
                                              tone: tone, glossaryEntries: merged)
-            let raw = try await stream(PromptBuilder.messages(for: request), isTranslationOutput: true)
-            // See the comment on the term-list call above: `stream()` can return a
-            // truncated buffer instead of throwing when cancellation lands mid-stream,
-            // so this must be checked explicitly rather than trusted to propagate.
+            // `streamChunkTranslation` delivers this chunk's content to `onToken`
+            // itself — incrementally once its first line is settled, or in one
+            // call on the buffered paths (see its doc comment) — so `final` and
+            // the stream agree by construction: whatever this returns IS what
+            // `onToken` was just called with for this chunk, concatenated.
+            let cleaned = try await streamChunkTranslation(PromptBuilder.messages(for: request), chunk: chunk)
+            // See the comment on the term-list call above: the underlying stream
+            // can end silently instead of throwing when cancellation lands
+            // mid-stream, so this must be checked explicitly rather than trusted
+            // to propagate. Content already forwarded to `onToken` before the
+            // cancellation landed cannot be un-sent — see the report for what
+            // that implies for a consumer racing a cancellation against
+            // in-flight incremental output.
             try Task.checkCancellation()
-            // Forward the *cleaned* chunk, not the raw tokens as they arrive. Streaming
-            // raw tokens let the live feed and `final` disagree whenever ResponseCleaner
-            // had to strip a preamble or unwrap a whole-answer code fence — the consumer
-            // would render the preamble live and then see it vanish when `final` replaced
-            // it. That recurred more than once when patched at the join instead of here,
-            // at the source. This trades token-by-token streaming for chunk-by-chunk
-            // delivery; that is the right trade, since the chunk is the unit the engine
-            // actually reasons about, and a contract the consumer can rely on (stream
-            // content == final content, always) is worth more than finer-grained updates.
-            // Suppress the whole-answer-fence unwrap when the source chunk was itself
-            // entirely a fenced code block — see the comment on `allowFenceUnwrap` in
-            // ResponseCleaner. Only a genuinely prose chunk can have been over-wrapped.
-            let cleaned = ResponseCleaner.clean(raw, allowFenceUnwrap: !chunk.containsCodeFence).text
             translatedChunks.append(cleaned)
-            onToken(cleaned)
         }
         let final = translatedChunks.joined(separator: "\n\n")
 
