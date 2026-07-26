@@ -103,30 +103,34 @@ public enum MarkupSkeleton {
         let leading = line.prefix { $0 == " " || $0 == "\t" }.count
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         let isBullet = trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.hasPrefix("+ ")
-        let isOrdered = trimmed.first?.isNumber == true && trimmed.contains(". ")
+        // The period must follow the leading digits immediately ("1. ", "12. "), not
+        // merely appear somewhere later in the line. `trimmed.contains(". ")` used to
+        // match prose like "3 files changed. See the report." — first character a
+        // digit, ". " present mid-sentence — and misread it as an ordered list item.
+        // A faithful translation of that same sentence starting with a letter (e.g.
+        // Russian "Изменено 3 файла...") then reads as a dropped list marker that
+        // never existed.
+        let leadingDigits = trimmed.prefix(while: \.isNumber)
+        let isOrdered = !leadingDigits.isEmpty
+            && trimmed.dropFirst(leadingDigits.count).hasPrefix(". ")
         guard isBullet || isOrdered else { return nil }
         return leading / 2
     }
 
     static func inlineTokens(in line: String) -> [MarkupToken] {
-        var tokens: [MarkupToken] = []
-
-        // inline code spans
-        var current: String? = nil
-        for character in line {
-            if character == "`" {
-                if let open = current { if !open.isEmpty { tokens.append(.inlineCode(open)) }; current = nil }
-                else { current = "" }
-            } else if current != nil { current?.append(character) }
-        }
-
-        // Markdown links are located first so a URL sitting inside one is never also
-        // counted as a bare URL. A URL merely wrapped in parentheses is NOT a link.
+        // Every kind of inline token below is collected into one `found` array and
+        // sorted together by position at the end. Previously inline code appended
+        // straight into the result while URLs accumulated separately and were only
+        // sorted among themselves — document order between the two kinds was lost
+        // whenever both appeared on the same line (routinely true after the model
+        // merges two source lines into one).
         var found: [(location: Int, token: MarkupToken)] = []
         let ns = line as NSString
         let whole = NSRange(location: 0, length: ns.length)
         var linkRanges: [NSRange] = []
 
+        // Markdown links are located first so a URL sitting inside one is never also
+        // counted as a bare URL. A URL merely wrapped in parentheses is NOT a link.
         if let linkRegex = try? NSRegularExpression(pattern: #"\[[^\]]*\]\(\s*([^)\s]+)(?:\s+["'][^"']*["'])?\s*\)"#) {
             for match in linkRegex.matches(in: line, range: whole) {
                 linkRanges.append(match.range)
@@ -143,8 +147,26 @@ public enum MarkupSkeleton {
             }
         }
 
-        tokens.append(contentsOf: found.sorted { $0.location < $1.location }.map(\.token))
-        return tokens
+        // Inline code spans. Scanned over UTF-16 code units of the same `ns` string
+        // that produced the URL positions above — NSRange.location is a UTF-16
+        // offset, so sharing that coordinate system here (instead of iterating
+        // Swift `Character`s, which are grapheme clusters) is what keeps the merged
+        // sort correct on a line containing an emoji or any other non-BMP character.
+        var openAt: Int? = nil
+        for index in 0..<ns.length where ns.character(at: index) == 0x60 /* "`" */ {
+            if let start = openAt {
+                if index > start + 1 { // non-empty span
+                    let span = ns.substring(with: NSRange(location: start + 1, length: index - start - 1))
+                    found.append((start, .inlineCode(span)))
+                }
+                openAt = nil
+            } else {
+                openAt = index
+            }
+        }
+        // An unterminated span (openAt still set here) emits no token, same as before.
+
+        return found.sorted { $0.location < $1.location }.map(\.token)
     }
 
     // A link target counts as a URL when the detector recognises the whole of it.

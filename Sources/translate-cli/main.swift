@@ -105,7 +105,8 @@ do {
         options: chatOptions, maxChunkCharacters: chunk,
         onToken: { FileHandle.standardOutput.write(Data($0.utf8)) })
     FileHandle.standardOutput.write(Data("\n".utf8))
-    var footer = "\n— \(Int(outcome.timeToFirstTokenMS))ms TTFT · \(Int(outcome.totalMS))ms total · \(outcome.chunks.count) chunk(s)"
+    let ttftDescription = outcome.timeToFirstTokenMS.map { "\(Int($0))ms" } ?? "—"
+    var footer = "\n— \(ttftDescription) TTFT · \(Int(outcome.totalMS))ms total · \(outcome.chunks.count) chunk(s)"
     if !outcome.documentGlossary.isEmpty { footer += " · \(outcome.documentGlossary.count) document terms" }
     let missing = outcome.checks.filter { $0.status == .missing }
     if !missing.isEmpty { footer += " · glossary misses: \(missing.map(\.term).joined(separator: ", "))" }

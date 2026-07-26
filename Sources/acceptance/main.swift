@@ -50,7 +50,11 @@ func translate(_ text: String, to target: Language) async throws -> TranslationO
 /// (honoured, applicable, percentage) for one outcome. Only meaningful when the
 /// text actually chunked and a source language was detected; otherwise there is
 /// nothing to measure and the caller treats that as inapplicable, not a pass.
-func adherence(_ outcome: TranslationOutcome, target: Language) -> (honoured: Int, applicable: Int, pct: Double) {
+/// `pct` is nil in exactly that inapplicable case — NOT a 100.0 sentinel. A
+/// sentinel silently averages alongside real measurements from the other runs of
+/// the same file and can lift a genuinely failing average up to (or above) the
+/// pass threshold; nil forces the caller to exclude it from that average instead.
+func adherence(_ outcome: TranslationOutcome, target: Language) -> (honoured: Int, applicable: Int, pct: Double?) {
     var honoured = 0, applicable = 0
     if outcome.chunks.count > 1, let source = outcome.detectedSource {
         for entry in outcome.documentGlossary {
@@ -64,7 +68,7 @@ func adherence(_ outcome: TranslationOutcome, target: Language) -> (honoured: In
             }
         }
     }
-    let pct = applicable == 0 ? 100.0 : Double(honoured) / Double(applicable) * 100
+    let pct: Double? = applicable == 0 ? nil : Double(honoured) / Double(applicable) * 100
     return (honoured, applicable, pct)
 }
 
@@ -111,30 +115,51 @@ for name in corpus {
             for _ in 0..<2 { outcomes.append(try await translate(text, to: dest)) }
 
             let measurements = outcomes.map { adherence($0, target: dest) }
-            let average = measurements.map(\.pct).reduce(0, +) / Double(measurements.count)
+            // Average only the runs that actually measured something. A run with
+            // applicable == 0 contributes no pct at all now (see `adherence`), so it
+            // can no longer masquerade as a perfect 100% inside this average.
+            let measuredPcts = measurements.compactMap(\.pct)
+            let average = measuredPcts.isEmpty ? nil : measuredPcts.reduce(0, +) / Double(measuredPcts.count)
             let runsDescription = measurements.enumerated()
-                .map { i, m in "run\(i + 1) \(String(format: "%.1f%%", m.pct)) (\(m.honoured)/\(m.applicable))" }
+                .map { i, m in
+                    let pctDescription = m.pct.map { String(format: "%.1f%%", $0) } ?? "n/a"
+                    return "run\(i + 1) \(pctDescription) (\(m.honoured)/\(m.applicable))"
+                }
                 .joined(separator: " · ")
-            let ttftDescription = outcomes.map { String(Int($0.timeToFirstTokenMS)) }.joined(separator: "/")
+            let ttftDescription = outcomes.map { $0.timeToFirstTokenMS.map { String(Int($0)) } ?? "—" }.joined(separator: "/")
+            let averageDescription = average.map { String(format: "%.1f%%", $0) } ?? "n/a"
 
-            print("\(name): \(runsDescription) · average \(String(format: "%.1f%%", average)) · " +
+            print("\(name): \(runsDescription) · average \(averageDescription) · " +
                   "\(first.chunks.count) chunks · \(first.documentGlossary.count) terms · " +
                   "TTFT \(ttftDescription) ms (info only — multi-chunk, not asserted)")
             for (i, outcome) in outcomes.enumerated() { checkMarkup(outcome, label: " run\(i + 1)") }
 
             // A chunked text with nothing to measure is a silent failure, not a pass: it
             // means the glossary was empty or no term recurred, so the mechanism did
-            // nothing at all — checked on every run, not just the first.
+            // nothing at all — checked on every run, not just the first. This is the
+            // failure that covers the every-run-nil case below, not a division by zero.
             for (i, m) in measurements.enumerated() where m.applicable == 0 {
                 failures.append("\(name) run\(i + 1): chunked into \(outcomes[i].chunks.count) but no term was measurable — document glossary did nothing")
             }
-            if average < 80 { failures.append("\(name): average adherence \(String(format: "%.1f%%", average)) < 80%") }
+            if let average, average < 80 {
+                failures.append("\(name): average adherence \(String(format: "%.1f%%", average)) < 80%")
+            }
         } else {
+            let ttftDescription = first.timeToFirstTokenMS.map { String(Int($0)) } ?? "—"
             print("\(name): adherence 100.0% (single chunk, document glossary not applicable) · 1 chunk · " +
-                  "\(first.documentGlossary.count) terms · TTFT \(Int(first.timeToFirstTokenMS)) ms")
+                  "\(first.documentGlossary.count) terms · TTFT \(ttftDescription) ms")
             checkMarkup(first, label: "")
-            if first.timeToFirstTokenMS >= 1000 {
-                failures.append("\(name): TTFT \(Int(first.timeToFirstTokenMS)) ms >= 1000 ms")
+            // Absent and slow are different failures. Before, a nil TTFT was measured
+            // as elapsed-time-so-far (roughly equal to totalMS), so an empty model
+            // reply was reported as ">= 1000 ms" — blaming latency for what was
+            // actually no response at all. Only a real, non-nil TTFT is judged
+            // against the latency threshold.
+            if let ttft = first.timeToFirstTokenMS {
+                if ttft >= 1000 {
+                    failures.append("\(name): TTFT \(Int(ttft)) ms >= 1000 ms")
+                }
+            } else {
+                failures.append("\(name): model returned no tokens")
             }
         }
     } catch {

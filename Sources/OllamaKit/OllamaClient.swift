@@ -68,7 +68,7 @@ public struct OllamaClient: LLMClient {
                     guard let http = response as? HTTPURLResponse else { throw OllamaError.notRunning }
                     guard http.statusCode == 200 else { throw OllamaError.httpStatus(http.statusCode, "see ollama logs") }
                     for try await line in bytes.lines {
-                        if let event = OllamaStreamParser.parse(line: line) { continuation.yield(event) }
+                        for event in OllamaStreamParser.parse(line: line) { continuation.yield(event) }
                     }
                     continuation.finish()
                 } catch { continuation.finish(throwing: Self.mapTransportError(error)) }

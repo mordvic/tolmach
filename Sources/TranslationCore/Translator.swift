@@ -11,8 +11,19 @@ public struct TranslationOutcome: Sendable {
     public let detectedSource: Language?
     public let checks: [GlossaryCheck]
     public let markupDiffs: [MarkupDiff]
+    /// One entry per translation call — the per-chunk calls only. The internal
+    /// term-list call's stats are deliberately excluded, so this means "the
+    /// translation calls" consistently with the token forwarding and the
+    /// first-token timestamp, which are gated the same way. `totalMS` already
+    /// covers wall-clock time including that preparatory call, so nothing the
+    /// consumer needs is lost by leaving it out here.
     public let stats: [ChatStats]
-    public let timeToFirstTokenMS: Double
+    /// Nil when no translation token ever arrived (an empty model reply). Treating
+    /// the absence as a sentinel — e.g. measuring elapsed time up to `Date()`
+    /// instead — made TTFT read as roughly equal to `totalMS`, which blamed
+    /// latency for what was actually an absent response. `totalMS` still covers
+    /// wall-clock time regardless, so no information is lost by making this optional.
+    public let timeToFirstTokenMS: Double?
     public let totalMS: Double
 }
 
@@ -53,7 +64,13 @@ public struct Translator: Sendable {
                     // push this mark later.
                     guard isTranslationOutput else { continue }
                     if firstTokenAt == nil { firstTokenAt = Date() }
-                case .done(let s): stats.append(s)
+                case .done(let s):
+                    // Gated the same as token forwarding and the first-token
+                    // timestamp above, so `stats` means "the translation calls"
+                    // consistently — otherwise a three-chunk translation returns
+                    // four ChatStats, the first belonging to the internal
+                    // term-list call, with nothing documenting that.
+                    if isTranslationOutput { stats.append(s) }
                 }
             }
             return buffer
@@ -132,7 +149,10 @@ public struct Translator: Sendable {
             // delivery; that is the right trade, since the chunk is the unit the engine
             // actually reasons about, and a contract the consumer can rely on (stream
             // content == final content, always) is worth more than finer-grained updates.
-            let cleaned = ResponseCleaner.clean(raw).text
+            // Suppress the whole-answer-fence unwrap when the source chunk was itself
+            // entirely a fenced code block — see the comment on `allowFenceUnwrap` in
+            // ResponseCleaner. Only a genuinely prose chunk can have been over-wrapped.
+            let cleaned = ResponseCleaner.clean(raw, allowFenceUnwrap: !chunk.containsCodeFence).text
             translatedChunks.append(cleaned)
             onToken(cleaned)
         }
@@ -163,7 +183,7 @@ public struct Translator: Sendable {
             markupDiffs: MarkupSkeleton.diff(source: chunks.map(\.text).joined(separator: "\n\n"),
                                              translation: final),
             stats: stats,
-            timeToFirstTokenMS: (firstTokenAt ?? Date()).timeIntervalSince(started) * 1000,
+            timeToFirstTokenMS: firstTokenAt.map { $0.timeIntervalSince(started) * 1000 },
             totalMS: Date().timeIntervalSince(started) * 1000)
     }
 }

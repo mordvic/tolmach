@@ -89,6 +89,21 @@ private struct FakeTermListFailure: Error {}
     }
 }
 
+@Test func statsExcludesTheInternalTermListCall() async throws {
+    // Fix 5: `stats` means "the translation calls" — one entry per chunk, not one
+    // per chunk plus the internal term-list scaffolding call.
+    let fake = FakeLLMClient(responses: [
+        "resource => ресурс\nserver => сервер",
+        "один", "два", "три", "четыре",
+    ])
+    let translator = Translator(client: fake)
+    let outcome = try await translator.translate(
+        text: multiChunkText, target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 200)
+    #expect(fake.receivedMessages.count == outcome.chunks.count + 1) // term-list call did happen
+    #expect(outcome.stats.count == outcome.chunks.count) // but its stats are excluded
+}
+
 @Test func unrecognisedSourceLanguageSkipsTheGlossaryButStillTranslates() async throws {
     // Ukrainian: recognised by NLLanguageRecognizer, absent from our nine targets.
     let ukrainian = String(repeating: "Сервер перевіряє ресурс перед публікацією ресурсу. ", count: 12)
@@ -102,6 +117,62 @@ private struct FakeTermListFailure: Error {}
     #expect(outcome.documentGlossary.isEmpty)
     #expect(fake.receivedMessages.count == outcome.chunks.count) // no term-list call
     #expect(!outcome.final.isEmpty)
+}
+
+@Test func aChunkConsistingSolelyOfAFenceSurvivesWithMarkersIntact() async throws {
+    // Reachability case from the review: Chunker flushes a fence alone into its own
+    // chunk whenever the preceding prose already fills the budget. The model
+    // reproducing that chunk verbatim is indistinguishable, to ResponseCleaner, from
+    // the "model over-wrapped a plain prose reply" case it exists to fix — unless
+    // Translator tells it the source chunk was itself entirely a fence.
+    //
+    // Ukrainian: recognised by NLLanguageRecognizer but absent from the nine
+    // supported targets (see unrecognisedSourceLanguageSkipsTheGlossaryButStillTranslates),
+    // so `detected` comes back nil and the term-list call is skipped — keeping the
+    // FakeLLMClient response order simple, one response per chunk.
+    let prose = String(repeating: "Сервер перевіряє ресурс перед публікацією ресурсу. ", count: 12)
+    let fence = "```bash\nprofile-server publish --strict --out ./dist\n```"
+    let doc = prose + "\n\n" + fence
+    // Chosen so the fence doesn't fit alongside the prose in one chunk, forcing
+    // Chunker to flush the prose as chunk 0 and the fence alone as chunk 1 — the
+    // exact shape that made ResponseCleaner strip a real code block's markers.
+    let maxCharacters = prose.trimmingCharacters(in: .whitespacesAndNewlines).count + 20
+    let chunks = Chunker.chunk(doc, maxCharacters: maxCharacters)
+    #expect(chunks.count == 2)
+    #expect(chunks[1].containsCodeFence)
+    #expect(chunks[1].text == fence)
+
+    let fake = FakeLLMClient(responses: ["переклад абзацу", fence])
+    let translator = Translator(client: fake)
+    let outcome = try await translator.translate(
+        text: doc, target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: maxCharacters)
+    #expect(outcome.chunks.count == 2)
+    #expect(outcome.translatedChunks[1] == fence)
+    #expect(outcome.translatedChunks[1].hasPrefix("```"))
+    #expect(outcome.translatedChunks[1].hasSuffix("```"))
+}
+
+@Test func anEmptyModelReplyLeavesTimeToFirstTokenNil() async throws {
+    // Fix 4: an absent response must read as "no data", not be measured as elapsed
+    // time so far — that previously made TTFT read as roughly equal to totalMS,
+    // reporting an absent response as a slow one.
+    let fake = FakeLLMClient(responses: [""])
+    let translator = Translator(client: fake)
+    let outcome = try await translator.translate(
+        text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900)
+    #expect(outcome.timeToFirstTokenMS == nil)
+    #expect(outcome.totalMS >= 0)
+}
+
+@Test func aNonEmptyModelReplyStillReportsATimeToFirstToken() async throws {
+    let fake = FakeLLMClient(responses: ["Привет, мир."])
+    let translator = Translator(client: fake)
+    let outcome = try await translator.translate(
+        text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900)
+    #expect(outcome.timeToFirstTokenMS != nil)
 }
 
 @Test func reportsGlossaryAndMarkupChecks() async throws {

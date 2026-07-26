@@ -15,7 +15,10 @@ public enum ResponseCleaner {
         "voici la traduction", "traduction", "aquí está la traducción", "traducción",
     ]
 
-    public static func clean(_ raw: String) -> CleanedResponse {
+    /// `allowFenceUnwrap` defaults to true for standalone callers (e.g. tests probing
+    /// `clean` in isolation), but `Translator` always passes `!chunk.containsCodeFence`
+    /// explicitly — see the false-positive case below.
+    public static func clean(_ raw: String, allowFenceUnwrap: Bool = true) -> CleanedResponse {
         var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         var stripped: String? = nil
         var unwrapped = false
@@ -28,8 +31,19 @@ public enum ResponseCleaner {
             }
         }
 
+        // The whole-answer-fence unwrap assumes the model over-wrapped a plain-prose
+        // reply in a spurious code fence. That assumption is wrong when the chunk it
+        // was asked to translate was ITSELF a fenced code block in its entirety —
+        // Chunker can and does produce such chunks (a fence flushed alone because the
+        // preceding prose would have overflowed the budget), and the model reproducing
+        // that chunk verbatim looks identical, at this layer, to the over-wrapping
+        // case. Erring toward *not* unwrapping is deliberate: a stray leftover pair of
+        // fence markers is cosmetic, silently destroying a real code block is not.
+        // `allowFenceUnwrap` lets the caller — who knows whether the source chunk was
+        // fenced — suppress the unwrap in exactly that case, while preamble stripping
+        // above still applies either way.
         let lines = text.components(separatedBy: .newlines)
-        if lines.count >= 2,
+        if allowFenceUnwrap, lines.count >= 2,
            lines[0].trimmingCharacters(in: .whitespaces).hasPrefix("```"),
            lines[lines.count - 1].trimmingCharacters(in: .whitespaces) == "```",
            !lines[1..<(lines.count - 1)].contains(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("```") }) {

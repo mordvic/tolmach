@@ -70,6 +70,30 @@ import Testing
     #expect(!diffs.isEmpty)
 }
 
+@Test func aURLBeforeInlineCodeOnOneLineKeepsDocumentOrder() {
+    // Inline code used to be appended straight into the result while URLs were
+    // collected separately and sorted only among themselves, so document order
+    // between the two kinds was lost whenever both landed on the same line.
+    let tokens = MarkupSkeleton.tokens(of: "See https://x.org then run `cmd` now.")
+    let relevant = tokens.filter {
+        if case .url = $0 { return true }
+        if case .inlineCode = $0 { return true }
+        return false
+    }
+    #expect(relevant == [.url(bare: true), .inlineCode("cmd")])
+}
+
+@Test func mergingAURLLineAndAnInlineCodeLineIntoOnePreservesOrderSoNoDiffIsReported() {
+    // Source has the URL and the inline code on separate lines; the model merging
+    // them into a single line is ordinary behaviour. If inline-code and URL
+    // positions don't share one coordinate system and sort together, the merged
+    // line comes out as [inlineCode, url] instead of [url, inlineCode] and LCS
+    // reports a spurious drop plus add — a phantom defect from a faithful merge.
+    let source = "See https://x.org for details.\nRun `cmd` to apply it."
+    let merged = "See https://x.org for details. Run `cmd` to apply it."
+    #expect(MarkupSkeleton.diff(source: source, translation: merged).isEmpty)
+}
+
 @Test func urlTokensKeepDocumentOrder() {
     let tokens = MarkupSkeleton.tokens(of: "Bare https://a.org then [link](https://b.org) after.")
     let urls = tokens.compactMap { token -> Bool? in
@@ -118,6 +142,26 @@ import Testing
     let tokens = MarkupSkeleton.tokens(of: "See [the section](#section) for details.")
     #expect(!tokens.contains(.url(bare: true)))
     #expect(!tokens.contains(.url(bare: false)))
+}
+
+@Test func aStandardOrderedListItemIsDetected() {
+    let tokens = MarkupSkeleton.tokens(of: "1. First item")
+    #expect(tokens.contains(.listItem(depth: 0)))
+}
+
+@Test func prosePrefixedByADigitCountIsNotAListItem() {
+    // First character is a digit and ". " appears mid-sentence, but the period does
+    // not immediately follow the leading digits — this is prose, not a list marker.
+    let tokens = MarkupSkeleton.tokens(of: "3 files changed. See the report.")
+    #expect(!tokens.contains { if case .listItem = $0 { return true }; return false })
+}
+
+@Test func aYearFollowedByAPeriodIsStillReadAsAListItem() {
+    // The period genuinely follows the leading digits immediately here, so this is
+    // indistinguishable from a real ordered-list marker at this layer — accepted as
+    // a known, harmless false positive rather than one worth special-casing.
+    let tokens = MarkupSkeleton.tokens(of: "2024. Released.")
+    #expect(tokens.contains(.listItem(depth: 0)))
 }
 
 @Test func aGenuineParagraphBreakDifferenceIsStillReported() {
