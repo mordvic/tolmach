@@ -378,6 +378,74 @@ private final class TokenBox: @unchecked Sendable {
     #expect(ttft < outcome.totalMS * 0.5)
 }
 
+// MARK: - Fix 1 refinement: flush on normalised length too, not only on "\n".
+//
+// Buffering only until the first "\n" made a single-paragraph, newline-free
+// chunk — the most hotkey-like input there is — wait for a newline that never
+// arrives, so it fell all the way back to the buffered path and TTFT read as
+// full generation time. `ResponseCleaner.isPreambleLine` rejects anything
+// whose normalised length exceeds `ResponseCleaner.preambleLineMaxLength`
+// before it even checks patterns, and normalisation only ever removes
+// characters — so once the buffered text's normalised length crosses that
+// threshold, the first line can no longer turn out to be a preamble no matter
+// what arrives next, and it's safe to flush immediately rather than wait for
+// a "\n".
+
+@Test func aNewlineFreeReplyOverTheLengthThresholdEmitsBeforeTheStreamEnds() async throws {
+    // No "\n" anywhere in this reply, and its length passes
+    // ResponseCleaner.preambleLineMaxLength (60) well before the stream ends.
+    // `callCount > 1` (not wall-clock) is what proves the flush happened
+    // mid-stream — a single buffered emit at the end would also reconstruct
+    // the same text, so call count is the only thing that actually
+    // distinguishes "flushed early" from "fell back to the end".
+    let reply = String(repeating: "x", count: 90)
+    let fake = FakeLLMClient(responses: [reply])
+    let translator = Translator(client: fake)
+    let box = TokenBox()
+    let outcome = try await translator.translate(
+        text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900,
+        onToken: box.onToken)
+    #expect(outcome.final == reply)
+    #expect(box.text == outcome.final)
+    #expect(box.callCount > 1)
+}
+
+@Test func aShortPreambleFollowedByANewlineIsStillStrippedWithTheLengthConditionInPlace() async throws {
+    // The case the length condition must not break: a short preamble line,
+    // comfortably under the 60-character threshold, followed by a newline
+    // that arrives long before the buffer could ever cross it. The
+    // newline-triggered preamble decision (condition 1) must still win.
+    let fake = FakeLLMClient(responses: ["Translation:\nActual content of the reply."])
+    let translator = Translator(client: fake)
+    let box = TokenBox()
+    let outcome = try await translator.translate(
+        text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900,
+        onToken: box.onToken)
+    #expect(!box.text.contains("Translation:"))
+    #expect(outcome.final == "Actual content of the reply.")
+    #expect(box.text == outcome.final)
+}
+
+@Test func aReplyUnderTheLengthThresholdWithNoNewlineStillTakesTheEndOfStreamFallback() async throws {
+    // Below the 60-character threshold and with no "\n" ever appearing,
+    // neither flush condition fires — the reply must still fall back to the
+    // pre-existing end-of-stream path: buffered to completion and emitted
+    // once (`callCount == 1`), not flushed early.
+    let reply = String(repeating: "y", count: 40)
+    let fake = FakeLLMClient(responses: [reply])
+    let translator = Translator(client: fake)
+    let box = TokenBox()
+    let outcome = try await translator.translate(
+        text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900,
+        onToken: box.onToken)
+    #expect(outcome.final == reply)
+    #expect(box.text == outcome.final)
+    #expect(box.callCount == 1)
+}
+
 // Both tests below synchronize on `FakeLLMClient.onCallStart` rather than a sleep
 // duration: cancelling is triggered the instant a *specific* call begins, so which
 // call cancellation lands inside is a fact about which call index the test picked,

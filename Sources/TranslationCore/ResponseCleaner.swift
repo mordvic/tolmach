@@ -55,11 +55,32 @@ public enum ResponseCleaner {
                                strippedPreamble: stripped, unwrappedCodeFence: unwrapped)
     }
 
-    static func isPreambleLine(_ line: String) -> Bool {
-        let normalized = line.replacingOccurrences(of: "*", with: "")
+    /// The longest normalised length `isPreambleLine` will ever accept — anything
+    /// past this is rejected before patterns are even considered. Exposed
+    /// (alongside `normalizedForPreambleCheck`) so a caller reasoning about the
+    /// *shape* of that decision — e.g. `Translator`'s incremental buffering,
+    /// which wants to know once a partially-received line has permanently ruled
+    /// itself out as a preamble — can reuse the exact same rule instead of
+    /// recreating it. Two copies of this threshold would be a defect waiting to
+    /// happen.
+    static let preambleLineMaxLength = 60
+
+    /// The normalisation `isPreambleLine` applies before measuring length or
+    /// matching against `preamblePatterns`: strip `*`, `#`, `_`, then trim and
+    /// lowercase. Normalisation only ever removes characters, so its output
+    /// length is monotonically non-decreasing as more raw text is appended to
+    /// `line` — which is what makes "normalised length exceeds
+    /// `preambleLineMaxLength`" a permanent, one-way decision a caller can act
+    /// on before a line is even complete.
+    static func normalizedForPreambleCheck(_ line: String) -> String {
+        line.replacingOccurrences(of: "*", with: "")
             .replacingOccurrences(of: "#", with: "").replacingOccurrences(of: "_", with: "")
             .trimmingCharacters(in: .whitespaces).lowercased()
-        guard normalized.count <= 60 else { return false }
+    }
+
+    static func isPreambleLine(_ line: String) -> Bool {
+        let normalized = normalizedForPreambleCheck(line)
+        guard normalized.count <= preambleLineMaxLength else { return false }
         let preamblePunctuation = CharacterSet(charactersIn: ":.!— -")
         // Check punctuation against the line before the trailing characters are trimmed
         // away, since that trailing punctuation (e.g. a colon) is the signal we key on.

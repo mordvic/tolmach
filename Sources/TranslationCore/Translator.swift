@@ -82,17 +82,36 @@ public struct Translator: Sendable {
         // makes incremental delivery safe: once the first line is settled, nothing
         // later in the reply can change what should have already been sent.
         //
-        // So tokens are buffered only until the first "\n" appears. At that point:
-        //   - if the first line opens a fence ("```..."), the unwrap might apply,
-        //     and deciding it needs the *end* of the response — so this chunk falls
-        //     back to buffering to the end, then a single full `ResponseCleaner.clean`
-        //     call, exactly as before incremental delivery existed;
-        //   - otherwise, the preamble decision is made right there (the same
-        //     `ResponseCleaner.isPreambleLine` rule the buffered cleaner uses, so
-        //     the two can't drift), the line is dropped if it's a preamble, and
-        //     everything from here on is forwarded to `onToken` as it arrives.
-        // A reply that never produces a "\n" at all (a single-line reply) falls
-        // back to the same buffered path once the stream ends.
+        // Tokens are buffered in `.buffering` mode, on every token, checked in
+        // this order:
+        //   - ahead of everything else: does the buffer open a fence ("```...")?
+        //     The whole-answer unwrap might apply, and deciding it needs the
+        //     *end* of the response — so this wins regardless of length or
+        //     whether a "\n" has appeared, and the chunk abandons incremental
+        //     delivery entirely, falling back to buffering to the end and then a
+        //     single full `ResponseCleaner.clean` call, exactly as before
+        //     incremental delivery existed.
+        // Absent a fence, buffering ends the moment any of these three holds:
+        //   1. a "\n" appears — the preamble decision is made right there, on
+        //      the completed first line, using the same
+        //      `ResponseCleaner.isPreambleLine` rule the buffered cleaner uses
+        //      (so the two can't drift) — the line is dropped if it's a
+        //      preamble, and everything from here on is forwarded to `onToken`
+        //      as it arrives;
+        //   2. the buffer's normalised length (`ResponseCleaner.normalizedForPreambleCheck`)
+        //      exceeds `ResponseCleaner.preambleLineMaxLength` before condition 1
+        //      has fired: `isPreambleLine` rejects anything past that length
+        //      before it even checks patterns, and normalisation only ever
+        //      removes characters, so once the buffered text crosses the
+        //      threshold no later token can turn it back into something that
+        //      length would still accept — the buffer can no longer be a
+        //      preamble no matter what follows, so it's safe to flush
+        //      immediately rather than wait for a "\n" that a single long,
+        //      newline-free chunk (the most hotkey-like input there is) might
+        //      never produce at all;
+        //   3. the stream ends without either of the above ever firing (a
+        //      short, single-line reply) — falls back to the same buffered
+        //      path used for the fence case.
         //
         // On the incremental path, no unwrap is ever applied — but that's not a
         // loss: a chunk that reaches the incremental path did not open with a
@@ -122,17 +141,27 @@ public struct Translator: Sendable {
                 case .token(let token):
                     if mode == .incremental { emit(token); continue }
                     buffer += token
-                    guard mode == .buffering, let newline = buffer.firstIndex(of: "\n") else { continue }
-                    let firstLine = String(buffer[buffer.startIndex..<newline])
-                    if firstLine.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+                    guard mode == .buffering else { continue } // .bufferedFence: keep accumulating only
+
+                    // Ahead of the three conditions below, on every token: once the
+                    // buffer opens a fence, the whole-answer unwrap might apply,
+                    // and that can only be decided at the end of the response — so
+                    // this must win regardless of how long the buffer is or
+                    // whether a "\n" has appeared yet.
+                    if buffer.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
                         mode = .bufferedFence
-                    } else {
+                        continue
+                    }
+
+                    if let newline = buffer.firstIndex(of: "\n") {
+                        // Condition 1: the first line is complete — decide the
+                        // preamble on it. Only a genuine preamble line is dropped.
+                        // Anything else on the first line is real content and must
+                        // be emitted along with it — not just the text after the
+                        // newline, which would silently lose the first line
+                        // whenever it wasn't a preamble.
                         mode = .incremental
-                        // Only a genuine preamble line is dropped. Anything else on
-                        // the first line is real content and must be emitted along
-                        // with it — not just the text after the newline, which
-                        // would silently lose the first line whenever it wasn't a
-                        // preamble.
+                        let firstLine = String(buffer[buffer.startIndex..<newline])
                         let rest: String
                         if ResponseCleaner.isPreambleLine(firstLine) {
                             rest = String(buffer[buffer.index(after: newline)...])
@@ -141,7 +170,18 @@ public struct Translator: Sendable {
                             rest = buffer
                         }
                         emit(rest)
+                    } else if ResponseCleaner.normalizedForPreambleCheck(buffer).count
+                                > ResponseCleaner.preambleLineMaxLength {
+                        // Condition 2: no "\n" yet, but the buffer's normalised
+                        // length has permanently ruled out a preamble (see the
+                        // comment above `streamChunkTranslation`) — flush what's
+                        // accumulated so far and go incremental, rather than
+                        // waiting for a newline this chunk may never produce.
+                        mode = .incremental
+                        emit(buffer)
                     }
+                    // Condition 3 (the stream ends without either firing) is
+                    // handled after the loop, below.
                 case .done(let chatStats):
                     // `streamChunkTranslation` is only ever used for the per-chunk
                     // translation calls, so — unlike the term-list call — every
