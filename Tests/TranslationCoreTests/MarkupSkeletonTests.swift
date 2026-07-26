@@ -97,3 +97,17 @@ import Testing
     #expect(tokens.contains(.url(bare: false)))
     #expect(!tokens.contains(.url(bare: true)))
 }
+
+@Test func aTrailingNewlineIsNotAStructuralChange() {
+    // Source files end with a newline; ResponseCleaner strips it from the reply.
+    let source = "## Заголовок\n\nАбзац текста.\n"
+    let translation = "## Heading\n\nA paragraph of text."
+    #expect(MarkupSkeleton.diff(source: source, translation: translation).isEmpty)
+}
+
+@Test func aGenuineParagraphBreakDifferenceIsStillReported() {
+    // The normalisation must not swallow a real structural change.
+    let source = "One paragraph only."
+    let translation = "First paragraph.\n\nSecond paragraph."
+    #expect(!MarkupSkeleton.diff(source: source, translation: translation).isEmpty)
+}

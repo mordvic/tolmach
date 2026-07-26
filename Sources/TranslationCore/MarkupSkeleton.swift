@@ -55,8 +55,11 @@ public enum MarkupSkeleton {
     /// comparison is wrong here: one dropped token would shift every later position and
     /// bury a single real defect under a cascade of false ones.
     public static func diff(source: String, translation: String) -> [MarkupDiff] {
-        let want = tokens(of: source)
-        let got = tokens(of: translation)
+        // A trailing newline is not structure. Source files end with one and
+        // ResponseCleaner trims it from the model's reply, so comparing them raw
+        // reports a phantom paragraph break on almost every real document.
+        let want = tokens(of: source.trimmingCharacters(in: .whitespacesAndNewlines))
+        let got = tokens(of: translation.trimmingCharacters(in: .whitespacesAndNewlines))
 
         // Longest common subsequence lengths.
         var lcs = Array(repeating: Array(repeating: 0, count: got.count + 1), count: want.count + 1)
