@@ -43,8 +43,54 @@ public enum TermExtractor {
         return out
     }
 
+    /// Fenced blocks and inline code are removed before extraction. An identifier
+    /// inside code is not prose terminology, and harvesting one produces a glossary
+    /// entry instructing the model to translate that identifier — which overrides
+    /// the prompt rule that code must be reproduced verbatim. Measured: `--strict`
+    /// harvested from a bash block came back as `--строгий` inside inline code.
+    ///
+    /// Removed spans are replaced with `"."`, not a blank line or a plain space.
+    /// `tokens(of:language:)` enumerates with `.omitWhitespace`, which means
+    /// whitespace — spaces, newlines, blank lines, any amount of it — never
+    /// produces a token at all; it is skipped in silence. Only an actually-tagged
+    /// token (punctuation included) yields the `nil` that acts as a boundary. A
+    /// removed span bordered only by whitespace therefore does *not* separate its
+    /// neighbours: "The server `x` cluster" stripped to a bare space still tags
+    /// "server" and "cluster" as directly adjacent nouns, welding them into the
+    /// phantom phrase "server cluster". A period is unambiguously tagged as
+    /// punctuation and reliably breaks the run.
+    static func strippingCode(_ text: String) -> String {
+        var output: [String] = []
+        var insideFence = false
+
+        for line in text.components(separatedBy: .newlines) {
+            if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+                insideFence.toggle()
+                // Leave a boundary marker where the block was, so no noun phrase
+                // can span the removed region.
+                if !insideFence { output.append(".") }
+                continue
+            }
+            if insideFence { continue }
+
+            // Inline code spans become a boundary marker for the same reason.
+            var stripped = ""
+            var insideSpan = false
+            for character in line {
+                if character == "`" {
+                    insideSpan.toggle()
+                    if !insideSpan { stripped.append(".") }
+                    continue
+                }
+                if !insideSpan { stripped.append(character) }
+            }
+            output.append(stripped)
+        }
+        return output.joined(separator: "\n")
+    }
+
     public static func extract(from text: String, language: Language, max: Int = 20, minFrequency: Int = 2) -> [String] {
-        let stream = tokens(of: text, language: language)
+        let stream = tokens(of: strippingCode(text), language: language)
         // key = lemma (lowercased) -> (occurrences, first surface form, discovery order)
         var counts: [String: (count: Int, surface: String, order: Int)] = [:]
 

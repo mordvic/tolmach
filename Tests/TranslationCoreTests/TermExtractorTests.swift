@@ -54,3 +54,41 @@ import Testing
     // "resource" itself still qualifies — only the stop-word-anchored phrase is dropped.
     #expect(terms.contains { $0.lowercased() == "resource" })
 }
+
+@Test func identifiersInsideFencedCodeAreNotHarvested() {
+    let text = """
+    Run the publisher before opening a pull request. The publisher validates
+    every resource, and the publisher rejects an invalid resource.
+
+    ```bash
+    profile-server publish --strict --out ./dist
+    profile-server publish --strict --out ./build
+    ```
+
+    The resource report is written to disk.
+    """
+    let terms = TermExtractor.extract(from: text, language: .en, minFrequency: 2)
+    let lowered = terms.map { $0.lowercased() }
+    #expect(!lowered.contains { $0.contains("strict") })
+    #expect(!lowered.contains { $0.contains("dist") })
+    // Prose terms are still found.
+    #expect(lowered.contains { $0.contains("publisher") || $0.contains("resource") })
+}
+
+@Test func identifiersInsideInlineCodeAreNotHarvested() {
+    let text = """
+    Pass `--strict` to promote warnings. Leave `--strict` off while drafting.
+    The validation report lists every warning, and the validation report is machine readable.
+    """
+    let terms = TermExtractor.extract(from: text, language: .en, minFrequency: 2)
+    #expect(!terms.map { $0.lowercased() }.contains { $0.contains("strict") })
+    #expect(terms.map { $0.lowercased() }.contains { $0.contains("validation") || $0.contains("report") })
+}
+
+@Test func removingCodeDoesNotWeldNeighbouringWordsTogether() {
+    let text = """
+    The server `x` cluster runs nightly. The server `y` cluster runs nightly.
+    """
+    let terms = TermExtractor.extract(from: text, language: .en, minFrequency: 2)
+    #expect(!terms.contains { $0.lowercased() == "server cluster" })
+}
