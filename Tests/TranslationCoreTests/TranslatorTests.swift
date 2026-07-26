@@ -174,30 +174,96 @@ private struct FakeTermListFailure: Error {}
     #expect(box.text == outcome.final)
 }
 
-@Test func cancellingMidStreamThrowsInsteadOfReturningATruncatedDocument() async throws {
-    // A per-token delay is essential here: a fully-synchronous fake never suspends,
-    // so cancel() would have no window in which to land before every response is
-    // already buffered and consumed.
+// Both tests below synchronize on `FakeLLMClient.onCallStart` rather than a sleep
+// duration: cancelling is triggered the instant a *specific* call begins, so which
+// call cancellation lands inside is a fact about which call index the test picked,
+// not a race against how fast this machine happens to stream 35 characters at 20ms
+// per token. A sleep-based version of this test previously always landed the
+// cancellation inside the term-list call — its ~700ms stream dwarfed the 80ms
+// sleep — leaving the per-chunk `Task.checkCancellation()` calls fully unexercised.
+//
+// A per-token delay is still essential on the call being cancelled: a
+// fully-synchronous fake never suspends, so cancel() would have no window in which
+// to land before every response is already buffered and consumed.
+
+/// Waits for exactly one `onCallStart` signal, then lets the caller resume past it.
+/// Backed by an unbounded `AsyncStream`, so the signal is captured even if it fires
+/// before anyone starts awaiting it.
+private func makeCallStartSignal() -> (onCallStart: @Sendable (Int) -> Void, waitFor: @Sendable (Int) async -> Void) {
+    let (stream, continuation) = AsyncStream<Int>.makeStream()
+    let onCallStart: @Sendable (Int) -> Void = { continuation.yield($0) }
+    // `first(where:)` makes its own iterator internally, so there is no mutable
+    // state captured across suspension points — each test calls `waitFor` only
+    // once, so a single fresh iteration is all this ever needs.
+    let waitFor: @Sendable (Int) async -> Void = { target in
+        _ = await stream.first(where: { $0 == target })
+    }
+    return (onCallStart, waitFor)
+}
+
+@Test func cancellingDuringTheTermListCallThrowsInsteadOfReturningATruncatedDocument() async throws {
+    let (onCallStart, waitFor) = makeCallStartSignal()
     let fake = FakeLLMClient(responses: [
         "resource => ресурс\nserver => сервер",
         "первый", "второй", "третий", "четвёртый",
-    ], delayPerToken: .milliseconds(20))
+    ], delayPerToken: .milliseconds(20), onCallStart: onCallStart)
     let translator = Translator(client: fake)
+    final class Box: @unchecked Sendable { var text = "" }
+    let box = Box()
 
     let task = Task {
         try await translator.translate(
             text: multiChunkText, target: .ru, tone: .neutral, userGlossary: nil,
-            options: ChatOptions(model: "test"), maxChunkCharacters: 200)
+            options: ChatOptions(model: "test"), maxChunkCharacters: 200,
+            onToken: { box.text += $0 })
     }
-    // Long enough to be mid-way through the (delayed) term-list call, well short
-    // of the ~5 calls (1 term-list + 4 chunks) a completed run would issue.
-    try await Task.sleep(for: .milliseconds(80))
+    await waitFor(0) // call 0: the term-list call has just started
     task.cancel()
 
     await #expect(throws: CancellationError.self) {
         try await task.value
     }
-    #expect(fake.receivedMessages.count < 5)
+    // Only the term-list call was ever issued: cancellation was caught by the
+    // `Task.checkCancellation()` right after it, before the per-chunk loop began.
+    #expect(fake.receivedMessages.count == 1)
+    #expect(box.text.isEmpty)
+}
+
+@Test func cancellingDuringThePerChunkLoopThrowsInsteadOfReturningATruncatedDocument() async throws {
+    let (onCallStart, waitFor) = makeCallStartSignal()
+    let fake = FakeLLMClient(responses: [
+        "resource => ресурс\nserver => сервер",
+        "первый", "второй", "третий", "четвёртый",
+    ], delayPerToken: .milliseconds(20), onCallStart: onCallStart)
+    let translator = Translator(client: fake)
+    final class Box: @unchecked Sendable { var text = "" }
+    let box = Box()
+
+    let task = Task {
+        try await translator.translate(
+            text: multiChunkText, target: .ru, tone: .neutral, userGlossary: nil,
+            options: ChatOptions(model: "test"), maxChunkCharacters: 200,
+            onToken: { box.text += $0 })
+    }
+    await waitFor(1) // call 1: the first per-chunk translation call has just started
+    task.cancel()
+
+    await #expect(throws: CancellationError.self) {
+        try await task.value
+    }
+    // A completed run issues 1 (term-list) call + one call per chunk. Computed
+    // rather than hard-coded so this doesn't silently stop meaning anything if the
+    // fixture or the chunker's split points change.
+    let chunkCount = Chunker.chunk(multiChunkText, maxCharacters: 200).count
+    #expect(chunkCount > 1) // otherwise call 1 wouldn't be a per-chunk call at all
+    // Exactly 2 calls were made: the term-list call ran to completion, and the
+    // second call — the first per-chunk translation, the one cancellation landed
+    // inside — was the last one issued. None of the remaining chunk calls a
+    // completed run would make ever happened, proving the loop stopped at the call
+    // cancellation landed in rather than running to completion.
+    #expect(fake.receivedMessages.count == 2)
+    #expect(fake.receivedMessages.count < 1 + chunkCount)
+    #expect(box.text.isEmpty) // no chunk had finished, so onToken never fired
 }
 
 // MARK: - CC-3: markupDiffs must compare against what the model was actually shown.

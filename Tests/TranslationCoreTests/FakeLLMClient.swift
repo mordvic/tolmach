@@ -16,14 +16,26 @@ final class FakeLLMClient: LLMClient, @unchecked Sendable {
     /// anyone could observe it. This delay is what lets a cancellation test catch
     /// the stream genuinely mid-flight, the way a real network response would.
     private let delayPerToken: Duration?
+    /// Invoked synchronously at the top of `chat`, with the zero-based index of the
+    /// call now starting (0 = first call ever made on this instance). Lets a test
+    /// synchronize on exactly *which* call is in flight — e.g. the term-list call
+    /// versus the first per-chunk call — instead of racing a cancellation against a
+    /// guessed sleep duration, which only ever pins the timing on one machine.
+    private let onCallStart: (@Sendable (Int) -> Void)?
+    private var callCount = 0
 
-    init(responses: [String], delayPerToken: Duration? = nil, errors: [Error?] = []) {
+    init(responses: [String], delayPerToken: Duration? = nil, errors: [Error?] = [],
+         onCallStart: (@Sendable (Int) -> Void)? = nil) {
         self.responses = responses
         self.delayPerToken = delayPerToken
         self.errors = errors
+        self.onCallStart = onCallStart
     }
 
     func chat(messages: [ChatMessage], options: ChatOptions) -> AsyncThrowingStream<ChatEvent, Error> {
+        let callIndex = callCount
+        callCount += 1
+        onCallStart?(callIndex)
         receivedMessages.append(messages)
         let reply = responses.isEmpty ? "" : responses.removeFirst()
         let error = errors.isEmpty ? nil : errors.removeFirst()
