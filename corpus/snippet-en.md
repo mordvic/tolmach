@@ -1,0 +1,1 @@
+The scheduler retries a failed job up to three times before moving it to the dead-letter queue. Each retry waits twice as long as the one before it, starting at one second. Operators can inspect the queue from the admin dashboard.
