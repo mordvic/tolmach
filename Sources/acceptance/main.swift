@@ -40,6 +40,14 @@ func isCodeBlockDiff(_ diff: MarkupDiff) -> Bool {
     return false
 }
 
+/// Identity for deduplicating unaccepted markup diffs across a file's repeated runs.
+/// `MarkupDiff.note` is derived entirely from which side is nil, so the
+/// (expected, actual) pair alone is the diff's identity.
+struct MarkupDiffKey: Hashable {
+    let expected: MarkupToken?
+    let actual: MarkupToken?
+}
+
 /// Files with a measured, accepted model limitation, and the reason.
 /// Scoped per file rather than per token kind on purpose: a codeBlock token
 /// carries only a content hash, so tolerating hash mismatches generally would
@@ -98,6 +106,17 @@ for name in corpus {
     let text = try String(contentsOfFile: "corpus/\(name)", encoding: .utf8)
     let dest = target(for: name)
 
+    // A defect the model reproduces reliably shows up identically in every run of a
+    // repeated file — the normal case, as the recorded code-block limitation
+    // demonstrates by appearing identically across all three runs. Counting
+    // occurrences here (per file) and flushing once, after every run has been
+    // checked, turns N identical FAILED entries for one defect into a single entry
+    // noting how many of the file's runs it appeared in: "(3/3 runs)" is materially
+    // different information from "(1/3 runs)" — a defect that appears in only some
+    // runs is intermittent, not a reliably-reproduced one, and collapsing the two
+    // together would hide that.
+    var unacceptedDiffCounts: [MarkupDiffKey: Int] = [:]
+
     func checkMarkup(_ outcome: TranslationOutcome, label: String) {
         for diff in outcome.markupDiffs {
             let expected = String(describing: diff.expected), actual = String(describing: diff.actual)
@@ -107,8 +126,24 @@ for name in corpus {
                 print("    known-limitation\(label): \(reason) (expected \(expected) actual \(actual))")
             } else {
                 print("    markup\(label): expected \(expected) actual \(actual)")
-                failures.append("\(name)\(label): unaccepted markup diff — expected \(expected) actual \(actual)")
+                let key = MarkupDiffKey(expected: diff.expected, actual: diff.actual)
+                unacceptedDiffCounts[key, default: 0] += 1
             }
+        }
+    }
+
+    // Deduplicated, one FAILED entry per distinct diff, noting how many of the
+    // file's `totalRuns` runs it showed up in. Called once per file, after every
+    // run of that file has gone through `checkMarkup`.
+    func flushMarkupFailures(totalRuns: Int) {
+        let entries = unacceptedDiffCounts.sorted {
+            (String(describing: $0.key.expected), String(describing: $0.key.actual)) <
+            (String(describing: $1.key.expected), String(describing: $1.key.actual))
+        }
+        for (key, count) in entries {
+            let expected = String(describing: key.expected), actual = String(describing: key.actual)
+            failures.append("\(name): unaccepted markup diff — expected \(expected) actual \(actual) " +
+                             "(\(count)/\(totalRuns) runs)")
         }
     }
 
@@ -145,6 +180,7 @@ for name in corpus {
                   "\(first.chunks.count) chunks · \(first.documentGlossary.count) terms · " +
                   "TTFT \(ttftDescription) ms (info only — multi-chunk, not asserted)")
             for (i, outcome) in outcomes.enumerated() { checkMarkup(outcome, label: " run\(i + 1)") }
+            flushMarkupFailures(totalRuns: outcomes.count)
 
             // A chunked text with nothing to measure is a silent failure, not a pass: it
             // means the glossary was empty or no term recurred, so the mechanism did
@@ -161,6 +197,7 @@ for name in corpus {
             print("\(name): adherence n/a (single chunk, document glossary not applicable) · 1 chunk · " +
                   "\(first.documentGlossary.count) terms · TTFT \(ttftDescription) ms")
             checkMarkup(first, label: "")
+            flushMarkupFailures(totalRuns: 1)
             // Absent and slow are different failures. Before, a nil TTFT was measured
             // as elapsed-time-so-far (roughly equal to totalMS), so an empty model
             // reply was reported as ">= 1000 ms" — blaming latency for what was
