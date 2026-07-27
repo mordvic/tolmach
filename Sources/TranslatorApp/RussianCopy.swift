@@ -131,7 +131,13 @@ enum RussianCopy {
         // digest. The digest names nothing the user can act on and there is one per layer,
         // so they all read the same; the progress bar is what tells them apart. Checked
         // after the exact table, since "pulling manifest" shares the prefix.
-        if raw.hasPrefix("pulling ") { return "Загружаю файлы модели…" }
+        // The remainder must actually look like a digest. A bare `hasPrefix("pulling ")`
+        // would swallow any future "pulling …" wording — the one status family whose
+        // renaming the raw-string fallback below would otherwise not survive.
+        if raw.hasPrefix("pulling ") {
+            let digest = raw.dropFirst("pulling ".count)
+            if !digest.isEmpty, digest.allSatisfy(\.isHexDigit) { return "Загружаю файлы модели…" }
+        }
         // Ollama has renamed these before, so an unrecognised line reaches the user as-is.
         // Swallowing it would leave the pane captionless with no clue why.
         return raw

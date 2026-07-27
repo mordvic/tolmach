@@ -195,7 +195,9 @@ extension OllamaError: OllamaErrorBridge {
     var russianMessage: String {
         switch self {
         case .notRunning:
-            "Ollama не запущена. Запустите её командой `ollama serve`."
+            // Guillemets rather than backticks: this string is rendered by `Text(String)`,
+            // which never parses Markdown, so backticks would show as grave accents.
+            "Ollama не запущена. Запустите её командой «ollama serve»."
         // The body is omitted deliberately: `httpStatus`'s payload is a raw server
         // response — English at best, a page of HTML at worst — and it is already in the
         // ollama log. The code is the part that helps.

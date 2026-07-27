@@ -27,7 +27,10 @@ struct SettingsModelsView: View {
                         selection: $settings.backgroundModel, models: models)
 
             TextField("Держать модель в памяти", text: $settings.keepAlive)
-            Text("Формат Ollama: `30m`, `1h`, `0` — выгружать сразу, `-1` — держать всегда. "
+            // Guillemets, not backticks: building the string with `+` forces `Text`'s
+            // plain-`String` initialiser instead of the `LocalizedStringKey` one, so
+            // Markdown is never parsed and backticks would render as literal grave accents.
+            Text("Формат Ollama: «30m», «1h», «0» — выгружать сразу, «-1» — держать всегда. "
                  + "Холодная загрузка стоит около двух секунд, поэтому короткое значение "
                  + "делает каждое первое нажатие хоткея заметно медленнее.")
                 .font(.caption)
@@ -37,7 +40,14 @@ struct SettingsModelsView: View {
                 HStack {
                     TextField("aya-expanse:8b", text: $modelToPull)
                     Button("Загрузить") {
-                        Task { await models.pull(pullTarget) }
+                        let target = pullTarget
+                        Task {
+                            await models.pull(target)
+                            // Clear only on success. Leaving the name after a failure lets
+                            // the user retry without retyping it; leaving it after a
+                            // success leaves a live button that would redownload it.
+                            if models.error == nil { modelToPull = "" }
+                        }
                     }
                     .disabled(pullTarget.isEmpty || models.isPulling)
                 }
@@ -90,7 +100,8 @@ private struct ModelChoice: View {
 }
 
 /// The same caption-sized, tinted `Label` appears five times in this pane; extracted so the
-/// notes cannot drift apart from each other or from `SettingsGeneralView`'s warning.
+/// notes cannot drift apart from each other. It is `private` to this file, so
+/// `SettingsGeneralView`'s same-shaped warning is deliberately not covered by it.
 private struct SettingsNote: View {
     let text: String
     let icon: String

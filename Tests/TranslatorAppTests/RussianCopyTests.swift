@@ -173,6 +173,10 @@ func negativeCountsTakeTheSameFormAsTheirMagnitude(magnitude: Int, expected: Str
     ("pulling manifest", "Получаю манифест…"),
     ("pulling model", "Загружаю модель…"),
     ("pulling 65f986688a01", "Загружаю файлы модели…"),
+    // Only a real digest takes the layer caption. A future "pulling …" wording must reach
+    // the raw-string fallback instead of being mislabelled as a layer download — that is
+    // the one status family the fallback would otherwise not protect.
+    ("pulling from mirror", "pulling from mirror"),
     ("verifying sha256 digest", "Проверяю контрольную сумму…"),
     ("writing manifest", "Записываю манифест…"),
     ("removing unused layers", "Убираю неиспользуемые слои…"),

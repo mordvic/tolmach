@@ -141,6 +141,9 @@ private func makeModel(installed: [String] = [],
     }
     #expect(message.contains("500"), "the HTTP status is missing from: \(message)")
     #expect(message.contains("Загрузка"), "the failure is not described in Russian: \(message)")
+    // The throwing path must release the flag too. A wedged `isPulling` would disable the
+    // download button for the rest of the session, and only the success path pinned it.
+    #expect(!model.isPulling)
 }
 
 /// Two pulls at once write the same `pullProgress` and `pullStatus`, so the bar would jump
