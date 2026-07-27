@@ -18,7 +18,14 @@ public enum PermissionsGate {
     }
 
     /// Never prompts. Safe to call on every hotkey press.
-    public static func isTrusted() -> Bool {
+    ///
+    /// `@Sendable` on the declaration because `SelectionReader.init` defaults a
+    /// `@Sendable () -> Bool` parameter to this function *as a value*, and a reference to a
+    /// plain `static func` is not a Sendable function value — the conversion warns in Swift 5
+    /// mode and is an error in Swift 6. `requestTrust` is deliberately left alone: nothing
+    /// passes it around as a value, and it is the one call here with a user-visible side
+    /// effect. `AXIsProcessTrustedWithOptions` is thread-agnostic, so the attribute is true.
+    @Sendable public static func isTrusted() -> Bool {
         AXIsProcessTrustedWithOptions(trustOptions(prompting: false) as CFDictionary)
     }
 
