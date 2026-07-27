@@ -137,6 +137,37 @@ private func tempURL() -> URL {
     #expect(reloaded.mutedSet == ["fhir", "profile server"])
 }
 
+@Test func reloadingAfterAnOutsideEditLetsSavingWorkAgain() throws {
+    // The dead end Task 9 left behind, and the contract the «Перечитать файл» button rests
+    // on. Once `save()` starts throwing `fileChangedOnDisk` nothing else in the app can
+    // clear the condition, so saving stays broken for the rest of the session — the app is
+    // `LSUIElement` and that session can be days long. `load()` is the only way out, and it
+    // only is one because it re-stamps: without that, the second save would compare against
+    // the launch-time stamp again and refuse just the same.
+    let url = tempURL()
+    let atLaunch = #"{"entries":[],"mutedTerms":["alpha"]}"#
+    try atLaunch.write(to: url, atomically: true, encoding: .utf8)
+    let store = GlossaryStore(url: url)
+    try store.load()
+
+    let handEdited = #"{"entries":[],"mutedTerms":["omega"]}"#
+    try handEdited.write(to: url, atomically: true, encoding: .utf8)
+    store.mute("beta")
+    #expect(throws: GlossaryStoreError.fileChangedOnDisk) { try store.save() }
+
+    // The button: re-read, then carry on. The user's hand-edit is now what the store holds,
+    // and the refused change is gone with it — which is the honest outcome, since the store
+    // never wrote it.
+    try store.load()
+    #expect(store.mutedSet == ["omega"])
+    store.mute("beta")
+    try store.save()
+
+    let reloaded = GlossaryStore(url: url)
+    try reloaded.load()
+    #expect(reloaded.mutedSet == ["omega", "beta"])
+}
+
 @Test func aFailedLoadLeavesTheStoreLockedSoTheBadFileSurvives() throws {
     // C2.2's promise in test form: a malformed file is recorded, not swallowed, and
     // because the gate never opened nothing downstream can overwrite it.
@@ -147,4 +178,58 @@ private func tempURL() -> URL {
     #expect(!store.isLoaded)
     #expect(throws: GlossaryStoreError.saveBeforeLoad) { try store.save() }
     #expect(try String(contentsOf: url, encoding: .utf8) == "{ not json")
+}
+
+@Test func aGlossaryEntryEncodesTheSameJSONNowThatItIsMutable() throws {
+    // `GlossaryEntry`'s stored properties became `var` so the glossary tab can bind editable
+    // fields to a row. That is a change to a `Codable` type whose encoded form is a
+    // hand-edited, git-tracked file (spec 9), so the shape has to be pinned rather than
+    // assumed: a renamed property or an accidental `CodingKeys` would silently orphan every
+    // glossary already on disk. `.sortedKeys` matches what `GlossaryStore.save()` writes.
+    let entry = GlossaryEntry(term: "FHIR", doNotTranslate: true, translations: ["ru": "ФХИР"])
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    let json = String(data: try encoder.encode(entry), encoding: .utf8)
+    #expect(json == #"{"doNotTranslate":true,"term":"FHIR","translations":{"ru":"ФХИР"}}"#)
+    #expect(try JSONDecoder().decode(GlossaryEntry.self, from: Data(json!.utf8)) == entry)
+}
+
+@Test func anEntryEditedInPlaceRoundTripsThroughTheFile() throws {
+    // What the glossary tab actually does. Its rows bind to elements of `file.entries`, so
+    // an edit lands on an existing element rather than replacing the array — only
+    // expressible because the three stored properties are `var`. All three are exercised
+    // here, since each one is a separate binding in the tab.
+    let url = tempURL()
+    let store = GlossaryStore(url: url)
+    try store.load()
+    store.file.entries = [GlossaryEntry(term: "profile server", doNotTranslate: true)]
+    store.file.entries[0].term = "Profile Server"
+    store.file.entries[0].doNotTranslate = false
+    store.file.entries[0].translations["ru"] = "сервер профилей"
+    try store.save()
+
+    let reloaded = GlossaryStore(url: url)
+    try reloaded.load()
+    #expect(reloaded.file.entries == [GlossaryEntry(term: "Profile Server",
+                                                    translations: ["ru": "сервер профилей"])])
+}
+
+@Test func duplicateTermsSurviveAsTwoSeparateEntries() throws {
+    // Why the tab lists rows by index rather than by term. Nothing on the path into
+    // `file.entries` uniques them — the file is hand-edited and the «+» button appends —
+    // so two rows can carry the same term, and a `Table` or a `ForEach` keyed by `term`
+    // would render one of them and silently drop the other's translation.
+    let url = tempURL()
+    let store = GlossaryStore(url: url)
+    try store.load()
+    store.file.entries = [
+        GlossaryEntry(term: "server", translations: ["ru": "сервер"]),
+        GlossaryEntry(term: "server", translations: ["de": "Server"]),
+    ]
+    try store.save()
+
+    let reloaded = GlossaryStore(url: url)
+    try reloaded.load()
+    #expect(reloaded.file.entries.count == 2)
+    #expect(reloaded.file.entries.map(\.translations) == [["ru": "сервер"], ["de": "Server"]])
 }

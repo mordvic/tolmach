@@ -1,9 +1,19 @@
 import Foundation
 
+/// The three stored properties are `var` so the settings pane can bind an editable field to
+/// a row of the user's glossary. They were `let`, and nothing depended on that: every site
+/// that touches them outside the initialiser below only reads — `requiredTranslation(for:)`
+/// here, `PromptBuilder` and `GlossaryVerifier` in the engine, `WarningsView` in the app.
+///
+/// Nothing observable changed with them: `Codable` derives its keys from the property names
+/// either way, so the on-disk JSON is unchanged (pinned by a test, because that file is
+/// hand-edited and git-tracked); `Equatable`'s synthesis is likewise unaffected; and the
+/// type is still `Sendable`, being a struct of `Sendable` value types — `var` on a value
+/// type shares nothing. Callers holding an entry in a `let` still cannot mutate it.
 public struct GlossaryEntry: Sendable, Codable, Equatable {
-    public let term: String
-    public let doNotTranslate: Bool
-    public let translations: [String: String]
+    public var term: String
+    public var doNotTranslate: Bool
+    public var translations: [String: String]
 
     public init(term: String, doNotTranslate: Bool = false, translations: [String: String] = [:]) {
         self.term = term; self.doNotTranslate = doNotTranslate; self.translations = translations

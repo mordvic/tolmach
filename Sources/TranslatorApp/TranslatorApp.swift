@@ -17,6 +17,9 @@ struct TranslatorApp: App {
     /// Owned here rather than created inside the settings pane so the installed list and a
     /// download in progress survive the settings window being closed and reopened.
     @State private var models: ModelsViewModel
+    /// The same client the `Translator` above translates through, kept so `warmUp()` can
+    /// reuse it instead of standing up a second `URLSession` for one request at launch.
+    @State private var client: OllamaClient
 
     init() {
         let settings = AppSettings()
@@ -34,8 +37,9 @@ struct TranslatorApp: App {
                 + "Файл на диске не изменён: \(error.localizedDescription)"
         }
         let statusModel = OllamaStatusModel()
+        let client = OllamaClient()
         let translation = TranslationViewModel(
-            translator: Translator(client: OllamaClient()),
+            translator: Translator(client: client),
             settings: settings,
             glossary: glossary)
         _settings = State(initialValue: settings)
@@ -43,6 +47,7 @@ struct TranslatorApp: App {
         _statusModel = State(initialValue: statusModel)
         _translation = State(initialValue: translation)
         _models = State(initialValue: ModelsViewModel())
+        _client = State(initialValue: client)
     }
 
     var body: some Scene {
@@ -53,8 +58,16 @@ struct TranslatorApp: App {
         // «Открыть окно перевода» still reaches the window via `openWindow(id:)`.
         // (`Scene.defaultLaunchBehavior(.suppressed)`, the declarative fix, is macOS 15+
         // and the platform floor here is macOS 14.)
-        MenuBarExtra("Толмач", systemImage: "character.bubble") {
+        MenuBarExtra {
             MenuContent()
+        } label: {
+            // The `MenuBarExtra(_:systemImage:)` convenience initialiser this used to be
+            // takes no view, and `warmUp()` needs one to hang a `.task` on — this label is
+            // the only thing the app renders at launch. Its title argument was only ever an
+            // accessibility label, so that is restored explicitly rather than dropped.
+            Image(systemName: "character.bubble")
+                .accessibilityLabel("Толмач")
+                .task { await warmUp() }
         }
 
         Window("Толмач", id: TranslatorApp.mainWindowID) {
@@ -72,7 +85,51 @@ struct TranslatorApp: App {
                     .tabItem { Text("Основные") }
                 SettingsModelsView(settings: settings, models: models)
                     .tabItem { Text("Модели") }
+                SettingsGlossaryView(glossary: glossary, settings: settings)
+                    .tabItem { Text("Глоссарий") }
+                SettingsAdvancedView(settings: settings)
+                    .tabItem { Text("Дополнительно") }
             }
+        }
+    }
+
+    /// One throwaway request at launch, so the first hotkey press does not pay to load the
+    /// model. Spec §5 measured a cold load at about 2000 ms against 155 ms warm, and
+    /// `keep_alive` is what keeps the model resident afterwards — so this must pass
+    /// `settings.keepAlive`, or it would load the model and let it fall straight back out
+    /// of memory before the user ever pressed anything.
+    ///
+    /// Hung on the `MenuBarExtra`'s label, not on the main window's `.task` where the plan
+    /// put it. No window opens at launch — see the scene-order comment above, which is the
+    /// whole reason `MenuBarExtra` is declared first — so a warm-up there would have fired
+    /// only once the user opened the window by hand, at which point they are already
+    /// looking at the app and the pause it exists to remove has nothing left to hide behind.
+    /// The label view is the one thing this app does render at launch.
+    ///
+    /// Straight to `OllamaClient.chat`, deliberately below both `TranslationViewModel` and
+    /// `Translator`. The view model owns the window's visible state, so warming through it
+    /// would move `state`, `translatedText` and `outcome` for a translation the user never
+    /// asked for. `Translator` would add language detection, chunking, a glossary merge,
+    /// response cleaning and a markup diff — all discarded, and none of it what makes the
+    /// model resident. `chat` is the layer that actually carries `keep_alive` to the server,
+    /// which is the entire job.
+    private func warmUp() async {
+        guard settings.warmUpOnLaunch else { return }
+        let options = ChatOptions(model: settings.interactiveModel,
+                                  temperature: settings.temperature,
+                                  keepAlive: settings.keepAlive)
+        do {
+            // Drained rather than abandoned after the first event: dropping the stream runs
+            // `onTermination`, which cancels the request, and there is nothing to save by
+            // cutting off a reply this short.
+            for try await _ in client.chat(messages: [ChatMessage(role: "user", content: "ok")],
+                                           options: options) {}
+        } catch {
+            // Swallowed on purpose, and this is the one place in the app where that is
+            // right. A warm-up is by definition something the user did not ask for, so its
+            // failure must cost them nothing; Ollama being unreachable is already the
+            // window's status line's job to say, and saying it twice — once about a request
+            // nobody made — would be worse than silence.
         }
     }
 
