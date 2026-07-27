@@ -82,6 +82,9 @@ and add `"TextCapture"` to `TranslatorApp`'s and `TranslatorAppTests`' `dependen
 // Tests/TextCaptureTests/PermissionsGateTests.swift
 import Testing
 import Foundation
+// `@testable import` does not re-export the module's own imports, so
+// `kAXTrustedCheckOptionPrompt` is not in scope without naming the framework here.
+import ApplicationServices
 @testable import TextCapture
 
 @Test func theSettingsURLPointsAtTheAccessibilityPane() {
@@ -202,6 +205,10 @@ Everything here is a pure function of two integers, so this task carries the rea
 // Tests/TextCaptureTests/HotkeyComboTests.swift
 import Testing
 import AppKit
+// Carbon explicitly: `@testable import` does not re-export the module's own imports, so
+// `cmdKey` and friends are not in scope without it. Task 1 hit the same trap with
+// `kAXTrustedCheckOptionPrompt`.
+import Carbon.HIToolbox
 @testable import TextCapture
 
 @Test func theDefaultIsOptionCommandT() {
