@@ -20,8 +20,12 @@ mkdir -p "$APP/Contents/MacOS"
 cp "$ROOT/Sources/TranslatorApp/Info.plist" "$APP/Contents/Info.plist"
 cp "$BIN" "$APP/Contents/MacOS/TranslatorApp"
 IDENTITY="${CODESIGN_IDENTITY:-}"
-if [ -z "$IDENTITY" ] && security find-identity -v -p codesigning 2>/dev/null | grep -q "LocalTranslator Dev"; then
-  IDENTITY="LocalTranslator Dev"
+if [ -z "$IDENTITY" ]; then
+  # The matched name is extracted rather than hardcoded. A substring test that then signs
+  # with a fixed literal can match one identity and hand codesign another — or an ambiguous
+  # one, if an old certificate with a similar name is still in the keychain.
+  IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
+    | sed -n 's/.*"\(.*LocalTranslator Dev.*\)".*/\1/p' | head -1)"
 fi
 if [ -n "$IDENTITY" ]; then
   codesign --force --sign "$IDENTITY" "$APP"
