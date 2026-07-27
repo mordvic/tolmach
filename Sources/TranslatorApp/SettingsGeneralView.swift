@@ -1,6 +1,7 @@
 // Sources/TranslatorApp/SettingsGeneralView.swift
 import SwiftUI
 import TranslationCore
+import TextCapture
 
 struct SettingsGeneralView: View {
     /// `@Bindable`, not `@State`: the settings object is created once in `TranslatorApp`
@@ -17,6 +18,34 @@ struct SettingsGeneralView: View {
 
     var body: some View {
         Form {
+            // Spec 6.1's standing indicator: the half of onboarding the panel's own prompt
+            // cannot cover, because the panel's prompt only appears once the user has already
+            // pressed the shortcut and been met with nothing.
+            //
+            // `isTrusted()` is read here during `body` evaluation and is **not** observable —
+            // there is no `@Observable` value behind it and TCC publishes no notification this
+            // app subscribes to. So the row disappears when the pane is next reopened, not the
+            // instant the user flips the switch in System Settings. That is honest and
+            // adequate: granting the permission means leaving this window for System Settings
+            // and coming back, and a stale warning for the seconds in between costs nothing.
+            // Polling `AXIsProcessTrustedWithOptions` on a timer to close that gap would be a
+            // repeated privileged call for a cosmetic gain.
+            if !PermissionsGate.isTrusted() {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Сочетание клавиш не сможет прочитать выделенный текст",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption).foregroundStyle(.orange)
+                    Text("Приложению нужен доступ в разделе «Конфиденциальность и "
+                         + "безопасность» → «Универсальный доступ». Главное окно работает "
+                         + "и без него.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        // Same reason as the panel's prompt: a `Text` given less width than it
+                        // wants truncates rather than wrapping, and the clause that would go
+                        // is the one saying where the setting actually lives.
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Открыть настройки системы") { PermissionsGate.openSettings() }
+                }
+            }
             LabeledContent("Сочетание клавиш") {
                 HotkeyRecorder(combo: $settings.hotkey)
             }

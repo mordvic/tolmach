@@ -149,6 +149,24 @@ struct TranslatorApp: App {
             }
         }
         observeHotkeyChanges()
+        // Spec 6.1's onboarding, in the only shape an `LSUIElement` app can offer it: there is
+        // no window at launch to put a screen in, so the system's own dialog is the screen.
+        //
+        // Prompted once, at first launch only. `requestTrust()` shows the system dialog;
+        // asking again on every launch would be nagging, and the standing indicator in
+        // Settings plus the panel's own prompt already cover the user who declined.
+        //
+        // The latch is set *before* the call, not after: `requestTrust` returns the state
+        // before the user answers, so there is no success to condition on, and a crash between
+        // the two would otherwise put the dialog back on the next launch.
+        //
+        // After the hotkey registration, so nothing about the modal delays the app's only
+        // shortcut becoming live; before `warmUp()`, which awaits a request that can take two
+        // minutes to time out.
+        if !settings.hasRequestedAccessibility {
+            settings.hasRequestedAccessibility = true
+            PermissionsGate.requestTrust()
+        }
         await warmUp()
     }
 

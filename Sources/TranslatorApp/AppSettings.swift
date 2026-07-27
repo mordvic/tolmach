@@ -102,6 +102,26 @@ final class AppSettings {
         set { withMutation(keyPath: \.warmUpOnLaunch) { defaults.set(newValue, forKey: "warmUpOnLaunch") } }
     }
 
+    /// Whether the system's Accessibility dialog has ever been raised by this app.
+    ///
+    /// Not «whether the permission is granted» — that is `PermissionsGate.isTrusted()` and it
+    /// is the system's answer, not a preference. This records only that the app has asked
+    /// once, so a user who declined is not asked again on every launch. It is deliberately
+    /// not exposed in any settings pane: it is a latch, not a choice, and the two visible
+    /// ways back to the permission (the panel's prompt and the General tab's indicator) are
+    /// what a user who changes their mind uses.
+    var hasRequestedAccessibility: Bool {
+        get {
+            access(keyPath: \.hasRequestedAccessibility)
+            return bool("hasRequestedAccessibility", false)
+        }
+        set {
+            withMutation(keyPath: \.hasRequestedAccessibility) {
+                defaults.set(newValue, forKey: "hasRequestedAccessibility")
+            }
+        }
+    }
+
     /// Stored as JSON under one key rather than as a key code and a modifier mask under
     /// two. Two keys can be observed half-written — a settings pane that crashed between
     /// them would leave the app registering a combination the user never chose — and a

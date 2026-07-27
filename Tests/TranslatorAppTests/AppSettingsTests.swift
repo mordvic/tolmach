@@ -68,6 +68,22 @@ private func freshDefaults() -> InMemoryDefaults { InMemoryDefaults(prefix: "tes
     #expect(afterRelaunch.warmUpOnLaunch == false)
 }
 
+/// Beyond the brief, and the whole contract of the first-launch prompt in one test.
+/// `TranslatorApp.launch()` raises the system Accessibility dialog only while this reads
+/// false, so a getter that defaulted to `true` would mean the dialog is never shown at all,
+/// and a setter that dropped its write would mean it is shown on every single launch. Both
+/// failures are silent in a build that otherwise works, and neither is visible in the two
+/// existing round-trip tests, which cover only the properties the General tab binds — this
+/// one is deliberately not bound to any control.
+@Test func theAccessibilityPromptIsRaisedOnceAndThenLatched() {
+    let defaults = freshDefaults()
+    #expect(AppSettings(defaults: defaults).hasRequestedAccessibility == false)
+
+    AppSettings(defaults: defaults).hasRequestedAccessibility = true
+    // A second instance over the same store is what the next launch reads.
+    #expect(AppSettings(defaults: defaults).hasRequestedAccessibility == true)
+}
+
 @Test func directionFollowsThePrimaryLanguageRule() {
     let settings = AppSettings(defaults: freshDefaults())   // ru primary, en working
     // Source is the primary language -> translate into the working one.
