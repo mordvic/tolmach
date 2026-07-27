@@ -100,5 +100,9 @@ public final class HotkeyManager {
         handlerRef = nil
         onPress = nil
         registered = nil
+        // Reset alongside the rest, so the field means "the id currently registered" rather
+        // than "the last id this instance used". Nothing reads it while no handler is
+        // installed, but leaving it set makes the invariant unreadable.
+        hotKeyID = 0
     }
 }

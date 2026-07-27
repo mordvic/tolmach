@@ -90,8 +90,12 @@ private func dispatchHotKey(signature: OSType = HotkeyManager.signature, id: UIn
 @MainActor
 @Test func nothingReachesTheClosureAfterUnregister() {
     // `Unmanaged.passUnretained` does not keep the manager alive, so a handler that outlived
-    // `unregister` would be reading freed memory. `RemoveEventHandler` is what prevents that,
-    // and this is the assertion that it actually ran.
+    // `unregister` would be reading freed memory. This asserts the observable half — nothing
+    // reaches the closure afterwards — and deliberately does not claim to prove
+    // `RemoveEventHandler` ran: `unregister` also nils `onPress`, so a surviving handler
+    // would no-op and this test would still pass. The assertion that actually depends on the
+    // handler being gone is `registeringTwiceOnOneInstanceSucceedsBothTimes` below, which
+    // fails with -9866 if a stale handler is left installed.
     let manager = HotkeyManager()
     var fired = 0
     let combo = HotkeyCombo(keyCode: 0x2B, modifiers: NSEvent.ModifierFlags([.control, .option, .command]).rawValue)
@@ -151,4 +155,43 @@ private func dispatchHotKey(signature: OSType = HotkeyManager.signature, id: UIn
     dispatchHotKey(signature: OSType(0x5A5A5A5A), id: manager.hotKeyID)
     #expect(fired == 0)
     #expect(dispatchHotKey(signature: OSType(0x5A5A5A5A), id: 1) == OSStatus(eventNotHandledErr))
+}
+
+@MainActor
+@Test func registeringTwiceOnOneInstanceSucceedsBothTimes() {
+    // This is the assertion that depends on `RemoveEventHandler` actually running. Carbon
+    // refuses a duplicate handler proc with the same `userData` — `eventHandlerAlreadyInstalled`,
+    // -9866 — so a stale handler left installed by `unregister` makes the second `register`
+    // return false. Nothing else in this file notices a leaked handler.
+    let manager = HotkeyManager()
+    defer { manager.unregister() }
+    let combo = HotkeyCombo(keyCode: 0x2B,
+                            modifiers: NSEvent.ModifierFlags([.control, .option, .command]).rawValue)
+    #expect(manager.register(combo) {})
+    manager.unregister()
+    #expect(manager.register(combo) {})
+}
+
+@MainActor
+@Test func aQueuedPressOfThePreviousShortcutIsDroppedAfterAChange() {
+    // Why the counter is bumped per registration rather than per instance. The user changes
+    // the shortcut while a press of the old one is already in flight; if both registrations
+    // shared an id, that stale press would still match and translate whatever happened to be
+    // selected. Assigning the id once per instance passes every other test in this file.
+    let manager = HotkeyManager()
+    defer { manager.unregister() }
+    var fired = 0
+    let first = HotkeyCombo(keyCode: 0x2B,
+                            modifiers: NSEvent.ModifierFlags([.control, .option, .command]).rawValue)
+    let second = HotkeyCombo(keyCode: 0x2C,
+                             modifiers: NSEvent.ModifierFlags([.control, .option, .command]).rawValue)
+    #expect(manager.register(first) { fired += 1 })
+    let staleID = manager.hotKeyID
+    #expect(manager.register(second) { fired += 1 })
+    #expect(manager.hotKeyID != staleID)
+
+    _ = dispatchHotKey(id: staleID)
+    #expect(fired == 0, "a press of the shortcut the user just replaced must not translate")
+    _ = dispatchHotKey(id: manager.hotKeyID)
+    #expect(fired == 1)
 }
