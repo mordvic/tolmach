@@ -233,3 +233,33 @@ private func tempURL() -> URL {
     #expect(reloaded.file.entries.count == 2)
     #expect(reloaded.file.entries.map(\.translations) == [["ru": "сервер"], ["de": "Server"]])
 }
+
+@Test func aFailedReloadLocksTheStoreInsteadOfArmingAClobber() throws {
+    // The reload button's failure path. `load()` stamps the file before it reads it, so a
+    // decode that throws leaves the stamp already moved to the file it could not read. If
+    // `isLoaded` also survived from the successful launch load, the next save would pass
+    // both of `save()`'s guards and write this session's copy straight over the user's
+    // broken file — Task 9's clobber, reached backwards through the button meant to help.
+    let url = tempURL()
+    try #"{"entries":[],"mutedTerms":["alpha"]}"#.write(to: url, atomically: true, encoding: .utf8)
+    let store = GlossaryStore(url: url)
+    try store.load()
+    #expect(store.isLoaded)
+
+    let broken = "{ not json"
+    try broken.write(to: url, atomically: true, encoding: .utf8)
+    #expect(throws: (any Error).self) { try store.load() }
+    #expect(store.isLoaded == false)
+
+    // The store still holds the launch-time entries, and must not be able to write them.
+    #expect(store.mutedSet == ["alpha"])
+    #expect(throws: GlossaryStoreError.saveBeforeLoad) { try store.save() }
+    #expect(try String(contentsOf: url, encoding: .utf8) == broken)
+
+    // And the way out still works once the user fixes the file.
+    try #"{"entries":[],"mutedTerms":["beta"]}"#.write(to: url, atomically: true, encoding: .utf8)
+    try store.load()
+    #expect(store.mutedSet == ["beta"])
+    store.mute("gamma")
+    try store.save()
+}

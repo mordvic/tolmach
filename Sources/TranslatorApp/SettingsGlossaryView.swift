@@ -104,7 +104,12 @@ struct SettingsGlossaryView: View {
                             // what it adds, but the file is hand-editable and can hold two
                             // identical lines, and removing "one of the two" by value would
                             // take both.
-                            Text(glossary.file.mutedTerms[index])
+                            // Bounds-checked for the same reason `entryBinding` is: during
+                            // the update that follows a removal SwiftUI can still evaluate
+                            // the body of a row that no longer exists, and an unchecked
+                            // subscript traps there.
+                            Text(glossary.file.mutedTerms.indices.contains(index)
+                                 ? glossary.file.mutedTerms[index] : "")
                             Spacer()
                             Button("вернуть") { unmute(at: index) }
                                 .buttonStyle(.link)
@@ -162,7 +167,10 @@ struct SettingsGlossaryView: View {
     private func persist() {
         do {
             try glossary.save()
-            glossary.lastProblem = nil
+            // Guarded: `persist()` runs on every keystroke, and `@Observable` has no
+            // equality short-circuit, so an unconditional `= nil` would invalidate every
+            // view reading `lastProblem` — including the main window — per character typed.
+            if glossary.lastProblem != nil { glossary.lastProblem = nil }
         } catch GlossaryStoreError.saveBeforeLoad {
             glossary.lastProblem = "Глоссарий не был прочитан при запуске, поэтому изменения не "
                 + "сохранены — иначе пустой список записался бы поверх вашего файла. "
@@ -181,23 +189,13 @@ struct SettingsGlossaryView: View {
         }
     }
 
-    /// Decodes the file before handing it to `load()`, which looks redundant and is not.
-    ///
-    /// `GlossaryStore.load()` stamps the file *before* it reads it, and leaves `isLoaded`
-    /// alone when the decode throws. So a reload of a malformed file would leave the store
-    /// holding this session's entries while stamped against the user's broken file — and the
-    /// next save would then pass Task 9's guard and write over it. That is the very clobber
-    /// the guard exists to prevent, re-armed backwards by the button meant to help. Decoding
-    /// first means `load()` is only ever called with bytes already known to parse, so it
-    /// cannot fail after moving the stamp. When the check fails nothing in the store is
-    /// touched at all: it stays stamped against the version it read at launch, so saving
-    /// keeps refusing and the user's file keeps surviving.
+    /// Delegates straight to `load()`, which now fails closed: a throw there resets both
+    /// `isLoaded` and the stamp, so a reload of a malformed file cannot leave the store
+    /// holding this session's entries while stamped against the user's broken one. An
+    /// earlier revision of this method pre-decoded the file to compensate for `load()` not
+    /// doing that; the check belonged in the store and is now there.
     private func reload() {
         do {
-            if FileManager.default.fileExists(atPath: glossary.url.path) {
-                _ = try JSONDecoder().decode(GlossaryFile.self,
-                                             from: try Data(contentsOf: glossary.url))
-            }
             try glossary.load()
             glossary.lastProblem = nil
         } catch {

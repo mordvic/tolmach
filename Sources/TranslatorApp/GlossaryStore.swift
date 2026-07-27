@@ -87,8 +87,19 @@ final class GlossaryStore {
         // other way — the same edit makes the stamp look stale and a later save refuses,
         // which costs the user a relaunch instead of their file.
         stamp = Self.fileStamp(of: url)
-        let data = try Data(contentsOf: url)
-        file = try JSONDecoder().decode(GlossaryFile.self, from: data)
+        // Fail closed. Without this, a reload that throws would leave the stamp already
+        // moved to the file it could not read while `isLoaded` kept whatever it was — so a
+        // store loaded successfully at launch would go on to pass `save()`'s guards and
+        // write this session's copy over the user's broken file. That is exactly the
+        // clobber the guards exist to prevent, reached backwards through the reload button.
+        do {
+            let data = try Data(contentsOf: url)
+            file = try JSONDecoder().decode(GlossaryFile.self, from: data)
+        } catch {
+            isLoaded = false
+            stamp = nil
+            throw error
+        }
         isLoaded = true
     }
 
