@@ -15,7 +15,7 @@ struct MainWindowView: View {
             HStack(spacing: 12) {
                 TextEditor(text: $model.sourceText)
                     .font(.body).frame(minWidth: 280, minHeight: 260)
-                    .overlay(alignment: .bottomTrailing) { chunkHint.padding(6) }
+                    .overlay(alignment: .bottomTrailing) { ChunkHint(model: model).padding(6) }
                 TextEditor(text: .constant(model.translatedText))
                     .font(.body).frame(minWidth: 280, minHeight: 260)
             }
@@ -41,20 +41,15 @@ struct MainWindowView: View {
             }.frame(width: 170)
             Spacer()
             if model.state == .running {
+                // ⌘. is the macOS convention for cancelling an operation in progress.
+                // Without it a run is unstoppable from the keyboard: ⌘↩ belongs to
+                // «Перевести», which is not on screen while the run is going.
                 Button("Отмена") { model.cancel() }
+                    .keyboardShortcut(".", modifiers: .command)
             } else {
                 Button("Перевести") { Task { await model.translate() } }
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(!status.isHealthy)
-            }
-        }
-    }
-
-    private var chunkHint: some View {
-        Group {
-            if model.expectedChunkCount > 1 {
-                Text(RussianCopy.chunkCount(model.expectedChunkCount))
-                    .font(.caption).foregroundStyle(.secondary)
             }
         }
     }
@@ -72,6 +67,33 @@ struct MainWindowView: View {
                 .font(.caption).foregroundStyle(.orange)
         case .failed(let message):
             Text(message).font(.caption).foregroundStyle(.red)
+        }
+    }
+}
+
+/// A `View` of its own rather than a computed property on `MainWindowView`, and that is
+/// the whole point of the type.
+///
+/// `MainWindowView.body` reads `model.translatedText`, so every streamed token
+/// invalidates it. A computed property is just part of that body, so the hint was rebuilt
+/// on every token — and `expectedChunkCount` runs `Chunker.chunk` in full: a line split,
+/// a `String.count` per block, and `enumerateSubstrings(options: .bySentences)` over
+/// oversized ones. Measured at 2 evaluations per token, for a value whose only inputs
+/// (`sourceText`, `settings.chunkSize`) cannot change while a run is streaming.
+///
+/// As a separate view value holding a single class reference, SwiftUI compares the
+/// re-created `ChunkHint` against the previous one, finds the reference identical, and
+/// skips its body. Observation then re-runs it only when `sourceText` itself changes.
+private struct ChunkHint: View {
+    let model: TranslationViewModel
+
+    var body: some View {
+        // Read once. The old computed property read it twice — once for the test and once
+        // for the label — and so paid for chunking twice on every pass.
+        let count = model.expectedChunkCount
+        if count > 1 {
+            Text(RussianCopy.chunkCount(count))
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 }

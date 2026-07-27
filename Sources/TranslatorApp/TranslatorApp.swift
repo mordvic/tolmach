@@ -30,13 +30,20 @@ struct TranslatorApp: App {
     }
 
     var body: some Scene {
+        // Scene order is load-bearing — do not "tidy" the `Window` back to the top.
+        // SwiftUI opens the *first* window-bearing scene at launch, so declaring `Window`
+        // first made this `LSUIElement` utility pop a 900x492 window on every login.
+        // With `MenuBarExtra` first, nothing opens at launch and the menu's
+        // «Открыть окно перевода» still reaches the window via `openWindow(id:)`.
+        // (`Scene.defaultLaunchBehavior(.suppressed)`, the declarative fix, is macOS 15+
+        // and the platform floor here is macOS 14.)
+        MenuBarExtra("Толмач", systemImage: "character.bubble") {
+            MenuContent()
+        }
+
         Window("Толмач", id: TranslatorApp.mainWindowID) {
             MainWindowView(model: translation, settings: settings, status: statusModel.status)
                 .task { await statusModel.refresh(interactiveModel: settings.interactiveModel) }
-        }
-
-        MenuBarExtra("Толмач", systemImage: "character.bubble") {
-            MenuContent()
         }
     }
 

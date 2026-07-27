@@ -1,5 +1,4 @@
 // Sources/TranslatorApp/RussianCopy.swift
-import Foundation
 import TranslationCore
 
 extension Tone {
