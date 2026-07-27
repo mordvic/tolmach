@@ -78,6 +78,15 @@ public struct SelectionReader: Sendable {
     /// true: the AX calls below are thread-agnostic synchronous IPC.
     @Sendable public static func accessibilityText() -> String? {
         let system = AXUIElementCreateSystemWide()
+        // Without this the default AX messaging timeout is 1.5 seconds, and it is spent
+        // synchronously on every press whenever the frontmost application is not answering.
+        // Measured against an app whose main thread was wedged: `kAXFocusedUIElement` blocked
+        // 1.503 s on 10 consecutive probes and then returned `kAXErrorCannotComplete`, after
+        // which `read()` falls through to the clipboard path and spends its full half second
+        // too — two seconds before the user is told «выделите текст». A quarter second is
+        // still an eternity for an app that is answering at all: the healthy measurement was
+        // 22 ms.
+        AXUIElementSetMessagingTimeout(system, 0.25)
         var focused: CFTypeRef?
         guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString,
                                             &focused) == .success,
@@ -141,12 +150,10 @@ public struct SelectionReader: Sendable {
     /// `string(forType: .string)` with nil and derives no plain-text flavour, so the poll
     /// never satisfies and the user gets «выделите текст». Right answer, slowest path.
     ///
-    /// **Open risk, not verified here.** The hotkey fires on key *down*, so the user is
-    /// normally still holding its modifiers when this runs, and an event posted to
-    /// `.cghidEventTap` enters the stream alongside the live hardware modifier state. If
-    /// those merge, the target application sees ⇧⌘C or ⌥⌘C rather than ⌘C, which in several
-    /// applications is a different command. Verifying it means posting keystrokes into
-    /// whatever the developer has in front of them, so it belongs to Task 10's hand-check.
+    /// A copy that arrives *after* the deadline is the one failure this cannot contain: the
+    /// poll gives up, the restore below puts the user's clipboard back, and the slow
+    /// application's ⌘C then lands on top of it. The user loses their clipboard and is told
+    /// «выделите текст» anyway. Waiting longer trades that against a stall on every press.
     ///
     /// `@Sendable` for the same reason as `accessibilityText`, and with the same
     /// justification: `clipboardLock` is what makes calling it from any thread safe.
@@ -175,6 +182,21 @@ public struct SelectionReader: Sendable {
         // returns the string — so the `return copied` below is not racing this.
         defer { snapshot.restore(to: pasteboard) }
 
+        // These two assignments are load-bearing, not tidiness. Do not delete them.
+        //
+        // The hotkey fires on key *down*, so the user is still physically holding its
+        // modifiers when this runs, and `CGEvent(keyboardEventSource:)` pre-loads the live
+        // hardware modifier state into the new event at construction time. Measured with a
+        // passive tap and with a real AppKit application in front: built while ⌥⌘ was held,
+        // the event came out already carrying CMD+OPT; built while ⇧ was held, SHIFT. With
+        // these assignments the target application receives exactly CMD in every
+        // configuration; with them removed it receives ⌥⌘C — a different command in real
+        // applications, and one that would work for whoever chose a harmless hotkey and fail
+        // mysteriously for everyone else.
+        //
+        // The merge happens at construction, not at post: `.cgSessionEventTap`,
+        // `.privateState` and `.combinedSessionState` all behave identically, and clearing
+        // the modifiers beforehand changes nothing. The assignment is the whole fix.
         down.flags = .maskCommand
         up.flags = .maskCommand
         down.post(tap: .cghidEventTap)

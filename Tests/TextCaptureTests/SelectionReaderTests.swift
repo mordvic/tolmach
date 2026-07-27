@@ -101,6 +101,8 @@ import Testing
     // instantiated from outside the module and a signature drift in `accessibilityText`,
     // `clipboardText` or `PermissionsGate.isTrusted` would go unnoticed until then. Only
     // constructed, never read: calling `read()` here would post a real ⌘C.
-    let reader = SelectionReader()
-    #expect(type(of: reader) == SelectionReader.self)
+    // The value of this test is entirely that the line below compiles; there is no assertion
+    // to make about the result that could fail, and one written anyway would read as coverage
+    // it does not provide.
+    _ = SelectionReader()
 }
