@@ -37,6 +37,13 @@ final class TranslationViewModel {
     }
 
     func translate() async {
+        // One run at a time. Two concurrent runs share `translatedText` and
+        // `clearedPrevious`, so both consumers append into the same pane and the user sees
+        // two source texts interleaved; `task = run` would also orphan the first run,
+        // leaving `cancel()` able to stop only the second, and whichever run finished last
+        // would win — possibly the older request.
+        guard state != .running else { return }
+
         let text = sourceText
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
@@ -60,16 +67,50 @@ final class TranslationViewModel {
 
         // Pieces travel through an AsyncStream rather than a Task-per-token. `onToken` is
         // called serially by the engine, and a stream preserves that order on the way to
-        // the main actor; spawning a separate `Task { @MainActor in … }` per piece would
-        // not — those are scheduled independently and could apply out of order, assembling
-        // the translation scrambled.
+        // the main actor.
+        //
+        // The per-token `Task { @MainActor in … }` alternative is rejected for two reasons,
+        // and it is worth being precise about which is which. Its ordering is *not*
+        // observably wrong today: MainActor's executor is a serial FIFO queue, so tasks
+        // enqueued serially do run in order — measured at 20k tasks, in order every time.
+        // What it lacks is the guarantee. Order there is a property of the current
+        // executor implementation, not of the language, whereas a stream's is contractual.
+        // Second, and independently: `await consumer.value` below is a barrier. It
+        // guarantees every piece the producer yielded has been applied *before* `state`
+        // flips and before `translatedText = result.final` overwrites. The per-token form
+        // has no such barrier — its stragglers merely happen to drain while this function
+        // is suspended.
         let (pieces, continuation) = AsyncStream<String>.makeStream()
         let consumer = Task { @MainActor [weak self] in
+            // Whitespace-only pieces are held here rather than triggering the clear.
+            // Discarded outright if real content never follows.
+            var pending = ""
             for await piece in pieces {
                 guard let self else { return }
-                // Spec 8: a failed run must not clobber the previous result, so the old
-                // text stays until new output actually arrives.
-                if !self.clearedPrevious { self.translatedText = ""; self.clearedPrevious = true }
+                if !self.clearedPrevious {
+                    // Spec 8: a failed run must not clobber the previous result, so the
+                    // old text stays until new output actually arrives — and a bare chunk
+                    // separator is not output. `Translator` writes the "\n\n" between
+                    // chunks straight to `onToken` instead of through its `emit`, so that
+                    // piece never stamps the first-token time; counting it as output would
+                    // clear the pane for a multi-chunk run that then reports an empty
+                    // reply, which is precisely the case spec 8 says must be survivable.
+                    if piece.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        pending += piece
+                        continue
+                    }
+                    self.translatedText = ""
+                    // Dropped at the same instant the text is, so the two always describe
+                    // the same run. On the interrupted and failed paths `translatedText`
+                    // becomes the new run's partial output while `outcome` would otherwise
+                    // still hold the previous run's glossary checks and markup diffs —
+                    // and Task 9 renders warnings from it, so it would describe a document
+                    // that is no longer on screen.
+                    self.outcome = nil
+                    self.clearedPrevious = true
+                    self.translatedText += pending
+                    pending = ""
+                }
                 self.translatedText += piece
             }
         }
@@ -107,7 +148,13 @@ final class TranslationViewModel {
         } catch {
             continuation.finish()
             await consumer.value
-            state = .failed(Self.message(for: error))
+            // Ask the task, not the error. `AsyncThrowingStream.cancel()` runs
+            // `onTermination` before `finish()`, so a producer that reaches
+            // `continuation.finish(throwing:)` inside that window surfaces a
+            // `URLError(.cancelled)` — which `mapTransportError` passes through unchanged
+            // — instead of a `CancellationError`. Reporting that as `.failed` would show
+            // the user an English `localizedDescription` right after they pressed Cancel.
+            state = run.isCancelled ? .interrupted : .failed(Self.message(for: error))
         }
     }
 
