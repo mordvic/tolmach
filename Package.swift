@@ -13,5 +13,7 @@ let package = Package(
         .executableTarget(name: "acceptance", dependencies: ["TranslationCore", "OllamaKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
         .executableTarget(name: "TranslatorApp", dependencies: ["TranslationCore", "OllamaKit"],
                           exclude: ["Info.plist"], swiftSettings: [.swiftLanguageMode(.v5)]),
+        .testTarget(name: "TranslatorAppTests", dependencies: ["TranslatorApp", "TranslationCore", "OllamaKit"],
+                    swiftSettings: [.swiftLanguageMode(.v5)]),
     ]
 )
