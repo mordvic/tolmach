@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import TranslationCore
 
@@ -211,18 +212,16 @@ private struct FakeTermListFailure: Error {}
         "один", "два", "три", "четыре",
     ])
     let translator = Translator(client: fake)
-    // Collected from a @Sendable closure, so use a lock-free append via an actor-free box.
-    final class Box: @unchecked Sendable { var text = "" }
-    let box = Box()
+    let collector = TokenCollector()
     let outcome = try await translator.translate(
         text: multiChunkText, target: .ru, tone: .neutral, userGlossary: nil,
         options: ChatOptions(model: "test"), maxChunkCharacters: 200,
-        onToken: { box.text += $0 })
+        onToken: collector.onToken)
     #expect(outcome.chunks.count > 1)
     #expect(outcome.documentGlossary.isEmpty == false)
     // The glossary was built, yet none of its raw wire format reached the consumer.
-    #expect(!box.text.contains("=>"))
-    #expect(!box.text.contains("ресурс"))
+    #expect(!collector.text.contains("=>"))
+    #expect(!collector.text.contains("ресурс"))
 }
 
 @Test func theStreamReconstructsExactlyWhatFinalContains() async throws {
@@ -235,14 +234,13 @@ private struct FakeTermListFailure: Error {}
         "Here is the translation:\nпервый", "второй", "третий", "четвёртый",
     ])
     let translator = Translator(client: fake)
-    final class Box: @unchecked Sendable { var text = "" }
-    let box = Box()
+    let collector = TokenCollector()
     let outcome = try await translator.translate(
         text: multiChunkText, target: .ru, tone: .neutral, userGlossary: nil,
         options: ChatOptions(model: "test"), maxChunkCharacters: 200,
-        onToken: { box.text += $0 })
+        onToken: collector.onToken)
     #expect(outcome.chunks.count > 1)
-    #expect(box.text == outcome.final)
+    #expect(collector.text == outcome.final)
 }
 
 // MARK: - Fix 1: incremental delivery restores a TTFT a consumer can actually observe.
@@ -266,10 +264,41 @@ private struct FakeTermListFailure: Error {}
 // path asserts `callCount > 1` for exactly that reason — asserted to fail
 // against the pre-Fix-1 implementation, see the report for the revert
 // evidence.
-private final class TokenBox: @unchecked Sendable {
-    var text = ""
-    var callCount = 0
-    func onToken(_ token: String) { text += token; callCount += 1 }
+/// Collects everything `Translator.translate` hands to `onToken`.
+///
+/// `onToken` is `@escaping @Sendable` because the translator genuinely calls it
+/// from a concurrent context, so a collector shared across that boundary has to
+/// be safe to touch from either side. Every access here goes through the lock,
+/// which is what makes the `@unchecked Sendable` conformance true rather than
+/// merely asserted — a box with unguarded stored properties satisfies the
+/// compiler and still races.
+///
+/// `onToken` is a property yielding an already-`@Sendable` closure rather than a
+/// method: a partially applied method reference (`collector.onToken` where
+/// `onToken` is a `func`) produces a *non*-`@Sendable` function value, and
+/// passing one into a `@Sendable` parameter is exactly the conversion the
+/// compiler warns about. A closure literal infers `@Sendable` from this
+/// property's declared type, so call sites can keep passing `collector.onToken`
+/// directly.
+private final class TokenCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedText = ""
+    private var storedCallCount = 0
+
+    var onToken: @Sendable (String) -> Void {
+        { token in
+            self.lock.withLock {
+                self.storedText += token
+                self.storedCallCount += 1
+            }
+        }
+    }
+
+    /// Everything handed to `onToken`, in arrival order.
+    var text: String { lock.withLock { storedText } }
+    /// How many times `onToken` was called — what distinguishes true incremental
+    /// delivery from a single buffered emit that reconstructs the same text.
+    var callCount: Int { lock.withLock { storedCallCount } }
 }
 
 @Test func theStreamReconstructsExactlyWhatFinalContainsOnTheIncrementalPathWithNoPreamble() async throws {
@@ -281,14 +310,14 @@ private final class TokenBox: @unchecked Sendable {
     // line was dropped instead of being included in the first emission.
     let fake = FakeLLMClient(responses: ["First line of content.\nSecond line of content.\nThird line."])
     let translator = Translator(client: fake)
-    let box = TokenBox()
+    let collector = TokenCollector()
     let outcome = try await translator.translate(
         text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
         options: ChatOptions(model: "test"), maxChunkCharacters: 900,
-        onToken: box.onToken)
+        onToken: collector.onToken)
     #expect(outcome.final == "First line of content.\nSecond line of content.\nThird line.")
-    #expect(box.text == outcome.final)
-    #expect(box.callCount > 1)
+    #expect(collector.text == outcome.final)
+    #expect(collector.callCount > 1)
 }
 
 @Test func aPreambleIsStrippedOnTheIncrementalPathAndNeverReachesOnToken() async throws {
@@ -302,15 +331,15 @@ private final class TokenBox: @unchecked Sendable {
         "Here is the translation:\nFirst line of content.\nSecond line of content.",
     ])
     let translator = Translator(client: fake)
-    let box = TokenBox()
+    let collector = TokenCollector()
     let outcome = try await translator.translate(
         text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
         options: ChatOptions(model: "test"), maxChunkCharacters: 900,
-        onToken: box.onToken)
-    #expect(!box.text.contains("Here is the translation"))
+        onToken: collector.onToken)
+    #expect(!collector.text.contains("Here is the translation"))
     #expect(outcome.final == "First line of content.\nSecond line of content.")
-    #expect(box.text == outcome.final)
-    #expect(box.callCount > 1)
+    #expect(collector.text == outcome.final)
+    #expect(collector.callCount > 1)
 }
 
 @Test func theStreamReconstructsExactlyWhatFinalContainsOnTheBufferedFencePath() async throws {
@@ -325,14 +354,14 @@ private final class TokenBox: @unchecked Sendable {
         "```\nHello there, this spans multiple lines.\nSecond line here.\n```",
     ])
     let translator = Translator(client: fake)
-    let box = TokenBox()
+    let collector = TokenCollector()
     let outcome = try await translator.translate(
         text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
         options: ChatOptions(model: "test"), maxChunkCharacters: 900,
-        onToken: box.onToken)
+        onToken: collector.onToken)
     #expect(outcome.final == "Hello there, this spans multiple lines.\nSecond line here.")
-    #expect(box.text == outcome.final)
-    #expect(box.callCount == 1)
+    #expect(collector.text == outcome.final)
+    #expect(collector.callCount == 1)
 }
 
 @Test func theStreamReconstructsExactlyWhatFinalContainsForASingleLineReply() async throws {
@@ -342,14 +371,14 @@ private final class TokenBox: @unchecked Sendable {
     // call, and the third shape the invariant must hold on.
     let fake = FakeLLMClient(responses: ["Привет, мир."])
     let translator = Translator(client: fake)
-    let box = TokenBox()
+    let collector = TokenCollector()
     let outcome = try await translator.translate(
         text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
         options: ChatOptions(model: "test"), maxChunkCharacters: 900,
-        onToken: box.onToken)
+        onToken: collector.onToken)
     #expect(outcome.final == "Привет, мир.")
-    #expect(box.text == outcome.final)
-    #expect(box.callCount == 1)
+    #expect(collector.text == outcome.final)
+    #expect(collector.callCount == 1)
 }
 
 @Test func timeToFirstTokenIsMeasuredFromTheFirstEmissionNotChunkCompletion() async throws {
@@ -401,14 +430,14 @@ private final class TokenBox: @unchecked Sendable {
     let reply = String(repeating: "x", count: 90)
     let fake = FakeLLMClient(responses: [reply])
     let translator = Translator(client: fake)
-    let box = TokenBox()
+    let collector = TokenCollector()
     let outcome = try await translator.translate(
         text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
         options: ChatOptions(model: "test"), maxChunkCharacters: 900,
-        onToken: box.onToken)
+        onToken: collector.onToken)
     #expect(outcome.final == reply)
-    #expect(box.text == outcome.final)
-    #expect(box.callCount > 1)
+    #expect(collector.text == outcome.final)
+    #expect(collector.callCount > 1)
 }
 
 @Test func aShortPreambleFollowedByANewlineIsStillStrippedWithTheLengthConditionInPlace() async throws {
@@ -418,14 +447,14 @@ private final class TokenBox: @unchecked Sendable {
     // newline-triggered preamble decision (condition 1) must still win.
     let fake = FakeLLMClient(responses: ["Translation:\nActual content of the reply."])
     let translator = Translator(client: fake)
-    let box = TokenBox()
+    let collector = TokenCollector()
     let outcome = try await translator.translate(
         text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
         options: ChatOptions(model: "test"), maxChunkCharacters: 900,
-        onToken: box.onToken)
-    #expect(!box.text.contains("Translation:"))
+        onToken: collector.onToken)
+    #expect(!collector.text.contains("Translation:"))
     #expect(outcome.final == "Actual content of the reply.")
-    #expect(box.text == outcome.final)
+    #expect(collector.text == outcome.final)
 }
 
 @Test func aReplyUnderTheLengthThresholdWithNoNewlineStillTakesTheEndOfStreamFallback() async throws {
@@ -436,14 +465,14 @@ private final class TokenBox: @unchecked Sendable {
     let reply = String(repeating: "y", count: 40)
     let fake = FakeLLMClient(responses: [reply])
     let translator = Translator(client: fake)
-    let box = TokenBox()
+    let collector = TokenCollector()
     let outcome = try await translator.translate(
         text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
         options: ChatOptions(model: "test"), maxChunkCharacters: 900,
-        onToken: box.onToken)
+        onToken: collector.onToken)
     #expect(outcome.final == reply)
-    #expect(box.text == outcome.final)
-    #expect(box.callCount == 1)
+    #expect(collector.text == outcome.final)
+    #expect(collector.callCount == 1)
 }
 
 // Both tests below synchronize on `FakeLLMClient.onCallStart` rather than a sleep
@@ -480,14 +509,13 @@ private func makeCallStartSignal() -> (onCallStart: @Sendable (Int) -> Void, wai
         "первый", "второй", "третий", "четвёртый",
     ], delayPerToken: .milliseconds(20), onCallStart: onCallStart)
     let translator = Translator(client: fake)
-    final class Box: @unchecked Sendable { var text = "" }
-    let box = Box()
+    let collector = TokenCollector()
 
     let task = Task {
         try await translator.translate(
             text: multiChunkText, target: .ru, tone: .neutral, userGlossary: nil,
             options: ChatOptions(model: "test"), maxChunkCharacters: 200,
-            onToken: { box.text += $0 })
+            onToken: collector.onToken)
     }
     await waitFor(0) // call 0: the term-list call has just started
     task.cancel()
@@ -498,7 +526,7 @@ private func makeCallStartSignal() -> (onCallStart: @Sendable (Int) -> Void, wai
     // Only the term-list call was ever issued: cancellation was caught by the
     // `Task.checkCancellation()` right after it, before the per-chunk loop began.
     #expect(fake.receivedMessages.count == 1)
-    #expect(box.text.isEmpty)
+    #expect(collector.text.isEmpty)
 }
 
 @Test func cancellingDuringThePerChunkLoopThrowsInsteadOfReturningATruncatedDocument() async throws {
@@ -508,14 +536,13 @@ private func makeCallStartSignal() -> (onCallStart: @Sendable (Int) -> Void, wai
         "первый", "второй", "третий", "четвёртый",
     ], delayPerToken: .milliseconds(20), onCallStart: onCallStart)
     let translator = Translator(client: fake)
-    final class Box: @unchecked Sendable { var text = "" }
-    let box = Box()
+    let collector = TokenCollector()
 
     let task = Task {
         try await translator.translate(
             text: multiChunkText, target: .ru, tone: .neutral, userGlossary: nil,
             options: ChatOptions(model: "test"), maxChunkCharacters: 200,
-            onToken: { box.text += $0 })
+            onToken: collector.onToken)
     }
     await waitFor(1) // call 1: the first per-chunk translation call has just started
     task.cancel()
@@ -535,7 +562,7 @@ private func makeCallStartSignal() -> (onCallStart: @Sendable (Int) -> Void, wai
     // cancellation landed in rather than running to completion.
     #expect(fake.receivedMessages.count == 2)
     #expect(fake.receivedMessages.count < 1 + chunkCount)
-    #expect(box.text.isEmpty) // no chunk had finished, so onToken never fired
+    #expect(collector.text.isEmpty) // no chunk had finished, so onToken never fired
 }
 
 // MARK: - CC-3: markupDiffs must compare against what the model was actually shown.
