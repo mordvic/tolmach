@@ -91,14 +91,16 @@ import Foundation
             == "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
 }
 
-@Test func checkingTrustDoesNotPrompt() {
-    // `isTrusted()` runs on every hotkey press. If it ever passed the prompt option, the
-    // user would get a system dialog every time they pressed the key. There is no way to
-    // observe "a dialog did not appear" from a test process, so what is pinned instead is
-    // that the call is cheap and repeatable — a prompting variant blocks on UI.
-    let start = Date()
-    for _ in 0..<50 { _ = PermissionsGate.isTrusted() }
-    #expect(Date().timeIntervalSince(start) < 1.0)
+@Test func theTwoEntryPointsAskForOppositePromptBehaviour() {
+    // `isTrusted()` runs on every hotkey press; if it ever passed the prompt option the
+    // user would get a system dialog on every press. A test process cannot observe whether
+    // a dialog appeared — `AXIsProcessTrustedWithOptions` returns immediately either way and
+    // posts the dialog asynchronously — so timing the call would pass with the bug present.
+    // What is pinned instead is the one thing that is observable: the option each entry
+    // point builds. That is why the dictionary construction is a function of its own.
+    let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+    #expect(PermissionsGate.trustOptions(prompting: false)[key] == false)
+    #expect(PermissionsGate.trustOptions(prompting: true)[key] == true)
 }
 ```
 
@@ -122,9 +124,17 @@ import AppKit
 /// The hotkey does *not* need it — `RegisterEventHotKey` is a Carbon API with no TCC gate —
 /// which is why the app can still react to the key press and explain itself.
 public enum PermissionsGate {
+    /// A function rather than two inline literals, because it is the only part of this
+    /// type a test can actually look at: `AXIsProcessTrustedWithOptions` returns the same
+    /// value whether or not it prompts, and posts its dialog asynchronously, so nothing
+    /// downstream distinguishes the two calls from inside a test process.
+    static func trustOptions(prompting: Bool) -> [String: Bool] {
+        [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: prompting]
+    }
+
     /// Never prompts. Safe to call on every hotkey press.
     public static func isTrusted() -> Bool {
-        AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: false] as CFDictionary)
+        AXIsProcessTrustedWithOptions(trustOptions(prompting: false) as CFDictionary)
     }
 
     /// Prompts, and returns the state *before* the user answers — the system dialog is
@@ -132,7 +142,7 @@ public enum PermissionsGate {
     /// by this call returning true.
     @discardableResult
     public static func requestTrust() -> Bool {
-        AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
+        AXIsProcessTrustedWithOptions(trustOptions(prompting: true) as CFDictionary)
     }
 
     public static let settingsURL = URL(
