@@ -4,12 +4,10 @@ import Observation
 @testable import TranslatorApp
 @testable import TranslationCore
 
-private func freshDefaults() -> UserDefaults {
-    let suite = "test-\(UUID().uuidString)"
-    let defaults = UserDefaults(suiteName: suite)!
-    defaults.removePersistentDomain(forName: suite)
-    return defaults
-}
+/// An empty, isolated defaults store per test. In-memory rather than a real
+/// `UserDefaults` suite, because a suite that gets written to leaves a plist in
+/// ~/Library/Preferences that nothing can reliably remove — see `InMemoryDefaults`.
+private func freshDefaults() -> InMemoryDefaults { InMemoryDefaults(prefix: "test") }
 
 @Test func factoryValuesMatchTheSpec() {
     let settings = AppSettings(defaults: freshDefaults())
@@ -37,18 +35,19 @@ private func freshDefaults() -> UserDefaults {
 /// The hand-check the Settings task asked for — change the primary language, quit,
 /// relaunch, see it stick — needs a GUI this environment does not have. Its actual claim
 /// does not: `AppSettings` caches nothing in memory, so a second instance over the same
-/// suite sees precisely what a relaunched app would read off disk. These five are the
+/// store sees precisely what a relaunched app would read back. These five are the
 /// properties the General tab binds. `valuesSurviveAReload` above happens to cover two of
 /// them; this covers the tab's whole set on purpose, so adding a control to that tab
 /// without a working setter behind it fails here.
 ///
-/// Written without `freshDefaults()` because removing the suite afterwards needs its name
-/// and the helper does not hand it back. This test writes to every key it reads, so
-/// leaving the domain behind would drop a plist into ~/Library/Preferences on every run.
+/// What this pins is that every General-tab setter writes through to the store and every
+/// getter reads back from it, with nothing cached in between — the failure it is built to
+/// catch is a setter that silently drops its write. The store is in-memory (see
+/// `InMemoryDefaults`), so the round trip is no longer through a plist on disk; the values
+/// involved are strings, ints, doubles and bools, which is not where a serialisation bug
+/// would hide, and the alternative was leaking a preferences file on every single run.
 @Test func everySettingTheGeneralTabBindsSurvivesARelaunch() {
-    let suite = "test-\(UUID().uuidString)"
-    let defaults = UserDefaults(suiteName: suite)!
-    defer { defaults.removePersistentDomain(forName: suite) }
+    let defaults = freshDefaults()
 
     let beforeQuit = AppSettings(defaults: defaults)
     // Every value differs from the factory default, so a setter that quietly drops its

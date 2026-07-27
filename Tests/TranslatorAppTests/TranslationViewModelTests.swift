@@ -38,9 +38,11 @@ private final class ThrowingClient: LLMClient, @unchecked Sendable {
 
 @MainActor
 private func makeModel(_ client: LLMClient) -> TranslationViewModel {
-    let defaults = UserDefaults(suiteName: "vm-\(UUID().uuidString)")!
+    // In-memory rather than a real `UserDefaults` suite: nothing here writes a
+    // setting today, but a suite that ever gets written to leaves a plist behind in
+    // ~/Library/Preferences that nothing can reliably remove — see `InMemoryDefaults`.
     return TranslationViewModel(translator: Translator(client: client),
-                                settings: AppSettings(defaults: defaults),
+                                settings: AppSettings(defaults: InMemoryDefaults(prefix: "vm")),
                                 glossary: GlossaryStore(url: FileManager.default.temporaryDirectory
                                     .appendingPathComponent("g-\(UUID().uuidString).json")))
 }
