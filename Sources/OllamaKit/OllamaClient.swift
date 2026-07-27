@@ -77,3 +77,74 @@ public struct OllamaClient: LLMClient {
         }
     }
 }
+
+public struct RunningModel: Sendable {
+    public let name: String
+}
+
+public struct PullProgress: Sendable, Equatable {
+    public let status: String
+    public let completed: Int64
+    public let total: Int64
+    /// Nil when the server sent no byte counts — many pull lines are bare status
+    /// updates, and a fabricated 0% would make the bar jump backwards.
+    public var fraction: Double? {
+        total > 0 ? Double(completed) / Double(total) : nil
+    }
+}
+
+public enum PullProgressParser {
+    public static func parse(line: String) -> PullProgress? {
+        guard !line.isEmpty, let data = line.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let status = object["status"] as? String else { return nil }
+        return PullProgress(status: status,
+                            completed: (object["completed"] as? NSNumber)?.int64Value ?? 0,
+                            total: (object["total"] as? NSNumber)?.int64Value ?? 0)
+    }
+}
+
+extension OllamaClient {
+    public func ps() async throws -> [RunningModel] {
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(from: baseURL.appendingPathComponent("api/ps"))
+        } catch { throw Self.mapTransportError(error) }
+        guard let http = response as? HTTPURLResponse else { throw OllamaError.notRunning }
+        guard http.statusCode == 200 else {
+            throw OllamaError.httpStatus(http.statusCode, String(data: data, encoding: .utf8) ?? "")
+        }
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let raw = object["models"] as? [[String: Any]] else {
+            throw OllamaError.decoding("unexpected /api/ps shape")
+        }
+        return raw.compactMap { ($0["name"] as? String).map(RunningModel.init(name:)) }
+    }
+
+    public func pull(model: String) -> AsyncThrowingStream<PullProgress, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    var request = URLRequest(url: baseURL.appendingPathComponent("api/pull"))
+                    request.httpMethod = "POST"
+                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    request.httpBody = try JSONSerialization.data(
+                        withJSONObject: ["model": model, "stream": true])
+                    let (bytes, response) = try await session.bytes(for: request)
+                    guard let http = response as? HTTPURLResponse else { throw OllamaError.notRunning }
+                    guard http.statusCode == 200 else {
+                        throw OllamaError.httpStatus(http.statusCode, "see ollama logs")
+                    }
+                    for try await line in bytes.lines {
+                        if let progress = PullProgressParser.parse(line: line) {
+                            continuation.yield(progress)
+                        }
+                    }
+                    continuation.finish()
+                } catch { continuation.finish(throwing: Self.mapTransportError(error)) }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+}
