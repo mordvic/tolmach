@@ -128,7 +128,18 @@ struct MainWindowView: View {
             Text("Перевод прерван — показана та часть, что успела прийти")
                 .font(.caption).foregroundStyle(.orange)
         case .failed(let message):
-            Text(message).font(.caption).foregroundStyle(.red)
+            // Spec 8 pairs both failure rows — a timed-out request and an empty model reply
+            // — with a retry, and Plan 2 built the states but never the button. Reachable:
+            // `translate()` opens with `guard state != .running`, and `.failed` is not
+            // `.running`, so the guard passes. The source text is still in the editor, so
+            // retrying costs the user nothing but the wait.
+            HStack(spacing: 8) {
+                Text(message).font(.caption).foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Повторить") { Task { await model.translate() } }
+                    .font(.caption)
+                Spacer()
+            }
         }
     }
 }
