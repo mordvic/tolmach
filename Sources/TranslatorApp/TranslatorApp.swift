@@ -58,6 +58,16 @@ struct TranslatorApp: App {
                            glossary: glossary, status: statusModel.status)
                 .task { await statusModel.refresh(interactiveModel: settings.interactiveModel) }
         }
+
+        // Declared last for the same reason `Window` is not first: whatever SwiftUI counts
+        // as a window-bearing scene, the one it may open at launch is the first, and that
+        // has to stay the `MenuBarExtra`.
+        Settings {
+            TabView {
+                SettingsGeneralView(settings: settings)
+                    .tabItem { Text("Основные") }
+            }
+        }
     }
 
     static let mainWindowID = "main"
@@ -75,6 +85,22 @@ private struct MenuContent: View {
             // and a freshly opened window would come up behind whatever the user was in.
             NSApp.activate(ignoringOtherApps: true)
         }
+        // There is no application menu in an `LSUIElement` app, so the standard ⌘,
+        // does not exist and this is the only way into the `Settings` scene.
+        // `SettingsLink` is macOS 14+, i.e. available at the floor, and is preferable to
+        // sending `showSettingsWindow:` by selector — a private-ish action whose name has
+        // already changed once across releases. The label is supplied because the
+        // no-argument initialiser renders the system's English «Settings».
+        //
+        // The button above works around this app not being activated by a menu click;
+        // `SettingsLink` exposes no action to hang that on. Measured on the real bundle:
+        // the settings window opens (420x450, visible) with `NSApp.isActive == false` and
+        // no key window, so the caveat applies here too — the pane comes up unfocused
+        // until it is clicked. Fixing it would mean swapping this standard control for a
+        // `Button` calling `openSettings()` plus `NSApp.activate`, and nothing in this
+        // environment could show that `activate` takes effect, so the standard control
+        // stays and the caveat is written down instead of papered over.
+        SettingsLink { Text("Настройки…") }
         Divider()
         Button("Выйти") { NSApp.terminate(nil) }
     }

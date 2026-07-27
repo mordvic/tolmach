@@ -20,6 +20,34 @@ extension Tone {
     }
 }
 
+extension Language {
+    /// `englishName` is prompt material — the model is told "translate into German" — and
+    /// the two-letter `rawValue`/`shortCode` is a code, not a word. Neither belongs in a
+    /// sentence on a Russian screen, so the settings pickers get their own labels here,
+    /// next to `Tone.russianName` and for the same reason.
+    ///
+    /// Nominative singular and lowercase, the way a language is named in running Russian
+    /// text («перевод на немецкий»), not the English habit of capitalising it. All nine
+    /// happen to be masculine adjectives, so this form also reads correctly as the direct
+    /// object of «переводится на …» in the same-language warning.
+    ///
+    /// Exhaustive with no `default:` on purpose: a tenth `Language` case should fail to
+    /// compile here instead of quietly showing the user nothing.
+    var russianName: String {
+        switch self {
+        case .ru: "русский"
+        case .en: "английский"
+        case .de: "немецкий"
+        case .fr: "французский"
+        case .es: "испанский"
+        case .pt: "португальский"
+        case .it: "итальянский"
+        case .zh: "китайский (упрощённый)"
+        case .ja: "японский"
+        }
+    }
+}
+
 enum RussianCopy {
     /// Russian nouns after a number take one of three forms, chosen by the last two
     /// digits of the count:

@@ -26,6 +26,41 @@ import Foundation
     }
 }
 
+@Test func everyLanguageHasANonEmptyRussianName() {
+    for language in Language.allCases {
+        #expect(!language.russianName.trimmingCharacters(in: .whitespaces).isEmpty,
+                "\(language.rawValue) has no Russian name")
+    }
+}
+
+@Test func languageNamesAreDistinct() {
+    let names = Language.allCases.map(\.russianName)
+    #expect(Set(names).count == Language.allCases.count)
+}
+
+/// `Language.englishName` exists for the *prompt* — the model is told "translate into
+/// German" — and reaching for it in a picker is the easy mistake, since it is the only
+/// name the type ships. Latin letters in a label mean `englishName`, or the raw code,
+/// leaked onto a Russian screen.
+@Test func languageNamesContainNoLatinLetters() {
+    let latin = CharacterSet(charactersIn: "a"..."z").union(CharacterSet(charactersIn: "A"..."Z"))
+    for language in Language.allCases {
+        #expect(language.russianName.rangeOfCharacter(from: latin) == nil,
+                "\(language.rawValue) → «\(language.russianName)» contains Latin letters")
+    }
+}
+
+/// Language names are written lowercase in running Russian text, unlike English, and the
+/// pickers put them in a sentence-shaped list. Capitalising them is the transliteration
+/// of an English habit, so it is worth pinning rather than trusting to review.
+@Test func languageNamesAreLowercase() {
+    for language in Language.allCases {
+        let first = language.russianName.first
+        #expect(first?.isUppercase == false,
+                "\(language.rawValue) → «\(language.russianName)» starts with a capital")
+    }
+}
+
 /// Russian picks one of three forms from the last two digits, and 11-14 are the trap: they
 /// end in 1-4 but take the same form as 5-20. The whole 11-14 span is listed rather than
 /// just its ends, because the branch is a range test and an off-by-one at either edge
