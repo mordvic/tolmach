@@ -882,12 +882,32 @@ public struct SelectionReader: Sendable {
         return selected as? String
     }
 
+    /// Serialises the whole snapshot → copy → poll → restore sequence against itself.
+    ///
+    /// Not optional. `NSPasteboard`'s per-name item cache is built without synchronisation,
+    /// and two threads reading `pasteboardItems` for the same name abort the process with an
+    /// uncaught `NSException` — measured 10 times out of 10, and 0 out of 10 for distinct
+    /// names. `NSPasteboard.general` is a single shared name, so every caller of this function
+    /// is on the same board. The race is intra-process, which is exactly why a lock closes it.
+    ///
+    /// A lock rather than `@MainActor`: the poll below busy-waits for up to half a second,
+    /// and running that on the main actor would stall the run loop on every fallback press.
+    private static let clipboardLock = NSLock()
+
     /// The fallback: post ⌘C and read what lands, then put the user's clipboard back.
     ///
-    /// The wait is a poll on `changeCount` rather than a fixed sleep. A sleep long enough to
-    /// be safe on a slow app is a visible stall on every press, and one short enough to feel
-    /// instant loses the text on a slow one — the poll is both.
+    /// The wait is a poll rather than a fixed sleep. A sleep long enough to be safe on a slow
+    /// app is a visible stall on every press, and one short enough to feel instant loses the
+    /// text on a slow one — the poll is both.
+    ///
+    /// It polls for a **non-nil string**, not merely for `changeCount` to move. Measured:
+    /// `clearContents()` bumps the counter *before* any data is written, and the subsequent
+    /// write does not bump it again. Returning on the first observed change therefore samples
+    /// the copying application's cleared-but-not-yet-written window and yields `nil` — an
+    /// intermittent «выделите текст» on a perfectly good selection.
     public static func clipboardText() -> String? {
+        clipboardLock.lock()
+        defer { clipboardLock.unlock() }
         let pasteboard = NSPasteboard.general
         let snapshot = PasteboardSnapshot.take(from: pasteboard)
         defer { snapshot.restore(to: pasteboard) }
@@ -905,8 +925,9 @@ public struct SelectionReader: Sendable {
 
         let deadline = Date().addingTimeInterval(0.5)
         while Date() < deadline {
-            if pasteboard.changeCount != snapshot.changeCount {
-                return pasteboard.string(forType: .string)
+            if pasteboard.changeCount != snapshot.changeCount,
+               let copied = pasteboard.string(forType: .string) {
+                return copied
             }
             usleep(10_000)
         }

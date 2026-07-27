@@ -18,11 +18,28 @@ import AppKit
 ///
 /// **Not thread-safe, because `NSPasteboard` is not.** Two threads reading the same
 /// pasteboard at once abort the process: `-[NSPasteboard pasteboardItems]` raises an
-/// uncaught `NSException` («value not absent»). Measured at 10 aborts in 10 runs, on a
-/// shared object and on fresh objects for the same name alike, and whether the data was
-/// written by this process or another. The app's pasteboard is `NSPasteboard.general`, a
-/// process-wide singleton, so `take` and `restore` have to stay on one thread — in practice
-/// the main actor, where the hotkey handler runs.
+/// uncaught `NSException`. Measured at 10 aborts in 10 runs, on a shared object and on fresh
+/// objects for the same name alike, and whether the data was written by this process or
+/// another; the exception varies — «value not absent» and `NSRangeException` from the same
+/// race — so do not match on its name. Distinct names never aborted, 0 in 10, which is what
+/// identifies the corrupted state as a per-name item cache rather than anything global. The
+/// app's pasteboard is `NSPasteboard.general`, a process-wide singleton, so `take` and
+/// `restore` have to be serialised by their caller.
+///
+/// **Three things a snapshot provably cannot put back**, all properties of `NSPasteboard`
+/// rather than choices made here. Each still leaves the user better off than the no-snapshot
+/// baseline, which destroys the clipboard outright — but none of them should be discovered
+/// later by surprise:
+///
+/// - **File promises are downgraded, and the board still looks intact.** An
+///   `NSFilePromiseProvider`'s metadata flavours all round-trip byte-identically and a
+///   receiver still reads them, but fulfilment calls back to the pasteboard's *owner*, which
+///   after the restore is this app, with nothing to serve it.
+/// - **Ownership is lost.** It can only be set through `declareTypes(_:owner:)`, and the
+///   original owner is a different process. No implementation can preserve it.
+/// - **`changeCount` cannot be restored.** It is monotonic and server-owned, and the restore
+///   itself bumps it, so a clipboard manager sees one extra entry per hotkey press. «The
+///   clipboard is untouched» is true of the contents, not of the counter.
 public struct PasteboardSnapshot: Equatable {
     /// One flavour of one item: the pasteboard type's raw string and its exact bytes.
     public struct Flavour: Equatable {
