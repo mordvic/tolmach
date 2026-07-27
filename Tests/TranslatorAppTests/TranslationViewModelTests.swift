@@ -150,7 +150,11 @@ private func makeModel(_ client: LLMClient) -> TranslationViewModel {
     // shorter than `preambleLineMaxLength` (60) and unmatched by any preamble pattern, so
     // the "\n" flushes the first line and every subsequent token is forwarded on its own.
     let firstLine = "Первая строка.\n"   // 15 characters — the entire buffered-flush phase
-    let reply = firstLine + String(repeating: "б", count: 400)
+    // The tail cycles digits rather than repeating one character on purpose. With 400
+    // identical letters every permutation of the tail pieces is byte-identical, so
+    // `hasPrefix` would hold even under scrambled assembly and the oracle below would
+    // pin nothing but reversal. Varied content makes position observable.
+    let reply = firstLine + (0..<400).map { String($0 % 10) }.joined()
     let client = ScriptedClient(responses: [reply], delayPerToken: .milliseconds(5))
     let model = makeModel(client)
     model.sourceText = String(repeating: "x ", count: 40)
@@ -160,8 +164,8 @@ private func makeModel(_ client: LLMClient) -> TranslationViewModel {
     await run.value
 
     #expect(model.state == .interrupted)
-    // The ordering assertion. Pieces applied out of order do not form a prefix of the
-    // reply, however many of them arrived.
+    // The ordering assertion. Because the tail is varied, pieces applied out of order do
+    // not form a prefix of the reply, however many of them arrived.
     #expect(reply.hasPrefix(model.translatedText))
     #expect(model.translatedText.count < reply.count)   // genuinely interrupted mid-stream
     // Above the 15-character buffered flush by enough that only incremental delivery can
