@@ -51,3 +51,43 @@ private func tempURL() -> URL {
     // And nothing was overwritten: the bad file is still on disk for the user to fix.
     #expect(try String(contentsOf: url, encoding: .utf8) == "{ not json")
 }
+
+@Test func savingBeforeLoadingRefusesAndLeavesNoFileBehind() throws {
+    // The clobber this gate exists to prevent: a store that has never read the user's
+    // file holds an empty `GlossaryFile`, so a save would write emptiness over a
+    // hand-authored glossary. Throwing is only half the requirement — a save that threw
+    // *after* writing would have destroyed the data just the same, so the absence of the
+    // file is the assertion that matters.
+    let url = tempURL()
+    let store = GlossaryStore(url: url)
+    #expect(!store.isLoaded)
+    #expect(throws: GlossaryStoreError.saveBeforeLoad) { try store.save() }
+    #expect(!FileManager.default.fileExists(atPath: url.path))
+}
+
+@Test func loadingFirstUnlocksSavingAndTheFileRoundTrips() throws {
+    let url = tempURL()
+    let store = GlossaryStore(url: url)
+    try store.load()
+    #expect(store.isLoaded)
+    store.mute("FHIR")
+    try store.save()
+    #expect(FileManager.default.fileExists(atPath: url.path))
+
+    let reloaded = GlossaryStore(url: url)
+    try reloaded.load()
+    #expect(reloaded.file == store.file)
+    #expect(reloaded.mutedSet.contains("fhir"))
+}
+
+@Test func aFailedLoadLeavesTheStoreLockedSoTheBadFileSurvives() throws {
+    // C2.2's promise in test form: a malformed file is recorded, not swallowed, and
+    // because the gate never opened nothing downstream can overwrite it.
+    let url = tempURL()
+    try "{ not json".write(to: url, atomically: true, encoding: .utf8)
+    let store = GlossaryStore(url: url)
+    #expect(throws: (any Error).self) { try store.load() }
+    #expect(!store.isLoaded)
+    #expect(throws: GlossaryStoreError.saveBeforeLoad) { try store.save() }
+    #expect(try String(contentsOf: url, encoding: .utf8) == "{ not json")
+}

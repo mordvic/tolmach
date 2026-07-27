@@ -5,6 +5,9 @@ import TranslationCore
 struct MainWindowView: View {
     @Bindable var model: TranslationViewModel
     @Bindable var settings: AppSettings
+    /// Plain `let`, not `@Bindable`: nothing here binds to the store, it is only read
+    /// (`lastProblem`) and messaged (`mute`/`save`). Observation still tracks the reads.
+    let glossary: GlossaryStore
     /// The value, not the `OllamaStatusModel`. The window only reads the status; the app
     /// owns the model and the refresh schedule.
     let status: OllamaStatus
@@ -20,9 +23,34 @@ struct MainWindowView: View {
                     .font(.body).frame(minWidth: 280, minHeight: 260)
             }
             statusLine
+            if let outcome = model.outcome, model.state == .finished {
+                WarningsView(outcome: outcome,
+                             target: model.resolvedTarget,
+                             problem: glossary.lastProblem,
+                             onMute: mute)
+            }
         }
         .padding(16)
         .frame(minWidth: 640, minHeight: 460)
+    }
+
+    /// Muting is two steps and only the first is guaranteed. `mute` updates the in-memory
+    /// list, so the term is already hidden for this session; `save` is what makes that
+    /// survive a restart, and it can fail — most importantly when the glossary never
+    /// loaded, in which case `GlossaryStore` refuses rather than overwriting the user's
+    /// file. A `try?` here would leave the user believing the term is gone for good.
+    private func mute(_ term: String) {
+        glossary.mute(term)
+        do {
+            try glossary.save()
+            glossary.lastProblem = nil
+        } catch GlossaryStoreError.saveBeforeLoad {
+            glossary.lastProblem = "Глоссарий не был прочитан, поэтому список скрытых терминов не сохранён. "
+                + "«\(term)» скрыт только до перезапуска."
+        } catch {
+            glossary.lastProblem = "Не удалось сохранить глоссарий, «\(term)» скрыт только до перезапуска: "
+                + error.localizedDescription
+        }
     }
 
     private var controls: some View {

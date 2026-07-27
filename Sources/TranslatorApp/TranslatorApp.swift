@@ -18,6 +18,18 @@ struct TranslatorApp: App {
     init() {
         let settings = AppSettings()
         let glossary = GlossaryStore()
+        // Read the user's glossary before anything in the app can write it. `save()` is
+        // gated on a successful `load()`, so a failure here is contained rather than
+        // compounded: `isLoaded` stays false, «не показывать» refuses to persist, and the
+        // file the user still has on disk cannot be overwritten by this session. The
+        // failure is recorded instead of swallowed — starting silently blank would tell
+        // the user their glossary is empty when it is merely unread.
+        do {
+            try glossary.load()
+        } catch {
+            glossary.lastProblem = "Не удалось прочитать глоссарий, перевод идёт без него. "
+                + "Файл на диске не изменён: \(error.localizedDescription)"
+        }
         let statusModel = OllamaStatusModel()
         let translation = TranslationViewModel(
             translator: Translator(client: OllamaClient()),
@@ -42,7 +54,8 @@ struct TranslatorApp: App {
         }
 
         Window("Толмач", id: TranslatorApp.mainWindowID) {
-            MainWindowView(model: translation, settings: settings, status: statusModel.status)
+            MainWindowView(model: translation, settings: settings,
+                           glossary: glossary, status: statusModel.status)
                 .task { await statusModel.refresh(interactiveModel: settings.interactiveModel) }
         }
     }

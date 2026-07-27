@@ -21,6 +21,11 @@ final class TranslationViewModel {
     var translatedText = ""
     var state: TranslationState = .idle
     var outcome: TranslationOutcome?
+    /// The target the last run actually resolved — the override if there was one, the
+    /// settings rule otherwise. `TranslationOutcome` carries no target, and
+    /// `GlossaryEntry.translations` is keyed by language, so without this the warnings
+    /// panel could only guess which translation of a term to show.
+    private(set) var resolvedTarget: Language?
     /// Overridden in the main window when the user picks a source explicitly.
     var sourceOverride: Language?
     var targetOverride: Language?
@@ -49,6 +54,7 @@ final class TranslationViewModel {
 
         let detected = sourceOverride ?? LanguageDetector.detect(text)
         let target = targetOverride ?? settings.targetLanguage(forDetected: detected)
+        resolvedTarget = target
         let tone = toneOverride ?? settings.defaultTone
         let options = ChatOptions(model: settings.interactiveModel,
                                   temperature: settings.temperature,
