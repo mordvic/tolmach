@@ -49,11 +49,20 @@ struct MainWindowView: View {
                 // greedy in its scroll axis: it would sit at the full 140 under a two-line
                 // warning and leave the rest blank. This takes the plain stack's own height
                 // while that fits, and only falls back to scrolling once it does not.
-                ViewThatFits(in: .vertical) {
-                    warnings
-                    ScrollView { warnings }
+                //
+                // Gated on `hasContent` for the same reason the panel is: an outcome with no
+                // diffs, no missing terms and no document glossary draws an empty `VStack`,
+                // and reserving 140pt for it is reserving space for nothing. Measured in the
+                // panel, where the cost was 86 of 260 points; not measured here, where the
+                // editors' floor absorbs more of it — applied because "do not reserve space
+                // for something that will not draw" is right either way.
+                if warnings.hasContent {
+                    ViewThatFits(in: .vertical) {
+                        warnings
+                        ScrollView { warnings }
+                    }
+                    .frame(maxHeight: 140)
                 }
-                .frame(maxHeight: 140)
             }
         }
         .padding(16)

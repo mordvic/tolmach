@@ -236,7 +236,7 @@ struct TranslatorApp: App {
         // The app is an `LSUIElement` and the panel is non-activating, so nothing so far has
         // brought it to the foreground; without this the window opens behind the application
         // the user was reading.
-        NSApp.activate(ignoringOtherApps: true)
+        activateThisApp()
     }
 
     /// One throwaway request at launch, so the first hotkey press does not pay to load the
@@ -316,7 +316,7 @@ private struct MenuContent: View {
             openWindow(id: TranslatorApp.mainWindowID)
             // The app is an `LSUIElement`, so it is not activated by the menu click alone
             // and a freshly opened window would come up behind whatever the user was in.
-            NSApp.activate(ignoringOtherApps: true)
+            activateThisApp()
         }
         // There is no application menu in an `LSUIElement` app, so the standard ⌘,
         // does not exist and this is the only way into the `Settings` scene.
@@ -336,5 +336,33 @@ private struct MenuContent: View {
         SettingsLink { Text("Настройки…") }
         Divider()
         Button("Выйти") { NSApp.terminate(nil) }
+    }
+}
+
+/// Bring this application forward.
+///
+/// `NSApp.activate(ignoringOtherApps:)` is deprecated on macOS 14 and, measured, does not
+/// do it: after «Открыть в окне» the translation window is front and answers `AXMain`, but
+/// the application is not frontmost, so the user's keystrokes still go to whatever they were
+/// reading. The same failure makes the `Settings` window swallow its first click — that click
+/// is spent activating rather than reaching the control under the pointer.
+///
+/// macOS 14 replaced unilateral activation with a cooperative form: the application that
+/// currently holds activation is named, and the system treats the request as a hand-off
+/// rather than a steal. `NSRunningApplication.activate(from:options:)` is that API and is
+/// available at this project's floor. When nothing else is frontmost there is nobody to hand
+/// off from, so that case falls through to the no-argument `NSApplication.activate()`, which
+/// is the macOS 14 replacement for the deprecated call and not the same thing as it.
+///
+/// `.activateAllWindows` and not the default: an `LSUIElement` app that has just been asked
+/// to show a window has exactly one thing the user wants to see, and leaving the rest behind
+/// the previous app is the failure this exists to fix.
+@MainActor
+func activateThisApp() {
+    if let yielding = NSWorkspace.shared.frontmostApplication,
+       yielding != NSRunningApplication.current {
+        NSRunningApplication.current.activate(from: yielding, options: [.activateAllWindows])
+    } else {
+        NSApp.activate()
     }
 }

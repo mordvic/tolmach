@@ -113,11 +113,20 @@ struct PanelView: View {
                 // `problem:` and `onMute:` are deliberately not passed. Muting a term is a
                 // decision about the glossary, and the glossary is not on screen here; the
                 // window is where that belongs.
-                ViewThatFits(in: .vertical) {
-                    WarningsView(outcome: outcome, target: model.resolvedTarget)
-                    ScrollView { WarningsView(outcome: outcome, target: model.resolvedTarget) }
+                // Gated on `hasContent`, not merely on `outcome` being present. A short clean
+                // translation has no diffs, no missing terms and no document glossary, so
+                // `WarningsView` draws an empty `VStack` — but the 120pt slot still claimed
+                // its height, and the panel's text went from nine lines while running to four
+                // and a half the moment it finished. It reads as the result being truncated
+                // exactly when it completes.
+                let warnings = WarningsView(outcome: outcome, target: model.resolvedTarget)
+                if warnings.hasContent {
+                    ViewThatFits(in: .vertical) {
+                        warnings
+                        ScrollView { warnings }
+                    }
+                    .frame(maxHeight: 120)
                 }
-                .frame(maxHeight: 120)
             }
 
             HStack {

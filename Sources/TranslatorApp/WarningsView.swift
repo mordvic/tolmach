@@ -20,6 +20,27 @@ struct WarningsView: View {
         }
     }
 
+    /// Whether this view would draw anything at all.
+    ///
+    /// It exists so a caller can decide not to reserve space for nothing. The panel does:
+    /// it hands the warnings a fixed 120pt slot, and an outcome with no diffs, no missing
+    /// terms and no document glossary — the ordinary case for a short, clean translation —
+    /// left that slot claiming its height while rendering an empty `VStack`, costing 86 of
+    /// the panel's 260 points. The translation went from nine visible lines while running
+    /// to four and a half once it finished, which reads as the result being truncated at
+    /// the moment it completed.
+    ///
+    /// The conditions are the disjunction of `body`'s own, deliberately, and that is why
+    /// this lives here rather than in the caller: the two must not be able to drift. If
+    /// they did, the failure is either this bug again or the opposite one — a warning with
+    /// nowhere to appear.
+    var hasContent: Bool {
+        problem != nil
+            || !outcome.markupDiffs.isEmpty
+            || !glossaryWarnings.isEmpty
+            || !outcome.documentGlossary.isEmpty
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let problem {
