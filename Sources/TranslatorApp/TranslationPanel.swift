@@ -97,6 +97,26 @@ final class PanelController {
 
     init(content: () -> AnyView) {
         hosting = NSHostingView(rootView: content())
+        // The panel must not be sized by its hosting view, and this line is what stops it.
+        //
+        // Measured on the running bundle before it existed: the panel opened **380 × 120**
+        // — 97pt of content plus the title bar — no matter what was in it, which is exactly
+        // the 97.0 Task 9 warned Task 10 about. An `NSHostingView` installed as a window's
+        // `contentView` publishes Auto Layout constraints derived from SwiftUI's *compressed*
+        // measurement, and AppKit then shrinks the window to satisfy them; a `ScrollView`
+        // compresses to nothing, so the panel collapsed to the height of its chrome and the
+        // permission prompt's instructions truncated to one line. `[]` leaves the frame to
+        // `PanelController`, which is the only thing here that knows where the panel goes.
+        //
+        // **No test in this file can hold this, and one was written and deleted rather than
+        // kept.** The shrink does not happen in the test process: a `PanelController` built
+        // with a `ScrollView`, shown, and laid out reports a 380×260 content view with these
+        // three lines *and without them* — all three removals were applied and all three
+        // passed. The evidence is the running bundle, measured three times at 380×120 before
+        // and twice at 380×260 after, with nothing else changed between the two builds.
+        hosting.sizingOptions = []
+        hosting.translatesAutoresizingMaskIntoConstraints = true
+        hosting.autoresizingMask = [.width, .height]
         panel.contentView = hosting
         // Forwarded through the controller's own properties rather than assigned to the
         // panel directly, so a caller that sets `onEscape` after construction — which is

@@ -34,7 +34,11 @@ struct PanelView: View {
             }
         }
         .padding(14)
-        .frame(minWidth: 340, maxWidth: 520, alignment: .leading)
+        // `maxHeight` and `.topLeading` because the panel is a fixed 380×260 and short
+        // content would otherwise float in the middle of it — the hint is one line, and it
+        // hung level with nothing. Slack goes to the bottom, where it reads as a panel with
+        // room left rather than as a mis-centred one.
+        .frame(minWidth: 340, maxWidth: 520, maxHeight: .infinity, alignment: .topLeading)
     }
 
     /// Spec 8's «нет разрешения Accessibility» row, shown at the moment the user pressed
@@ -52,6 +56,17 @@ struct PanelView: View {
                  + "в разделе «Конфиденциальность и безопасность» → «Универсальный доступ». "
                  + "Главное окно работает и без него.")
                 .font(.caption).foregroundStyle(.secondary)
+                // Same defect Task 9 found on the status row, in the place it does the most
+                // damage — and it took the first live run to see it, because Task 9's
+                // `ImageRenderer` check measured the view at its *ideal* height, where the
+                // sentence wraps happily. In the shipped panel it does not: the real
+                // `NSHostingView` sizes the window to what the content will compress to, and
+                // a `Text` given less height than it wants truncates rather than wrapping.
+                // Measured on the running bundle at the panel's own 380pt: this rendered as
+                // «Чтобы переводить выделенное по сочетанию клавиш, приложению…», i.e. the
+                // whole of *where the setting actually lives* was cut — from the one screen
+                // every new user sees before anything else works.
+                .fixedSize(horizontal: false, vertical: true)
             Button("Открыть настройки системы", action: onGrantPermission)
         }
     }

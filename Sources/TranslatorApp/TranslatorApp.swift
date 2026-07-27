@@ -2,9 +2,15 @@
 import SwiftUI
 import OllamaKit
 import TranslationCore
+import TextCapture
 
 @main
 struct TranslatorApp: App {
+    /// Read here rather than only in `MenuContent`, because the panel's «Открыть в окне» has
+    /// nowhere else to get it: the panel is hosted in a detached `NSHostingView`, which has no
+    /// scene environment to inherit. `@Environment` on an `App` is the documented shape (it is
+    /// how `scenePhase` is read), and this is verified in the live pass rather than assumed.
+    @Environment(\.openWindow) private var openWindow
     // Built once in `init` and handed to `State` explicitly, because `@State`'s
     // declaration-site initialisers cannot reference each other and the view model needs
     // the very same settings and glossary the rest of the app reads. Two `AppSettings`
@@ -20,6 +26,13 @@ struct TranslatorApp: App {
     /// The same client the `Translator` above translates through, kept so `warmUp()` can
     /// reuse it instead of standing up a second `URLSession` for one request at launch.
     @State private var client: OllamaClient
+    /// The hotkey path, which owns a `TranslationViewModel` of its own — see the comment on
+    /// `HotkeyCoordinator.panelModel`. It shares this app's `settings`, `glossary` and
+    /// `client`; only the view model is separate.
+    @State private var coordinator: HotkeyCoordinator
+    /// Built here rather than on first press so that a press never pays for an `NSPanel` and
+    /// an `NSHostingView` before it can show anything.
+    @State private var panel: PanelController
 
     init() {
         let settings = AppSettings()
@@ -42,12 +55,23 @@ struct TranslatorApp: App {
             translator: Translator(client: client),
             settings: settings,
             glossary: glossary)
+        // A second `Translator` over the *same* client. `Translator` is a value with no state
+        // beyond the client, so this costs nothing and keeps the two view models independent;
+        // sharing the client is what matters, because it is what holds the `URLSession`.
+        let coordinator = HotkeyCoordinator(settings: settings, glossary: glossary,
+                                            translator: Translator(client: client))
         _settings = State(initialValue: settings)
         _glossary = State(initialValue: glossary)
         _statusModel = State(initialValue: statusModel)
         _translation = State(initialValue: translation)
         _models = State(initialValue: ModelsViewModel())
         _client = State(initialValue: client)
+        _coordinator = State(initialValue: coordinator)
+        // Content is a placeholder until `configurePanel()` runs at launch. Everything the
+        // real content needs — the panel itself, for «закрыть», and `openWindow` — either
+        // does not exist yet here or is not readable outside a scene, and the panel is never
+        // ordered in before that point.
+        _panel = State(initialValue: PanelController { AnyView(EmptyView()) })
     }
 
     var body: some Scene {
@@ -67,7 +91,7 @@ struct TranslatorApp: App {
             // accessibility label, so that is restored explicitly rather than dropped.
             Image(systemName: "character.bubble")
                 .accessibilityLabel("Толмач")
-                .task { await warmUp() }
+                .task { await launch() }
         }
 
         Window("Толмач", id: TranslatorApp.mainWindowID) {
@@ -91,6 +115,110 @@ struct TranslatorApp: App {
                     .tabItem { Text("Дополнительно") }
             }
         }
+    }
+
+    // MARK: - The hotkey path
+
+    /// Everything this app does at launch, in the order it has to happen.
+    ///
+    /// The hotkey is registered **before** the warm-up, which is not what Task 10's brief
+    /// said. `warmUp()` awaits a real HTTP request whose `timeoutIntervalForRequest` is 120
+    /// seconds (`OllamaClient.swift:18`), so registering after it would leave the app's only
+    /// shortcut dead for as long as Ollama takes to answer — two seconds on a cold model,
+    /// and two *minutes* if Ollama accepts the connection and then never replies. Registration
+    /// is synchronous and takes no I/O, so there is nothing to gain by deferring it.
+    private func launch() async {
+        configurePanel()
+        // The refusal is swallowed here, and it is worth being honest that nothing surfaces
+        // it: `AppSettings.hotkey` already guarantees a valid combination, and the only other
+        // way `register` fails is -9878 for a combination another component of this process
+        // already holds — nothing else in this process registers one. A user-visible message
+        // needs UI that does not exist yet; see the task report.
+        coordinator.start {
+            // The pointer is sampled *here*, at the press, and used after the capture. The
+            // read can take up to three quarters of a second and the user's hand is still on
+            // the mouse; the panel belongs where they were looking when they pressed.
+            let cursor = NSEvent.mouseLocation
+            // Hidden before the capture and shown after it, never before. The brief said
+            // before; doing that breaks the capture outright, because the panel becomes the
+            // key window and the system-wide accessibility focus follows it — see the
+            // comment in `HotkeyCoordinator.handlePress`, which carries the measurement.
+            Task {
+                await coordinator.handlePress(willCapture: { panel.hide() },
+                                              afterCapture: { panel.show(at: cursor) })
+            }
+        }
+        observeHotkeyChanges()
+        await warmUp()
+    }
+
+    /// Re-registers when the user changes the shortcut in settings.
+    ///
+    /// Observation rather than the brief's other suggestion — «a simple comparison on each
+    /// panel show» — because that one cannot work: after a change the *old* combination is
+    /// still the registered one, so the user presses the new one, nothing happens, and the
+    /// comparison that would have fixed it never runs. The re-registration has to happen
+    /// without a press.
+    ///
+    /// `withObservationTracking` and not `Observations`, which is macOS 26 and this app's
+    /// floor is 14. It is one-shot, so the callback re-arms; and its `onChange` fires
+    /// *before* the new value is stored, so the re-read happens on a later turn of the main
+    /// actor rather than inside the callback, where `settings.hotkey` would still be the old
+    /// combination.
+    private func observeHotkeyChanges() {
+        withObservationTracking {
+            _ = settings.hotkey
+        } onChange: {
+            Task { @MainActor in
+                coordinator.refreshRegistration()
+                observeHotkeyChanges()
+            }
+        }
+    }
+
+    /// The panel's content and its two key actions, wired once at launch.
+    ///
+    /// Not in `init()`: the actions need the `PanelController` itself, which cannot be
+    /// referenced while it is being constructed, and «Открыть в окне» needs `openWindow`,
+    /// which is only readable from inside a scene.
+    private func configurePanel() {
+        panel.setContent(AnyView(PanelHost(
+            coordinator: coordinator,
+            // Copying does not close. Enter is the shortcut that means «скопировать и
+            // закрыть» (spec 7.2); the button is for a user who wants to keep reading.
+            onCopy: { coordinator.copyResult() },
+            onOpenInWindow: { handOffToWindow() },
+            onGrantPermission: {
+                // Both, and in this order. `requestTrust` is what actually puts this app into
+                // the Accessibility list — a user sent straight to the pane by `openSettings`
+                // alone would have to find the app with the «+» button first — and
+                // `openSettings` is what the button's label promises.
+                PermissionsGate.requestTrust()
+                PermissionsGate.openSettings()
+            })))
+        panel.onEscape = {
+            coordinator.panelModel.cancel()
+            panel.hide()
+        }
+        panel.onEnter = {
+            coordinator.copyResult()
+            panel.hide()
+        }
+    }
+
+    /// Spec 7.2's «Открыть в окне»: the panel's texts move to the window, and the window
+    /// comes forward. Both are written, not just the source — the translation is the thing
+    /// the user wants to keep, and re-running it would cost them the wait a second time.
+    private func handOffToWindow() {
+        let (source, translated) = coordinator.handOffToWindow()
+        translation.sourceText = source
+        translation.translatedText = translated
+        panel.hide()
+        openWindow(id: TranslatorApp.mainWindowID)
+        // The app is an `LSUIElement` and the panel is non-activating, so nothing so far has
+        // brought it to the foreground; without this the window opens behind the application
+        // the user was reading.
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     /// One throwaway request at launch, so the first hotkey press does not pay to load the
@@ -134,6 +262,30 @@ struct TranslatorApp: App {
     }
 
     static let mainWindowID = "main"
+}
+
+/// The panel's SwiftUI content.
+///
+/// A view of its own so that `selection` is *read inside a body* rather than baked in at the
+/// call site. `PanelController` builds its `NSHostingView` once and keeps it; a
+/// `PanelView(selection: coordinator.selection)` written where the content is constructed
+/// would freeze whatever the selection was at launch — `.empty` — and the panel would show
+/// the «выделите текст» hint forever. Read here, it registers observation on the
+/// `@Observable` coordinator and the panel re-renders on every capture.
+private struct PanelHost: View {
+    let coordinator: HotkeyCoordinator
+    let onCopy: () -> Void
+    let onOpenInWindow: () -> Void
+    let onGrantPermission: () -> Void
+
+    var body: some View {
+        PanelView(model: coordinator.panelModel,
+                  selection: coordinator.selection,
+                  onCopy: onCopy,
+                  onOpenInWindow: onOpenInWindow,
+                  onRetry: { Task { await coordinator.retry() } },
+                  onGrantPermission: onGrantPermission)
+    }
 }
 
 /// A view of its own rather than the buttons inline, so `@Environment(\.openWindow)` has a

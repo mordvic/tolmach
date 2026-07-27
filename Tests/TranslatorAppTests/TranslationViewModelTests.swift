@@ -3,13 +3,20 @@ import Foundation
 @testable import TranslatorApp
 @testable import TranslationCore
 
-private final class ScriptedClient: LLMClient, @unchecked Sendable {
+/// Internal rather than private, because `HotkeyCoordinatorTests` needs the same double and a
+/// second copy would drift from this one.
+final class ScriptedClient: LLMClient, @unchecked Sendable {
     private var responses: [String]
+    /// How many times the model was actually asked. The coordinator's «do not translate an
+    /// empty selection» claim is about a call that must *not* happen, and no view-model state
+    /// distinguishes "refused before the call" from "called and given nothing".
+    private(set) var callCount = 0
     let delayPerToken: Duration
     init(responses: [String], delayPerToken: Duration = .zero) {
         self.responses = responses; self.delayPerToken = delayPerToken
     }
     func chat(messages: [ChatMessage], options: ChatOptions) -> AsyncThrowingStream<ChatEvent, Error> {
+        callCount += 1
         let reply = responses.isEmpty ? "" : responses.removeFirst()
         let delay = delayPerToken
         return AsyncThrowingStream { continuation in
