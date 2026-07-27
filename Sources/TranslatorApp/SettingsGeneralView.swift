@@ -17,6 +17,14 @@ struct SettingsGeneralView: View {
 
     var body: some View {
         Form {
+            LabeledContent("Сочетание клавиш") {
+                HotkeyRecorder(combo: $settings.hotkey)
+            }
+            Text("Нажмите на поле и наберите новое сочетание. Нужен хотя бы один из "
+                 + "модификаторов ⌃, ⌥ или ⌘ — иначе сочетание отняло бы обычную клавишу "
+                 + "у всех остальных программ.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             Picker("Основной язык", selection: $settings.primaryLanguage) {
                 ForEach(Language.allCases, id: \.self) { Text($0.russianName).tag($0) }
             }

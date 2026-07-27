@@ -2,6 +2,7 @@
 import Foundation
 import Observation
 import TranslationCore
+import TextCapture
 
 @Observable
 final class AppSettings {
@@ -99,6 +100,41 @@ final class AppSettings {
             return bool("warmUpOnLaunch", true)
         }
         set { withMutation(keyPath: \.warmUpOnLaunch) { defaults.set(newValue, forKey: "warmUpOnLaunch") } }
+    }
+
+    /// Stored as JSON under one key rather than as a key code and a modifier mask under
+    /// two. Two keys can be observed half-written — a settings pane that crashed between
+    /// them would leave the app registering a combination the user never chose — and a
+    /// single value cannot.
+    ///
+    /// An unreadable value falls back to the default instead of to "no hotkey". The
+    /// settings pane is reachable from the menu bar, but the hotkey is the only way in to
+    /// the panel, so leaving it unset would be an unrecoverable state reached by a typo in
+    /// a plist.
+    ///
+    /// `isValid` is checked on the way out for the same reason and not only on the way in.
+    /// Undecodable bytes are the obvious corruption; a value that decodes cleanly and is
+    /// still unusable is the quieter one. `{"keyCode":17,"modifiers":0}` is well-formed
+    /// JSON and a well-formed `HotkeyCombo`, and it is a bare «T». The recorder refuses
+    /// those, but the recorder is not the only writer — the reasoning above is about a
+    /// user-writable plist, and a plist can hold this just as easily as it can hold
+    /// garbage. `HotkeyManager.register` would refuse it and the app would end up with no
+    /// hotkey at all: the same unrecoverable state, reached through the door left open
+    /// next to the one that was closed.
+    var hotkey: HotkeyCombo {
+        get {
+            access(keyPath: \.hotkey)
+            guard let data = defaults.data(forKey: "hotkey"),
+                  let decoded = try? JSONDecoder().decode(HotkeyCombo.self, from: data),
+                  decoded.isValid
+            else { return .default }
+            return decoded
+        }
+        set {
+            withMutation(keyPath: \.hotkey) {
+                defaults.set(try? JSONEncoder().encode(newValue), forKey: "hotkey")
+            }
+        }
     }
 
     /// Spec 6.2: if the detected source is the primary language, translate into the

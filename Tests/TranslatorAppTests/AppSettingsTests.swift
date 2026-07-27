@@ -1,8 +1,10 @@
 import Testing
 import Foundation
+import AppKit
 import Observation
 @testable import TranslatorApp
 @testable import TranslationCore
+import TextCapture
 
 /// An empty, isolated defaults store per test. In-memory rather than a real
 /// `UserDefaults` suite, because a suite that gets written to leaves a plist in
@@ -93,5 +95,92 @@ private final class FiredFlag: @unchecked Sendable {
         fired.value = true
     }
     settings.chunkSize = 1200
+    #expect(fired.value)
+}
+
+@Test func theHotkeyDefaultsToOptionCommandTAndSurvivesARelaunch() {
+    let defaults = freshDefaults()
+    #expect(AppSettings(defaults: defaults).hotkey == HotkeyCombo.default)
+
+    let custom = HotkeyCombo(keyCode: 0x23, modifiers: NSEvent.ModifierFlags([.control, .shift]).rawValue)
+    AppSettings(defaults: defaults).hotkey = custom
+    // A second instance over the same suite is what a relaunch looks like from here.
+    #expect(AppSettings(defaults: defaults).hotkey == custom)
+}
+
+@Test func aCorruptStoredHotkeyFallsBackToTheDefaultRatherThanLeavingNoHotkeyAtAll() {
+    // The value is JSON in a single key and the file is user-writable. A half-written or
+    // hand-mangled value must not leave the app with nothing registered and no way to fix
+    // it, since the settings pane is reachable from the menu but the hotkey is not.
+    let defaults = freshDefaults()
+    defaults.set(Data("{ not json".utf8), forKey: "hotkey")
+    // Pinned so this cannot pass for the wrong reason. `InMemoryDefaults` overrides
+    // `object(forKey:)` but not `data(forKey:)`; the two are only connected because
+    // `NSUserDefaults` implements the latter on top of the former, which is an
+    // implementation detail this suite depends on. Were that to stop holding, the getter
+    // below would see no data at all, return `.default`, and this test would pass while
+    // testing nothing. Measured today: it holds.
+    #expect(defaults.data(forKey: "hotkey") != nil)
+    #expect(AppSettings(defaults: defaults).hotkey == HotkeyCombo.default)
+}
+
+/// Beyond the brief. A stored value that decodes cleanly can still be one the app must not
+/// use: `{"keyCode":17,"modifiers":0}` is valid JSON and a valid `HotkeyCombo`, and it is a
+/// bare «T». The recorder refuses those, but the recorder is not the only writer — a
+/// hand-edited plist is exactly the threat the corrupt-value case above is written for, and
+/// this half of it is the worse half. Undecodable bytes cost the user their custom
+/// shortcut; a decodable invalid one gets handed to `HotkeyManager.register`, which refuses
+/// it and leaves the app with *no* hotkey — and the hotkey is the only way to the panel.
+/// A bare letter that did somehow register would be worse still, taking «T» away from every
+/// other program on the machine.
+@Test func aStoredHotkeyWithNoUsableModifierFallsBackToTheDefault() {
+    let defaults = freshDefaults()
+    let bareLetter = HotkeyCombo(keyCode: 0x11, modifiers: 0)
+    #expect(!bareLetter.isValid)   // the premise, not the claim
+    defaults.set(try? JSONEncoder().encode(bareLetter), forKey: "hotkey")
+    #expect(AppSettings(defaults: defaults).hotkey == HotkeyCombo.default)
+
+    // Shift alone is the same hole through a narrower gap, and the one a plausible typo
+    // reaches: ⇧T is how the whole world types a capital T.
+    let shiftOnly = HotkeyCombo(keyCode: 0x11, modifiers: NSEvent.ModifierFlags.shift.rawValue)
+    defaults.set(try? JSONEncoder().encode(shiftOnly), forKey: "hotkey")
+    #expect(AppSettings(defaults: defaults).hotkey == HotkeyCombo.default)
+}
+
+/// Beyond the brief. `HotkeyCombo.init(from:)` is hand-written precisely so a stored value
+/// gets masked on the way back in, and nothing at this layer pinned that the settings store
+/// actually goes through it. Bytes in a plist are not necessarily bytes this build wrote:
+/// caps lock, the numeric pad and the fn key all set bits that survive
+/// `deviceIndependentFlagsMask`, and an unmasked `modifiers` compares unequal to the same
+/// visible combination recorded fresh — so the settings pane would show ⌘T, the manager
+/// would register ⌘T, and `settings.hotkey == recordedCombo` would be false anyway.
+///
+/// Written as raw JSON rather than by encoding a `HotkeyCombo`, because encoding one would
+/// have masked the bits before they ever reached the store and the test would prove nothing.
+@Test func aStoredHotkeyWithStrayModifierBitsReadsBackAsTheVisibleCombination() {
+    let defaults = freshDefaults()
+    let dirty = NSEvent.ModifierFlags([.command, .capsLock, .numericPad, .function]).rawValue
+    defaults.set(Data(#"{"keyCode":17,"modifiers":\#(dirty)}"#.utf8), forKey: "hotkey")
+
+    let expected = HotkeyCombo(keyCode: 0x11, modifiers: NSEvent.ModifierFlags.command.rawValue)
+    // Distinct from `.default` (⌥⌘, same key code), so a decode that failed outright and
+    // fell back would fail this rather than sail past it.
+    #expect(expected != HotkeyCombo.default)
+    #expect(AppSettings(defaults: defaults).hotkey == expected)
+}
+
+/// Beyond the brief. Neither of the brief's two tests can see a missing `access(keyPath:)`
+/// or `withMutation(keyPath:_:)` — a round trip through `UserDefaults` succeeds just as
+/// well without them. That is the exact defect Plan 2 shipped on this class, and adding a
+/// property is when it comes back.
+@Test func changingTheHotkeyNotifiesObservers() {
+    let settings = AppSettings(defaults: freshDefaults())
+    let fired = FiredFlag()
+    withObservationTracking {
+        _ = settings.hotkey
+    } onChange: {
+        fired.value = true
+    }
+    settings.hotkey = HotkeyCombo(keyCode: 0x23, modifiers: NSEvent.ModifierFlags.control.rawValue)
     #expect(fired.value)
 }
