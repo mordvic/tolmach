@@ -2,7 +2,10 @@ import Testing
 @testable import TranslatorApp
 @testable import OllamaKit
 
-private struct StubProbe: OllamaProbe {
+/// Non-private so `ModelsViewModelTests` can drive `ModelsViewModel` with the same stub:
+/// both view models take the same `OllamaProbe`, and a second copy of this would be a
+/// second thing to keep in step with the protocol.
+struct StubProbe: OllamaProbe {
     var installed: [String] = []
     var resident: [String] = []
     var failure: Error? = nil

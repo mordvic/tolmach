@@ -14,6 +14,9 @@ struct TranslatorApp: App {
     @State private var glossary: GlossaryStore
     @State private var statusModel: OllamaStatusModel
     @State private var translation: TranslationViewModel
+    /// Owned here rather than created inside the settings pane so the installed list and a
+    /// download in progress survive the settings window being closed and reopened.
+    @State private var models: ModelsViewModel
 
     init() {
         let settings = AppSettings()
@@ -39,6 +42,7 @@ struct TranslatorApp: App {
         _glossary = State(initialValue: glossary)
         _statusModel = State(initialValue: statusModel)
         _translation = State(initialValue: translation)
+        _models = State(initialValue: ModelsViewModel())
     }
 
     var body: some Scene {
@@ -66,6 +70,8 @@ struct TranslatorApp: App {
             TabView {
                 SettingsGeneralView(settings: settings)
                     .tabItem { Text("Основные") }
+                SettingsModelsView(settings: settings, models: models)
+                    .tabItem { Text("Модели") }
             }
         }
     }

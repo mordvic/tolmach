@@ -75,4 +75,72 @@ enum RussianCopy {
     static func chunkCount(_ count: Int) -> String {
         "\(count) \(plural(count, "фрагмент", "фрагмента", "фрагментов"))"
     }
+
+    /// Keyed by the same model-name prefixes as `ModelPolicy.blacklist`, because the engine
+    /// matches by prefix so that every tag of a bad model is covered.
+    ///
+    /// The reasons live here rather than in `ModelPolicy` for the same reason
+    /// `Tone.russianName` does: the engine is UI-agnostic and `translate-cli` prints its
+    /// English text on a terminal, while this pane is Russian. Two tables can drift, so
+    /// `everyBlacklistedPrefixHasRussianCopy` fails the suite if a prefix is added there
+    /// without a translation here.
+    ///
+    /// Wording follows the measurements in spec §5 — this is evidence the user is being
+    /// shown, not a ban, and the model stays selectable.
+    static let blacklistReasons: [String: String] = [
+        "gemma3n": "Портит идентификаторы посимвольно: выдала «StructureDefiinition» внутри "
+            + "инлайн-кода и «Implemenentierungsleitfadens». Для перевода техдокументации это "
+            + "худший из отказов — имя типа в коде ломается молча.",
+        "qwen3:30b": "78 секунд рассуждений до первого символа перевода. Слишком медленно для "
+            + "интерактивной работы.",
+    ]
+
+    /// The engine decides *whether* a model is marked; this layer decides *what to say*.
+    /// Consulting `ModelPolicy` first is what keeps the two from disagreeing about which
+    /// models carry a warning — only the language of the answer differs.
+    ///
+    /// A marked prefix with no translation falls back to the engine's English rather than
+    /// to `nil`: a warning in the wrong language is worse than Russian and far better than
+    /// silence, which would leave a model that mangles identifiers looking approved.
+    /// `russian` is a parameter so that fallback can be exercised by a test instead of
+    /// merely asserted in a comment.
+    static func blacklistReason(for model: String,
+                                russian: [String: String] = blacklistReasons) -> String? {
+        guard let english = ModelPolicy.blacklistReason(for: model) else { return nil }
+        for (prefix, reason) in russian where model.hasPrefix(prefix) { return reason }
+        return english
+    }
+
+    /// Ollama's `/api/pull` stream captions itself in English. Strings taken from the
+    /// running server's own source — ollama v0.31.1, `server/images.go` and
+    /// `server/download.go` — plus «removing any unused layers», which the published API
+    /// docs still show and older servers still send.
+    static let pullStatuses: [String: String] = [
+        "pulling manifest": "Получаю манифест…",
+        "pulling model": "Загружаю модель…",
+        "verifying sha256 digest": "Проверяю контрольную сумму…",
+        "writing manifest": "Записываю манифест…",
+        "removing unused layers": "Убираю неиспользуемые слои…",
+        "removing any unused layers": "Убираю неиспользуемые слои…",
+        "success": "Готово.",
+    ]
+
+    static func pullStatus(_ raw: String) -> String {
+        if let known = pullStatuses[raw] { return known }
+        // Each layer gets its own line — "pulling " plus twelve hex characters of its
+        // digest. The digest names nothing the user can act on and there is one per layer,
+        // so they all read the same; the progress bar is what tells them apart. Checked
+        // after the exact table, since "pulling manifest" shares the prefix.
+        if raw.hasPrefix("pulling ") { return "Загружаю файлы модели…" }
+        // Ollama has renamed these before, so an unrecognised line reaches the user as-is.
+        // Swallowing it would leave the pane captionless with no clue why.
+        return raw
+    }
+
+    /// The Russian for a transport failure already exists on `OllamaErrorBridge`; anything
+    /// else has only its English `localizedDescription`, which still beats saying nothing
+    /// about why an operation failed.
+    static func failureDetail(_ error: Error) -> String {
+        (error as? OllamaErrorBridge)?.russianMessage ?? error.localizedDescription
+    }
 }

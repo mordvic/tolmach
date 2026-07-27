@@ -2,6 +2,7 @@ import Testing
 import Foundation
 @testable import TranslatorApp
 @testable import TranslationCore
+import OllamaKit
 
 @Test func everyToneHasANonEmptyRussianName() {
     for tone in Tone.allCases {
@@ -123,4 +124,92 @@ func negativeCountsTakeTheSameFormAsTheirMagnitude(magnitude: Int, expected: Str
     #expect(RussianCopy.plural(1, "термин", "термина", "терминов") == "термин")
     #expect(RussianCopy.plural(13, "термин", "термина", "терминов") == "терминов")
     #expect(RussianCopy.plural(22, "термин", "термина", "терминов") == "термина")
+}
+
+// MARK: - Blacklist reasons
+
+/// The engine decides *whether* a model is blacklisted and the app decides *what to say*,
+/// which is two tables that can drift. `ModelPolicy` is engine-side and `translate-cli`
+/// prints its English; a prefix added there without Russian here would show the user
+/// «Port: corrupts identifiers character-by-character…» in a Russian pane. This is the only
+/// thing that would notice.
+@Test func everyBlacklistedPrefixHasRussianCopy() {
+    for prefix in ModelPolicy.blacklist.keys {
+        #expect(RussianCopy.blacklistReasons[prefix] != nil,
+                "ModelPolicy.blacklist has no Russian counterpart for «\(prefix)»; add one to RussianCopy.blacklistReasons")
+    }
+}
+
+/// Documenting the fallback by exercising it rather than by comment: a prefix the engine
+/// blacklists and this layer has no Russian for still warns, in English. A warning in the
+/// wrong language is worse than Russian and far better than silence — silence would let a
+/// model that mangles identifiers look approved.
+@Test func aMissingTranslationFallsBackToTheEnglishReasonNotToSilence() {
+    let reason = RussianCopy.blacklistReason(for: "gemma3n:e4b", russian: [:])
+    #expect(reason == ModelPolicy.blacklistReason(for: "gemma3n:e4b"))
+    #expect(reason != nil)
+    // A model the engine does not blacklist stays unmarked whatever the table holds.
+    #expect(RussianCopy.blacklistReason(for: "aya-expanse:8b", russian: [:]) == nil)
+}
+
+@Test func blacklistReasonsAreKeyedByPrefixLikeTheEngines() {
+    // `blacklistReason(for:)` must agree with `ModelPolicy` on *which* models are marked,
+    // for every tag, and only disagree on the language of the answer.
+    for name in ["gemma3n", "gemma3n:e4b", "gemma3n:e2b", "qwen3:30b", "qwen3:30b-a3b",
+                 "aya-expanse:8b", "qwen3:8b", "gpt-oss:20b"] {
+        #expect((RussianCopy.blacklistReason(for: name) == nil)
+                == (ModelPolicy.blacklistReason(for: name) == nil),
+                "«\(name)» is marked by one layer and not the other")
+    }
+}
+
+// MARK: - Pull statuses
+
+/// Ollama's `/api/pull` stream carries English status lines, and putting them straight into
+/// `pullStatus` would show «verifying sha256 digest» in a Russian pane. Strings taken from
+/// ollama v0.31.1's own source (`server/images.go`, `server/download.go`) — the running
+/// server here — plus the wording the published API docs still show.
+@Test(arguments: [
+    ("pulling manifest", "Получаю манифест…"),
+    ("pulling model", "Загружаю модель…"),
+    ("pulling 65f986688a01", "Загружаю файлы модели…"),
+    ("verifying sha256 digest", "Проверяю контрольную сумму…"),
+    ("writing manifest", "Записываю манифест…"),
+    ("removing unused layers", "Убираю неиспользуемые слои…"),
+    ("removing any unused layers", "Убираю неиспользуемые слои…"),
+    ("success", "Готово."),
+])
+func pullStatusesAreShownInRussian(raw: String, expected: String) {
+    #expect(RussianCopy.pullStatus(raw) == expected)
+}
+
+/// Ollama has renamed these before — v0.31.1 emits «removing unused layers» where the
+/// published docs still say «removing any unused layers» — so an unrecognised line must
+/// reach the user as-is. Swallowing it would leave the pane captionless with no clue why.
+@Test func anUnrecognisedPullStatusIsShownRatherThanSwallowed() {
+    #expect(RussianCopy.pullStatus("recomputing the flux capacitor") == "recomputing the flux capacitor")
+    #expect(RussianCopy.pullStatus("") == "")
+}
+
+// MARK: - OllamaError → Russian
+
+/// `TranslationViewModel.message(for:)` casts to `OllamaErrorBridge`; without the
+/// conformance the cast fails and the user gets `errorDescription`'s English
+/// («Ollama is not reachable on 127.0.0.1:11434»).
+@MainActor
+@Test func everyOllamaErrorCaseReachesTheUserInRussian() {
+    let cases: [OllamaError] = [.notRunning, .httpStatus(503, "upstream"), .decoding("bad shape")]
+    for error in cases {
+        let message = TranslationViewModel.message(for: error)
+        #expect(message != error.errorDescription,
+                "\(error) still surfaces OllamaKit's English: \(message)")
+        #expect(message.rangeOfCharacter(from: CharacterSet(charactersIn: "а"..."я")) != nil,
+                "\(error) produced no Russian: \(message)")
+    }
+}
+
+@MainActor
+@Test func theHttpStatusCodeSurvivesTheTranslation() {
+    // The code is the one piece of the message that helps diagnose anything.
+    #expect(TranslationViewModel.message(for: OllamaError.httpStatus(503, "upstream")).contains("503"))
 }
