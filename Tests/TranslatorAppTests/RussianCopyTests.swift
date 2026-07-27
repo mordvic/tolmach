@@ -126,6 +126,17 @@ func negativeCountsTakeTheSameFormAsTheirMagnitude(magnitude: Int, expected: Str
     #expect(RussianCopy.plural(22, "термин", "термина", "терминов") == "термина")
 }
 
+// MARK: - Direction
+
+/// The panel's header. Both halves are `russianName`, so the two assertions that would
+/// merely restate `russianName` are left to the tests above; what is pinned here is the
+/// arrow, the order of the operands, and — the part that is a decision rather than a
+/// format — that an undetected source is *stated* instead of silently dropped.
+@Test func theDirectionLineNamesBothLanguagesInRussian() {
+    #expect(RussianCopy.direction(from: .en, to: .ru) == "английский → русский")
+    #expect(RussianCopy.direction(from: nil, to: .ru) == "язык не определён → русский")
+}
+
 // MARK: - Blacklist reasons
 
 /// The engine decides *whether* a model is blacklisted and the app decides *what to say*,

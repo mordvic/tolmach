@@ -70,6 +70,19 @@ enum RussianCopy {
         }
     }
 
+    /// The panel's header line. An undetected source is stated rather than hidden — the
+    /// direction rule sends undetected text to the primary language, and a user who sees a
+    /// surprising target deserves to know the detector is why.
+    ///
+    /// The target is not optional and the source is: `AppSettings.targetLanguage(forDetected:)`
+    /// always resolves to *some* language, while `LanguageDetector.detect` is allowed to
+    /// give up. Nothing here decides *whether* to show the line — see `PanelView.direction`,
+    /// which will not build one out of two halves that came from different runs.
+    static func direction(from source: Language?, to target: Language) -> String {
+        let left = source.map(\.russianName) ?? "язык не определён"
+        return "\(left) → \(target.russianName)"
+    }
+
     /// "3 фрагмента" — the hint the main window shows over the source pane when the text
     /// will be translated in more than one piece.
     static func chunkCount(_ count: Int) -> String {
