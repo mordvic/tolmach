@@ -24,10 +24,36 @@ struct MainWindowView: View {
             }
             statusLine
             if let outcome = model.outcome, model.state == .finished {
-                WarningsView(outcome: outcome,
-                             target: model.resolvedTarget,
-                             problem: glossary.lastProblem,
-                             onMute: mute)
+                let warnings = WarningsView(outcome: outcome,
+                                            target: model.resolvedTarget,
+                                            problem: glossary.lastProblem,
+                                            onMute: mute)
+                // `WarningsView` has no natural ceiling: `documentGlossary` is one row per
+                // term the model extracted, and the disclosure expands in place, so an
+                // unbounded panel takes whatever it wants from the editors — which are the
+                // reason the window exists.
+                //
+                // 140pt comes off the window's own budget rather than out of the air. Of
+                // the 460pt minimum, the chrome takes ~112 (32 of padding, ~28 for the
+                // controls row, ~16 for the status caption, three 12pt gaps) and the
+                // editors' `minHeight: 260` takes the next 260, leaving ~88. That 88 is
+                // what the panel gets at the minimum window size no matter what this cap
+                // says, because the editors' 260 is a hard floor and the panel is the only
+                // child that can give — it shrinks and scrolls rather than pushing anything
+                // out. What the cap actually governs is a *taller* window: the panel may
+                // claim up to 140 (about nine caption rows — a heading and its bullets, or
+                // the head of an expanded document glossary) and then stops, so every
+                // further pixel of a resized window goes to the editors.
+                //
+                // `ViewThatFits` and not a bare `ScrollView`, because a `ScrollView` is
+                // greedy in its scroll axis: it would sit at the full 140 under a two-line
+                // warning and leave the rest blank. This takes the plain stack's own height
+                // while that fits, and only falls back to scrolling once it does not.
+                ViewThatFits(in: .vertical) {
+                    warnings
+                    ScrollView { warnings }
+                }
+                .frame(maxHeight: 140)
             }
         }
         .padding(16)
@@ -47,6 +73,14 @@ struct MainWindowView: View {
         } catch GlossaryStoreError.saveBeforeLoad {
             glossary.lastProblem = "Глоссарий не был прочитан, поэтому список скрытых терминов не сохранён. "
                 + "«\(term)» скрыт только до перезапуска."
+        } catch GlossaryStoreError.fileChangedOnDisk {
+            // Deliberately not «не удалось сохранить»: nothing is broken and there is
+            // nothing to retry. The file changed under the app, the app refused to write
+            // its stale copy over it, and the user is the only one who knows which version
+            // they want — so say what happened and what to do about it.
+            glossary.lastProblem = "Файл глоссария изменился на диске после запуска приложения, "
+                + "поэтому список скрытых терминов не сохранён — иначе ваши правки были бы затёрты. "
+                + "«\(term)» скрыт только до перезапуска; перезапустите приложение, чтобы прочитать новую версию."
         } catch {
             glossary.lastProblem = "Не удалось сохранить глоссарий, «\(term)» скрыт только до перезапуска: "
                 + error.localizedDescription

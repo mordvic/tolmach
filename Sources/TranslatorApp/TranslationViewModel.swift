@@ -54,7 +54,6 @@ final class TranslationViewModel {
 
         let detected = sourceOverride ?? LanguageDetector.detect(text)
         let target = targetOverride ?? settings.targetLanguage(forDetected: detected)
-        resolvedTarget = target
         let tone = toneOverride ?? settings.defaultTone
         let options = ChatOptions(model: settings.interactiveModel,
                                   temperature: settings.temperature,
@@ -144,6 +143,16 @@ final class TranslationViewModel {
                 state = .failed("Модель вернула пустой ответ. Попробуйте ещё раз.")
                 return
             }
+            // Written here rather than beside the `let target` that computes it, for the
+            // same reason `clearedPrevious` is written where it is. The warnings panel
+            // renders these two as a pair — the checks come from `outcome`, the translation
+            // to show for each term is looked up by `resolvedTarget` — so a moment where
+            // one is this run's and the other is the last run's is a moment the panel can
+            // render a wrong translation. Assigning at the top of `translate()` is not
+            // observably wrong today, only because no `await` sits between there and
+            // `state = .running`; that is a fact about this function's body, not an
+            // invariant. Assigned together, the pair cannot come apart.
+            resolvedTarget = target
             outcome = result
             translatedText = result.final
             state = .finished
