@@ -93,9 +93,12 @@ import SwiftUI
 /// distinguishes the two only engages for a panel tall enough to reach the top of the
 /// screen — which is precisely the long translation this panel exists to display.
 ///
-/// The height comes through `resize(to:)` rather than being conjured, because that is how
-/// the app gets there: Task 9 grows the panel as tokens arrive, Esc hides it, and the next
-/// hotkey press shows it again at the size the last translation left behind.
+/// The height is set on the panel directly, and the state it creates is **not currently
+/// reachable in the app**: the panel is a fixed 380 × 260 and nothing resizes it, so at that
+/// height the upward flip never comes near the menu bar. The test is kept anyway, and the
+/// reason is narrow rather than defensive — `show(at:)` using `visibleFrame` is correct at
+/// any size, the panel's size is one edit away from changing, and this is the only thing
+/// that would notice if that edit and a `frame`-based `show` ever met.
 @MainActor
 @Test func aTallPanelOpensBelowTheMenuBarRatherThanUnderIt() throws {
     let screen = try #require(NSScreen.main, "no display attached; this test cannot run headless")
@@ -105,8 +108,9 @@ import SwiftUI
 
     let controller = PanelController { AnyView(Text("перевод")) }
     controller.show(at: CGPoint(x: visible.midX, y: visible.midY))
-    let tall = CGSize(width: 380, height: visible.height - 40)
-    controller.resize(to: tall)
+    var tall = controller.panel.frame
+    tall.size = CGSize(width: 380, height: visible.height - 40)
+    controller.panel.setFrame(tall, display: false)
     controller.hide()
 
     // Low enough that the panel flips upward, tall enough that the flip then clamps — the
@@ -116,7 +120,7 @@ import SwiftUI
     defer { controller.hide() }
 
     #expect(controller.panel.frame
-            == PanelPlacement.frame(cursor: cursor, size: tall, screen: visible))
+            == PanelPlacement.frame(cursor: cursor, size: tall.size, screen: visible))
     #expect(controller.panel.frame.maxY <= visible.maxY)
     #expect(controller.panel.frame.maxY < screen.frame.maxY)
 }
@@ -210,38 +214,3 @@ private func keyDown(_ keyCode: UInt16, _ characters: String) -> NSEvent {
     #expect(escapes == 0)
 }
 
-// MARK: - Resizing
-
-/// Task 9 streams text into this panel, so it is resized repeatedly while the user is
-/// reading it. Growing from the origin would walk the whole panel down the screen a line at
-/// a time; the top edge is what has to stay still. Checked in both directions, because
-/// `frame.origin.y += frame.height - size.height` reads the *old* height and a later tidy-up
-/// that assigns `frame.size` first would flip the sign without looking wrong.
-@MainActor
-@Test func resizingKeepsTheTopEdgeStill() {
-    let controller = PanelController { AnyView(Text("перевод")) }
-    controller.show(at: CGPoint(x: 400, y: 600))
-    defer { controller.hide() }
-    let top = controller.panel.frame.maxY
-    let left = controller.panel.frame.minX
-
-    controller.resize(to: CGSize(width: 380, height: 420))
-    #expect(controller.panel.frame.maxY == top)
-    #expect(controller.panel.frame.minX == left)
-    #expect(controller.panel.frame.height == 420)
-
-    controller.resize(to: CGSize(width: 380, height: 150))
-    #expect(controller.panel.frame.maxY == top)
-    #expect(controller.panel.frame.height == 150)
-}
-
-/// A hidden panel is left alone. Task 9 measures the content as tokens arrive, and some of
-/// those measurements land after the user has pressed Esc — moving a hidden window's frame
-/// would decide where it reappears next time, from a translation they cancelled.
-@MainActor
-@Test func resizingAHiddenPanelDoesNothing() {
-    let controller = PanelController { AnyView(Text("перевод")) }
-    let before = controller.panel.frame
-    controller.resize(to: CGSize(width: 380, height: 420))
-    #expect(controller.panel.frame == before)
-}

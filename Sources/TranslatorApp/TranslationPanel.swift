@@ -12,6 +12,23 @@ import SwiftUI
 /// window needs the first without the second.
 @MainActor
 final class TranslationPanel: NSPanel {
+    /// 380 × 260, fixed for the panel's whole life.
+    ///
+    /// Deliberate, and it is the only size this panel ever has: nothing resizes it after
+    /// `PanelController.show(at:)` places it, and `hosting.sizingOptions = []` stops the
+    /// hosting view from trying. An earlier `PanelController.resize(to:)` existed to grow the
+    /// panel as tokens arrived and was never called by anything — it and its tests were
+    /// removed rather than wired up, because a method describing behaviour the app does not
+    /// have is worse than the absence of the behaviour.
+    ///
+    /// The cost is real and accepted: a one-line result and the «выделите текст» hint each
+    /// get a panel mostly full of empty space, and a long translation scrolls inside it
+    /// instead of the panel growing. Task 9 measured SwiftUI's ideal height at 97pt for the
+    /// short state and 301pt for the long one, so those are the numbers to start from if this
+    /// is ever revisited. The reason not to revisit it now is that a panel that changes size
+    /// while text streams into it moves under the reader's eyes, and this one floats over the
+    /// application they are reading — a fixed rectangle they can predict is worth more than a
+    /// tight fit they cannot.
     init() {
         super.init(contentRect: NSRect(x: 0, y: 0, width: 380, height: 260),
                    styleMask: [.nonactivatingPanel, .titled, .fullSizeContentView, .utilityWindow],
@@ -144,14 +161,4 @@ final class PanelController {
     }
 
     func hide() { panel.orderOut(nil) }
-
-    func resize(to size: CGSize) {
-        guard panel.isVisible else { return }
-        var frame = panel.frame
-        // Grows downwards from the top edge, so the panel does not appear to jump while
-        // text streams into it.
-        frame.origin.y += frame.height - size.height
-        frame.size = size
-        panel.setFrame(frame, display: true, animate: false)
-    }
 }
