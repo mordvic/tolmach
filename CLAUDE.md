@@ -14,7 +14,7 @@ window. Batch file translation is v2.
 ```bash
 swift build                       # build everything
 swift build --build-tests         # must stay at zero warnings — this is a standing rule
-swift test                        # ~280 tests, all offline (fake LLMClient), a few seconds
+swift test                        # ~289 tests, all offline (fake LLMClient), a few seconds
 swift test --filter someTestName  # one test, by name (Swift Testing function names)
 swift test --filter TranslationCoreTests   # one test target
 
@@ -38,7 +38,6 @@ ad-hoc signing macOS re-asks after every build. The script's header says how to 
 <!-- The count and the names below are checked against Package.swift by
      DocumentationTests/ArchitectureDriftTests.swift. This block said "Five" and named a
      target that does not exist for long enough that two separate documents repeated it. -->
-
 
 ```
 TranslationCore  (pure domain; depends on nothing but Foundation/NaturalLanguage)
@@ -90,9 +89,12 @@ Facts that will bite you if you "tidy" them:
   into `message.content`, i.e. straight into the translation.
 - Ollama reports durations in nanoseconds; convert to ms at the client boundary.
 - `ModelPolicy` pins `aya-expanse:8b` for the interactive path (TTFT < 1 s is a hard requirement)
-  and `gpt-oss:20b` for the background path, and carries a blacklist with measured reasons shown
-  in settings. `keep_alive` (default `30m`) is load-bearing, not an optimisation: cold load ~2000 ms
-  vs ~155 ms warm.
+  and `gpt-oss:20b` for the background path, and carries a blacklist with measured reasons. Those
+  reasons are English and reach `translate-cli`; the settings pane renders
+  `RussianCopy.blacklistReasons`, keyed by the same prefixes, and falls back to the English if a
+  prefix has no Russian counterpart. **The background model is stored and read by nothing** —
+  batch translation is v2; see `docs/OPEN-ITEMS.md`. `keep_alive` (default `30m`) is
+  load-bearing, not an optimisation: cold load ~2000 ms vs ~155 ms warm.
 
 ### The app layer
 
@@ -130,6 +132,12 @@ Facts that will bite you if you "tidy" them:
   Russian labels for domain enums live in `RussianCopy.swift`, exhaustive with no `default:`.
 - Code comments here carry *why* and the measurement behind it, not what the code does. When changing
   something a comment justifies, update the reasoning or say why the measurement no longer holds.
+- **«Measured» and «load-bearing» are a contract, not emphasis.** A comment using either word
+  means a specific observation was made — usually with a count, «10 aborts in 10 runs» — and the
+  code below it is the way it is *because* of that observation. Changing that code invalidates
+  the observation. Either re-measure and update the number, or record why the measurement no
+  longer applies. Deleting the line and keeping the comment is the one thing that must not
+  happen: it has already cost this project two defects that looked like tidying.
 - Commit messages: conventional, scoped by area — `feat(app):`, `fix(capture):`, `feat(ollama):`,
   `test(app):`, `docs(capture):`.
 - UI is verified by hand; GUI automation is unavailable in this environment. Never describe UI
@@ -137,11 +145,31 @@ Facts that will bite you if you "tidy" them:
 
 ## Where the reasoning lives
 
-- `docs/superpowers/specs/2026-07-24-local-translator-design.md` — the design of record: measurements,
-  rejected alternatives (two-pass refinement was measured and cut from v1), error-handling table,
-  test thresholds, and §11a's list of known, deliberately-unfixed v1 limitations. Read it before
-  changing engine behaviour.
-- `docs/adr/` — decisions whose code looks inconsistent without them.
-- `CONTEXT.md` — the project's ubiquitous language (Russian), including terms to avoid. Use these
-  words in docs and commit messages: чанк, корректор, дрейф терминологии, документный глоссарий.
-- `docs/superpowers/plans/` — the three implementation plans the codebase was built from.
+Read the one that answers your question; do not read them all.
+
+| Document | Read it when |
+|---|---|
+| `docs/RUNBOOK.md` | Building, signing, permissions, running the acceptance harness. |
+| `docs/OPEN-ITEMS.md` | «May I change this?» / «Is this unfinished on purpose?» — manual checks owed to a human, accepted limitations, and open questions. |
+| `docs/PLATFORM-TRAPS.md` | Before writing a *new* call into `NSPasteboard`, Accessibility, Carbon, `CGEvent` or `NSPanel`. An index of the eleven behaviours that each cost a defect. |
+| `docs/TESTING.md` | Writing a test. The mutation rule and nine shapes of test that pass under the defect they name. |
+| `docs/MEASUREMENTS.md` | «Where did this number come from?» |
+| `docs/BASELINE.md` | After running `swift run acceptance` — whether the result is normal, and where to record it. |
+| `docs/adr/` | The code looks inconsistent and you want to know whether it is deliberate. |
+| `docs/superpowers/specs/…-design.md` | Changing engine behaviour. **Note its status header — it is the pre-implementation design, and where it and the code disagree the code is right.** |
+| `docs/history/` | «What did we already try?» The build ledgers, including rejected approaches and defects found in the plans themselves. |
+| `CONTEXT.md` | Writing UI copy or naming something. |
+| `docs/superpowers/plans/` | Rarely. The three plans the codebase was built from; parts of them are known wrong where the ledgers record a correction. |
+
+### Traps, by where you are about to write
+
+Pointers, not summaries — the owning file has the measurement and is kept true by sitting next
+to the code. `docs/PLATFORM-TRAPS.md` has the same list with the facts attached.
+
+- `NSPasteboard`, anything clipboard → `TextCapture/PasteboardSnapshot.swift`, `GeneralPasteboard.swift`
+- Accessibility reads, synthetic key events → `TextCapture/SelectionReader.swift`
+- Carbon hotkeys, key codes, modifier masks → `TextCapture/HotkeyManager.swift`, `HotkeyCombo.swift`
+- `NSPanel` framing, sizing, key status → `TranslatorApp/TranslationPanel.swift`
+- App activation, scene order → `TranslatorApp/TranslatorApp.swift`
+- Recording a shortcut, `performKeyEquivalent` → `TranslatorApp/HotkeyRecorder.swift`
+- `UserDefaults` in tests → `Tests/TranslatorAppTests/InMemoryDefaults.swift`

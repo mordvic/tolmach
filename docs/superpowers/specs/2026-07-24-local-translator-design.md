@@ -1,537 +1,649 @@
-# Local Translator — дизайн v1
+# Local Translator — design v1
 
-Дата: 2026-07-24, ревизия 2026-07-25
-Статус: утверждён к реализации
-Прототип, на замерах которого построен документ: `prototype-translation-engine/`
+Date: 2026-07-24, revised 2026-07-25
+Status: approved for implementation
+Prototype the document's measurements were taken on: `prototype-translation-engine/`
+(not present in this repository — see section 11)
 
-Ревизия от 2026-07-25 внесена по результатам второго эксперимента: документный глоссарий
-подтверждён и уточнён (раздел 4.4), двухпроходный режим исключён из v1 (раздел 4.8), проверка
-разметки переведена на выравнивание последовательностей (раздел 4.7).
+The 2026-07-25 revision records the results of the second experiment: the документный глоссарий
+(document glossary) was confirmed and refined (section 4.4), the two-pass mode was cut from v1
+(section 4.8), and the markup check moved to sequence alignment (section 4.7).
 
-## 1. Что это
+## Status of this document
 
-Приложение-переводчик для macOS, работающее целиком на локальных LLM через Ollama. Текст
-никогда не покидает машину.
+**This is the pre-implementation design of 2026-07-24. It was written before the code existed.**
+It records what was intended and the measurements the intent rests on, not what was built.
 
-Три поверхности взаимодействия, из которых **в v1 входят две**:
+**Where this document and the code disagree, the code is right.** The code carries the
+measurements; this carries the intent. Corrections made on 2026-07-29 after reading the spec
+against the code are marked inline as **Corrected 2026-07-29**; the superseded claim is stated
+rather than deleted, so the reason for the change stays visible.
 
-1. **Хоткей поверх всего** — выделил текст в любом приложении, нажал сочетание клавиш,
-   получил всплывающее окно с переводом.
-2. **Главное окно** — два поля, выбор языков, тона и модели, кнопка перевода.
-3. **Пакетный перевод файлов** — вынесен в v2, см. раздел 12.
+Sections known to be superseded, and where the truth now lives:
 
-Целевые языки: RU, EN, DE, FR, ES, PT, IT, ZH, JA — все равнозначны.
+- **Section 3** — the module list. `Package.swift` is the roster of targets.
+- **Section 3.3** — the `TextCapture` roster. The directory listing of `Sources/TextCapture/`
+  is the roster.
+- **Section 4.9** — time-to-first-token semantics, and the granularity of streaming.
+  `TranslationOutcome.timeToFirstTokenMS` and `Translator.streamChunkTranslation` in
+  `Sources/TranslationCore/Translator.swift` are the authority.
+- **Section 11** — the prototype is gone. See that section.
 
-Целевой контент: техническая документация с кодом, деловая переписка, длинные тексты и статьи.
+## 1. What this is
 
-## 2. Чего в v1 нет
+A macOS translator running entirely on local LLMs through Ollama. Text never leaves the machine.
 
-Сознательно вынесено за границы, чтобы объём остался посильным для одного плана реализации:
+Three interaction surfaces, of which **two ship in v1**:
 
-- пакетный перевод файлов (v2);
-- история переводов;
-- OCR и перевод текста с экрана;
-- распознавание и синтез речи;
-- локализационные форматы (JSON/YAML/`.strings`) с плейсхолдерами;
-- синхронизация между устройствами, iOS-версия;
-- автообновление, распространение через App Store;
-- встроенный бенчмарк моделей (v2, см. раздел 12).
+1. **A global hotkey** — select text in any application, press a key combination, get a floating
+   panel with the translation.
+2. **A main window** — two fields, language, tone and model selection, a translate button.
+3. **Batch file translation** — deferred to v2, see section 12.
 
-## 3. Архитектура
+Target languages: RU, EN, DE, FR, ES, PT, IT, ZH, JA — all equal.
 
-Пять модулей, каждый — отдельный target в Swift Package Manager. Ключевой принцип: доменная
-логика перевода не знает ни про Ollama, ни про SwiftUI. Прототип подтвердил, что шов держится.
+Target content: technical documentation containing code, business correspondence, long texts and
+articles.
+
+## 2. What v1 does not have
+
+Deliberately out of scope, to keep the work within one implementation plan:
+
+- batch file translation (v2);
+- translation history;
+- OCR and translation of text on screen;
+- speech recognition and synthesis;
+- localisation formats (JSON/YAML/`.strings`) with placeholders;
+- cross-device sync, an iOS version;
+- auto-update, App Store distribution;
+- a built-in model benchmark (v2, see section 12).
+
+## 3. Architecture
+
+The key principle: the translation domain logic knows nothing about Ollama and nothing about
+SwiftUI. The prototype confirmed the seam holds.
+
+> **Corrected 2026-07-29.** This section said "five modules, each a target in Swift Package
+> Manager" and named `AppSettings` as one of them. There is no `AppSettings` target: it is
+> `Sources/TranslatorApp/AppSettings.swift`. **`Package.swift` is the target list** — read it
+> there rather than here, because a restated list is exactly what drifted. The subsections below
+> stay because each carries reasoning that the manifest does not; where a subsection names a
+> target that does not exist, it is corrected in place.
 
 ### 3.1 `OllamaKit`
 
-Тонкий HTTP-клиент к `http://127.0.0.1:11434`. Реализует протокол `LLMClient`, объявленный в
-`TranslationCore`.
+A thin HTTP client against `http://127.0.0.1:11434`. Implements the `LLMClient` protocol declared
+in `TranslationCore`.
 
-Эндпойнты: `/api/tags` (список установленных моделей), `/api/chat` со стримингом NDJSON,
-`/api/pull` с прогрессом, `/api/ps` (какие модели резидентны).
+Endpoints: `/api/tags` (installed models), `/api/chat` with NDJSON streaming, `/api/pull` with
+progress, `/api/ps` (which models are resident).
 
-Два обязательных правила, выведённых эмпирически:
+Two mandatory rules, derived empirically:
 
-- поле `message.thinking` в ответе читается и **отбрасывается**;
-- параметр `think` в запросе **не отправляется никогда**. Проверено на `qwen3:30b`:
-  `"think": false` не отключает рассуждения, а перекладывает их из `message.thinking` в
-  `message.content`, откуда они попадают прямо в текст перевода.
+- the `message.thinking` field in a response is read and **discarded**;
+- the `think` parameter in a request is **never sent**. Verified on `qwen3:30b`: `"think": false`
+  does not disable reasoning, it moves it out of `message.thinking` and into `message.content`,
+  from where it lands directly in the translated text.
 
-Длительности Ollama отдаёт в наносекундах — клиент приводит их к миллисекундам на границе.
+Ollama reports durations in nanoseconds — the client converts them to milliseconds at the
+boundary.
 
 ### 3.2 `TranslationCore`
 
-Доменное ядро. Зависит только от протокола `LLMClient`, поэтому полностью тестируется с
-фейковым клиентом, без запущенной Ollama.
+The domain core. Depends only on the `LLMClient` protocol, so it is fully testable with a fake
+client and no running Ollama.
 
-Состав:
+Contents:
 
-| Компонент | Ответственность |
+| Component | Responsibility |
 |---|---|
-| `LanguageDetector` | Определение языка исходника через `NLLanguageRecognizer` |
-| `Chunker` | Разбиение длинного текста, огороженный код — атомарен |
-| `TermExtractor` | Сбор повторяющихся терминов из исходника |
-| `DocumentGlossary` | Временный глоссарий документа, построенный на извлечённых терминах |
-| `Glossary` / `GlossaryEntry` | Пользовательский глоссарий и фильтрация по вхождению |
-| `LemmaMatcher` | Сравнение форм слова по леммам через `NLTagger` |
-| `GlossaryVerifier` | Проверка соблюдения глоссария в результате |
-| `PromptBuilder` | Сборка system- и user-сообщений, включая промпт для списка терминов |
-| `ResponseCleaner` | Срезание преамбул и снятие лишней обёртки код-блоком |
-| `MarkupSkeleton` | Структурное сравнение разметки исходника и перевода |
-| `ModelPolicy` | Правила выбора модели по режиму работы |
-| `Translator` | Оркестрация всего перечисленного |
+| `LanguageDetector` | Detects the source language via `NLLanguageRecognizer` |
+| `Chunker` | Splits long text; a fenced code block is atomic |
+| `TermExtractor` | Collects recurring terms from the source |
+| `DocumentGlossary` | The document's temporary glossary, built from the extracted terms |
+| `Glossary` / `GlossaryEntry` | The user glossary and its filtering by occurrence |
+| `LemmaMatcher` | Compares word forms by lemma via `NLTagger` |
+| `GlossaryVerifier` | Checks that the glossary was honoured in the result |
+| `PromptBuilder` | Assembles system and user messages, including the term-list prompt |
+| `ResponseCleaner` | Strips preambles and removes a spurious code-fence wrapper |
+| `MarkupSkeleton` | Structural comparison of source and translation markup |
+| `ModelPolicy` | Rules for choosing a model per execution path |
+| `Translator` | Orchestrates all of the above |
 
 ### 3.3 `TextCapture`
 
-Вся macOS-специфика захвата текста. Вынесена в отдельный модуль потому, что это самая хрупкая
-и наименее тестируемая часть системы — её нужно держать подальше от логики.
+All macOS-specific text capture. Split into its own module because it is the most fragile and
+least testable part of the system — it needs to be kept away from the logic.
 
-Состав: `HotkeyManager`, `SelectionReader`, `PermissionsGate`.
+> **Corrected 2026-07-29.** This section listed `HotkeyManager`, `SelectionReader`,
+> `PermissionsGate`. The actual contents of `Sources/TextCapture/` are `GeneralPasteboard.swift`,
+> `HotkeyCombo.swift`, `HotkeyManager.swift`, `PasteboardSnapshot.swift`, `PermissionsGate.swift`,
+> `SelectionReader.swift`. The directory listing is the roster; the two additions the design did
+> not anticipate are the hotkey value type (`HotkeyCombo`) and the whole-pasteboard snapshot that
+> the ⌘C fallback of section 6 requires.
 
 ### 3.4 `AppSettings`
 
-Настройки и их хранение. Скаляры — в `UserDefaults`. Пользовательский глоссарий — отдельным
-JSON-файлом в `~/Library/Application Support/LocalTranslator/glossary.json`, чтобы его можно
-было править руками и класть в git.
+Settings and their storage. Scalars live in `UserDefaults`. The пользовательский глоссарий (user
+glossary) is a separate JSON file at
+`~/Library/Application Support/LocalTranslator/glossary.json`, so it can be edited by hand and
+kept in git.
+
+> **Corrected 2026-07-29.** This is not a target. It is `Sources/TranslatorApp/AppSettings.swift`
+> (the scalars) plus `Sources/TranslatorApp/GlossaryStore.swift` (the JSON file). Everything the
+> section says about the storage split still holds.
 
 ### 3.5 `TranslatorApp`
 
-SwiftUI-оболочка: `MenuBarExtra`, всплывающая панель, главное окно, сцена настроек.
+The SwiftUI shell: `MenuBarExtra`, the floating panel, the main window, the settings scene.
 
-### 3.6 Поток данных по хоткею
+### 3.6 Data flow on a hotkey press
 
 ```
 HotkeyManager → SelectionReader → LanguageDetector → ModelPolicy
-    → Translator (TermExtractor → Chunker → PromptBuilder → LLMClient)
-    → ResponseCleaner → MarkupSkeleton + GlossaryVerifier → всплывающая панель
+    → Translator (Chunker → TermExtractor → PromptBuilder → LLMClient)
+    → ResponseCleaner → MarkupSkeleton + GlossaryVerifier → floating panel
 ```
 
-Определение языка идёт нативным `NLLanguageRecognizer`, а не через LLM: это мгновенно,
-бесплатно и не занимает модель.
+> **Corrected 2026-07-29.** Two things about this sketch. The order inside `Translator` was
+> written `TermExtractor → Chunker`; the code chunks first and extracts terms only when there is
+> more than one чанк, so the arrow is `Chunker → TermExtractor` (see `Translator.translate`).
+> And the whole left-hand sequence is owned by `HotkeyCoordinator` in `TranslatorApp`, which also
+> decides the ordering of panel hide/capture/show — that ordering is measured, not preferred, and
+> its reasoning lives in `Sources/TranslatorApp/HotkeyCoordinator.swift`.
 
-## 4. Движок перевода
+Language detection uses the native `NLLanguageRecognizer` rather than the LLM: it is instant,
+free, and does not occupy the model.
 
-### 4.1 Промпт
+## 4. The translation engine
 
-System-сообщение содержит жёсткие правила: выдать **только** перевод без преамбул; сохранить
-структуру (переносы строк, пустые строки, маркеры списков, уровни заголовков); не переводить
-содержимое огороженных код-блоков и инлайн-кода; не трогать URL, адреса почты, пути к файлам,
-CLI-флаги и идентификаторы; сохранить числа, единицы и даты; соблюсти выбранный тон.
+### 4.1 The prompt
 
-Постпроцессинг обязателен и не заменяется промптом. `ResponseCleaner` срезает преамбулы вида
-«Here is the translation:», «Вот перевод:» и снимает обёртку код-блоком, если модель завернула
-в неё весь ответ.
+The system message carries hard rules: output **only** the translation, with no preamble;
+preserve the structure (line breaks, blank lines, list markers, heading levels); do not translate
+the contents of fenced code blocks or inline code; do not touch URLs, email addresses, file paths,
+CLI flags or identifiers; keep numbers, units and dates; follow the selected тон (tone).
 
-### 4.2 Тон
+Post-processing is mandatory and is not replaced by the prompt. `ResponseCleaner` strips preambles
+of the form «Here is the translation:», «Вот перевод:» and removes a code-fence wrapper if the
+model wrapped the entire reply in one.
 
-Пять режимов: `neutral`, `formal`, `casual`, `technical`, `literal`. Каждый — отдельная
-инструкция в system-промпте. Значение по умолчанию настраивается; заводское — `neutral`.
+### 4.2 Tone
 
-### 4.3 Чанкинг
+Five modes: `neutral`, `formal`, `casual`, `technical`, `literal`. Each is a separate instruction
+in the system prompt. The default is configurable; the factory value is `neutral`.
 
-Текст режется по границам абзацев. Огороженный код-блок — **атомарная единица**: он никогда не
-разрезается, даже если превышает целевой размер чанка. Если разрезать, модель получает
-незакрытую ограду и надёжно «чинит» её, переводя код.
+### 4.3 Chunking
 
-Абзац, который в одиночку превышает бюджет, режется по границам предложений.
+Text is cut on paragraph boundaries. A fenced code block is an **atomic unit**: it is never cut,
+even when it exceeds the target chunk size. Cut it, and the model receives an unclosed fence and
+reliably "repairs" it by translating the code.
 
-Размер чанка по умолчанию — 900 символов, настраивается в продвинутых настройках.
+A paragraph that exceeds the budget on its own is cut on sentence boundaries.
 
-### 4.4 Терминологическая связность
+The default chunk size is 900 characters, configurable in the advanced settings.
 
-Передача предыдущего переведённого абзаца в качестве контекста **не решает задачу** — проверено
-на двух моделях разного класса, обе дали «местные языковые модели» в первом чанке и «локальный
-перевод» в пятом на одном и том же тексте. Механизм заменён.
+### 4.4 Terminological consistency
 
-Когда чанков больше одного, перед переводом выполняется подготовительный проход:
+Passing the previous translated paragraph as context **does not solve the problem** — verified on
+two models of different classes, both of which produced «местные языковые модели» in the first
+чанк and «локальный перевод» in the fifth on the same text. The mechanism was replaced.
 
-1. `TermExtractor` собирает кандидатов из исходника через `NLTagger`: отдельные
-   существительные и прилагательные, а также именные группы длиной два-три слова. Кандидат
-   попадает в список, если встречается не менее двух раз и не является стоп-словом. Сравнение
-   частот идёт по леммам, чтобы разные падежные формы считались одним термином. Список
-   сортируется по убыванию частоты и обрезается до 20 записей.
-2. Одним коротким запросом к модели переводится только этот список. Модель обязана вернуть
-   каждую строку в формате `исходный термин => перевод`, отразив термин дословно.
-3. Результат становится `DocumentGlossary` и подставляется в промпт **каждого** чанка наравне
-   с пользовательским глоссарием.
+When there is more than one чанк, a preparatory pass runs before translation:
 
-При конфликте пользовательский глоссарий побеждает.
+1. `TermExtractor` collects candidates from the source via `NLTagger`: individual nouns and
+   adjectives, plus noun phrases two to three words long. A candidate enters the list if it occurs
+   at least twice and is not a stop word. Frequencies are compared by lemma, so different
+   inflected forms count as one term. The list is sorted by descending frequency and truncated to
+   20 entries.
+2. A single short request to the model translates that list and nothing else. The model must
+   return every line in the form `source term => translation`, echoing the term verbatim.
+3. The result becomes the документный глоссарий (document glossary) and is injected into the
+   prompt of **every** чанк alongside the пользовательский глоссарий.
 
-**Документные термины подставляются целиком, без фильтрации по вхождению.** Это отличает их от
-пользовательского глоссария и является причиной, по которой механизм работает: термины извлечены
-из этого же документа и ограничены двадцатью, поэтому нерелевантных среди них нет, а фильтрация
-по поверхностной форме теряла бы термин в тех чанках, где он стоит в другом падеже — то есть
-ровно там, где связность и нужна.
+On conflict, the user glossary wins.
 
-**Сопоставление идёт по отражённому термину, а не по позиции строки.** Позиционное сопоставление
-допускает тихий сдвиг: пропуск одной строки в ответе портит все последующие термины, и ошибка
-уходит в каждый чанк принудительно. При разборе по термину нераспознанная строка просто не даёт
-записи.
+**Document terms are injected whole, without filtering by occurrence.** This is what distinguishes
+them from the user glossary and is the reason the mechanism works: the terms were extracted from
+this very document and capped at twenty, so none of them is irrelevant, whereas filtering by
+surface form would lose a term in exactly those чанки where it stands in a different case — that
+is, exactly where consistency is needed.
 
-Подготовительный проход пропускается в двух случаях: чанк всего один, либо язык исходника не
-опознан — разбирать текст морфологией чужого языка означает получить мусорные термины. Перевод в
-обоих случаях выполняется как обычно.
+**Matching is by the echoed term, not by line position.** Positional matching admits a silent
+shift: one missing line in the reply corrupts every term after it, and the error is forced into
+every чанк. Parsing by term means an unrecognised line simply yields no entry.
 
-Механизм подтверждён замером (см. раздел 11): сквозная согласованность терминов выросла с 64–68%
-до 88% в двух прогонах.
+The preparatory pass is skipped in two cases: there is only one чанк, or the source language was
+not recognised — parsing text with a foreign language's morphology yields garbage terms.
+Translation proceeds normally in both cases.
 
-Известное ограничение: термин, переведённый вне контекста, может быть неверным — замер дал одну
-ошибочную запись из одиннадцати. Попытка снабдить список контекстом проблему не решает, потому
-что причина в изоляции термина, а не в нехватке информации. Смягчение — показывать документный
-глоссарий пользователю (раздел 7.3), чтобы ошибочная запись была видна.
+The mechanism is confirmed by measurement (see section 11): end-to-end term consistency rose from
+64–68% to 88% across two runs.
 
-### 4.5 Пользовательский глоссарий
+Known limitation: a term translated out of context can be wrong — the measurement produced one
+bad entry out of eleven. Supplying the list with context does not fix it, because the cause is the
+term's isolation, not a shortage of information. The mitigation is to show the документный
+глоссарий to the user (section 7.3), so a bad entry is visible.
 
-Запись: `{term, doNotTranslate, translations: [код языка: строка]}`.
+### 4.5 The user glossary
 
-В промпт подставляются **только релевантные** записи — те, чей термин встречается в тексте
-чанка. Механизм проверен: на немецком соблюдены 5 из 5 подставленных терминов.
+An entry: `{term, doNotTranslate, translations: [language code: string]}`.
 
-### 4.6 Проверка глоссария
+**Only relevant** entries are injected into the prompt — those whose term occurs in the чанк's
+text. The mechanism is verified: on German, 5 of 5 injected terms were honoured.
 
-Сравнение подстрок не годится для флективных языков: модель корректно перевела
-`implementation guide` как «руководств**а** по реализации» в родительном падеже, а проверка
-искала «руководство по реализации» и отрапортовала нарушение.
+### 4.6 Glossary verification
 
-`LemmaMatcher` приводит и ожидаемую форму, и текст перевода к последовательности лемм через
-`NLTagger` и сравнивает по ним.
+Substring comparison is unsuitable for inflected languages: the model correctly translated
+`implementation guide` as «руководств**а** по реализации» in the genitive, and the check looked for
+«руководство по реализации» and reported a violation.
 
-Результат проверки имеет **три** состояния:
+`LemmaMatcher` reduces both the expected form and the translated text to a sequence of lemmas via
+`NLTagger` and compares those.
 
-- **соблюдён** — лемма-совпадение найдено;
-- **не найден** — совпадения нет, показывается предупреждение;
-- **проверить невозможно** — лемматизация для целевого языка недоступна либо термин
-  многословный и разошёлся по предложению; предупреждение не показывается.
+The check has **three** outcomes:
 
-Предупреждение никогда не блокирует результат. Рядом с ним — действие «игнорировать этот
-термин», которое навсегда исключает запись из проверки.
+- **honoured** — a lemma match was found;
+- **not found** — no match; a warning is shown;
+- **cannot be verified** — lemmatisation is unavailable for the target language, or the term is
+  multi-word and spread across the sentence; no warning is shown.
 
-Осторожность намеренная: проверка, ошибочно кричащая о нарушении на корректном переводе, хуже
-отсутствующей — ей перестают верить на второй день.
+A warning never blocks the result. Beside it sits an «игнорировать этот термин» action, which
+excludes the entry from the check permanently.
 
-### 4.7 Проверка целостности разметки
+The caution is deliberate: a check that falsely cries violation on a correct translation is worse
+than no check at all — people stop believing it on the second day.
 
-Проверка по присутствию подстроки слишком слаба: она пропустила три разных дефекта из трёх
-встретившихся — превращение голого URL в markdown-ссылку, разломанную блок-цитату и абзац,
-разорванный хвостовыми пробелами на четыре строки.
+### 4.7 Markup integrity checking
 
-`MarkupSkeleton` сводит исходник и перевод к последовательности структурных токенов и сравнивает
-последовательности. Токены:
+Checking by substring presence is too weak: it missed three distinct defects out of the three that
+occurred — a bare URL turned into a markdown link, a broken blockquote, and a paragraph shattered
+into four lines by trailing spaces.
 
-- заголовок с уровнем;
-- маркер списка с уровнем вложенности;
-- маркер блок-цитаты;
-- огороженный код-блок — хеш содержимого и язык;
-- инлайн-код — точный текст;
-- URL — с признаком «голый» или «внутри markdown-ссылки»;
-- граница абзаца — пустая строка между блоками;
-- жёсткий перенос строки — два пробела в конце строки.
+`MarkupSkeleton` reduces source and translation to a sequence of structural tokens and compares the
+sequences. The tokens:
 
-Последние два токена разделены намеренно: дефект `gpt-oss` был именно жёстким переносом, а
-выглядел как распавшийся абзац.
+- a heading with its level;
+- a list marker with its nesting depth;
+- a blockquote marker;
+- a fenced code block — content hash and language;
+- inline code — the exact text;
+- a URL — flagged as bare or inside a markdown link;
+- граница абзаца (paragraph break) — a blank line between blocks;
+- жёсткий перенос строки (hard line break) — two trailing spaces at the end of a line.
 
-**Сравнение идёт выравниванием последовательностей (LCS), а не позиционно.** При позиционном
-сравнении потеря одного токена в начале сдвигает все последующие, и один дефект превращается в
-десятки предупреждений. Это тот же отказ, из-за которого проверка глоссария сделана осторожной:
-предупреждение, которому нельзя верить, хуже отсутствующего.
+The last two tokens are kept separate deliberately: the `gpt-oss` defect was precisely a hard line
+break, and it looked like a shattered paragraph.
 
-Расхождение показывается конкретным списком «было → стало». Как и глоссарий, это предупреждение,
-а не блокировка.
+**Comparison is by sequence alignment (LCS), not positional.** Under positional comparison, losing
+one token near the start shifts everything after it, and one defect becomes dozens of warnings.
+This is the same failure mode that made the glossary check cautious: a warning you cannot trust is
+worse than no warning.
 
-### 4.8 Двухпроходный режим — исключён из v1
+A divergence is shown as a concrete «было → стало» list. Like the glossary, this is a warning, not
+a block.
 
-Проверены обе формулировки, обе провалились.
+### 4.8 Two-pass mode — cut from v1
 
-**Редактор** (исходная): 1.8× времени, шесть починок против двух новых поломок, включая
-перефразирование с потерей содержания — «спецификация» превратилась в «задание», последний абзац
-ужался.
+Both formulations were tested; both failed.
 
-**Корректор** (переписанная, с запретом перефразировать и предохранителем по длине): устранил
-разрушительность — предохранитель принял оба прогона, структура абзацев уцелела, — но
-переусердствовал в обратную сторону. За 2× времени он отредактировал одну букву в первом прогоне
-и не изменил ничего во втором, оставив в том же предложении очевидные кальки нетронутыми.
+**Editor** (the original): 1.8× the time, six fixes against two new breakages, including
+rephrasing that lost content — «спецификация» became «задание», and the last paragraph shrank.
 
-Вывод: второй проход не окупается ни в одной из формулировок. Путь к качеству — модель получше:
-`gpt-oss:20b` за один проход починила шесть ошибок `aya-expanse:8b`, которых второй проход самой
-`aya-expanse:8b` не увидел.
+**Корректор** (proof-reader — the rewritten formulation, forbidden to rephrase and fitted with a
+length guard): it removed the destructiveness — the guard accepted both runs, paragraph structure
+survived — but overshot in the other direction. For 2× the time it edited a single letter in the
+first run and changed nothing in the second, leaving obvious calques untouched in the very same
+sentence.
 
-Из v1 исключается полностью — вместе с `TwoPassRefiner`, предохранителем длины и промптом
-корректора. Кандидат к пересмотру в v2, если появится модель, для которой второй проход
-осмыслен.
+Conclusion: a second pass does not pay for itself in either formulation. The route to quality is a
+better model: `gpt-oss:20b` in a single pass fixed six errors of `aya-expanse:8b` that
+`aya-expanse:8b`'s own second pass never saw.
 
-### 4.9 Отмена и стриминг
+Cut from v1 entirely — along with `TwoPassRefiner`, the length guard and the корректор prompt.
+A candidate for reconsideration in v2, should a model appear for which a second pass makes sense.
 
-Ответ модели отдаётся потребителю **по чанкам**, а не по токенам. Причина в том, что очистка
-ответа (раздел 4.1) применима только к целому ответу: пока чанк не закончен, из него нельзя
-срезать преамбулу. Отдавать сырые токены значило бы, что поток и итоговый текст расходятся ровно
-в тех случаях, когда очистка срабатывает, — панель показала бы преамбулу, а затем та бы исчезла
-при подстановке итога. Размен на менее «живое» обновление сделан осознанно: контракт, на который
-потребитель может опереться, дороже частоты обновлений.
+### 4.9 Cancellation and streaming
 
-Замер времени до первого токена при этом берётся с первого **сырого** токена — иначе он вырос бы
-на время генерации целого чанка и перестал отражать воспринимаемую задержку.
+> **Corrected 2026-07-29.** This section said the model's reply is handed to the consumer
+> **per чанк, not per token**. That is no longer what the code does, and the paragraph below
+> states the current contract. The *reason* given here survived the change and still governs the
+> design: cleaning the reply (section 4.1) can only be decided on a whole first line (a preamble)
+> or a whole reply (the fence unwrap), so nothing may be emitted before its shape is settled.
 
-Запрос выполняется в `Task`, отменяемом при закрытии всплывающей панели или нажатии «Отмена».
-**Отмена проверяется явно** — `Task.checkCancellation()` перед каждым сетевым вызовом и после
-него. Без этого `AsyncThrowingStream` при отмене *завершается*, а не бросает: цикл получил бы
-короткий буфер, продолжил бы досылать запросы по всем оставшимся чанкам и вернул бы обрезанный
-документ как успешный результат. Отмена обязана приходить наружу как `CancellationError`.
+The reply is buffered only until the shape of the чанк's answer is decided, then delivered
+incrementally. `Translator.streamChunkTranslation` buffers from the first token and leaves
+buffering the moment any of three conditions holds: a `"\n"` appears (the preamble decision is made
+on the completed first line), the buffer's normalised length passes the point where it can no
+longer be a preamble, or the stream ends. One case never goes incremental: a reply that opens a
+fence, because the whole-answer unwrap can only be decided at the end. The invariant that matters
+is that `final` and the `onToken` stream agree exactly — чанки are joined with `"\n\n"` in both,
+and there is a test pinning it. The trade — a less "live" first fraction of a second in exchange
+for a contract the consumer can lean on — is made deliberately.
 
-Одно исключение из общего правила деградации: сбой подготовительного вызова, строящего документный
-глоссарий, оставляет глоссарий пустым, но перевод продолжается — это улучшение, а не сам
-результат. Отмена под это исключение не попадает и пробрасывается дальше.
+> **Corrected 2026-07-29.** This section said time-to-first-token is taken from the first **raw**
+> token («с первого сырого токена»), so that it would not grow by the generation time of a whole
+> чанк. That is the opposite of what the code does, and the number gates the product's hard
+> requirement (section 5: TTFT under a second; `Sources/acceptance/main.swift` fails the run at
+> 1000 ms). Do not "restore" the raw-token reading.
 
-## 5. Политика выбора модели
+Time-to-first-token is measured to the first `onToken` call that carried actual чанк content —
+the first moment a consumer could have shown the user something. It is deliberately **not** the
+first raw token off the wire: a чанк whose whole-answer shape is undecided is buffered until its
+first line settles, so timing the wire would measure an event nobody watching `onToken` can ever
+observe. The `"\n\n"` чанк separator carries no content and does not count, and the internal
+term-list call never reaches `onToken` at all. The value is `nil` when no token was ever emitted,
+and that nil *is* the empty-reply signal (see section 11a). The authority is
+`TranslationOutcome.timeToFirstTokenMS` in `Sources/TranslationCore/Translator.swift`, whose doc
+comment carries the reasoning in full.
 
-`ModelPolicy` жёстко связывает режим работы и модель. Основание — замеры на M5 Pro / 48 ГБ,
-техдока 710 символов EN → DE:
+The request runs in a `Task`, cancelled when the floating panel closes or «Отмена» is pressed.
+**Cancellation is checked explicitly** — `Task.checkCancellation()` before and after every network
+call. Without it, `AsyncThrowingStream` *finishes* on cancellation instead of throwing: the loop
+would receive a short buffer, keep issuing requests for every remaining чанк, and return a
+truncated document as a successful result. Cancellation must surface as `CancellationError`.
 
-| Модель | TTFT (тёплая) | Полное время | Роль |
+One exception to the general degradation rule: a failure of the preparatory call that builds the
+документный глоссарий leaves the glossary empty but lets the translation continue — it is an
+enhancement, not the result itself. Cancellation does not fall under this exception and is
+rethrown.
+
+## 5. Model selection policy
+
+`ModelPolicy` binds execution path to model. The basis is measurements on an M5 Pro / 48 GB, a
+710-character EN → DE technical document:
+
+| Model | TTFT (warm) | Total time | Role |
 |---|---|---|---|
-| `aya-expanse:8b` | 0.55 с | 5.7 с | Интерактивный путь |
-| `gemma3n:e4b` | 2.7 с (холодная) | 6.9 с | Исключена |
-| `gpt-oss:20b` | 7.5–25 с | 28.7 с | Фоновый путь |
-| `qwen3:30b` | 78.6 с | 82.4 с | Исключена |
+| `aya-expanse:8b` | 0.55 s | 5.7 s | Интерактивный путь |
+| `gemma3n:e4b` | 2.7 s (cold) | 6.9 s | Excluded |
+| `gpt-oss:20b` | 7.5–25 s | 28.7 s | Фоновый путь |
+| `qwen3:30b` | 78.6 s | 82.4 s | Excluded |
 
-Оговорка к таблице: у `gemma3n:e4b` замер сделан на холодной загрузке, тёплый TTFT не измерялся —
-она исключена по качеству, а не по скорости, поэтому доводить замер смысла не было. По
-пропускной способности она сопоставима с `aya-expanse:8b` (52 против 46 ток/с).
+A caveat on the table: `gemma3n:e4b` was measured on a cold load and its warm TTFT was never
+measured — it is excluded on quality, not on speed, so finishing the measurement had no point. On
+throughput it is comparable to `aya-expanse:8b` (52 against 46 tok/s).
 
-**Интерактивный путь** (хоткей): `aya-expanse:8b`. Требование жёсткое — TTFT ниже секунды.
+**Интерактивный путь** (the interactive path — hotkey): `aya-expanse:8b`. The requirement is hard
+— TTFT under a second.
 
-**Фоновый путь** (кнопка в главном окне): `gpt-oss:20b`. Здесь десятки секунд на рассуждения —
-приемлемая плата за заметно лучшую прозу.
+**Фоновый путь** (the background path — the main window's button): `gpt-oss:20b`. Here tens of
+seconds of reasoning is an acceptable price for noticeably better prose.
 
-**Чёрный список с причиной, показываемой в настройках:**
+> **Corrected 2026-07-29.** The фоновый путь is not wired up. `ModelPolicy.defaultModel(for:
+> .background)` returns `gpt-oss:20b` and `AppSettings.backgroundModel` is settable in
+> Settings → «Модели», but nothing reads it: `TranslationViewModel` builds its `ChatOptions` from
+> `settings.interactiveModel` for both surfaces, so the main window's button runs the interactive
+> model too. The split exists in the policy and the settings, not in the translation path.
 
-- `gemma3n:e4b` — портит идентификаторы посимвольно. Выдала `` `StructureDefiinition` `` внутри
-  инлайн-кода и `Implemenentierungsleitfadens`. Для переводчика техдоки это худший из возможных
-  отказов: имя типа в коде сломано молча.
-- `qwen3:30b` — 78 секунд до первого символа перевода.
+**A blacklist, with the reason shown in settings:**
 
-Список не зашит намертво: в настройках выбирается любая установленная модель, но записи из
-чёрного списка помечены предупреждением с указанием причины.
+- `gemma3n:e4b` — corrupts identifiers character by character. It produced
+  `` `StructureDefiinition` `` inside inline code, and `Implemenentierungsleitfadens`. For a
+  technical-documentation translator this is the worst possible failure: a type name in code broken
+  silently.
+- `qwen3:30b` — 78 seconds before the first character of translation.
 
-### 5.1 Резидентность модели
+The list is not hard-wired: any installed model can be chosen in settings, but blacklisted entries
+are marked with a warning stating the reason. (The reason strings in `ModelPolicy.blacklist` are
+English and are what `translate-cli` prints; the app renders the Russian
+`RussianCopy.blacklistReasons`, keyed by the same prefixes, and falls back to the English text if
+a prefix has no Russian counterpart.)
 
-`keep_alive` — несущая конструкция, а не оптимизация: холодная загрузка `aya-expanse:8b` стоит
-~2000 мс против ~155 мс на тёплой. Без неё каждое нажатие хоткея начинается с двухсекундной
-паузы.
+### 5.1 Model residency
 
-Значение по умолчанию — `30m`, настраивается. При запуске приложения выполняется прогрев модели
-интерактивного пути коротким запросом; поведение отключается настройкой «прогревать при
-запуске» (по умолчанию включено).
+`keep_alive` is load-bearing, not an optimisation: a cold load of `aya-expanse:8b` costs ~2000 ms
+against ~155 ms warm. Without it, every hotkey press begins with a two-second pause.
 
-## 6. Захват выделенного текста
+The default is `30m`, configurable. At application launch the interactive path's model is warmed
+with a short request; this is disabled by the «прогревать при запуске» setting (on by default).
 
-Два механизма, основной и резервный:
+## 6. Capturing the selected text
 
-1. **Accessibility API** — `AXUIElement` с атрибутом `kAXSelectedTextAttribute`. Чисто, не
-   трогает буфер обмена. Но работает не везде: часть Electron-приложений и браузеров атрибут
-   игнорируют.
-2. **Эмуляция `Cmd+C`** — резервный путь. Работает почти везде. Обязательно: сохранить прежнее
-   содержимое буфера обмена до эмуляции и восстановить после, иначе приложение молча затирает
-   пользователю буфер.
+Two mechanisms, primary and fallback:
 
-Порядок: сначала Accessibility, при пустом результате — эмуляция. Если оба пути дали пустоту,
-во всплывающей панели показывается подсказка «выделите текст».
+1. **The Accessibility API** — `AXUIElement` with the `kAXSelectedTextAttribute` attribute. Clean,
+   and it does not touch the clipboard. But it does not work everywhere: some Electron applications
+   and browsers ignore the attribute.
+2. **Synthetic `Cmd+C`** — the fallback. Works almost everywhere. Mandatory: save the previous
+   clipboard contents before the synthetic press and restore them afterwards, or the application
+   silently overwrites the user's clipboard.
 
-### 6.1 Разрешения
+Order: Accessibility first, then the synthetic press if the result was empty. If both paths come
+back empty, the floating panel shows a «выделите текст» hint.
 
-Приложению требуется доступ Accessibility. При первом запуске `PermissionsGate` проверяет
-`AXIsProcessTrustedWithOptions` и, если доступа нет, показывает экран онбординга с объяснением,
-зачем это нужно, и кнопкой, открывающей нужный раздел системных настроек.
+### 6.1 Permissions
 
-Без разрешения перевод по сочетанию клавиш не выполняется: само сочетание регистрируется
-через Carbon и срабатывает даже без доступа, но оба пути захвата текста без него молчат.
-Приложение пользуется этим — вместо тишины оно показывает во всплывающей панели объяснение
-и кнопку в системные настройки ровно в тот момент, когда пользователь попытался
-воспользоваться хоткеем. Главное окно при этом остаётся полностью функциональным.
+The application needs Accessibility access. `PermissionsGate` checks
+`AXIsProcessTrustedWithOptions`, and if access is absent shows an onboarding screen explaining why
+it is needed, with a button that opens the relevant System Settings pane.
 
-### 6.2 Хоткей и направление перевода
+> **Corrected 2026-07-29.** There is no onboarding screen. `TranslatorApp` is an `LSUIElement`
+> app with no window at launch to put one in, so onboarding takes three shapes instead: the
+> system's own dialog, raised exactly once at first launch (latched by
+> `AppSettings.hasRequestedAccessibility`, so a user who declined is not nagged); the panel's own
+> prompt, shown at the moment the user presses the hotkey and nothing happens; and a standing
+> indicator in Settings → «Основные». All three name the pane explicitly — «Конфиденциальность и
+> безопасность» → «Универсальный доступ» — and offer «Открыть настройки системы». The same
+> correction applies to the corresponding row of section 8's table.
 
-Сочетание по умолчанию — `⌥⌘T`, настраивается.
+Without the permission, translation by key combination does not happen: the combination itself is
+registered through Carbon and fires even without access, but both capture paths stay silent
+without it. The application exploits this — instead of silence it shows, in the floating panel,
+an explanation and a button into System Settings at exactly the moment the user tried to use the
+hotkey. The main window remains fully functional.
 
-Направление определяется автоматически по двум настройкам: **основной язык** (заводское
-значение — русский) и **рабочий язык** (заводское — английский). Если определённый язык
-исходника совпадает с основным, перевод идёт в рабочий; иначе — в основной.
+### 6.2 Hotkey and translation direction
 
-## 7. Интерфейс
+The default combination is `⌥⌘T`, configurable.
+
+The direction is derived automatically from two settings: the **primary language** (factory value:
+Russian) and the **working language** (factory value: English). If the detected source language
+equals the primary one, translation goes to the working language; otherwise to the primary one.
+
+## 7. The interface
 
 ### 7.1 Menu bar
 
-`MenuBarExtra` с иконкой. Меню: открыть главное окно, настройки, статус Ollama (запущена /
-не запущена / модель резидентна), выход.
+`MenuBarExtra` with an icon. The menu: open the main window, settings, Ollama status (running /
+not running / model resident), quit.
 
-### 7.2 Всплывающая панель
+### 7.2 The floating panel
 
-`NSPanel` со стилем `.nonactivatingPanel` — критично, иначе панель отбирает фокус у приложения,
-из которого пользователь выделял текст, и рвёт его рабочий поток.
+An `NSPanel` with the `.nonactivatingPanel` style — critical, or the panel steals focus from the
+application the user was selecting text in and breaks their workflow.
 
-Появляется рядом с курсором. Содержит: определённое направление перевода, текст перевода,
-отрисовываемый потоком по мере поступления токенов, предупреждения глоссария и целостности
-разметки (если есть), кнопки «скопировать» и «открыть в окне».
+It appears next to the cursor. It contains: the detected translation direction, the translated
+text rendered as it streams in, glossary and markup-integrity warnings (if any), and «скопировать»
+and «открыть в окне» buttons.
 
-`Esc` закрывает панель и отменяет запрос. `Enter` копирует результат и закрывает. Настройка
-«копировать автоматически» (по умолчанию выключена) кладёт результат в буфер сразу по
-завершении.
+`Esc` closes the panel and cancels the request. `Enter` copies the result and closes. The
+«копировать автоматически» setting (off by default) puts the result on the clipboard as soon as it
+completes.
 
-### 7.3 Главное окно
+### 7.3 The main window
 
-Два текстовых поля — исходник и результат. Над ними: выбор исходного языка (с пунктом
-«определить автоматически»), целевого языка, тона и модели. Кнопка «Перевести», при выполнении
-превращающаяся в «Отмена».
+Two text fields — source and result. Above them: source language selection (with a «определить
+автоматически» entry), target language, and tone. A «Перевести» button that becomes «Отмена» while
+running.
 
-Под результатом — блок предупреждений: расхождения разметки и нарушения глоссария, каждое с
-пояснением «было → стало».
+> **Corrected 2026-07-29.** The window has no model picker. Its pickers are source language,
+> target language and tone; the model is chosen in Settings → «Модели» — and, per the correction
+> in section 5, the window runs the interactive model regardless.
 
-Там же, свёрнутым списком, **документный глоссарий** — термины, которые движок зафиксировал для
-этого текста, и их переводы. Это смягчение известного дефекта из раздела 4.4: термин, переведённый
-вне контекста, может быть неверным, а увидеть это можно только глазами. Список короткий (до
-двадцати строк) и читается за минуту. Запись можно заглушить — тем же механизмом, что и
-нарушения глоссария.
+Below the result is a warnings block: markup divergences and glossary violations, each with a
+«было → стало» explanation.
 
-### 7.4 Настройки
+In the same place, as a collapsed list, is the **документный глоссарий** — the terms the engine
+fixed for this text and their translations. This is the mitigation for the known defect from
+section 4.4: a term translated out of context can be wrong, and only a human eye can see it. The
+list is short (up to twenty rows) and reads in a minute. An entry can be muted by the same
+mechanism as a glossary violation.
 
-Четыре вкладки:
+### 7.4 Settings
 
-- **Основные** — хоткей, основной и рабочий языки, тон по умолчанию, автокопирование,
-  прогрев при запуске.
-- **Модели** — модель интерактивного пути, модель фонового пути, `keep_alive`. Список берётся
-  из `/api/tags`; записи чёрного списка помечены предупреждением с причиной.
-- **Глоссарий** — таблица записей с редактированием, флаг «не переводить», переводы по языкам,
-  список заглушённых проверок. Кнопка «открыть файл» ведёт к `glossary.json`.
-- **Продвинутые** — размер чанка, температура.
+Four tabs:
 
-## 8. Обработка ошибок
+- **«Основные»** — hotkey, primary and working languages, default tone, auto-copy, warm-up on
+  launch.
+- **«Модели»** — the interactive path's model, the background path's model, `keep_alive`. The list
+  comes from `/api/tags`; blacklisted entries are marked with a warning and its reason.
+- **«Глоссарий»** — a table of entries with editing, the "do not translate" flag, per-language
+  translations, and the list of muted checks. An "open file" button leads to `glossary.json`.
+- **«Дополнительно»** — chunk size, temperature.
 
-| Ситуация | Поведение |
+> **Corrected 2026-07-29.** The fourth tab was named «Продвинутые» here; the shipped tab is
+> labelled «Дополнительно». Its contents are as described.
+
+## 8. Error handling
+
+| Situation | Behaviour |
 |---|---|
-| Ollama не запущена | Внятное сообщение и кнопка «Запустить Ollama». Приложение не пытается стартовать её молча. |
-| Модель не скачана | Предложение выполнить `pull` с отображением прогресса через стриминг `/api/pull`. |
-| Таймаут или зависание запроса | Отмена по истечении 120 с, кнопка «Повторить». |
-| Пустое выделение | Подсказка во всплывающей панели. |
-| Нет разрешения Accessibility | Экран онбординга со ссылкой в системные настройки. |
-| Модель вернула пустой ответ | Сообщение об ошибке и кнопка «Повторить»; результат предыдущего перевода не затирается. |
+| Ollama not running | A clear message and a «Запустить Ollama» button. The application does not try to start it silently. |
+| Model not downloaded | An offer to `pull` it, with progress shown through the `/api/pull` stream. |
+| Request timeout or hang | Cancelled after 120 s, with a «Повторить» button. |
+| Empty selection | A hint in the floating panel. |
+| No Accessibility permission | An explanation and a link into System Settings. (Was: "an onboarding screen" — corrected 2026-07-29, see section 6.1 for the three shapes this actually takes.) |
+| Model returned an empty reply | An error message and a «Повторить» button; the previous translation's result is not wiped. |
 
-## 9. Хранение данных
+## 9. Data storage
 
-- Скалярные настройки — `UserDefaults`.
-- Пользовательский глоссарий и список заглушённых проверок —
+- Scalar settings — `UserDefaults`.
+- The user glossary and the list of muted checks —
   `~/Library/Application Support/LocalTranslator/glossary.json`.
-- Переводы никуда не записываются: истории в v1 нет.
+- Translations are not written anywhere: v1 has no history.
 
-## 10. Тестирование
+## 10. Testing
 
-**Юнит-тесты `TranslationCore` с фейковым `LLMClient`** — основной объём. Покрываются:
-чанкинг (в первую очередь атомарность огороженного кода), сборка промпта, фильтрация
-пользовательского глоссария по вхождению, лемма-сравнение и три состояния проверки, срезание
-преамбул, снятие обёртки код-блоком, построение и LCS-сравнение `MarkupSkeleton`, разбор списка
-терминов по отражённому термину (включая пропущенную и лишнюю строку), слияние пользовательского
-и документного глоссариев.
+**Unit tests for `TranslationCore` with a fake `LLMClient`** — the bulk of the suite. Covered:
+chunking (above all the atomicity of fenced code), prompt assembly, filtering of the user glossary
+by occurrence, lemma comparison and the three check outcomes, preamble stripping, code-fence
+unwrapping, construction and LCS comparison of `MarkupSkeleton`, parsing the term list by echoed
+term (including a missing and a spurious line), and merging the user and document glossaries.
 
-**Приёмочный прогон** — отдельная задача плана, не в CI. Корпус текстов прогоняется через живую
-Ollama, объективные метрики сравниваются с зафиксированным baseline прототипа.
+**An acceptance run** — a separate task in the plan, not in CI. A corpus of texts is run through a
+live Ollama and objective metrics are compared against the prototype's recorded baseline.
 
-Пороги **измеряются по форме входа**, а не единым числом для всего корпуса. Это уточнение внесено
-после первого прогона, который оказался красным по трём пунктам, и ни один из них не был
-регрессом движка — все три показали, что порог приложен не к тому, что он описывает.
+> **Corrected 2026-07-29.** The harness exists: `swift run acceptance`
+> (`Sources/acceptance/main.swift`), run from the package root, over `corpus/` — five files today,
+> not the 10–20 the last paragraph of this section anticipates. It compares against the thresholds
+> in the table below, which are constants in the harness, not against a file inherited from the
+> prototype; the list of already-accepted model behaviours lives in the harness too
+> (`isKnownModelBehaviour` and `knownFileLimitations`). It exits 1 on regression.
 
-| Проверка | Порог | На чём измеряется |
+Thresholds are **measured by input shape**, not as one number for the whole corpus. This
+refinement was made after the first run came back red on three counts, none of which was an engine
+regression — all three showed the threshold was being applied to something other than what it
+describes.
+
+| Check | Threshold | Measured on |
 |---|---|---|
-| TTFT | ниже 1000 мс | только одночанковые файлы — форма хоткея, для которой требование и сформулировано. Многочанковый документ честно платит за подготовительный вызов глоссария, и его время печатается справочно, без утверждения. |
-| Целостность разметки | ноль расхождений вне списка известных | сравнение со списком **измеренных** повадок модели. Новое расхождение — провал; известное печатается с пометкой и остаётся на виду. |
-| Согласованность терминов | среднее по трём прогонам не ниже 80% | три прогона одного входа дали 80.6%, 86.1% и 91.7% — одиночный замер у границы не отличает сигнал от шума. Задача порога — отличить работающий глоссарий от откатившегося к базовым 64–68% без него. |
+| TTFT | under 1000 ms | single-чанк files only — the hotkey shape, which is what the requirement was written for. A multi-чанк document honestly pays for the preparatory glossary call, and its time is printed for information, without an assertion. |
+| Markup integrity | zero divergences outside the known list | compared against the list of **measured** model habits. A new divergence is a failure; a known one is printed with a note and stays visible. |
+| Term consistency | average over three runs no lower than 80% | three runs of the same input gave 80.6%, 86.1% and 91.7% — a single measurement at the boundary cannot tell signal from noise. The threshold's job is to distinguish a working glossary from one that has fallen back to the 64–68% baseline without it. |
 
-Требование «ноль расхождений разметки» из первой редакции противоречило замеру самого прототипа,
-где записано, что `aya-expanse:8b` переписывает голый URL в markdown-ссылку. Прежняя проверка по
-присутствию подстроки этого не видела; структурная видит, и её сообщение — признак работы, а не
-поломки.
+The "zero markup divergences" requirement of the first revision contradicted the prototype's own
+measurement, which records that `aya-expanse:8b` rewrites a bare URL as a markdown link. The old
+substring-presence check did not see this; the structural one does, and its message is a sign of
+the checker working, not of breakage.
 
-Послабление привязано к файлу и виду токена, а не внесено в общий список. Токен код-блока несёт
-только хеш содержимого, поэтому разрешение несовпадения хешей вообще позволило бы модели
-переписать команду целиком; прицелиться в конкретный блок тоже нельзя, так как `String.hashValue`
-сеется на процесс и пара хешей меняется от прогона к прогону.
+The allowance is tied to a file and a token kind rather than added to a global list. A code-block
+token carries only a content hash, so permitting hash mismatches in general would also permit the
+model to rewrite a command outright; targeting a specific block is impossible too, since
+`String.hashValue` is seeded per process and the pair of hashes changes from run to run.
 
-**Тесты `OllamaKit` на фикстурах** — разбор NDJSON-стрима, включая ответ с полем
-`message.thinking`, которое должно быть отброшено, и финальный кадр со статистикой в
-наносекундах.
+**`OllamaKit` tests on fixtures** — parsing the NDJSON stream, including a response with a
+`message.thinking` field that must be discarded, and the final frame with statistics in
+nanoseconds.
 
-**Прогон качества на реальных моделях** — отдельная схема, не в CI. Набор из 10–20 текстов по
-трём типам контента прогоняется через живую Ollama; проверяются объективные метрики
-(целостность разметки, соблюдение глоссария, TTFT), прозу оценивает человек. Прототип уже
-содержит рабочую основу такой оснастки.
+**A quality run against real models** — a separate scheme, not in CI. A set of 10–20 texts across
+three content types is run through a live Ollama; objective metrics (markup integrity, glossary
+adherence, TTFT) are checked, and the prose is judged by a human. The prototype already contains a
+working basis for this harness.
 
-**Интерфейс** — вручную. Автоматизация UI в v1 не окупается.
+> **Corrected 2026-07-29.** That basis now lives in `Sources/acceptance/main.swift`; the prototype
+> is gone (section 11). The human judgement of prose is still manual and unautomated.
 
-## 11. Приложение: откуда взяты числа
+**The interface** — by hand. UI automation does not pay for itself in v1.
 
-Замеры сделаны 2026-07-24 и 2026-07-25 на Apple M5 Pro / 48 ГБ, macOS 26.5.2, Ollama 0.31.1,
-прототипом `prototype-translation-engine/`. Подробности и полные тексты выводов — в его README.
+## 11. Appendix: where the numbers come from
 
-Ключевые факты, на которые опирается дизайн:
+The measurements were taken on 2026-07-24 and 2026-07-25 on an Apple M5 Pro / 48 GB, macOS 26.5.2,
+Ollama 0.31.1, with the `prototype-translation-engine/` prototype. The details and full output
+texts are in its README.
 
-1. Тёплая `aya-expanse:8b` даёт TTFT 330–570 мс и 41–46 ток/с; холодная загрузка стоит ~2000 мс
-   против ~155 мс тёплой.
-2. Огороженный код-блок, инлайн-код и URL пережили все прогоны на обеих рабочих моделях при
-   разбиении текста на 5 чанков.
-3. Разрыв терминологии между чанками воспроизвёлся идентично на `aya-expanse:8b` и
-   `gpt-oss:20b` — модель не при чём, дело в архитектуре.
-4. Проверка глоссария подстрокой дала ложное срабатывание на русском родительном падеже и
-   отработала чисто на немецком.
-5. Второй проход в формулировке редактора: 12.3 с → 22.3 с, шесть починок против двух новых
-   поломок, включая потерю содержания. В формулировке корректора: 2× времени, одна изменённая
-   буква в первом прогоне и ноль изменений во втором.
-6. Документный глоссарий: сквозная согласованность терминов 68% → 88% и 64% → 88% в двух
-   прогонах. Из одиннадцати зафиксированных терминов один переведён неверно. Контекст,
-   добавленный к списку терминов, эту ошибку не исправляет ни в одной из трёх проверенных
-   формулировок — причина в изоляции термина, а не в нехватке информации.
-7. `gemma3n:e4b` испортила идентификатор внутри инлайн-кода.
-8. `qwen3:30b` потратила 78 с на рассуждения до первого символа; `"think": false` перекладывает
-   рассуждения в `message.content` и делает хуже.
+> **Corrected 2026-07-29.** The prototype is not in this repository: `prototype-translation-engine/`
+> holds nothing but build artefacts, is untracked, and a fresh clone gets an empty directory — its
+> README and its full outputs are not recoverable from here.
+> These figures are therefore historical: they justify decisions that were really made, but they
+> cannot be reproduced from a clone.
+> The ones that still gate anything are re-measured by `swift run acceptance` against a live
+> Ollama; anything else below stands on the record of the day it was measured and nothing more.
 
-## 11a. Известные ограничения v1
+The key facts the design rests on:
 
-Измерены, не устранены, зафиксированы осознанно. Каждое — то, о чём стоит знать до того, как
-строить поверх.
+1. A warm `aya-expanse:8b` gives TTFT of 330–570 ms and 41–46 tok/s; a cold load costs ~2000 ms
+   against ~155 ms warm.
+2. Fenced code blocks, inline code and URLs survived every run on both working models with the text
+   split into 5 чанков.
+3. The terminology break between чанками reproduced identically on `aya-expanse:8b` and
+   `gpt-oss:20b` — the model is not at fault, the architecture is.
+4. Substring-based glossary checking produced a false positive on the Russian genitive and ran
+   clean on German.
+5. A second pass in the editor formulation: 12.3 s → 22.3 s, six fixes against two new breakages,
+   including lost content. In the корректор formulation: 2× the time, one changed letter in the
+   first run and zero changes in the second.
+6. Документный глоссарий: end-to-end term consistency 68% → 88% and 64% → 88% across two runs. Of
+   eleven recorded terms, one was translated wrongly. Adding context to the term list does not fix
+   that error in any of the three formulations tested — the cause is the term's isolation, not a
+   shortage of information.
+7. `gemma3n:e4b` corrupted an identifier inside inline code.
+8. `qwen3:30b` spent 78 s reasoning before the first character; `"think": false` moves the
+   reasoning into `message.content` and makes it worse.
 
-**Документный глоссарий не работает для китайского и японского исходников.** `NLTagger` размечает
-японские слова как `OtherWord` — ни одного существительного или прилагательного на 114 токенах, —
-а порог длины термина в три символа отсекает почти всю китайскую лексику. Для этих языков механизм
-раздела 4.4 молча не делает ничего: `documentGlossary` возвращается пустым без признака, что язык
-для этой цели не поддержан. Языки при этом заявлены равнозначными (раздел 1), так что это
-расхождение между обещанием и реализацией, а не сознательное сужение. Починка требует отдельного
-подхода к извлечению терминов для письменностей без словоизменения — работа на v2.
+## 11a. Known limitations of v1
 
-**Модель переводит человекочитаемый текст внутри кода.** `aya-expanse:8b` вернула
-`git tag -m "См. CHANGELOG.md"` вместо `"See CHANGELOG.md"`. При этом блок из одних флагов и путей
-сохранён байт в байт — модель понимает правило, но считает естественный язык исключением из него.
-Уточнение промпта было испробовано и результата не дало; попытка ограничена одним заходом
-сознательно, чтобы не подгонять формулировки под одну модель.
+Measured, not fixed, recorded deliberately. Each is something worth knowing before building on
+top.
 
-**Жёсткие переносы строк теряются при чанкинге.** `Chunker` обрезает хвостовые пробелы в
-последней строке блока, а два хвостовых пробела в Markdown — это и есть жёсткий перенос. Проверка
-разметки об этом больше не сообщает (она сравнивает с тем, что модель реально получила), но
-содержимое действительно меняется. Дефект в `Chunker`, не в проверке.
+**The документный глоссарий does not work for Chinese and Japanese sources.** `NLTagger` tags
+Japanese words as `OtherWord` — not a single noun or adjective across 114 tokens — and the
+three-character minimum term length cuts away almost all Chinese vocabulary. For these languages
+the mechanism of section 4.4 silently does nothing: `documentGlossary` comes back empty with no
+signal that the language is unsupported for this purpose. The languages are declared equal
+(section 1), so this is a gap between promise and implementation, not a deliberate narrowing.
+Fixing it requires a separate approach to term extraction for scripts without inflection — work
+for v2.
 
-**Пустой ответ модели теперь отличим.** `timeToFirstTokenMS == nil` означает, что наружу не ушло
-ни одного токена, — это и есть признак пустого ответа. Строка раздела 8 реализуется без изменений
-в ядре; ограничение снято правкой, сделавшей эту метрику опциональной.
+**The model translates human-readable text inside code.** `aya-expanse:8b` returned
+`git tag -m "См. CHANGELOG.md"` instead of `"See CHANGELOG.md"`. A block consisting only of flags
+and paths was preserved byte for byte — the model understands the rule but treats natural language
+as an exception to it. Sharpening the prompt was attempted and changed nothing; the attempt was
+deliberately limited to one round, to avoid tuning the wording to a single model.
 
-**Расхождение терминологии между чанками не видно верификатору.** `GlossaryVerifier` проверяет
-склеенный документ, поэтому термин, переведённый по-разному в разных чанках, но присутствующий
-в требуемой форме хотя бы один раз, отчитывается как соблюдённый. Логика позиционной проверки
-существует только в приёмочном стенде и в ядро не перенесена.
+**Hard line breaks are lost in chunking.** `Chunker` trims trailing whitespace on the last line of
+a block, and two trailing spaces in Markdown are precisely a жёсткий перенос строки. The markup
+check no longer reports this (it compares against what the model actually received), but the
+content really does change. The defect is in `Chunker`, not in the check.
 
-## 12. Что дальше, после v1
+**An empty model reply is now distinguishable.** `timeToFirstTokenMS == nil` means not a single
+token ever went out — that nil is the empty-reply signal. Section 8's row is implemented with no
+change to the core; the limitation was removed by the edit that made this metric optional.
 
-- **Пакетный перевод файлов** — третья поверхность. Ядро уже спроектировано так, чтобы стать
-  ещё одним потребителем `Translator` без изменений в нём.
-- **Встроенный бенчмарк моделей** — перенос оснастки прототипа в настройки, чтобы чёрный список
-  строился на замерах машины пользователя, а не был зашит в код.
-- **Второй проход** — пересмотреть, если появится модель, для которой он осмыслен. Обе
-  проверенные формулировки провалились на `aya-expanse:8b`.
-- **Сбор терминов из прозы** — вместо перевода списка терминов извлекать их из уже переведённого
-  текста. Бьёт в корень ошибочного перевода вне контекста, но возвращает привилегированный первый
-  чанк и требует прохода выравнивания. Оправдано, если на практике ошибочных терминов окажется
-  много.
+**Terminology divergence between чанками is invisible to the verifier.** `GlossaryVerifier` checks
+the joined document, so a term translated differently in different чанки but present in the
+required form at least once is reported as honoured. The per-position check exists only in the
+acceptance harness and has not been moved into the core.
+
+## 12. What comes after v1
+
+- **Batch file translation** — the third surface. The core is already designed to let it become
+  another consumer of `Translator` with no changes to it.
+- **A built-in model benchmark** — moving the prototype's harness into settings, so the blacklist
+  is built from measurements on the user's machine rather than hard-wired in code.
+- **The second pass** — to be reconsidered if a model appears for which it makes sense. Both
+  formulations tested failed on `aya-expanse:8b`.
+- **Collecting terms from the prose** — instead of translating a list of terms, extract them from
+  already-translated text. This strikes at the root of out-of-context mistranslation, but it brings
+  back a privileged first чанк and requires an alignment pass. Justified if bad terms turn out to
+  be common in practice.

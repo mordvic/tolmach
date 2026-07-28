@@ -61,6 +61,13 @@ Deliberate, with the reason. Do not "fix" these without reading the reason first
 - **The permission row lags a grant made without leaving the app.** It refreshes on appearance
   and on activation; TCC publishes no notification this app subscribes to, and polling a
   privileged call on a timer for a cosmetic gain was rejected.
+- **The background-model setting does nothing.** Settings → «Модели» offers «Модель для
+  фонового перевода», `AppSettings.backgroundModel` stores it, and **nothing reads it**: both
+  `TranslationViewModel` and the launch warm-up build `ChatOptions` from `interactiveModel`.
+  `ModelRole.background` exists only to supply that setting's own default. The background path
+  is batch file translation, which is v2 — so the control shipped ahead of the feature. It
+  should either be labelled as inert or removed until the feature exists; right now a user who
+  changes it gets no effect and no explanation. Found while correcting §5 of the spec.
 - **`swift run acceptance` is not in CI, deliberately.** It needs a live Ollama and a resident
   model. There is no CI at all for that reason.
 - **Cosmetics on the Модели tab** — the `aya-expanse:8b` value wraps to three lines, and the

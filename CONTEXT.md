@@ -1,69 +1,114 @@
-# Local Translator
+# Domain language
 
-Переводчик для macOS, работающий на локальных LLM через Ollama. Текст никогда не покидает
-машину.
+The concepts this project is built out of, each with the **Russian term** that names it, the
+type that implements it, and the words not to use for it.
 
-## Глоссарии
+The headwords stay Russian on purpose. The product's interface is Russian, its design spec was
+written in Russian, and this glossary's job is to keep one concept from acquiring three names
+across the UI, the docs and the code. Translating the headwords would leave the file describing
+concepts nobody writes down that way.
 
-**Пользовательский глоссарий**:
-Термины, заданные человеком и действующие во всех переводах. Подставляется в промпт выборочно —
-только те записи, что встретились в переводимом тексте.
-_Avoid_: глоссарий (без уточнения), словарь
+`_Avoid_` lists are not style preferences. Each entry is a word that was used for the concept at
+some point and caused a real ambiguity.
 
-**Документный глоссарий**:
-Термины, извлечённые из переводимого документа и переведённые один раз до основного перевода,
-чтобы во всех его частях звучать одинаково. Живёт только на время одного перевода и
-подставляется целиком, без выборки.
+---
+
+## Glossaries
+
+**Пользовательский глоссарий** — *user glossary*
+Terms set by a person, in force for every translation. Injected into a chunk's prompt
+selectively: only entries whose term occurs in that chunk. See `docs/adr/0001` for why this one
+is filtered and the next is not.
+→ `Glossary`, `GlossaryEntry`, `GlossaryStore`
+_Avoid_: глоссарий (unqualified), словарь
+
+**Документный глоссарий** — *document glossary*
+Terms extracted from the document being translated and translated once, before the main
+translation, so every part of it renders them the same way. Lives for one translation only, and
+is injected whole, without filtering.
+→ `DocumentGlossary`, `TermExtractor`
 _Avoid_: временный словарь, автоглоссарий, кэш терминов
 
-**Дрейф терминологии**:
-Расхождение перевода одного и того же термина между частями одного документа.
+**Дрейф терминологии** — *terminology drift*
+The same term rendered differently in different parts of one document. The failure the document
+glossary exists to prevent; worth about twenty points of adherence.
+→ measured by `Sources/acceptance/main.swift`
 _Avoid_: несогласованность, рассинхрон, разъезд
 
-## Перевод
+---
 
-**Чанк**:
-Часть текста, переводимая одним запросом к модели. Огороженный код-блок попадает в чанк целиком
-и не разрезается никогда.
+## Translation
+
+**Чанк** — *chunk*
+A piece of text translated by one request to the model. A fenced code block goes into a chunk
+whole and is never cut.
+→ `Chunker`, `Chunk`
 _Avoid_: фрагмент, кусок, блок, сегмент
 
-**Корректор**:
-Второй проход, исправляющий только явные ошибки первого. Не вправе перефразировать, сокращать
-или менять структуру — этим отличается от редактора, каким второй проход был изначально.
+**Корректор** — *corrector*
+A second pass that fixes only outright errors from the first. It may not rephrase, shorten or
+restructure — which is what distinguishes it from an editor, which is what the second pass was
+originally going to be. **Cut from v1** after measurement; see §4.8 of the design spec.
 _Avoid_: редактор, ревьюер, вычитка
 
-**Тон**:
-Регистр речи, заданный человеком для перевода.
+**Тон** — *tone*
+The register a person chose for the translation.
+→ `Tone`, and `Tone.russianName` for the label
 _Avoid_: стиль, манера
 
-## Пути исполнения
+---
 
-**Интерактивный путь**:
-Перевод по горячей клавише, где задержка до первого символа важнее качества прозы.
+## Execution paths
+
+**Интерактивный путь** — *interactive path*
+Translation by hotkey, where time to the first character matters more than prose quality.
+→ `AppSettings.interactiveModel`, `ModelRole.interactive`
 _Avoid_: быстрый режим, режим хоткея
 
-**Фоновый путь**:
-Перевод по кнопке или пакетом, где качество прозы важнее скорости.
+**Фоновый путь** — *background path*
+Translation by button or in batch, where prose quality matters more than speed. **The setting
+exists and nothing reads it** — batch translation is v2. See `docs/OPEN-ITEMS.md`.
+→ `AppSettings.backgroundModel`, `ModelRole.background`
 _Avoid_: медленный режим, качественный режим
 
-## Разметка
+---
 
-**Целостность разметки**:
-Сохранность в переводе всего, что модель трогать не должна: структуры документа, кода, ссылок.
+## Markup
+
+**Целостность разметки** — *markup integrity*
+Everything the model must not touch surviving the translation: document structure, code, links.
+→ `MarkupSkeleton`, `MarkupDiff`
 _Avoid_: валидность, корректность вёрстки
 
-**Граница абзаца**:
-Пустая строка, разделяющая блоки текста.
+**Граница абзаца** — *paragraph break*
+The blank line separating blocks of text.
+→ `MarkupToken.paragraphBreak`
 _Avoid_: перенос, разрыв
 
-**Жёсткий перенос строки**:
-Разрыв внутри абзаца, заданный двумя пробелами в конце строки. Отдельное понятие от границы
-абзаца: модели ломают именно его, а выглядит это как распавшийся абзац.
+**Жёсткий перенос строки** — *hard line break*
+A break inside a paragraph, written as two trailing spaces. A separate concept from a paragraph
+break because this is the one models destroy, and the damage looks like a paragraph falling
+apart.
+→ `MarkupToken.hardLineBreak`
 _Avoid_: перенос, новая строка
 
-## Язык
+---
 
-**Опознанный язык исходника**:
-Язык, который распознан и входит в список поддерживаемых. Только при опознанном языке строится
-документный глоссарий; сам перевод возможен и с неопознанного.
-_Avoid_: исходный язык (без уточнения, опознан ли он)
+## Language
+
+**Опознанный язык исходника** — *recognised source language*
+A source language that was detected *and* is in the supported list. The document glossary is
+built only for a recognised source; translation itself works from an unrecognised one.
+→ `LanguageDetector.detect` returning non-nil
+_Avoid_: исходный язык (without saying whether it was recognised)
+
+---
+
+## A note on writing
+
+Documentation and commit messages are English; the application's UI strings are Russian. When
+an English sentence needs one of these concepts, use the English gloss and put the Russian term
+beside it on first use — that is what the rest of the documentation does.
+
+Russian UI labels for domain enums live in `Sources/TranslatorApp/RussianCopy.swift`, exhaustive
+with no `default:`, so a new case fails to compile rather than silently rendering nothing.
