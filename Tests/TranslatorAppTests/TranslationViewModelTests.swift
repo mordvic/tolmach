@@ -311,3 +311,44 @@ private func makeModel(_ client: LLMClient) -> TranslationViewModel {
     panel.cancel()
     await run.value
 }
+
+@MainActor
+@Test func theRefusalReasonNamesWhichSideIsBusy() async {
+    // The panel asks this to decide both whether to offer «Открыть в окне» and what to say
+    // when it does not. A Bool would answer the first question and leave the view to guess
+    // at the second — which is how the button and the message drift apart.
+    let window = makeModel(ScriptedClient(responses: ["Перевод окна."]))
+    let panel = makeModel(ScriptedClient(responses: ["Перевод панели."]))
+    #expect(window.adoptionRefusal(from: panel) == nil)
+    #expect(window.adoptionRefusal(from: window) == .sameModel)
+
+    let busy = makeModel(ScriptedClient(responses: [String(repeating: "б", count: 200)],
+                                        delayPerToken: .milliseconds(5)))
+    busy.sourceText = String(repeating: "x ", count: 40)
+    let run = Task { await busy.translate() }
+    try? await Task.sleep(for: .milliseconds(40))
+    #expect(busy.state == .running)
+
+    // Seen from the panel's end: the window is the one that is busy.
+    #expect(busy.adoptionRefusal(from: panel) == .targetBusy)
+    // Seen from the window's end: the panel's run is the one still going.
+    #expect(window.adoptionRefusal(from: busy) == .sourceBusy)
+
+    busy.cancel()
+    await run.value
+}
+
+@MainActor
+@Test func adoptRefusesExactlyWhenTheReasonSaysItWill() async {
+    // The two must not be able to disagree: `adopt` is defined as "no reason to refuse", and
+    // this is what stops a later edit adding a guard to one and not the other.
+    let window = makeModel(ScriptedClient(responses: ["Перевод окна."]))
+    let panel = makeModel(ScriptedClient(responses: ["Перевод панели."]))
+    panel.sourceText = "Panel source."
+    await panel.translate()
+
+    #expect(window.adoptionRefusal(from: window) != nil)
+    #expect(window.adopt(from: window) == false)
+    #expect(window.adoptionRefusal(from: panel) == nil)
+    #expect(window.adopt(from: panel))
+}

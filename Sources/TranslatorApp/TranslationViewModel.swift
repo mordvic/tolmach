@@ -4,6 +4,25 @@ import Observation
 import OllamaKit
 import TranslationCore
 
+/// Why one view model will not take over another's run.
+///
+/// `sourceBusy` and `targetBusy` are the same underlying fact — `state` moves with the text
+/// but the `Task` behind it cannot — seen from the two ends. They are separate cases because
+/// the panel says something different about each: its own run finishing is a matter of
+/// seconds and needs no words, while the window being busy is invisible from the panel and
+/// has to be stated.
+enum AdoptionRefusal: Equatable {
+    /// Adopting from oneself. Not reachable through the app; the guard exists so the
+    /// assignments below cannot silently become self-assignments.
+    case sameModel
+    /// This model is mid-translation. Overwriting it would leave its own task writing into
+    /// state it no longer owns.
+    case targetBusy
+    /// The other model is mid-translation, so its `.running` state would arrive here with no
+    /// task behind it and no way out — see `adopt(from:)`.
+    case sourceBusy
+}
+
 enum TranslationState: Equatable {
     case idle, running, finished, interrupted
     case failed(String)
@@ -36,6 +55,24 @@ final class TranslationViewModel {
         self.translator = translator; self.settings = settings; self.glossary = glossary
     }
 
+    /// Why `adopt(from:)` would refuse right now, or `nil` if it would not.
+    ///
+    /// A separate function, and returning a reason rather than a Bool, because the panel's
+    /// «Открыть в окне» has to answer two questions the moment it draws: whether to offer
+    /// the button at all, and what to tell the user when it does not. Deriving either from a
+    /// restatement of the rule is how the two drift — the button stays lit for a refusal the
+    /// view has never heard of, and the caption blames the wrong thing. This is the same
+    /// treatment `WarningsView.hasContent` got, for the same reason.
+    func adoptionRefusal(from other: TranslationViewModel) -> AdoptionRefusal? {
+        if other === self { return .sameModel }
+        // Order matters only for the message: when both are running, saying «the window is
+        // busy» is the more useful half, because the panel's own run is already visible to
+        // the user as a spinner and a «Отмена» button.
+        if state == .running { return .targetBusy }
+        if other.state == .running { return .sourceBusy }
+        return nil
+    }
+
     /// Take over a translation another view model performed — the panel handing its result
     /// to the window.
     ///
@@ -64,7 +101,7 @@ final class TranslationViewModel {
     /// can miss it.
     @discardableResult
     func adopt(from other: TranslationViewModel) -> Bool {
-        guard other !== self, state != .running, other.state != .running else { return false }
+        guard adoptionRefusal(from: other) == nil else { return false }
         sourceText = other.sourceText
         translatedText = other.translatedText
         outcome = other.outcome

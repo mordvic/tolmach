@@ -307,10 +307,10 @@ struct TranslatorApp: App {
 /// `@Observable` coordinator and the panel re-renders on every capture.
 private struct PanelHost: View {
     let coordinator: HotkeyCoordinator
-    /// The *window's* view model, read only for its `state`. The panel needs it because
-    /// `TranslationViewModel.adopt(from:)` refuses while the window is mid-translation, and
-    /// the panel is where the button that would be refused lives. Read inside `body`, so
-    /// observation picks the change up and the button re-enables when the window finishes.
+    /// The *window's* view model. The panel needs it to ask whether the window would take
+    /// this run — `TranslationViewModel.adoptionRefusal(from:)` — because the button that
+    /// would be refused lives here. Asked inside `body`, so observation picks the change up
+    /// and the button re-enables when the window finishes.
     let windowModel: TranslationViewModel
     let onCopy: () -> Void
     let onOpenInWindow: () -> Void
@@ -319,7 +319,7 @@ private struct PanelHost: View {
     var body: some View {
         PanelView(model: coordinator.panelModel,
                   selection: coordinator.selection,
-                  canOpenInWindow: windowModel.state != .running,
+                  adoptionRefusal: windowModel.adoptionRefusal(from: coordinator.panelModel),
                   onCopy: onCopy,
                   onOpenInWindow: onOpenInWindow,
                   onRetry: { Task { await coordinator.retry() } },

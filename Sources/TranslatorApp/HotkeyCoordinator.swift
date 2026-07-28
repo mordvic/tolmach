@@ -210,20 +210,21 @@ final class HotkeyCoordinator {
         // An empty result is not copied. `clearContents()` alone would destroy whatever the
         // user has, in exchange for putting nothing there — the exact failure spec 6 is about.
         guard !panelModel.translatedText.isEmpty else { return }
-        // Through the same serialisation `SelectionReader.clipboardText()` uses, and for the
-        // same reason: two threads touching one pasteboard name abort the process, and the
-        // fallback runs on a detached task while this runs on the main actor. Today they
-        // cannot overlap — the panel that offers «Скопировать» is hidden for the duration of
-        // a capture — but that is a fact about the current UI, not about this code, and the
-        // failure mode is a hard abort rather than a wrong value.
-        // The text is read here, on the main actor, and the write happens off it.
+        // The text is read here, on the main actor; the write happens off it, through the
+        // same serialisation `SelectionReader.clipboardText()` uses.
         //
-        // Taking `GeneralPasteboard`'s lock on the main actor was the previous shape and it
-        // traded one latent failure for another: the other holder is
-        // `SelectionReader.clipboardText()`, which keeps the lock for the whole of its poll
-        // — up to half a second whenever the target application ignores the ⌘C. Blocking the
-        // main thread for that long stops drawing and event delivery outright. A clipboard
-        // write has nothing to report back, so there is nothing to wait for.
+        // Serialised because two threads touching one pasteboard name abort the process —
+        // measured 10 times out of 10 for one name, 0 out of 10 for distinct names — and
+        // `NSPasteboard.general` is one name. Today this and the ⌘C fallback cannot overlap,
+        // because the panel that offers «Скопировать» is hidden for the duration of a
+        // capture; but that is a fact about the current UI rather than about this code, and
+        // the failure mode is a hard abort rather than a wrong value.
+        //
+        // Off the main actor because the lock's other holder keeps it for the whole of its
+        // poll — up to half a second whenever the target application ignores the ⌘C — and
+        // blocking the main thread for that long stops drawing and event delivery outright.
+        // `async` rather than fire-and-forget so callers that need the write to have landed,
+        // and the test that checks it, can await it; the suspension does not block the actor.
         let text = panelModel.translatedText
         let board = pasteboard
         await Task.detached(priority: .userInitiated) {

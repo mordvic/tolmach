@@ -18,12 +18,14 @@ struct PanelStatus: Equatable {
 struct PanelView: View {
     let model: TranslationViewModel
     let selection: SelectionResult
-    /// Whether the main window can take this run right now. False while the window is
-    /// running a translation of its own, because `TranslationViewModel.adopt(from:)` refuses
-    /// then — and a button that silently does nothing is worse than one that is visibly
-    /// unavailable, especially when the window it would open is already on screen showing
-    /// something else.
-    var canOpenInWindow = true
+    /// Why the main window would refuse this run right now, straight from the type that
+    /// decides it — not a restatement of its rule. `nil` means the hand-off would go through.
+    ///
+    /// Asked rather than re-derived because the button needs two answers from one rule:
+    /// whether to be available, and what to say when it is not. A view that computed its own
+    /// version would keep offering a button for any refusal added later, and would explain
+    /// it with whichever reason it happened to know about.
+    var adoptionRefusal: AdoptionRefusal?
     var onCopy: () -> Void = {}
     var onOpenInWindow: () -> Void = {}
     var onRetry: () -> Void = {}
@@ -141,13 +143,12 @@ struct PanelView: View {
                 // keeping it while refusing to copy it would be pointless.
                 Button("Скопировать", action: onCopy)
                     .disabled(model.translatedText.isEmpty)
-                // Unavailable while *this* run is streaming, because the window would adopt
-                // a `.running` state with no task behind it and never leave it; and while
-                // the *window* is busy, because it refuses the hand-off then. Both refusals
-                // live in `adopt(from:)`; this is the affordance that stops the user meeting
-                // them as a button that does nothing.
+                // One condition, and it is the window's own answer. Whatever
+                // `adoptionRefusal` covers, this button covers — including refusals added
+                // after this line was written, which is the whole point of asking rather
+                // than restating.
                 Button("Открыть в окне", action: onOpenInWindow)
-                    .disabled(model.state == .running || !canOpenInWindow)
+                    .disabled(adoptionRefusal != nil)
                 Spacer()
                 if model.state == .running {
                     // ⌘. is the macOS convention for cancelling an operation in progress,
@@ -157,10 +158,11 @@ struct PanelView: View {
                 }
             }
 
-            // Said rather than left to be inferred from a greyed-out button: the window is
-            // open and visibly translating something else, and without this the user has to
-            // guess whether the app is broken or busy.
-            if !canOpenInWindow, model.state != .running {
+            // Only `targetBusy` gets words. `sourceBusy` means this panel's own run is still
+            // going, which the spinner and «Отмена» beside it already say; `sameModel` is not
+            // reachable from here. A greyed-out button with no explanation is fine when the
+            // reason is on screen, and not fine when it is in another window.
+            if adoptionRefusal == .targetBusy {
                 Text("Окно занято своим переводом — дождитесь его окончания.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
