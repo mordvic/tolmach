@@ -91,7 +91,12 @@ struct SettingsGeneralView: View {
             Picker("Тон по умолчанию", selection: $settings.defaultTone) {
                 ForEach(Tone.allCases, id: \.self) { Text($0.russianName).tag($0) }
             }
-            Toggle("Копировать результат автоматически", isOn: $settings.autoCopy)
+            // «по хоткею» is not padding. `autoCopy` is read in exactly one place —
+            // `HotkeyCoordinator.runTranslation` — so a translation done in the main window
+            // never touches the clipboard whatever this says. Spec §7.2 puts automatic
+            // copying in the panel's section deliberately; the label used to promise the
+            // whole app and quietly mean a third of it.
+            Toggle("Копировать результат по хоткею автоматически", isOn: $settings.autoCopy)
             Toggle("Прогревать модель при запуске", isOn: $settings.warmUpOnLaunch)
             Text("Направление выбирается само: текст на основном языке переводится в рабочий, "
                  + "любой другой — в основной.")

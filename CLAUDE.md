@@ -110,7 +110,8 @@ Facts that will bite you if you "tidy" them:
   `.nonactivatingPanel` still becomes *key* and system-wide accessibility focus follows the key window.
 - Capture order is Accessibility first, synthetic ⌘C fallback second, and the fallback must restore
   the *whole* pasteboard. The only path allowed to write the user's clipboard unasked is `autoCopy`,
-  off by default.
+  off by default — and it is read only by `HotkeyCoordinator`, so it governs the panel and not
+  the main window. Its label says so; do not widen one without the other.
 - `AppSettings` reads and writes `UserDefaults` directly in every accessor (no stored properties),
   so `@Observable`'s synthesis does not apply — each accessor calls `access(keyPath:)` /
   `withMutation(keyPath:_:)` by hand. Keep that shape when adding a setting.
