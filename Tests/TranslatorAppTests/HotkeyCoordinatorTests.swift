@@ -291,16 +291,6 @@ private func waitUntil(_ condition: @MainActor () -> Bool,
 
 // MARK: - Handing over to the window
 
-@MainActor
-@Test func handingOffToTheWindowCarriesBothTexts() async {
-    let reader = ScriptedReader(["Hello."])
-    let (coordinator, _) = makeCoordinator(reader: reader, replies: ["Привет."])
-    await coordinator.handlePress()
-    let (source, translated) = coordinator.handOffToWindow()
-    #expect(source == "Hello.")
-    #expect(translated == "Привет.")
-}
-
 // MARK: - The pasteboard
 
 @MainActor
@@ -315,11 +305,11 @@ private func waitUntil(_ condition: @MainActor () -> Bool,
                                            pasteboard: board)
     // Nothing translated yet: Enter on an empty panel must not clear what the user has.
     await coordinator.handlePress()
-    coordinator.copyResult()
+    await coordinator.copyResult()
     #expect(board.string(forType: .string) == "буфер пользователя")
 
     await coordinator.handlePress()
-    coordinator.copyResult()
+    await coordinator.copyResult()
     #expect(board.string(forType: .string) == "Привет.")
 }
 

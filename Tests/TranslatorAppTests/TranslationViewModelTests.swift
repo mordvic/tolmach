@@ -288,3 +288,26 @@ private func makeModel(_ client: LLMClient) -> TranslationViewModel {
     await run.value
 }
 
+
+@MainActor
+@Test func adoptingIsRefusedWhileTheSourceIsStillTranslating() async {
+    // `state` moves with the text but the `Task` behind it cannot — it belongs to the other
+    // model and keeps writing there. Adopting `.running` therefore hands this model a state
+    // it has no way to leave: `cancel()` is `task?.cancel()` on a nil task, `translate()`
+    // refuses while `.running`, and the window renders «Отмена» rather than «Перевести», so
+    // the pane sits on a spinner until the app is quit.
+    let panel = makeModel(ScriptedClient(responses: [String(repeating: "б", count: 200)],
+                                         delayPerToken: .milliseconds(5)))
+    panel.sourceText = String(repeating: "x ", count: 40)
+    let run = Task { await panel.translate() }
+    try? await Task.sleep(for: .milliseconds(40))
+    #expect(panel.state == .running)
+
+    let window = makeModel(ScriptedClient(responses: ["Перевод окна."]))
+    #expect(window.adopt(from: panel) == false)
+    #expect(window.state != .running)
+    #expect(window.translatedText.isEmpty)
+
+    panel.cancel()
+    await run.value
+}

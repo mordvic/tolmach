@@ -202,11 +202,11 @@ final class HotkeyCoordinator {
         // Spec 6 is emphatic that capturing a selection must leave the clipboard as the user
         // left it, so this is the *only* path in the app that writes to it without the user
         // asking — and it is behind a setting that is off by default.
-        if settings.autoCopy, panelModel.state == .finished { copyResult() }
+        if settings.autoCopy, panelModel.state == .finished { await copyResult() }
     }
 
     /// Enter on the panel, and the «Скопировать» button.
-    func copyResult() {
+    func copyResult() async {
         // An empty result is not copied. `clearContents()` alone would destroy whatever the
         // user has, in exchange for putting nothing there — the exact failure spec 6 is about.
         guard !panelModel.translatedText.isEmpty else { return }
@@ -216,13 +216,22 @@ final class HotkeyCoordinator {
         // cannot overlap — the panel that offers «Скопировать» is hidden for the duration of
         // a capture — but that is a fact about the current UI, not about this code, and the
         // failure mode is a hard abort rather than a wrong value.
-        GeneralPasteboard.withExclusiveAccess {
-            pasteboard.clearContents()
-            pasteboard.setString(panelModel.translatedText, forType: .string)
-        }
+        // The text is read here, on the main actor, and the write happens off it.
+        //
+        // Taking `GeneralPasteboard`'s lock on the main actor was the previous shape and it
+        // traded one latent failure for another: the other holder is
+        // `SelectionReader.clipboardText()`, which keeps the lock for the whole of its poll
+        // — up to half a second whenever the target application ignores the ⌘C. Blocking the
+        // main thread for that long stops drawing and event delivery outright. A clipboard
+        // write has nothing to report back, so there is nothing to wait for.
+        let text = panelModel.translatedText
+        let board = pasteboard
+        await Task.detached(priority: .userInitiated) {
+            GeneralPasteboard.withExclusiveAccess {
+                board.clearContents()
+                board.setString(text, forType: .string)
+            }
+        }.value
     }
 
-    func handOffToWindow() -> (source: String, translated: String) {
-        (panelModel.sourceText, panelModel.translatedText)
-    }
 }

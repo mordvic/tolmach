@@ -53,9 +53,18 @@ final class TranslationViewModel {
     /// completion overwrite what was just adopted, and cancelling it first does not help:
     /// the cancellation lands later and writes `.interrupted` over the adopted state. The
     /// caller keeps its panel on screen instead, so the result is not lost.
+    /// Refuses when *either* model is mid-translation, and the source half of that is not
+    /// symmetry for its own sake. `state` moves with the text, but the `Task` behind it does
+    /// not and cannot: it belongs to the other model and goes on writing there. Adopting a
+    /// `.running` state therefore hands this model a state it has no way to leave —
+    /// `cancel()` is `task?.cancel()` on a nil task, `translate()` refuses while `.running`,
+    /// and the window renders «Отмена» rather than «Перевести» — so the pane stays wedged on
+    /// a spinner until the app is quit. The panel's «Открыть в окне» is disabled while its
+    /// run is in flight for the same reason, but the guard belongs here, where no call site
+    /// can miss it.
     @discardableResult
     func adopt(from other: TranslationViewModel) -> Bool {
-        guard other !== self, state != .running else { return false }
+        guard other !== self, state != .running, other.state != .running else { return false }
         sourceText = other.sourceText
         translatedText = other.translatedText
         outcome = other.outcome

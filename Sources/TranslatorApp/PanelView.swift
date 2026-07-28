@@ -18,6 +18,12 @@ struct PanelStatus: Equatable {
 struct PanelView: View {
     let model: TranslationViewModel
     let selection: SelectionResult
+    /// Whether the main window can take this run right now. False while the window is
+    /// running a translation of its own, because `TranslationViewModel.adopt(from:)` refuses
+    /// then — and a button that silently does nothing is worse than one that is visibly
+    /// unavailable, especially when the window it would open is already on screen showing
+    /// something else.
+    var canOpenInWindow = true
     var onCopy: () -> Void = {}
     var onOpenInWindow: () -> Void = {}
     var onRetry: () -> Void = {}
@@ -135,7 +141,13 @@ struct PanelView: View {
                 // keeping it while refusing to copy it would be pointless.
                 Button("Скопировать", action: onCopy)
                     .disabled(model.translatedText.isEmpty)
+                // Unavailable while *this* run is streaming, because the window would adopt
+                // a `.running` state with no task behind it and never leave it; and while
+                // the *window* is busy, because it refuses the hand-off then. Both refusals
+                // live in `adopt(from:)`; this is the affordance that stops the user meeting
+                // them as a button that does nothing.
                 Button("Открыть в окне", action: onOpenInWindow)
+                    .disabled(model.state == .running || !canOpenInWindow)
                 Spacer()
                 if model.state == .running {
                     // ⌘. is the macOS convention for cancelling an operation in progress,
@@ -143,6 +155,15 @@ struct PanelView: View {
                     Button("Отмена") { model.cancel() }
                         .keyboardShortcut(".", modifiers: .command)
                 }
+            }
+
+            // Said rather than left to be inferred from a greyed-out button: the window is
+            // open and visibly translating something else, and without this the user has to
+            // guess whether the app is broken or busy.
+            if !canOpenInWindow, model.state != .running {
+                Text("Окно занято своим переводом — дождитесь его окончания.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

@@ -202,9 +202,10 @@ struct TranslatorApp: App {
     private func configurePanel() {
         panel.setContent(AnyView(PanelHost(
             coordinator: coordinator,
+            windowModel: translation,
             // Copying does not close. Enter is the shortcut that means «скопировать и
             // закрыть» (spec 7.2); the button is for a user who wants to keep reading.
-            onCopy: { coordinator.copyResult() },
+            onCopy: { Task { await coordinator.copyResult() } },
             onOpenInWindow: { handOffToWindow() },
             onGrantPermission: {
                 // Both, and in this order. `requestTrust` is what actually puts this app into
@@ -219,8 +220,12 @@ struct TranslatorApp: App {
             panel.hide()
         }
         panel.onEnter = {
-            coordinator.copyResult()
+            // Hidden first, then copied. `copyResult()` suspends while the write goes through
+            // `GeneralPasteboard`'s serialisation, and Enter means «copy and close» — leaving
+            // the panel up for the length of that suspension would make the close look laggy
+            // for a keystroke whose whole point is to be instant.
             panel.hide()
+            Task { await coordinator.copyResult() }
         }
     }
 
@@ -302,6 +307,11 @@ struct TranslatorApp: App {
 /// `@Observable` coordinator and the panel re-renders on every capture.
 private struct PanelHost: View {
     let coordinator: HotkeyCoordinator
+    /// The *window's* view model, read only for its `state`. The panel needs it because
+    /// `TranslationViewModel.adopt(from:)` refuses while the window is mid-translation, and
+    /// the panel is where the button that would be refused lives. Read inside `body`, so
+    /// observation picks the change up and the button re-enables when the window finishes.
+    let windowModel: TranslationViewModel
     let onCopy: () -> Void
     let onOpenInWindow: () -> Void
     let onGrantPermission: () -> Void
@@ -309,6 +319,7 @@ private struct PanelHost: View {
     var body: some View {
         PanelView(model: coordinator.panelModel,
                   selection: coordinator.selection,
+                  canOpenInWindow: windowModel.state != .running,
                   onCopy: onCopy,
                   onOpenInWindow: onOpenInWindow,
                   onRetry: { Task { await coordinator.retry() } },
