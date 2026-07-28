@@ -112,21 +112,6 @@ public struct SelectionReader: Sendable {
         return selected as? String
     }
 
-    /// Serialises the whole snapshot → copy → poll → restore sequence against itself.
-    ///
-    /// Not optional. `NSPasteboard`'s per-name item cache is built without synchronisation,
-    /// and two threads reading `pasteboardItems` for the same name abort the process with an
-    /// uncaught `NSException` — measured 10 times out of 10, and 0 out of 10 for distinct
-    /// names. `NSPasteboard.general` is a single shared name, so every caller of this function
-    /// is on the same board. The race is intra-process, which is exactly why a lock closes it.
-    ///
-    /// A lock rather than `@MainActor`: the poll below busy-waits for up to half a second,
-    /// and running that on the main actor would stall the run loop on every fallback press.
-    ///
-    /// The lock covers callers that come through *this* function. Anything else in the
-    /// process that reads or writes `NSPasteboard.general` while a fallback is in flight is
-    /// still on the wrong side of that abort.
-    private static let clipboardLock = NSLock()
 
     /// The fallback: post ⌘C and read what lands, then put the user's clipboard back.
     ///
@@ -156,10 +141,14 @@ public struct SelectionReader: Sendable {
     /// «выделите текст» anyway. Waiting longer trades that against a stall on every press.
     ///
     /// `@Sendable` for the same reason as `accessibilityText`, and with the same
-    /// justification: `clipboardLock` is what makes calling it from any thread safe.
+    /// justification: `GeneralPasteboard.withExclusiveAccess` is what makes calling it from
+    /// any thread safe. See that type for why the serialisation cannot live here.
     @Sendable public static func clipboardText() -> String? {
-        clipboardLock.lock()
-        defer { clipboardLock.unlock() }
+        GeneralPasteboard.withExclusiveAccess { clipboardTextLocked() }
+    }
+
+    /// The body of `clipboardText()`, split out so the lock is taken in exactly one place.
+    private static func clipboardTextLocked() -> String? {
 
         // Built before the snapshot is taken, so that failing to build them costs nothing.
         // `PasteboardSnapshot.restore` is not free even when it puts back exactly what it

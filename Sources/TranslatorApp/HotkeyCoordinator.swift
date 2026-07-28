@@ -210,8 +210,16 @@ final class HotkeyCoordinator {
         // An empty result is not copied. `clearContents()` alone would destroy whatever the
         // user has, in exchange for putting nothing there — the exact failure spec 6 is about.
         guard !panelModel.translatedText.isEmpty else { return }
-        pasteboard.clearContents()
-        pasteboard.setString(panelModel.translatedText, forType: .string)
+        // Through the same serialisation `SelectionReader.clipboardText()` uses, and for the
+        // same reason: two threads touching one pasteboard name abort the process, and the
+        // fallback runs on a detached task while this runs on the main actor. Today they
+        // cannot overlap — the panel that offers «Скопировать» is hidden for the duration of
+        // a capture — but that is a fact about the current UI, not about this code, and the
+        // failure mode is a hard abort rather than a wrong value.
+        GeneralPasteboard.withExclusiveAccess {
+            pasteboard.clearContents()
+            pasteboard.setString(panelModel.translatedText, forType: .string)
+        }
     }
 
     func handOffToWindow() -> (source: String, translated: String) {

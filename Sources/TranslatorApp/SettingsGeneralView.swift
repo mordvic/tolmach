@@ -12,6 +12,20 @@ struct SettingsGeneralView: View {
     /// redraw.
     @Bindable var settings: AppSettings
 
+    /// Held as state rather than read straight from `PermissionsGate` inside `body`, because
+    /// the permission is not observable and reading it there made the warning below outlive
+    /// the problem it describes.
+    ///
+    /// The failing sequence is the one the warning's own button creates: the user clicks
+    /// «Открыть настройки системы», grants the permission, and comes back to a Settings
+    /// window that never closed. Nothing in it changed, so SwiftUI does not re-evaluate
+    /// `body`, `isTrusted()` is never asked again, and the row still says the shortcut
+    /// cannot read anything — telling the user that the thing they just did did not work.
+    ///
+    /// `didBecomeActiveNotification` is the signal precisely because that is what coming
+    /// back *is*. It costs one privileged call per activation, unlike polling.
+    @State private var isTrusted = true
+
     private var languagesCollide: Bool {
         settings.primaryLanguage == settings.workingLanguage
     }
@@ -22,15 +36,13 @@ struct SettingsGeneralView: View {
             // cannot cover, because the panel's prompt only appears once the user has already
             // pressed the shortcut and been met with nothing.
             //
-            // `isTrusted()` is read here during `body` evaluation and is **not** observable —
-            // there is no `@Observable` value behind it and TCC publishes no notification this
-            // app subscribes to. So the row disappears when the pane is next reopened, not the
-            // instant the user flips the switch in System Settings. That is honest and
-            // adequate: granting the permission means leaving this window for System Settings
-            // and coming back, and a stale warning for the seconds in between costs nothing.
-            // Polling `AXIsProcessTrustedWithOptions` on a timer to close that gap would be a
-            // repeated privileged call for a cosmetic gain.
-            if !PermissionsGate.isTrusted() {
+            // Reads the cached `isTrusted`, refreshed on appearance and on every activation
+            // — see the property's own comment for why reading `PermissionsGate` here
+            // directly was wrong. TCC publishes no notification this app subscribes to, so
+            // the row still lags a grant made without leaving the app; that window is the
+            // seconds between flipping the switch and clicking back, and closing it would
+            // mean polling a privileged call on a timer for a cosmetic gain.
+            if !isTrusted {
                 VStack(alignment: .leading, spacing: 6) {
                     Label("Сочетание клавиш не сможет прочитать выделенный текст",
                           systemImage: "exclamationmark.triangle.fill")
@@ -88,5 +100,14 @@ struct SettingsGeneralView: View {
         }
         .formStyle(.grouped)
         .frame(width: 420)
+        // On appearance rather than in the property's initialiser: `@State`'s initial value is
+        // evaluated once for the lifetime of the view's storage, so a pane opened before the
+        // permission was granted would keep the value it was born with. It starts `true` so a
+        // granted user never sees the warning flash on the way in.
+        .onAppear { isTrusted = PermissionsGate.isTrusted() }
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSApplication.didBecomeActiveNotification)) { _ in
+            isTrusted = PermissionsGate.isTrusted()
+        }
     }
 }

@@ -36,6 +36,38 @@ final class TranslationViewModel {
         self.translator = translator; self.settings = settings; self.glossary = glossary
     }
 
+    /// Take over a translation another view model performed — the panel handing its result
+    /// to the window.
+    ///
+    /// It lives here rather than at the call site because the five values it moves are one
+    /// unit, and writing them from outside is what broke: an earlier `handOffToWindow` set
+    /// `sourceText` and `translatedText` directly and left `state` and `outcome` alone, so a
+    /// window that had already finished a translation of its own went on rendering that
+    /// run's «Готово за N мс» and that run's markup and glossary warnings underneath the
+    /// text it had just been handed. `translate()` maintains the same pairing — it drops
+    /// `outcome` at the instant it replaces `translatedText` — and this is the only other
+    /// place allowed to move either.
+    ///
+    /// Refuses while this model is mid-translation, and says so with its return value rather
+    /// than by doing half the job. Adopting under a running task would let that task's own
+    /// completion overwrite what was just adopted, and cancelling it first does not help:
+    /// the cancellation lands later and writes `.interrupted` over the adopted state. The
+    /// caller keeps its panel on screen instead, so the result is not lost.
+    @discardableResult
+    func adopt(from other: TranslationViewModel) -> Bool {
+        guard other !== self, state != .running else { return false }
+        sourceText = other.sourceText
+        translatedText = other.translatedText
+        outcome = other.outcome
+        resolvedTarget = other.resolvedTarget
+        state = other.state
+        // `clearedPrevious` is deliberately not touched. It is written and read only inside
+        // `translate()`, which resets it before every run, so an assignment here would be
+        // dead — and a mutation test proved it: removing it changed nothing. Left out rather
+        // than kept as insurance, because a line that cannot matter reads as though it does.
+        return true
+    }
+
     /// Known before the run because chunking depends on the input alone. Lets the window
     /// say "3 фрагмента" up front instead of leaving the user with an opaque spinner.
     var expectedChunkCount: Int {

@@ -228,9 +228,19 @@ struct TranslatorApp: App {
     /// comes forward. Both are written, not just the source — the translation is the thing
     /// the user wants to keep, and re-running it would cost them the wait a second time.
     private func handOffToWindow() {
-        let (source, translated) = coordinator.handOffToWindow()
-        translation.sourceText = source
-        translation.translatedText = translated
+        // The whole run moves, not just its two strings — `outcome`, `resolvedTarget` and
+        // `state` with them, through `adopt(from:)`, which is what keeps the window from
+        // showing a previous window translation's elapsed time and warnings underneath the
+        // text it was just handed.
+        //
+        // The panel stays up when the window refuses. It refuses only while it is running a
+        // translation of its own, and hiding the panel then would throw away a result the
+        // user asked to keep in exchange for nothing.
+        guard translation.adopt(from: coordinator.panelModel) else {
+            openWindow(id: TranslatorApp.mainWindowID)
+            activateThisApp()
+            return
+        }
         panel.hide()
         openWindow(id: TranslatorApp.mainWindowID)
         // The app is an `LSUIElement` and the panel is non-activating, so nothing so far has

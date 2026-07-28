@@ -235,3 +235,56 @@ private func makeModel(_ client: LLMClient) -> TranslationViewModel {
     model.sourceText = String(repeating: "Sentence here. ", count: 200)
     #expect(model.expectedChunkCount > 1)
 }
+
+@MainActor
+@Test func adoptingCarriesTheWholeRunNotJustItsText() async {
+    // The window and the panel each own a view model, and «Открыть в окне» moves one run
+    // between them. Moving only the two strings is what broke: a window that had already
+    // finished a translation of its own kept that run's `outcome` and `.finished`, so it
+    // went on rendering that run's elapsed time and its markup and glossary warnings
+    // underneath the text it had just been handed — warnings about a document no longer on
+    // screen.
+    let window = makeModel(ScriptedClient(responses: ["Перевод окна."]))
+    window.sourceText = "Window source."
+    await window.translate()
+    let windowOutcome = window.outcome
+    #expect(windowOutcome != nil)
+
+    let panel = makeModel(ScriptedClient(responses: ["Перевод панели."]))
+    panel.sourceText = "Panel source."
+    await panel.translate()
+
+    #expect(window.adopt(from: panel))
+    #expect(window.sourceText == "Panel source.")
+    #expect(window.translatedText == "Перевод панели.")
+    #expect(window.state == panel.state)
+    #expect(window.resolvedTarget == panel.resolvedTarget)
+    // The identity check is the point: the window must not still be holding the outcome it
+    // arrived with, because that is what the warnings and the elapsed time are drawn from.
+    #expect(window.outcome?.final == "Перевод панели.")
+    #expect(window.outcome?.totalMS != windowOutcome?.totalMS)
+}
+
+@MainActor
+@Test func adoptingIsRefusedWhileTheTargetIsMidTranslation() async {
+    // Adopting under a running task loses the adoption: the task finishes and writes its own
+    // result over it, and cancelling first does not help either — the cancellation lands
+    // later and writes `.interrupted` on top. Refusing is what lets the caller keep the
+    // panel on screen instead of throwing the result away for nothing.
+    let window = makeModel(ScriptedClient(responses: [String(repeating: "а", count: 200)],
+                                          delayPerToken: .milliseconds(5)))
+    window.sourceText = String(repeating: "x ", count: 40)
+    let run = Task { await window.translate() }
+    try? await Task.sleep(for: .milliseconds(40))
+    #expect(window.state == .running)
+
+    let panel = makeModel(ScriptedClient(responses: ["Перевод панели."]))
+    panel.sourceText = "Panel source."
+    await panel.translate()
+
+    #expect(window.adopt(from: panel) == false)
+    #expect(window.sourceText != "Panel source.")
+    window.cancel()
+    await run.value
+}
+
