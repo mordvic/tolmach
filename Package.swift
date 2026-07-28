@@ -17,5 +17,8 @@ let package = Package(
                           exclude: ["Info.plist"], swiftSettings: [.swiftLanguageMode(.v5)]),
         .testTarget(name: "TranslatorAppTests", dependencies: ["TranslatorApp", "TranslationCore", "OllamaKit", "TextCapture"],
                     swiftSettings: [.swiftLanguageMode(.v5)]),
+        // Depends on no product: it reads Package.swift and the documents as text, and exists
+        // so that documentation drift fails the build the way a broken test does.
+        .testTarget(name: "DocumentationTests", swiftSettings: [.swiftLanguageMode(.v5)]),
     ]
 )

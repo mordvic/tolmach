@@ -33,7 +33,12 @@ ad-hoc signing macOS re-asks after every build. The script's header says how to 
 
 ## Architecture
 
-Five SwiftPM targets, one hard rule: **translation logic knows nothing about Ollama or SwiftUI.**
+6 SwiftPM targets, one hard rule: **translation logic knows nothing about Ollama or SwiftUI.**
+
+<!-- The count and the names below are checked against Package.swift by
+     DocumentationTests/ArchitectureDriftTests.swift. This block said "Five" and named a
+     target that does not exist for long enough that two separate documents repeated it. -->
+
 
 ```
 TranslationCore  (pure domain; depends on nothing but Foundation/NaturalLanguage)
