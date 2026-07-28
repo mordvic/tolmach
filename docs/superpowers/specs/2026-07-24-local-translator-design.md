@@ -371,10 +371,13 @@ throughput it is comparable to `aya-expanse:8b` (52 against 46 tok/s).
 seconds of reasoning is an acceptable price for noticeably better prose.
 
 > **Corrected 2026-07-29.** The фоновый путь is not wired up. `ModelPolicy.defaultModel(for:
-> .background)` returns `gpt-oss:20b` and `AppSettings.backgroundModel` is settable in
-> Settings → «Модели», but nothing reads it: `TranslationViewModel` builds its `ChatOptions` from
-> `settings.interactiveModel` for both surfaces, so the main window's button runs the interactive
-> model too. The split exists in the policy and the settings, not in the translation path.
+> .background)` returns `gpt-oss:20b`, but nothing reads it: `TranslationViewModel` builds its
+> `ChatOptions` from `settings.interactiveModel` for both surfaces, so the main window's button
+> runs the interactive model too. The split exists in the policy, not in the translation path.
+>
+> There was also an `AppSettings.backgroundModel` and a picker for it in Settings → «Модели».
+> Both were **removed on 2026-07-29**: a stored value nothing reads is a defect the user cannot
+> see. The policy above stands and the property returns when batch translation does — v2.
 
 **A blacklist, with the reason shown in settings:**
 

@@ -59,13 +59,17 @@ final class AppSettings {
         }
         set { withMutation(keyPath: \.interactiveModel) { defaults.set(newValue, forKey: "interactiveModel") } }
     }
-    var backgroundModel: String {
-        get {
-            access(keyPath: \.backgroundModel)
-            return string("backgroundModel", ModelPolicy.defaultModel(for: .background))
-        }
-        set { withMutation(keyPath: \.backgroundModel) { defaults.set(newValue, forKey: "backgroundModel") } }
-    }
+    // `backgroundModel` used to live here. It was written by a settings picker and read by
+    // nothing — both surfaces build `ChatOptions` from `interactiveModel` — so it was removed
+    // along with its control rather than left as a setting that does nothing.
+    //
+    // `ModelRole.background` and `ModelPolicy.defaultModel(for: .background)` are deliberately
+    // kept: the two-path model policy is a design decision recorded in §5 of the spec, and the
+    // background path is batch translation in v2. This property comes back when something
+    // reads it.
+    //
+    // Any value a user already stored stays in `UserDefaults` under `"backgroundModel"`,
+    // untouched. Nothing reads it, and v2 would find it again.
     var keepAlive: String {
         get {
             access(keyPath: \.keepAlive)

@@ -92,9 +92,10 @@ Facts that will bite you if you "tidy" them:
   and `gpt-oss:20b` for the background path, and carries a blacklist with measured reasons. Those
   reasons are English and reach `translate-cli`; the settings pane renders
   `RussianCopy.blacklistReasons`, keyed by the same prefixes, and falls back to the English if a
-  prefix has no Russian counterpart. **The background model is stored and read by nothing** —
-  batch translation is v2; see `docs/OPEN-ITEMS.md`. `keep_alive` (default `30m`) is
-  load-bearing, not an optimisation: cold load ~2000 ms vs ~155 ms warm.
+  prefix has no Russian counterpart. **The background role is policy only** — nothing reads it,
+  batch translation is v2, and the settings control that implied otherwise was removed.
+  `keep_alive` (default `30m`) is load-bearing, not an optimisation: cold load ~2000 ms vs
+  ~155 ms warm.
 
 ### The app layer
 

@@ -21,10 +21,14 @@ struct SettingsModelsView: View {
 
     var body: some View {
         Form {
-            ModelChoice(title: "Модель для хоткея",
+            // One picker, not two. There was a «Модель для фонового перевода» here and it did
+            // nothing: both surfaces build `ChatOptions` from `interactiveModel`, and the
+            // background path is batch file translation, which is v2. A control that stores a
+            // value nothing reads is worse than a missing one — the user changes it, gets no
+            // effect and no explanation, and has no way to tell a broken app from an inert
+            // setting. It comes back with the feature.
+            ModelChoice(title: "Модель для перевода",
                         selection: $settings.interactiveModel, models: models)
-            ModelChoice(title: "Модель для фонового перевода",
-                        selection: $settings.backgroundModel, models: models)
 
             TextField("Держать модель в памяти", text: $settings.keepAlive)
             // Guillemets, not backticks: building the string with `+` forces `Text`'s

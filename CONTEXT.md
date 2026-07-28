@@ -66,9 +66,10 @@ Translation by hotkey, where time to the first character matters more than prose
 _Avoid_: быстрый режим, режим хоткея
 
 **Фоновый путь** — *background path*
-Translation by button or in batch, where prose quality matters more than speed. **The setting
-exists and nothing reads it** — batch translation is v2. See `docs/OPEN-ITEMS.md`.
-→ `AppSettings.backgroundModel`, `ModelRole.background`
+Translation by button or in batch, where prose quality matters more than speed. **Not built.**
+Batch translation is v2; the policy exists, the path does not, and the settings control that
+used to imply otherwise was removed.
+→ `ModelRole.background`, `ModelPolicy.defaultModel(for: .background)`
 _Avoid_: медленный режим, качественный режим
 
 ---
