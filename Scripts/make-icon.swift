@@ -42,8 +42,10 @@ func serifFont(capHeight target: CGFloat) throws -> NSFont {
         throw Failure("neither the system serif nor Georgia is available")
     }
     guard probe.capHeight > 0 else { throw Failure("\(probe.fontName) reports no cap height") }
-    return NSFont(descriptor: probe.fontDescriptor, size: probeSize * target / probe.capHeight)
-        ?? probe
+    guard let sized = NSFont(descriptor: probe.fontDescriptor, size: probeSize * target / probe.capHeight) else {
+        throw Failure("could not resize \(probe.fontName) to cap height \(target)")
+    }
+    return sized
 }
 
 func drawIcon(in ctx: CGContext, pixels: CGFloat, simplified: Bool) throws {
@@ -59,7 +61,6 @@ func drawIcon(in ctx: CGContext, pixels: CGFloat, simplified: Bool) throws {
         CGPoint(x: bodyOrigin + x * unit, y: pixels - (bodyOrigin + y * unit))
     }
 
-    ctx.setAllowsAntialiasing(true)
     ctx.addPath(CGPath(roundedRect: CGRect(x: bodyOrigin, y: bodyOrigin, width: bodySide, height: bodySide),
                        cornerWidth: bodySide * 185.4 / 824,
                        cornerHeight: bodySide * 185.4 / 824,
@@ -72,8 +73,10 @@ func drawIcon(in ctx: CGContext, pixels: CGFloat, simplified: Bool) throws {
     //
     // The simplified geometry is not a style choice. At a 16 px raster a 5-unit stroke is
     // 0.64 px and the two chevrons of each guillemet merge; widening the stroke to 9 then
-    // brings its miter edge within 1.5 units (0.19 px) of the letter, so the chevrons move
-    // outward and the letter shrinks to reopen the gap to ≈6.7 units. Spec §3.1.
+    // brings its rightmost extent — the butt-capped end of the arm, not the miter join, which
+    // sits at the apex on the far left — within 1.2 units (0.16 px) of the glyph path's left
+    // edge, so the chevrons move outward and the letter shrinks to reopen the gap to ≈6.90
+    // units. Spec §3.1.
     let chevrons: [[(CGFloat, CGFloat)]] = simplified
         ? [[(28, 40), (20, 50), (28, 60)], [(72, 40), (80, 50), (72, 60)]]
         : [[(22, 40), (14, 50), (22, 60)], [(32, 40), (24, 50), (32, 60)],
@@ -99,6 +102,21 @@ func drawIcon(in ctx: CGContext, pixels: CGFloat, simplified: Bool) throws {
         NSAttributedString.Key(kCTForegroundColorAttributeName as String): Palette.parchment.cgColor,
     ]
     let line = CTLineCreateWithAttributedString(NSAttributedString(string: "Т", attributes: attributes))
+    // CoreText can silently substitute a different face for a glyph the requested font lacks.
+    // A substitution invalidates the cap-height maths the whole sizing scheme rests on — the
+    // font above was sized to *this* font's cap height, not whatever CoreText might swap in —
+    // so confirm the line is one glyph run in exactly the font that was asked for.
+    let runs = CTLineGetGlyphRuns(line) as! [CTRun]
+    guard CTLineGetGlyphCount(line) == 1, runs.count == 1 else {
+        throw Failure("Т produced \(CTLineGetGlyphCount(line)) glyph(s) across \(runs.count) run(s), expected one of each")
+    }
+    let runAttributes = CTRunGetAttributes(runs[0]) as NSDictionary
+    guard let runFont = runAttributes[kCTFontAttributeName as String] as! CTFont? else {
+        throw Failure("the rendered run for Т carries no font attribute")
+    }
+    guard CTFontCopyPostScriptName(runFont) as String == CTFontCopyPostScriptName(font) as String else {
+        throw Failure("CoreText substituted \(CTFontCopyPostScriptName(runFont)) for Т instead of \(font.fontName)")
+    }
     let glyphBounds = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
     let baseline = point(50, simplified ? 64 : 66)
     ctx.textPosition = CGPoint(x: baseline.x - glyphBounds.midX, y: baseline.y)
@@ -106,12 +124,15 @@ func drawIcon(in ctx: CGContext, pixels: CGFloat, simplified: Bool) throws {
 }
 
 func renderIcon(pixels: Int, simplified: Bool) throws -> CGImage {
+    guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else {
+        throw Failure("sRGB colour space is unavailable")
+    }
     guard let ctx = CGContext(data: nil,
                               width: pixels,
                               height: pixels,
                               bitsPerComponent: 8,
                               bytesPerRow: 0,
-                              space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                              space: colorSpace,
                               bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
         throw Failure("could not create a \(pixels)×\(pixels) context")
     }

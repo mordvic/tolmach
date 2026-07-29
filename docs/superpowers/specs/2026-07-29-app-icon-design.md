@@ -113,13 +113,14 @@ therefore not acceptable at the bottom of the range.
   - the Т drops to a cap height of **27** units with its baseline at **y = 64**.
 
   Both halves of that are forced by the same measurement. Widening the stroke to 9 pushes the
-  chevron's miter edge out to x ≈ 35.5 while the Т's left sidebearing sits at x ≈ 36.5 — a gap of
-  1.5 units, which is **0.19 px** at a 16 px raster, i.e. the chevron and the letter fuse into one
-  blob. Moving the chevrons outward and shrinking the letter opens the gap to ≈ 6.7 units (0.86 px
-  at 16 px, 1.7 px at 32 px). The baseline moves from 66 to 64 so the smaller letter stays
-  optically centred on the chevrons at y = 50.5.
+  chevron's rightmost extent — the butt-capped end of the arm, not the miter join, which sits at
+  the apex on the far left — out to x = 35.51, while the glyph path's left edge sits at
+  x ≈ 36.74 — a gap of ≈1.2 units, which is **0.16 px** at a 16 px raster, i.e. the chevron and the
+  letter fuse into one blob. Moving the chevrons outward and shrinking the letter opens the gap to
+  ≈ 6.90 units (0.89 px at 16 px, 1.78 px at 32 px). The baseline moves from 66 to 64 so the smaller
+  letter stays optically centred on the chevrons at y = 50.5.
 
-  At the full mark's stroke width of 5 the same gap is ≈ 2.5 units and needs no adjustment.
+  At the full mark's stroke width of 5 the same gap is ≈ 2.79 units and needs no adjustment.
 
 ## 4. How the icon is produced
 
@@ -133,7 +134,8 @@ swift Scripts/make-icon.swift build/AppIcon.icns
 - Run with `swift <file>`, not as a SwiftPM target. A new target would have to repeat
   `.swiftLanguageMode(.v5)` and the platform floor, and would put a drawing tool into the shipped
   package graph for no benefit.
-- Imports AppKit / CoreGraphics only — the no-external-dependencies rule holds.
+- Imports AppKit, CoreGraphics, CoreText, Foundation and ImageIO — all system frameworks, so the
+  no-external-dependencies rule holds.
 - Writes the ten `AppIcon.iconset` members (`icon_16x16`, `icon_16x16@2x`, `icon_32x32`,
   `icon_32x32@2x`, `icon_128x128`, `icon_128x128@2x`, `icon_256x256`, `icon_256x256@2x`,
   `icon_512x512`, `icon_512x512@2x` — rasters 16 through 1024), then invokes `iconutil -c icns`.
@@ -185,6 +187,20 @@ cache artefact, not a failure.
 - **`.icns`, not the macOS 26 `.icon` format.** The platform floor is macOS 14; `.icns` is correct
   and current for every supported version. Revisit only if the floor rises.
 - No installer, DMG or App Store artwork — nothing in this project produces them.
+- **Not byte-reproducible across machines.** The `.icns` is not committed (§4), and the mark
+  depends on whichever serif CoreText resolves `.serif` to on the building machine. The
+  cap-height normalisation of §3 bounds how much that can shift the letter, but does not remove
+  the difference — two developers can build the same commit and ship visually different icons.
+- **The 16 px raster is weaker than the simplified geometry of §3.1 implies.** Measured from
+  `build/AppIcon.iconset/icon_16x16.png`: each guillemet renders as a single column of solid
+  cinnabar, 1 px wide and 2 px tall — the simplified chevron's horizontal extent is 8 units ≈
+  1.03 px, so no angle survives at that size; it reads as a red dash, not a `«`. The letter is
+  weaker than the spec implies too: the crossbar peaks around RGB (130,130,129) and the stem
+  around (162,160,154), never reaching parchment (239,231,215). The chevrons *are* genuinely
+  separated from the letter by two columns of pure ink — the fusion defect §3.1 exists to fix is
+  fixed — but the result at 16 px is a mid-grey Т flanked by two red flecks, not a crisp mark.
+  Accepted, not a defect: re-deriving this from the pixels again is redundant, and "fixing" the
+  geometry further would fight the raster, not the drawing.
 
 ## 8. Out of scope: the menu-bar glyph
 
