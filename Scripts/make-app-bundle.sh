@@ -19,6 +19,16 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 cp "$ROOT/Sources/TranslatorApp/Info.plist" "$APP/Contents/Info.plist"
 cp "$BIN" "$APP/Contents/MacOS/TranslatorApp"
+# The signature covers Contents/Resources, so the icon has to be in place before codesign runs:
+# a resource added afterwards leaves the seal broken, and a broken seal costs the Accessibility
+# grant this script's signing identity exists to preserve.
+ICNS="$ROOT/build/AppIcon.icns"
+# Regenerating costs a few seconds of compile, so it happens only when the generator moved.
+if [ ! -f "$ICNS" ] || [ "$ROOT/Scripts/make-icon.swift" -nt "$ICNS" ]; then
+  swift "$ROOT/Scripts/make-icon.swift" "$ICNS"
+fi
+mkdir -p "$APP/Contents/Resources"
+cp "$ICNS" "$APP/Contents/Resources/AppIcon.icns"
 IDENTITY="${CODESIGN_IDENTITY:-}"
 if [ -z "$IDENTITY" ]; then
   # The matched name is extracted rather than hardcoded. A substring test that then signs
