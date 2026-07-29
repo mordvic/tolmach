@@ -46,7 +46,7 @@ func serifFont(capHeight target: CGFloat) throws -> NSFont {
         ?? probe
 }
 
-func drawIcon(in ctx: CGContext, pixels: CGFloat) throws {
+func drawIcon(in ctx: CGContext, pixels: CGFloat, simplified: Bool) throws {
     // The macOS app-icon grid: the tile body is 824 of the 1024-point canvas, so the artwork
     // deliberately does not run to the edge.
     let bodySide = pixels * 824 / 1024
@@ -69,12 +69,17 @@ func drawIcon(in ctx: CGContext, pixels: CGFloat) throws {
 
     // « Т » — pointing outward. Turning them inward would read better as a graphic, but »…«
     // is the German convention and this application's copy rules are Russian. Spec §2.3.
-    let chevrons: [[(CGFloat, CGFloat)]] = [
-        [(22, 40), (14, 50), (22, 60)], [(32, 40), (24, 50), (32, 60)],
-        [(68, 40), (76, 50), (68, 60)], [(78, 40), (86, 50), (78, 60)],
-    ]
+    //
+    // The simplified geometry is not a style choice. At a 16 px raster a 5-unit stroke is
+    // 0.64 px and the two chevrons of each guillemet merge; widening the stroke to 9 then
+    // brings its miter edge within 1.5 units (0.19 px) of the letter, so the chevrons move
+    // outward and the letter shrinks to reopen the gap to ≈6.7 units. Spec §3.1.
+    let chevrons: [[(CGFloat, CGFloat)]] = simplified
+        ? [[(28, 40), (20, 50), (28, 60)], [(72, 40), (80, 50), (72, 60)]]
+        : [[(22, 40), (14, 50), (22, 60)], [(32, 40), (24, 50), (32, 60)],
+           [(68, 40), (76, 50), (68, 60)], [(78, 40), (86, 50), (78, 60)]]
     ctx.setStrokeColor(Palette.cinnabar.cgColor)
-    ctx.setLineWidth(5 * unit)
+    ctx.setLineWidth((simplified ? 9 : 5) * unit)
     ctx.setLineJoin(.miter)
     ctx.setLineCap(.butt)
     for chevron in chevrons {
@@ -86,7 +91,7 @@ func drawIcon(in ctx: CGContext, pixels: CGFloat) throws {
 
     // Not `try?` with a fallback: a tile drawn without its letter is a broken icon that looks
     // like a finished one, and this script's whole contract is to fail loudly instead.
-    let font = try serifFont(capHeight: 31 * unit)
+    let font = try serifFont(capHeight: (simplified ? 27 : 31) * unit)
     let attributes: [NSAttributedString.Key: Any] = [
         .font: font,
         // CoreText reads its own key. NSAttributedString.Key.foregroundColor is not a
@@ -95,12 +100,12 @@ func drawIcon(in ctx: CGContext, pixels: CGFloat) throws {
     ]
     let line = CTLineCreateWithAttributedString(NSAttributedString(string: "Т", attributes: attributes))
     let glyphBounds = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
-    let baseline = point(50, 66)
+    let baseline = point(50, simplified ? 64 : 66)
     ctx.textPosition = CGPoint(x: baseline.x - glyphBounds.midX, y: baseline.y)
     CTLineDraw(line, ctx)
 }
 
-func renderIcon(pixels: Int) throws -> CGImage {
+func renderIcon(pixels: Int, simplified: Bool) throws -> CGImage {
     guard let ctx = CGContext(data: nil,
                               width: pixels,
                               height: pixels,
@@ -110,7 +115,7 @@ func renderIcon(pixels: Int) throws -> CGImage {
                               bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
         throw Failure("could not create a \(pixels)×\(pixels) context")
     }
-    try drawIcon(in: ctx, pixels: CGFloat(pixels))
+    try drawIcon(in: ctx, pixels: CGFloat(pixels), simplified: simplified)
     guard let image = ctx.makeImage() else { throw Failure("could not render \(pixels)×\(pixels)") }
     return image
 }
@@ -142,7 +147,8 @@ func makeIcns(at output: URL) throws {
     try? FileManager.default.removeItem(at: iconset)
     try FileManager.default.createDirectory(at: iconset, withIntermediateDirectories: true)
     for member in members {
-        try writePNG(try renderIcon(pixels: member.pixels),
+        // 16 and 32 are the sizes the full mark cannot survive; see drawIcon.
+        try writePNG(try renderIcon(pixels: member.pixels, simplified: member.pixels <= 32),
                      to: iconset.appendingPathComponent(member.name + ".png"))
     }
     try run("/usr/bin/iconutil", ["-c", "icns", iconset.path, "-o", output.path])
