@@ -1,6 +1,6 @@
 # macOS traps
 
-Eleven platform behaviours that each cost this project a real defect. They are collected here
+The platform behaviours that each cost this project a real defect. They are collected here
 so that someone about to write a *new* call site finds them — an agent adding its first
 `NSPasteboard` line will not think to open `PasteboardSnapshot.swift`.
 
@@ -107,9 +107,50 @@ older one's presses — measured, and a foreign signature ran the closure too.
 **`NSHostingView` as a window's `contentView` publishes compressed constraints.** AppKit then
 shrinks the window to satisfy them: measured, the panel opened 380 × 120 regardless of content
 because a `ScrollView` compresses to nothing, truncating the permission prompt to one line.
-`sizingOptions = []` leaves the frame to the caller. Note that neither `fittingSize` nor
-`intrinsicContentSize` is usable for measuring the content — both report the same number
-whatever is in the view. → `Sources/TranslatorApp/TranslationPanel.swift`
+`sizingOptions = []` leaves the frame to the caller. Those two numbers were taken on a `.titled`
+panel against a fixed size and neither condition exists any more — the mechanism stands, the
+figures are quarantined. → `Sources/TranslatorApp/TranslationPanel.swift`
+
+**An installed hosting view measures what it is *showing*, not what its content wants.** Which
+is why the entry above concludes that nothing on the installed view is usable for measurement:
+a `ScrollView` in the content compresses to nothing and the view reports that compressed height
+as the truth. The fix is a **second, detached host** that is never installed in a window and
+always holds the *non-scrolling* variant of the same content — measure that, then decide from
+the answer whether the installed one gets a `ScrollView`. → `PanelController.measuring` in
+`Sources/TranslatorApp/TranslationPanel.swift`
+
+**`sizeThatFits(in:)` exists on `NSHostingController` and not on `NSHostingView`.** Checked in
+the SDK's `SwiftUI.swiftinterface`: the `NSHostingView` class body has no `sizeThatFits` of any
+signature, so the call does not compile. It matters because `fittingSize` is the obvious
+substitute and it is **not a proposal-taking API** — measured, a long paragraph answered
+6929 × 44 both with no frame and with the frame preset to 560 × 120, so there is no way to ask
+an `NSHostingView` for a height *at a width*. That is exactly what a second measuring pass
+needs, so the measuring host is an `NSHostingController`.
+→ `Sources/TranslatorApp/TranslationPanel.swift`
+
+**A greedy SwiftUI view answers your proposal back at you, and `greatestFiniteMagnitude`
+survives an `isFinite` check.** Measured on the real `PanelView`: `sizeThatFits(in: unbounded)`
+answered `greatestFiniteMagnitude` on both axes for a one-word translation *and* for a
+forty-sentence one, because the view carries `frame(maxWidth: .infinity, maxHeight: .infinity)`
+and contains three `Spacer`s. A sizer that tests `isFinite && > 0` takes that for a real
+measurement: every panel came out at the width ceiling and the height ceiling, always scrolling,
+and never resized again. `fittingSize` asks for the **ideal** size instead, where a `Spacer` is
+0 — the same two views answered 274 and 6929. So the two passes deliberately use two different
+APIs: `fittingSize` for the ideal width, `sizeThatFits(in:)` for the height *at that width*.
+→ `PanelController.measure` in `Sources/TranslatorApp/TranslationPanel.swift`
+
+**A detached measuring host does not see content that changed through `@Observable`
+observation until `layoutSubtreeIfNeeded()` runs.** Reassigning `rootView` is enough only when
+the rebuilt view genuinely differs — a builder that captured a `String` does, and that is the
+shape in which this was first (correctly, but narrowly) measured. A builder that reads a model
+*inside* `body` does not: the rebuilt view's stored properties are identical, the same object
+reference, so nothing looks changed and the pending invalidation is never flushed. Measured on
+one reused host: after the text changed and `rootView` was reassigned, `fittingSize` still
+answered the previous 274 and `sizeThatFits(560)` still answered 94 tall; the layout call moved
+them to 6929 and 302. Through a whole `PanelController` with the layout call removed, five
+presses of alternating content all came out 300 × 120 — it does not lag by one press, it
+freezes at the first content it ever laid out. → `PanelController.measure` in
+`Sources/TranslatorApp/TranslationPanel.swift`
 
 **`constrainFrameRect(_:to:)` rewrites the frame on order-in** for `.titled` windows. Measured:
 a frame at x = 19 came back at x = 221, AppKit reserving the Stage Manager strip — silently

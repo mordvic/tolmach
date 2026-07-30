@@ -28,7 +28,7 @@ Everything speaks to `http://127.0.0.1:11434`. Nothing leaves the machine.
 
 ```bash
 swift build                       # library and executables
-swift test                        # ~289 tests, entirely offline, a few seconds
+swift test                        # ~341 tests, entirely offline, a few seconds
 ./Scripts/make-app-bundle.sh      # assembles build/LocalTranslator.app (debug)
 ./Scripts/make-app-bundle.sh release
 open build/LocalTranslator.app
