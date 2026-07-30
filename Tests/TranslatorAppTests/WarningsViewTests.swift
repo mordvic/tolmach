@@ -59,3 +59,21 @@ private func quietOutcome(documentGlossary: [GlossaryEntry] = [],
         GlossaryCheck(term: "payload", expected: "полезная нагрузка", status: .unverifiable),
     ])).hasContent == false)
 }
+
+@Test func theCollapsedStatusBarSaysHowManyWarningsAreHidingUnderIt() {
+    // A disclosure triangle with no summary is a triangle the user has no reason to press.
+    // The summary must agree with `WarningsView.hasContent` exactly: a bar that offered «0
+    // предупреждений» would be a control that expands to nothing.
+    #expect(RunStatusBar.summary(outcome: quietOutcome(), problem: nil) == nil)
+
+    let dropped = MarkupDiff(expected: .paragraphBreak, actual: nil,
+                             note: "dropped in translation")
+    let added = MarkupDiff(expected: nil, actual: .hardLineBreak, note: "added in translation")
+
+    #expect(RunStatusBar.summary(outcome: quietOutcome(markupDiffs: [dropped]),
+                                 problem: nil) == "1 предупреждение")
+    #expect(RunStatusBar.summary(outcome: quietOutcome(markupDiffs: [dropped, added]),
+                                 problem: nil) == "2 предупреждения")
+    #expect(RunStatusBar.summary(outcome: quietOutcome(),
+                                 problem: "не сохранён") == "1 предупреждение")
+}
