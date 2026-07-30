@@ -133,9 +133,10 @@ Deliberate, with the reason. Do not "fix" these without reading the reason first
   say the opposite — a fixed 380 × 260 that nothing resized — and that was retired by the UI
   redesign's Task 4, which took the candidate measurement the old entry pointed at and wired
   it up. What is deliberate now: the width is clamped to 300–560 pt and **frozen for a whole
-  presentation**, so a panel never changes width while the user reads it; the height is
-  monotonic within a presentation and capped at 0.6 of `visibleFrame`, past which the content
-  scrolls instead; and dragging an edge hands the size to the user until the panel hides.
+  presentation**, so a panel never changes width while the user reads it; the height has a
+  120 pt floor, is monotonic within a presentation and is capped at 0.6 of `visibleFrame`, past
+  which the content scrolls instead; and dragging an edge hands the size to the user until the
+  panel hides.
   `PanelSizer` owns all four rules and is where to change them. The old entry's ideal heights
   (97 pt short, 301 pt long) are gone with the doc comment that held them — they described a
   size the controller now measures directly, and quoting stale numbers for a live measurement
@@ -155,18 +156,29 @@ Deliberate, with the reason. Do not "fix" these without reading the reason first
 - **The stale-measuring comment in `PanelController.measure` is left as written, including the
   word «every».** The UI redesign's own ledger proposed narrowing it — claiming that because
   `PanelHost` hands `selection` to `PanelView` as a stored value, a change of *selection kind*
-  re-evaluates without a layout pass, so `.empty` and `.notPermitted` presses were never
-  sized against the previous press. Re-probed while writing this file, and it **did not
-  reproduce**: with `measuring.view.layoutSubtreeIfNeeded()` commented out, a `PanelController`
-  driven through five presses — short text, long text, `.empty`, `.notPermitted`, short text
-  again — returned 300 × 120 for all five, with the layout call restored it returned
-  300 × 120 / 560 × 302 / 326 × 120 / 560 × 128 / 300 × 120. Run twice, once with a host
-  shaped like `PanelHost` and once with the same host carrying closure properties, in case
-  SwiftUI's view comparison treats closures as always-different; same answer both times. The
-  probe used a stand-in for `PanelHost`, which is `private`, so it is a faithful model rather
-  than the type itself — that is the one gap left. One clause *is* imprecise and is worth
-  correcting the next time that file is opened for another reason: without the layout call the
-  host does not lag by one press, it freezes at the first content it ever laid out.
+  re-evaluates without a layout pass, so `.empty` and `.notPermitted` presses were never sized
+  against the previous press. **That claim is retracted.** Settled against the real `PanelHost`,
+  driven through the real `HotkeyCoordinator.handlePress` with an injected `SelectionReader`,
+  reading the frame at `show(at:)`. Five presses — short text, long text, `.empty`,
+  `.notPermitted`, short text — with `measuring.view.layoutSubtreeIfNeeded()` in place:
+  300 × 120 / 300 × 120 / 326 × 120 / 560 × 131 / 560 × 305. With it commented out:
+  300 × 120 / 300 × 120 / **560 × 305 / 326 × 120 / 560 × 131**. Deterministic over repeated
+  runs, identical whether or not the panel is hidden between presses. So a selection-*kind*
+  change is stale too, and `.empty` and `.notPermitted` are exactly the presses that never run
+  a translation and so never get a second chance. The stale size also **changes press to
+  press** rather than freezing — presses 4 and 5 are each precisely the previous press's size —
+  which makes «sizes every press against the previous one» the accurate wording. Reproducing
+  this needs `PanelHost`'s `private` lifted so `@testable import` can see it; two earlier probes
+  that used a stand-in instead each got a different wrong answer, which is the lesson worth
+  keeping.
+- **Owed to `TranslationPanel.constrainFrameRect`'s doc comment.** Task 4 re-measured the
+  constraint against the current mask and found that the menu-bar-band pull-down reproduces
+  while the Stage Manager case — a frame at x = 19 coming back at x = 221 — does **not**. Only
+  the first half reached the comment; it still presents x = 19 → x = 221 as live evidence. The
+  observation is legitimate and is recorded in Task 4's report and in the branch ledger, but a
+  measurement whose only home is a task report is one nobody will find. The comment should gain
+  the non-reproduction, or say why it is being kept unqualified. Not done here because this
+  entry's own task changed no product code.
 - **A refused `start()` at launch is swallowed.** If `HotkeyManager.register` ever fails the
   user gets no shortcut and no message. Unreachable today: `AppSettings.hotkey` guarantees a
   valid combination, and the only other failure is `-9878` for a combination another component

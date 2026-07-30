@@ -147,14 +147,33 @@ shape in which this was first (correctly, but narrowly) measured. A builder that
 reference, so nothing looks changed and the pending invalidation is never flushed. Measured on
 one reused host: after the text changed and `rootView` was reassigned, `fittingSize` still
 answered the previous 274 and `sizeThatFits(560)` still answered 94 tall; the layout call moved
-them to 6929 and 302. Through a whole `PanelController` with the layout call removed, five
-presses of alternating content all came out 300 × 120 — it does not lag by one press, it
-freezes at the first content it ever laid out. → `PanelController.measure` in
-`Sources/TranslatorApp/TranslationPanel.swift`
+them to 6929 and 302.
 
-**`constrainFrameRect(_:to:)` rewrites the frame on order-in** for `.titled` windows. Measured:
-a frame at x = 19 came back at x = 221, AppKit reserving the Stage Manager strip — silently
-overruling the placement arithmetic. → `Sources/TranslatorApp/TranslationPanel.swift`
+Re-measured end to end against the real `PanelHost`, driven through the real
+`HotkeyCoordinator.handlePress` with an injected `SelectionReader`, reading the panel's frame
+at `show(at:)`. Five presses — short text, long text, `.empty`, `.notPermitted`, short text —
+**with** the layout call: 300 × 120, 300 × 120, 326 × 120, 560 × 131, 560 × 305. **Without** it:
+300 × 120, 300 × 120, **560 × 305, 326 × 120, 560 × 131**. Deterministic over repeated runs and
+identical whether or not the panel is hidden between presses. Two things follow. The stale size
+**changes press to press** rather than freezing — presses 4 and 5 are each exactly the previous
+press's size — which is why the source comment's «sizes every press against the previous one» is
+the accurate description. And a change of selection *kind* is stale too: `.empty` and
+`.notPermitted` come out at the wrong size, and neither runs a translation, so neither ever gets
+a second chance to correct itself. (Presses 1 and 2 are equal in both columns for a reason that
+is not staleness: `handlePress` assigns `sourceText` *after* the panel is shown, so a text press
+legitimately opens on the previous run's content either way.)
+→ `PanelController.measure` in `Sources/TranslatorApp/TranslationPanel.swift`
+
+**`constrainFrameRect(_:to:)` rewrites the frame on order-in**, and **not only for `.titled`
+windows** — this project's panel has carried no `.titled` bit since the UI redesign and the
+override is still load-bearing. What reproduces on the current mask, re-measured against a stock
+`NSPanel`: a frame whose top crosses the menu-bar band comes back pulled down by the height of
+the band, exactly as the titled one did. What did **not** reproduce on that re-measurement is
+the original evidence — a frame at x = 19 coming back at x = 221, AppKit reserving the Stage
+Manager strip — which is consistent with the original note saying it was taken on a development
+machine with Stage Manager on. Both figures are kept: the first is why the override exists now,
+the second is why it was written. See `docs/MEASUREMENTS.md` for where each observation lives.
+→ `Sources/TranslatorApp/TranslationPanel.swift`
 
 **`NSApp.activate(ignoringOtherApps:)` does not activate on macOS 14.** The window comes front
 and answers `AXMain`, but the app is not frontmost and keystrokes still go elsewhere; the same

@@ -110,8 +110,9 @@ Facts that will bite you if you "tidy" them:
   `.nonactivatingPanel` still becomes *key* and system-wide accessibility focus follows the key window.
 - **The panel sizes itself to its content and is not `.titled`.** Three types share the job and
   none of them may be collapsed into another: `PanelSizer` owns the rules (width clamped to
-  300–560 pt and frozen for a whole presentation, height monotonic within a presentation and
-  capped at 0.6 of `visibleFrame`, past which the content scrolls; a hand-resize wins until the
+  300–560 pt and frozen for a whole presentation, height floored at 120 pt, monotonic within a
+  presentation and capped at 0.6 of `visibleFrame`, past which the content scrolls; a
+  hand-resize wins until the
   panel hides), `PanelPlacement` picks the anchor corner nearest the pointer so growth moves the
   *far* edge and not the text already read, and `PanelController` does the measuring.
   It measures with a **second, detached `NSHostingController`** — never the installed view,

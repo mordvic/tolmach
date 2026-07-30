@@ -109,11 +109,13 @@ pending invalidation is never flushed. Restoring the line was fix round 2.
 
 ## Over-claims
 
-Eight over-claims are what the branch's running ledger counted; enumerated by shape below they
-come to ten entries, because Task 9's two comment losses and Task 13's four comment findings
-can each reasonably be grouped as one. **The count is not the point.** The pattern is, and it
-is the most transferable thing on this branch: on work that cannot be seen, the failure mode is
-not writing broken code, it is writing a true-sounding sentence about code nobody checked.
+Eight over-claims are what the branch's running ledger counted through Task 13; enumerated by
+shape below they come to eleven entries, because Task 9's two comment losses and Task 13's four
+comment findings can each reasonably be grouped as one — and because the last row was committed
+by **Task 14**, the task written to close the pattern. **The count is not the point.** The
+pattern is, and it is the most transferable thing on this branch: on work that cannot be seen,
+the failure mode is not writing broken code, it is writing a true-sounding sentence about code
+nobody checked.
 
 | Task | Shape | What was claimed, and what was so |
 |---|---|---|
@@ -127,6 +129,7 @@ not writing broken code, it is writing a true-sounding sentence about code nobod
 | 11 | **A test claimed to verify a property it gives zero signal for.** | "Stable sort using index tiebreaker handles the critical test case that would fail with unstable sort." The test had been run green and the green read as confirmation, without ever mutating the tiebreaker away. |
 | 12 | **A comment promising two load-bearing reasons when one had been invalidated.** | The by-index comment said "Two independent reasons, both load-bearing". One of them — `Table` needing bindings into `let` properties — had been stale since `GlossaryEntry`'s properties became `var`, in the very commit the comment's own ledger tag pointed at. Cut to the one reason that still holds, tag restored. |
 | 13 | **Rationale claiming more precision than it has.** | Four at once. A defaulted closure justified by "the existing tests that construct this view directly" — `grep -rn "MainWindowView" Tests/` returns nothing, and the default would have let a future second call site compile while silently never refreshing. A fold comment arguing why one observer beats two, which never mentioned that the panel builds *two* hosts and both would call it. An ordering rationale justified on residency accuracy, when residency can only ever change the label's text and never the glyph. And `MenuBarExtra` content caching stated as fact, inherited from general SwiftUI behaviour and measured on nothing. |
+| 14 | **A stand-in's artefact recorded as a measurement — in the file that exists for provenance.** | This document, `PLATFORM-TRAPS.md`, `OPEN-ITEMS.md` and `MEASUREMENTS.md` all carried "five presses all came out 300 × 120 — it freezes at the first content it ever laid out". Both halves were artefacts of a probe that replaced `PanelHost` with a look-alike; against the real type the size lags rather than freezing. The `MEASUREMENTS.md` row — the one a future reader cites — carried the sequence with no mention that the content was a stand-in at all. Caught on review, re-taken against the real `PanelHost`, and written up above. Recorded here rather than quietly fixed, because a catalogue of over-claims that omits its own author's is the same failure one level up. |
 
 Two things about this list are worth more than the list itself.
 
@@ -156,6 +159,7 @@ works on some machines.
 | **1.797e+308** on both axes | What `sizeThatFits(in: unbounded)` answers on the real `PanelView` for short *and* long content. `greatestFiniteMagnitude` is finite and positive, so an `isFinite && > 0` guard reads it as a measurement. This is why the width pass uses `fittingSize`, where a `Spacer` is 0. |
 | **6929 × 44**, frame or no frame | An `NSHostingView`'s `fittingSize` for a long paragraph, both unframed and with the frame preset to 560 × 120. `fittingSize` is not a proposal-taking API, so there is no way to ask an `NSHostingView` for a height *at a width*. |
 | **274 × 94 → 6929 × 94 / 302** | The measuring host before and after `layoutSubtreeIfNeeded()`, with content changed through `@Observable`. Both `fittingSize` and `sizeThatFits` are stale in the same way and neither read may be hoisted above the layout call. |
+| **300 × 120 / 300 × 120 / 326 × 120 / 560 × 131 / 560 × 305** with the layout call, and **300 × 120 / 300 × 120 / 560 × 305 / 326 × 120 / 560 × 131** without it | Five presses — short text, long text, `.empty`, `.notPermitted`, short text — through the **real** `PanelHost` and the **real** `HotkeyCoordinator.handlePress`, frame read at `show(at:)`. Deterministic, and identical whether or not the panel is hidden between presses. See the section below for what it settles and what it refutes. |
 | **canBecomeKey: `true` → `false`** | A stock `NSPanel` with the old mask and with the new one. Dropping `.titled` is what makes `TranslationPanel.canBecomeKey` load-bearing; it was not before. |
 | **600+ combinations, 0 mismatches** | `RunStatusBar`'s warning count against `WarningsView.hasContent`, probed to establish that the agreement is structural rather than coincidental. |
 | **3, 50, 200, 5000 entries** | Array sizes at which the glossary tiebreaker's removal was mutated in and *not* caught. Recorded in the source so the line is not tidied away on the strength of a green suite. |
@@ -198,35 +202,62 @@ works on some machines.
   awaits a request with a 120-second timeout, so a hung Ollama would leave a healthy-looking
   glyph up for two minutes. `refresh()` now runs first, with the trade stated.
 
-### One measurement this task re-took, and what it found
+### The one measurement this branch got wrong three times
 
-The branch ledger flagged the corrected staleness comment as its third over-general claim in
-Task 4: the wording says a stale host sizes «every» press against the previous one and singles
-out `.empty` and `.notPermitted` as the states that never get a second chance, and a probe was
-reported to show the opposite — that because `PanelHost` hands `selection` to `PanelView` as a
-stored value, a change of selection *kind* re-evaluates without a layout pass, so only
-text-to-text presses were ever stale. Task 14 was told to narrow the comment on that basis.
-
-**It did not reproduce, so the comment was left as written.** With
-`measuring.view.layoutSubtreeIfNeeded()` commented out, a `PanelController` driven through five
-presses — short text, long text, `.empty`, `.notPermitted`, short text again — returned
-300 × 120 for all five. With the line restored the same five presses returned
-300 × 120 / 560 × 302 / 326 × 120 / 560 × 128 / 300 × 120. Run twice: once with a host shaped
-like `PanelHost`, and once with the same host carrying closure properties, in case SwiftUI's
-view comparison treats closures as always-different and re-evaluates the body for that reason.
-Same answer both times. The mechanism explains it: the *parent's* stored properties are what
-SwiftUI compares, and `PanelHost`'s never change — `selection` is read inside `body`, so the
-child's stored property can only differ if the parent's body re-runs, which is the thing that
-does not happen.
-
-The probe used a stand-in for `PanelHost`, which is `private` to `TranslatorApp`, so it is a
-faithful model of the shape rather than the type itself. That is the one gap left, and it is
-recorded in `docs/OPEN-ITEMS.md` §2 along with the numbers.
-
-One clause in that comment *is* imprecise and was not corrected here, because this task changed
-no product code: without the layout call the host does not lag by one press, it freezes at the
-first content it ever laid out. Worth fixing the next time the file is opened for another
+It is worth the space, because it is the cleanest example on the branch of the thing the branch
+kept doing: three probes, three different answers, and the first two were wrong for the same
 reason.
+
+The comment in `PanelController.measure` says a stale measuring host sizes «every» press
+against the previous one, and singles out `.empty` and `.notPermitted` as the presses that never
+get a second chance, because neither runs a translation.
+
+- **Probe 1**, run during Task 4's fix rounds, reported that a change of selection *kind*
+  re-evaluates without a layout pass — because `PanelHost` hands `selection` to `PanelView` as a
+  stored value — and therefore that `.empty` and `.notPermitted` were never stale and only
+  text-to-text presses were. That was written into this ledger as the branch's third over-general
+  claim in Task 4, and Task 14 was instructed to narrow the comment on the strength of it.
+- **Probe 2**, run at Task 14 to check probe 1 before writing it down, could not reproduce it. It
+  reported the opposite over-correction: that without the layout call the host *freezes* at the
+  first content it ever laid out, so all five presses of a sequence came out 300 × 120. The
+  comment was left alone on that basis, which was the right call for a wrong reason.
+- **Probe 3**, run at Task 14's review, settled it. Both earlier probes used a **stand-in** for
+  `PanelHost` rather than the type itself, because `PanelHost` is `private` to `TranslatorApp`.
+  Lifting that one keyword makes it visible to `@testable import`, and `HotkeyCoordinator`
+  already takes an injectable `SelectionReader`, so presses can be driven through the real
+  `handlePress` instead of simulated. Neither earlier probe took that route, and each got a
+  different wrong answer for it.
+
+Against the real `PanelHost`, frame read at `show(at:)`, five presses — short text, long text,
+`.empty`, `.notPermitted`, short text — deterministic over repeated runs and identical whether or
+not the panel is hidden between presses:
+
+| press | with `layoutSubtreeIfNeeded()` | without it |
+|---|---|---|
+| 1 · `.text` short | 300 × 120 | 300 × 120 |
+| 2 · `.text` long | 300 × 120 | 300 × 120 |
+| 3 · `.empty` | 326 × 120 | **560 × 305** |
+| 4 · `.notPermitted` | 560 × 131 | **326 × 120** |
+| 5 · `.text` short | 560 × 305 | **560 × 131** |
+
+Three things follow, and the comment survives all three.
+
+1. **A selection-kind change is stale too.** Probe 1 is refuted: `.empty` and `.notPermitted`
+   come out at the wrong size, and they are precisely the presses with no translation to correct
+   them. «Every» is right.
+2. **The stale size is not frozen — it lags.** Probe 2 is refuted: presses 4 and 5 are each
+   exactly the previous press's size. Press 3 is stale at a size that is neither its own nor its
+   immediate predecessor's, so «lags by exactly one» describes the direction and two of the three
+   affected presses here rather than a law — but «sizes every press against the previous one»,
+   which is what the comment actually says, is the accurate description.
+3. Presses 1 and 2 are equal in both columns and that is **not** staleness: `handlePress`
+   assigns `sourceText` *after* `afterCapture()` shows the panel, so a text press legitimately
+   opens on the previous run's content either way. Only presses 3, 4 and 5 discriminate.
+
+The transferable part is not the numbers. It is that two probes agreed on nothing except that
+they had both replaced the type under test with something shaped like it, and that a two-keyword
+access-level change was all that stood between them and the real answer. Where a probe stands in
+for the thing being measured, the stand-in is the measurement.
 
 ---
 
@@ -335,19 +366,24 @@ What was gathered instead, uniformly, across every task:
 - **Clean-rebuild warning counts**, run with `.build` actually removed after Task 7's over-claim
   showed what an incremental check misses. The two `grep -i warning` hits every run produces are
   the compiler naming `WarningsView.swift` and `WarningsViewTests.swift`.
-- **macOS 14 floor checks read out of the SDK's `.swiftinterface`**, never inferred from "it
-  compiled" — the SDK on this machine is far above the floor, so a successful build proves
-  nothing about availability. `LabeledContent` 13.0, `GroupedFormStyle` 13.0,
-  `TitleAndIconLabelStyle` 11.3, `ViewThatFits` 13.0, `HSplitView` 10.15,
-  `List(_:id:selection:rowContent:)` 10.15, and `onChange(of:initial:_:)` at exactly macOS 14.0.
+- **macOS 14 floor checks read out of the SDK's `.swiftinterface`** wherever the API was new to
+  the file — the SDK on this machine is far above the floor, so a successful build proves nothing
+  about availability. Read directly: `LabeledContent` 13.0, `GroupedFormStyle` 13.0,
+  `TitleAndIconLabelStyle` 11.3, `List(_:id:selection:rowContent:)` 10.15, the
+  `.roundedBorder` and `.labelsHidden()` modifiers, `Label(_:systemImage:)` for a `StringProtocol`
+  at 11.0, and `onChange(of:initial:_:)` at exactly macOS 14.0. Not every figure in the reports
+  has that provenance: `ViewThatFits` at 13.0 and `HSplitView` at 10.15 are stated from recall —
+  `HSplitView` is described as "SwiftUI's original split-view API" rather than cited — and should
+  be re-read before anyone relies on them.
 - **Mutation testing**, per `docs/TESTING.md`, with the source restored and `git status`
   confirmed clean after each one.
 - **Scratch probes** for the things a unit test cannot reach: the four hosting-view measurement
   candidates, the observation staleness, the doubled status refresh, and this task's five-press
   re-probe.
 - **`./Scripts/make-app-bundle.sh`** at Tasks 4 and 7 — the bundle assembles and signs with the
-  «LocalTranslator Dev» identity, so the Accessibility grant survives rebuilds. A build and
-  signing check. Not a visual one.
+  «LocalTranslator Dev» identity. A build and signing check, and nothing more: that the identity
+  is what makes the Accessibility grant survive a rebuild is inherited from `CLAUDE.md` and from
+  Plan 3's manual pass, and was not re-established on this branch.
 
 The distinction that matters, and the one this project keeps having to relearn: a green suite
 says the arithmetic is right. It says nothing about whether the arithmetic reaches a screen.
