@@ -32,83 +32,86 @@ struct SettingsGeneralView: View {
 
     var body: some View {
         Form {
-            // Spec 6.1's standing indicator: the half of onboarding the panel's own prompt
-            // cannot cover, because the panel's prompt only appears once the user has already
-            // pressed the shortcut and been met with nothing.
-            //
-            // Reads the cached `isTrusted`, refreshed on appearance and on every activation
-            // — see the property's own comment for why reading `PermissionsGate` here
-            // directly was wrong. TCC publishes no notification this app subscribes to, so
-            // the row still lags a grant made without leaving the app; that window is the
-            // seconds between flipping the switch and clicking back, and closing it would
-            // mean polling a privileged call on a timer for a cosmetic gain.
-            if !isTrusted {
-                VStack(alignment: .leading, spacing: 6) {
-                    Label("Сочетание клавиш не сможет прочитать выделенный текст",
-                          systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption).foregroundStyle(.orange)
+            Section("Доступ") {
+                // Visible whether or not the permission is granted, unlike the block this
+                // replaces. A row that appears only on failure makes the form jump when the
+                // user comes back from System Settings, and leaves a user whose permission
+                // *is* granted with no way to learn the permission exists.
+                LabeledContent("Доступ к тексту в других программах") {
+                    if isTrusted {
+                        Label("предоставлен", systemImage: "checkmark.circle")
+                            .foregroundStyle(.green).labelStyle(.titleAndIcon)
+                    } else {
+                        Label("нет доступа", systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange).labelStyle(.titleAndIcon)
+                    }
+                }
+                if !isTrusted {
                     Text("Приложению нужен доступ в разделе «Конфиденциальность и "
                          + "безопасность» → «Универсальный доступ». Главное окно работает "
                          + "и без него.")
                         .font(.caption).foregroundStyle(.secondary)
-                        // Same reason as the panel's prompt: a `Text` given less width than it
-                        // wants truncates rather than wrapping, and the clause that would go
-                        // is the one saying where the setting actually lives.
+                        // A `Text` given less width than it wants truncates rather than
+                        // wrapping, and the clause that gets cut is the one saying where the
+                        // setting actually lives.
                         .fixedSize(horizontal: false, vertical: true)
                     Button("Открыть настройки системы") { PermissionsGate.openSettings() }
                 }
             }
-            LabeledContent("Сочетание клавиш") {
-                HotkeyRecorder(combo: $settings.hotkey)
+
+            Section("Сочетание клавиш") {
+                LabeledContent("Сочетание клавиш") { HotkeyRecorder(combo: $settings.hotkey) }
+                Text("Нажмите на поле и наберите новое сочетание. Нужен хотя бы один из "
+                     + "модификаторов ⌃, ⌥ или ⌘ — иначе сочетание отняло бы обычную клавишу "
+                     + "у всех остальных программ.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
-            Text("Нажмите на поле и наберите новое сочетание. Нужен хотя бы один из "
-                 + "модификаторов ⌃, ⌥ или ⌘ — иначе сочетание отняло бы обычную клавишу "
-                 + "у всех остальных программ.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Picker("Основной язык", selection: $settings.primaryLanguage) {
-                ForEach(Language.allCases, id: \.self) { Text($0.russianName).tag($0) }
-            }
-            Picker("Рабочий язык", selection: $settings.workingLanguage) {
-                ForEach(Language.allCases, id: \.self) { Text($0.russianName).tag($0) }
-            }
-            // Equal languages make `targetLanguage(forDetected:)` return the same language
-            // whatever the source is, so every translation becomes a round trip into the
-            // primary language and the app quietly stops doing anything useful. Say so
-            // rather than swapping the value back or refusing the selection: the user is
-            // mid-edit, and only they know which of the two pickers they meant to change.
-            if languagesCollide {
-                Label {
-                    Text("Основной и рабочий языки совпадают: любой текст, на каком бы языке "
-                         + "он ни был, будет переводиться на \(settings.primaryLanguage.russianName) — "
-                         + "включая текст, который уже на нём написан. Выберите разные языки.")
-                } icon: {
-                    Image(systemName: "exclamationmark.triangle.fill")
+
+            Section("Языки") {
+                Picker("Основной язык", selection: $settings.primaryLanguage) {
+                    ForEach(Language.allCases, id: \.self) { Text($0.russianName).tag($0) }
                 }
-                .font(.caption)
-                .foregroundStyle(.orange)
+                Picker("Рабочий язык", selection: $settings.workingLanguage) {
+                    ForEach(Language.allCases, id: \.self) { Text($0.russianName).tag($0) }
+                }
+                // Equal languages make `targetLanguage(forDetected:)` return the same
+                // language whatever the source is, so every translation becomes a round trip
+                // into the primary language and the app quietly stops doing anything useful.
+                // Say so rather than swapping the value back or refusing the selection: the
+                // user is mid-edit, and only they know which of the two pickers they meant.
+                if languagesCollide {
+                    Label {
+                        Text("Основной и рабочий языки совпадают: любой текст, на каком бы "
+                             + "языке он ни был, будет переводиться на "
+                             + "\(settings.primaryLanguage.russianName) — включая текст, "
+                             + "который уже на нём написан. Выберите разные языки.")
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                    }
+                    .font(.caption).foregroundStyle(.orange)
+                }
+                Text("Направление выбирается само: текст на основном языке переводится в "
+                     + "рабочий, любой другой — в основной.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
-            Picker("Тон по умолчанию", selection: $settings.defaultTone) {
-                ForEach(Tone.allCases, id: \.self) { Text($0.russianName).tag($0) }
+
+            Section("Перевод") {
+                Picker("Тон по умолчанию", selection: $settings.defaultTone) {
+                    ForEach(Tone.allCases, id: \.self) { Text($0.russianName).tag($0) }
+                }
             }
-            // «по хоткею» is not padding. `autoCopy` is read in exactly one place —
-            // `HotkeyCoordinator.runTranslation` — so a translation done in the main window
-            // never touches the clipboard whatever this says. Spec §7.2 puts automatic
-            // copying in the panel's section deliberately; the label used to promise the
-            // whole app and quietly mean a third of it.
-            Toggle("Копировать результат по хоткею автоматически", isOn: $settings.autoCopy)
-            Toggle("Прогревать модель при запуске", isOn: $settings.warmUpOnLaunch)
-            Text("Направление выбирается само: текст на основном языке переводится в рабочий, "
-                 + "любой другой — в основной.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+
+            Section("Поведение") {
+                // «по хоткею» is not padding. `autoCopy` is read in exactly one place —
+                // `HotkeyCoordinator.runTranslation` — so a translation done in the main
+                // window never touches the clipboard whatever this says. Spec §7.2 puts
+                // automatic copying in the panel's section deliberately; the label used to
+                // promise the whole app and quietly mean a third of it.
+                Toggle("Копировать результат по хоткею автоматически", isOn: $settings.autoCopy)
+                Toggle("Прогревать модель при запуске", isOn: $settings.warmUpOnLaunch)
+            }
         }
-        .formStyle(.grouped)
-        .frame(width: 420)
-        // On appearance rather than in the property's initialiser: `@State`'s initial value is
-        // evaluated once for the lifetime of the view's storage, so a pane opened before the
-        // permission was granted would keep the value it was born with. It starts `true` so a
-        // granted user never sees the warning flash on the way in.
+        .settingsPane()
         .onAppear { isTrusted = PermissionsGate.isTrusted() }
         .onReceive(NotificationCenter.default.publisher(
             for: NSApplication.didBecomeActiveNotification)) { _ in
