@@ -156,12 +156,23 @@ Deliberate, with the reason. Do not "fix" these without reading the reason first
   Spec §3.3 puts the freeze on «the first content update after `show(at:)`». That is not
   enough either, and the measurement is in `PanelSizer.fit`'s width rule: the real `PanelView`
   asks for 347 pt before a single character has arrived and 6929 once the whole reply has, and
-  every point in between is a wrong answer. **No early moment knows the final width.** So the
-  width now tracks the content — monotonically, never shrinking — and `frozenWidth` pins it at
-  the settle, which is when the reader starts reading. The re-wrapping the freeze exists to
-  prevent is confined to the first few hundred milliseconds, while there is a line or two on
-  screen; from the settle the width does not move again for the rest of the presentation,
-  including through a «Повторить».
+  every point in between is a wrong answer — an independent probe measured a forty-sentence
+  reply frozen at 330/347 pt as 462 pt tall, against 560 × 302 correct, a much worse shape (not,
+  as this entry said until now, a case that crosses the 0.6 ceiling on a laptop display: that
+  probe's own numbers need `visibleFrame.height` ≤ 770 pt to scroll at 330/347, and a 14-inch
+  MacBook Pro reports ≈ 875, a 13-inch Air ≈ 850 — the only width that scrolls on every current
+  laptop is the 300 pt floor above, the defect's width, not a candidate freeze point).
+  **No early moment knows the final width.** So the width now tracks the content —
+  monotonically, never shrinking — and `frozenWidth` pins it at the settle, which is when the
+  reader starts reading. Measured per streaming run, repeated and stable to ±1: flowing prose
+  at ~125 chars/s re-wraps 4–5 times over 48 ms–0.9 s with 86–89 chars on screen when it stops;
+  slow prose at ~25 chars/s re-wraps 8 times over 48 ms–3.4 s with 79 chars on screen; hard-broken
+  short lines (a list, a poem, dialogue) re-wrap 12 times over 42 ms–6.7 s with 626 chars on
+  screen. The first re-wrap always happens with zero characters on screen, and flowing prose
+  pins at `maxWidth` once its longest unwrapped line passes ~80 characters, so most of a long
+  reply arrives at a fixed width — the bad case is content whose lines are individually short.
+  From the settle the width does not move again for the rest of the presentation, including
+  through a «Повторить».
   **This is a deliberate deviation from the review that asked for the fix**, which required the
   width to be frozen from the moment it is first set. It was refused on the measurement above
   and the reason is recorded here rather than only in the fix report.

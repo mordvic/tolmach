@@ -149,9 +149,29 @@ it.
 size, the screen's `visibleFrame`, whether a run is in progress, and whether the user has resized
 by hand, and returns the next size. Its rules:
 
-- **Width** is clamped to 300…560 pt and is computed **once per presentation** — on the first
-  content update after `show(at:)` — then frozen until the panel hides. A width that moved while
-  tokens arrived would re-wrap every line on every token.
+- **Width** is clamped to 300…560 pt. Within a presentation it tracks the widest the content has
+  *ever* asked for — monotonically, never shrinking — until the run **settles** (the state leaves
+  `.running`), at which point it freezes for the rest of the presentation, including through a
+  «Повторить».
+
+  This is a deliberate change from this section's original text, which specified the width as
+  computed once — on the first content update after `show(at:)` — then frozen, reasoning that a
+  width which moved while tokens arrived would re-wrap every line on every token. Implementing
+  that ran into two things. First, `HotkeyCoordinator.handlePress` assigns the source text only
+  *after* `show(at:)` returns, so at the true first content update the panel could be measuring
+  the *previous* press's result, or nothing at all — an early freeze was catching whatever
+  happened to be on screen, not the content this press was showing. Second, once that ordering
+  was accounted for, measurement showed no early moment knows the final width regardless: the
+  real `PanelView` asks for 347 pt before a single character has arrived and 6929 pt once the
+  whole reply has, and freezing anywhere on that curve produces the wrong shape — a
+  forty-sentence reply frozen at 330–347 pt comes out 462 pt tall, against 560 × 302 at the
+  width it deserves. The reflow this section's original reasoning warned against is real but
+  bounded, measured per streaming run: 4–5 width changes for fast prose (~125 chars/s), 8 for
+  slow prose (~25 chars/s), 12 for hard-broken short lines (a list, a poem, dialogue) — the first
+  change always lands with zero characters on screen, and flowing prose pins at `maxWidth` once
+  its longest unwrapped line passes ~80 characters, so most of a long reply arrives at a fixed
+  width; the bad case is content whose lines are individually short. The human accepted that
+  reflow cost in exchange for the panel ending, once settled, at the width its content deserves.
 - **Height** is clamped to 120 pt … 60 % of `visibleFrame.height`.
 - **Height is monotonic within one run**: it never decreases between the first token and
   `.finished`. Text arriving cannot make the panel shrink.

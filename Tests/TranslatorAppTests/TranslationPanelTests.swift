@@ -521,7 +521,14 @@ private func realPanelContent(_ model: TranslationViewModel) -> (PanelContentVar
 /// growing to roughly twice its proper height — which on a laptop display crosses the 0.6
 /// ceiling and swaps in the scrolling variant for content that would have fitted unscrolled.
 /// The control below is the assertion that matters: the same content assigned *before* the
-/// show is the size this press deserves, and the two must agree.
+/// show is the size this press deserves, and for this long reply the two agree — both land at
+/// `maxWidth`. That does not generalize to every length: the same comparison with a short
+/// reply has `afterRun` stuck at the button-row width the run started from (347 × 120)
+/// against a deserved 300 × 120, and with a medium reply `afterRun` settles at 560 × 134
+/// against a deserved 560 × 120 — the width only grows and the height only grows within a
+/// run, so a reply that never needed the room it grew through disagrees with what a fresh
+/// `show(at:)` would give it. Long text is the one case where growth and deserved size land
+/// on the same number.
 @MainActor
 @Test func aPanelShownBeforeItsTranslationArrivesEndsUpAsWideAsThatTranslationNeeds() {
     let longText = String(repeating: "Длинная строка перевода. ", count: 40)

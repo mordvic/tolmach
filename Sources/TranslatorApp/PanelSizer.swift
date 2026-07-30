@@ -76,13 +76,24 @@ enum PanelSizer {
         // There is no early moment at which the final width is knowable: the panel asks for
         // 347 pt before a single character has arrived — that is its button row, which is also
         // what `minWidth` is — and stays under 400 until one line of the reply is longer than
-        // the panel itself. Freezing at any of those points puts a forty-sentence translation
-        // into a ~370 pt column at 462 pt tall instead of 560 × 302, which is past the 0.6
-        // ceiling on a laptop display and so scrolls content that would have fitted. Growing
-        // instead costs a re-wrap or two in the first few hundred milliseconds, while there is
-        // a line or two on screen and nobody is reading yet; `frozenWidth` pins it for the rest
-        // of the presentation at the settle, which is when reading starts. `PanelController`
-        // is what decides that moment — see `applyFit`.
+        // the panel itself. Freezing at any of those points gives the wrong shape: an
+        // independent probe of the real `PanelView` measured a forty-sentence translation
+        // frozen at 330/347 pt as 462 pt tall, against 560 × 302 correct — a much worse shape,
+        // not (as an earlier version of this comment claimed) a case that crosses the 0.6
+        // height ceiling on a laptop display: that probe's own numbers need visibleFrame.height
+        // ≤ 770 pt to scroll at 330/347, and a 14-inch MacBook Pro reports ≈ 875, a 13-inch Air
+        // ≈ 850 — well clear. The only width that scrolls on every current laptop is 300 pt,
+        // which is the pre-fix defect's frozen width, not a candidate freeze point. Growing
+        // instead costs a handful of re-wraps while the reply is still short — measured per
+        // streaming run: 4–5 width changes for fast prose (~125 chars/s), 8 for slow prose
+        // (~25 chars/s), 12 for hard-broken short lines (a list, a poem, dialogue), and the
+        // first change always lands with zero characters on screen. Flowing prose pins at
+        // `maxWidth` once its longest unwrapped line passes ~80 characters, so most of a long
+        // reply arrives at a fixed width; the bad case is content whose lines are
+        // individually short.
+        // `frozenWidth` pins the width for the rest of the presentation at the settle, which
+        // is when reading starts. `PanelController` is what decides that moment — see
+        // `applyFit`.
         let width = frozenWidth ?? min(max(max(wanted.width, previous.width), minWidth), maxWidth)
         // `max(minHeight, …)` and not the fraction alone: on a very short screen — a strip
         // display, or a `visibleFrame` squeezed by a tall menu bar — the fraction falls

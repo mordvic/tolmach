@@ -143,7 +143,7 @@ struct TranslatorApp: App {
     ///
     /// The hotkey is registered **before** the warm-up, which is not what Task 10's brief
     /// said. `warmUp()` awaits a real HTTP request whose `timeoutIntervalForRequest` is 120
-    /// seconds (`OllamaClient.swift:26`), so registering after it would leave the app's only
+    /// seconds (`OllamaClient.swift:33`), so registering after it would leave the app's only
     /// shortcut dead for as long as Ollama takes to answer — two seconds on a cold model,
     /// and two *minutes* if Ollama accepts the connection and then never replies. Registration
     /// is synchronous and takes no I/O, so there is nothing to gain by deferring it.
@@ -193,7 +193,7 @@ struct TranslatorApp: App {
         // same symbol (see its doc comment), so residency only ever changes `status.label`'s
         // text, never the icon. What refreshing after `warmUp()` actually costs is the glyph's
         // *first* honest reading: `warmUp()` awaits a request whose timeout is 120 seconds
-        // (`OllamaClient.swift:26`) — the same hazard the comment above this one registers the
+        // (`OllamaClient.swift:33`) — the same hazard the comment above this one registers the
         // hotkey ahead of — so an Ollama that accepts the connection and then never answers
         // would leave `.unknown` (which reads as the healthy glyph) on screen for up to two
         // minutes, which is the one situation this indicator exists to reveal. Refreshing first
