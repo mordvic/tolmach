@@ -125,7 +125,10 @@ Facts that will bite you if you "tidy" them:
 - Swift 6 tools, `.swiftLanguageMode(.v5)` on **every** target, platform floor macOS 14. Any new
   target repeats both.
 - **No external dependencies.** Foundation, NaturalLanguage, SwiftUI, AppKit, Observation,
-  ApplicationServices, CoreGraphics, Carbon, Swift Testing only.
+  ApplicationServices, CoreGraphics, CoreText, ImageIO, Carbon, Swift Testing only. This list is a
+  closed whitelist, not an illustration: adding a framework to it is a deliberate edit, not a
+  formality. CoreText and ImageIO are here for `Scripts/make-icon.swift` alone — glyph layout and
+  PNG encoding for the icon — and nothing in the shipped targets uses them.
 - Tests use **Swift Testing** (`@Test`, `#expect`), not XCTest. Test names are sentences describing
   the behaviour being pinned. `UserDefaults`-backed tests use `InMemoryDefaults`, never a real suite
   (a written suite leaves a plist in `~/Library/Preferences` that nothing reliably removes).

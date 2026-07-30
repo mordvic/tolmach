@@ -134,8 +134,10 @@ swift Scripts/make-icon.swift build/AppIcon.icns
 - Run with `swift <file>`, not as a SwiftPM target. A new target would have to repeat
   `.swiftLanguageMode(.v5)` and the platform floor, and would put a drawing tool into the shipped
   package graph for no benefit.
-- Imports AppKit, CoreGraphics, CoreText, Foundation and ImageIO — all system frameworks, so the
-  no-external-dependencies rule holds.
+- Imports AppKit, CoreGraphics, CoreText, Foundation and ImageIO. CoreText and ImageIO were not on
+  CLAUDE.md's permitted list when this was written, and «they are system frameworks» was the wrong
+  answer to that: the list is a closed whitelist, so the rule holds because the list was extended
+  for the icon generator, not because the frameworks ship with the OS.
 - Writes the ten `AppIcon.iconset` members (`icon_16x16`, `icon_16x16@2x`, `icon_32x32`,
   `icon_32x32@2x`, `icon_128x128`, `icon_128x128@2x`, `icon_256x256`, `icon_256x256@2x`,
   `icon_512x512`, `icon_512x512@2x` — rasters 16 through 1024), then invokes `iconutil -c icns`.

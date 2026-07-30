@@ -23,7 +23,9 @@ cp "$BIN" "$APP/Contents/MacOS/TranslatorApp"
 # a resource added afterwards leaves the seal broken, and a broken seal costs the Accessibility
 # grant this script's signing identity exists to preserve.
 ICNS="$ROOT/build/AppIcon.icns"
-# Regenerating costs a few seconds of compile, so it happens only when the generator moved.
+# Regenerating costs a few seconds of compile, so it happens on the two occasions that need it:
+# the icns is missing — the fresh-clone case, since build/ is git-ignored — or the generator is
+# newer than it.
 if [ ! -f "$ICNS" ] || [ "$ROOT/Scripts/make-icon.swift" -nt "$ICNS" ]; then
   swift "$ROOT/Scripts/make-icon.swift" "$ICNS"
 fi
