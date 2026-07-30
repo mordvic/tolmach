@@ -117,18 +117,30 @@ struct TranslatorApp: App {
         // as a window-bearing scene, the one it may open at launch is the first, and that
         // has to stay the `MenuBarExtra`.
         Settings {
+            // `Label` and not `Image`, so the tab bar keeps its words as well as gaining
+            // glyphs. That is what a macOS settings toolbar is — Mail, Safari and Xcode all
+            // draw the icon above its title — and it is the shape `.tabItem` was built for.
+            // Icon-only would leave three unlabelled glyphs to guess at, and would need an
+            // `accessibilityLabel` on each or VoiceOver would read the English symbol name
+            // out of a window whose every other string is Russian.
+            //
+            // All three symbols are SF Symbols 2, i.e. macOS 11, so they are available at
+            // this project's macOS 14 floor with room to spare and need no `#available`.
+            // `shippingbox` for «Модели» because that pane is about what has been pulled and
+            // what is on disk, not about inference; `book.closed` for «Глоссарий» because the
+            // dictionary-shaped `character.book.closed` is SF Symbols 4 and buys nothing here.
             TabView {
                 SettingsGeneralView(settings: settings)
-                    .tabItem { Text("Основные") }
+                    .tabItem { Label("Основные", systemImage: "gearshape") }
                 SettingsModelsView(settings: settings, models: models,
                                    status: statusModel.status,
                                    onRefresh: {
                                        await statusModel.refresh(
                                            interactiveModel: settings.interactiveModel)
                                    })
-                    .tabItem { Text("Модели") }
+                    .tabItem { Label("Модели", systemImage: "shippingbox") }
                 SettingsGlossaryView(glossary: glossary, settings: settings)
-                    .tabItem { Text("Глоссарий") }
+                    .tabItem { Label("Глоссарий", systemImage: "book.closed") }
             }
             // «Модели» now shows Ollama's health line, which this scene's own `Window` also
             // shows independently — so the pane needs its own initial check rather than
