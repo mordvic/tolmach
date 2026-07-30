@@ -14,10 +14,11 @@ struct MainWindowView: View {
     var onCopy: () -> Void = {}
     /// Refreshes `OllamaStatusModel` after a run in *this* window settles — the window's
     /// own half of the "after a translation attempt" trigger; `PanelHost` covers the hotkey
-    /// half. Defaults to a no-op so the existing tests that construct this view directly
-    /// (there is no scene to drive it in a test) do not all need updating for a hook they
-    /// are not exercising.
-    var onRunFinished: () async -> Void = {}
+    /// half. Not defaulted, matching `PanelHost.onRunFinished`: there is exactly one call
+    /// site (`TranslatorApp.swift`'s `Window` scene), and a default here would let a future
+    /// second call site compile while silently never refreshing — the same trap a default
+    /// would have been worth taking on `PanelHost` too, if it had more than one caller.
+    let onRunFinished: () async -> Void
 
     var body: some View {
         VStack(spacing: 0) {

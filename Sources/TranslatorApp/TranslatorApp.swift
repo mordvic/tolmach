@@ -187,14 +187,22 @@ struct TranslatorApp: App {
             settings.hasRequestedAccessibility = true
             PermissionsGate.requestTrust()
         }
-        await warmUp()
-        // After `warmUp()`, not before: `refresh()`'s residency check (`OllamaProbe.ps()`)
-        // is only accurate once whatever `warmUp()` was going to load has had the chance to
-        // finish loading. Reading it first would report the model as not resident at launch
-        // even when `warmUpOnLaunch` is about to make that true moments later — a self-inflicted
-        // "not ready" flash the ordering avoids for free, since `warmUp()`'s failure is already
-        // swallowed and its own guard makes it a no-op when the setting is off.
+        // Ahead of `warmUp()`, not after — corrected from an earlier version of this method
+        // that put it last for `OllamaProbe.ps()`'s residency accuracy. That reasoning named a
+        // benefit `menuBarSymbol` cannot receive: the glyph maps *both* `.running` cases to the
+        // same symbol (see its doc comment), so residency only ever changes `status.label`'s
+        // text, never the icon. What refreshing after `warmUp()` actually costs is the glyph's
+        // *first* honest reading: `warmUp()` awaits a request whose timeout is 120 seconds
+        // (`OllamaClient.swift:18`) — the same hazard the comment above this one registers the
+        // hotkey ahead of — so an Ollama that accepts the connection and then never answers
+        // would leave `.unknown` (which reads as the healthy glyph) on screen for up to two
+        // minutes, which is the one situation this indicator exists to reveal. Refreshing first
+        // still costs something, just not to the glyph: if `warmUpOnLaunch` is about to make the
+        // model resident, `status.label`'s text can read "не загружена" for a few seconds until
+        // the next refresh trigger corrects it — text-only, and already inside the staleness
+        // `menuBarSymbol`'s doc comment accepts.
         await statusModel.refresh(interactiveModel: settings.interactiveModel)
+        await warmUp()
     }
 
     /// Re-registers when the user changes the shortcut in settings.
@@ -255,7 +263,23 @@ struct TranslatorApp: App {
                     PermissionsGate.openSettings()
                 },
                 onContentChange: { settling in panel.contentDidChange(settling: settling) },
+                // Gated on `variant`, not unconditional: `PanelController` builds *two* live
+                // hosts from this same closure — `hosting` (installed) and `measuring`
+                // (measured, for `PanelController.measure`) — and both carry a `PanelHost`
+                // with its own `.onChange(of: coordinator.panelModel.state)`, because that
+                // hook lives on `PanelHost` itself rather than varying by variant. Wiring
+                // `onRunFinished` unconditionally, as `onContentChange` above is, would fire
+                // the refresh twice per settle — measured, in a scratch test with one
+                // `NSHostingView` and one detached `NSHostingController` over the same
+                // `@Observable`, both laid out: `installed=1 measured=1`. `onContentChange`
+                // tolerates that doubling because `applyFit` is idempotent against the frame
+                // it already set and `contentDidChange` gates on `panel.isVisible`; `refresh()`
+                // has neither guard, so a second call is a second live HTTP round trip and a
+                // second unguarded write to `status`. Restricting the real closure to
+                // `.installed` — the variant `hosting` builds — makes the measured copy's
+                // closure a no-op instead, so only one host ever calls it.
                 onRunFinished: {
+                    guard case .installed = variant else { return }
                     await statusModel.refresh(interactiveModel: settings.interactiveModel)
                 }))
         }
