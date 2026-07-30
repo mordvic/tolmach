@@ -89,6 +89,12 @@ enum RussianCopy {
         "\(count) \(plural(count, "фрагмент", "фрагмента", "фрагментов"))"
     }
 
+    /// "12 символов" — the source pane's own character count, next to `chunkCount` in its
+    /// footer.
+    static func characterCount(_ count: Int) -> String {
+        "\(count) " + plural(count, "символ", "символа", "символов")
+    }
+
     /// Keyed by the same model-name prefixes as `ModelPolicy.blacklist`, because the engine
     /// matches by prefix so that every tag of a bad model is covered.
     ///

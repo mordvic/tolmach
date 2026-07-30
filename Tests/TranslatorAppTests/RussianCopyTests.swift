@@ -126,6 +126,17 @@ func negativeCountsTakeTheSameFormAsTheirMagnitude(magnitude: Int, expected: Str
     #expect(RussianCopy.plural(22, "термин", "термина", "терминов") == "термина")
 }
 
+@Test func theCharacterCountAgreesWithRussianGrammar() {
+    // Through `plural`, like the chunk count, because the number comes from the user's
+    // typing and every form is reachable within a sentence of it.
+    #expect(RussianCopy.characterCount(1) == "1 символ")
+    #expect(RussianCopy.characterCount(2) == "2 символа")
+    #expect(RussianCopy.characterCount(5) == "5 символов")
+    #expect(RussianCopy.characterCount(11) == "11 символов")
+    #expect(RussianCopy.characterCount(21) == "21 символ")
+    #expect(RussianCopy.characterCount(0) == "0 символов")
+}
+
 // MARK: - Direction
 
 /// The panel's header. Both halves are `russianName`, so the two assertions that would
