@@ -37,6 +37,8 @@ under them has not changed:
 | «Открыть в окне» while the window is **busy** | The button should be disabled with «Окно занято своим переводом» beneath it, and re-enable itself when the window finishes | `PanelView.swift`, `AdoptionRefusal` |
 | The window and Settings actually coming **forward** | `NSApp.activate(ignoringOtherApps:)` does not activate on macOS 14; replaced with cooperative activation, which no one has watched work | `activateThisApp()` in `TranslatorApp.swift` |
 | The permission row clearing after granting and returning | It is refreshed on `didBecomeActiveNotification`; the failure it fixes was telling the user their grant had not worked | `SettingsGeneralView.swift` |
+| The icon in Finder, Spotlight and the Accessibility list | Nothing here can see the screen; the rendered PNGs were checked, how macOS composites and caches them was not. Finder caches icons aggressively — a blank sheet right after the first build is a cache artefact, not a failure | `Scripts/make-icon.swift` |
+| The ink tile against a **dark** desktop background | The dark ground was chosen over the parchment one with this trade-off stated and accepted; whether it separates well enough in practice has not been looked at | `Scripts/make-icon.swift`, spec §2.4 |
 
 ---
 
