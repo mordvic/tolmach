@@ -30,8 +30,31 @@ struct PanelView: View {
     var onOpenInWindow: () -> Void = {}
     var onRetry: () -> Void = {}
     var onGrantPermission: () -> Void = {}
+    /// Whether the content must scroll — `PanelSizer` decided the content is taller than
+    /// the panel it can be given. Wrapping the *whole* content and not just the text,
+    /// because the ceiling applies to the sum: a long translation with a long document
+    /// glossary can put the button row off the bottom on its own.
+    var scrolls = false
+    var onClose: () -> Void = {}
 
     var body: some View {
+        Group {
+            if scrolls { ScrollView { content } } else { content }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    /// The panel's content at its natural size, with nothing that compresses.
+    ///
+    /// **Nothing in here may be a `ScrollView`, and that is a measurement, not taste.** The
+    /// controller sizes the panel by measuring this view, and a `ScrollView` compresses to
+    /// nothing when measured: before `hosting.sizingOptions = []` existed, the panel opened
+    /// at 380 × 120 on the running bundle no matter what was in it, because AppKit shrank
+    /// the window to the hosting view's compressed measurement. The flag above is how
+    /// scrolling is reached instead — outside the thing being measured.
+    @ViewBuilder private var content: some View {
         VStack(alignment: .leading, spacing: 8) {
             // Exhaustive with no `default:` on purpose: a fourth `SelectionResult` case
             // should fail to compile here rather than open an empty panel.
@@ -41,12 +64,25 @@ struct PanelView: View {
             case .text: translation
             }
         }
-        .padding(14)
-        // `maxHeight` and `.topLeading` because the panel is a fixed 380×260 and short
-        // content would otherwise float in the middle of it — the hint is one line, and it
-        // hung level with nothing. Slack goes to the bottom, where it reads as a panel with
-        // room left rather than as a mis-centred one.
-        .frame(minWidth: 340, maxWidth: 520, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    /// The direction line and the way out.
+    ///
+    /// The ⨯ is here rather than in the window chrome because Task 4 drops `.titled` from
+    /// the style mask to get a rounded, material panel, and `standardWindowButton(.closeButton)`
+    /// returns nil without it.
+    @ViewBuilder private var header: some View {
+        HStack(alignment: .firstTextBaseline) {
+            if let line = Self.direction(outcome: model.outcome, target: model.resolvedTarget) {
+                Text(line).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+            Button(action: onClose) { Image(systemName: "xmark") }
+                .buttonStyle(.borderless)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Закрыть")
+        }
     }
 
     /// Spec 8's «нет разрешения Accessibility» row, shown at the moment the user pressed
@@ -58,6 +94,7 @@ struct PanelView: View {
     /// A user sent to the wrong one finds nothing and concludes the app is broken.
     private var permissionPrompt: some View {
         VStack(alignment: .leading, spacing: 8) {
+            header
             Label("Нет доступа к тексту в других программах", systemImage: "lock")
                 .font(.headline)
             Text("Чтобы переводить выделенное по сочетанию клавиш, приложению нужен доступ "
@@ -80,22 +117,24 @@ struct PanelView: View {
     }
 
     private var emptyHint: some View {
-        Label("Выделите текст и нажмите сочетание ещё раз", systemImage: "text.cursor")
-            .font(.callout).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 8) {
+            header
+            Label("Выделите текст и нажмите сочетание ещё раз", systemImage: "text.cursor")
+                .font(.callout).foregroundStyle(.secondary)
+        }
     }
 
     private var translation: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let line = Self.direction(outcome: model.outcome, target: model.resolvedTarget) {
-                Text(line).font(.caption).foregroundStyle(.secondary)
-            }
+            header
 
-            ScrollView {
-                Text(model.translatedText)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(maxHeight: 220)
+            Text(model.translatedText)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // A `Text` given less width than it wants truncates rather than wrapping,
+                // and the panel's width is now measured from this view — so without this
+                // the measurement and the rendering disagree about how many lines there are.
+                .fixedSize(horizontal: false, vertical: true)
 
             statusLine
 
@@ -112,28 +151,19 @@ struct PanelView: View {
             // with the failure and its «Повторить» underneath, instead of a labelled
             // paragraph losing its annotations for a reason that has nothing to do with it.
             if let outcome = model.outcome {
-                // `WarningsView` has no natural ceiling — `documentGlossary` is one row per
-                // extracted term — and this panel floats over the user's work, so it cannot
-                // take the whole screen. `ViewThatFits` rather than a bare `ScrollView`,
-                // which is greedy in its scroll axis and would sit at the full 120 under a
-                // one-line warning. Same reasoning as `MainWindowView`, smaller budget.
-                //
                 // `problem:` and `onMute:` are deliberately not passed. Muting a term is a
                 // decision about the glossary, and the glossary is not on screen here; the
                 // window is where that belongs.
                 // Gated on `hasContent`, not merely on `outcome` being present. A short clean
                 // translation has no diffs, no missing terms and no document glossary, so
-                // `WarningsView` draws an empty `VStack` — but the 120pt slot still claimed
-                // its height, and the panel's text went from nine lines while running to four
-                // and a half the moment it finished. It reads as the result being truncated
-                // exactly when it completes.
+                // `WarningsView` draws an empty `VStack` — and the sizer measures whatever is
+                // here, so an empty stack would still add its `VStack` spacing to a height
+                // nothing is asking for. The 120pt slot this used to fill is gone — `scrolls`
+                // and `PanelSizer` own the ceiling now — and this gate exists only so an empty
+                // stack does not pad a measured height.
                 let warnings = WarningsView(outcome: outcome, target: model.resolvedTarget)
                 if warnings.hasContent {
-                    ViewThatFits(in: .vertical) {
-                        warnings
-                        ScrollView { warnings }
-                    }
-                    .frame(maxHeight: 120)
+                    warnings
                 }
             }
 
