@@ -92,7 +92,12 @@ struct SettingsGlossaryView: View {
                             Text(glossary.file.mutedTerms.indices.contains(index)
                                  ? glossary.file.mutedTerms[index] : "")
                             Spacer()
-                            Button("вернуть") { unmute(at: index) }
+                            // «Вернуть» with a capital, like every other button in this window.
+                            // A `.link` style is not a reason to lowercase a label — the two
+                            // «не показывать» links in `WarningsView` sit inside a sentence and
+                            // read as its continuation, but this one stands alone at the end of
+                            // a row and is a button in everything except its styling.
+                            Button("Вернуть") { unmute(at: index) }
                                 .buttonStyle(.link)
                         }
                     }

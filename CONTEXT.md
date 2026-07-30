@@ -44,6 +44,12 @@ A piece of text translated by one request to the model. A fenced code block goes
 whole and is never cut.
 → `Chunker`, `Chunk`
 _Avoid_: фрагмент, кусок, блок, сегмент
+_On screen_: **часть**. This is the one headword whose interface wording differs from the
+code's, and it is a deliberate exception rather than drift. «Чанк» is a transliteration that
+means nothing to someone translating a document, and every alternative the `_Avoid_` list
+rules out is ruled out for good reason — so the interface names the *effect* instead: the
+source pane says «3 части», and the setting that governs the size is called «Длина одного
+запроса к модели» and never names the unit at all. Code, docs and this file keep «чанк».
 
 **Корректор** — *corrector*
 A second pass that fixes only outright errors from the first. It may not rephrase, shorten or

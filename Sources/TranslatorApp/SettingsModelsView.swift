@@ -137,27 +137,50 @@ struct SettingsModelsView: View {
                 }
             }
 
-            Section("Дополнительно") {
+            // Two sections where «Дополнительно» used to be one. That section held three
+            // settings answering two unrelated questions — how fast a translation starts, and
+            // how good it is — under a heading that said only that they were rare. Splitting
+            // them lets each heading say what its settings are for, and puts the two residency
+            // settings side by side: «Загружать при запуске» gets the model into memory once,
+            // «Держать в памяти» decides how long it stays. Neither is understandable without
+            // the other, and until now they were in different tabs.
+            Section("Модель в памяти") {
+                Toggle("Загружать модель при запуске", isOn: $settings.warmUpOnLaunch)
+                Text("Первый перевод иначе ждёт около двух секунд, пока модель поднимается "
+                     + "в память.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 TextField("Держать модель в памяти", text: $settings.keepAlive)
                 // Guillemets, not backticks: building the string with `+` forces `Text`'s
                 // plain-`String` initialiser instead of the `LocalizedStringKey` one, so
                 // Markdown is never parsed and backticks would render as literal grave
                 // accents.
                 Text("Формат Ollama: «30m», «1h», «0» — выгружать сразу, «-1» — держать всегда. "
-                     + "Холодная загрузка стоит около двух секунд, поэтому короткое значение "
-                     + "делает каждое первое нажатие хоткея заметно медленнее.")
+                     + "Короткое значение возвращает те же две секунды каждому первому "
+                     + "переводу после паузы.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
 
+            Section("Качество перевода") {
+                // «Длина одного запроса к модели», not «Размер фрагмента». `CONTEXT.md` names
+                // this concept «чанк» and lists «фрагмент» under _Avoid_ — those lists are
+                // words that caused a real ambiguity, not preferences — so the old label broke
+                // the project's own glossary. «Чанк» is not the fix either: it is a
+                // transliteration that means nothing to someone translating a document. The
+                // way out is to name the setting by what the number governs rather than by the
+                // internal concept, so the concept needs no user-facing word at all.
+                //
                 // Through `RussianCopy.plural` rather than a bare «символов». The stepper's
                 // own 100-character step never leaves the «символов» form, but `chunkSize`
                 // reads straight from `UserDefaults` on every access precisely so a value set
                 // outside the app is picked up — and `defaults write … chunkSize 901` would
                 // then render «901 символов».
-                Stepper("Размер фрагмента: \(settings.chunkSize) "
+                Stepper("Длина одного запроса к модели: \(settings.chunkSize) "
                         + RussianCopy.plural(settings.chunkSize, "символ", "символа", "символов"),
                         value: $settings.chunkSize, in: 300...4000, step: 100)
-                Text("Больше — связнее перевод длинного текста, но дольше до первого результата.")
+                Text("Длинный текст переводится по частям. Больше — связнее перевод, "
+                     + "но дольше до первого результата.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Slider(value: $settings.temperature, in: 0...1, step: 0.05) {
@@ -168,7 +191,12 @@ struct SettingsModelsView: View {
                     // Russian notation, would disagree with the control right above it.
                     Text("Температура: \(settings.temperature, format: .number.precision(.fractionLength(2)).locale(Locale(identifier: "ru_RU")))")
                 }
-                Text("Ниже — предсказуемее и ближе к оригиналу. По умолчанию 0,2.")
+                // The caption now says what the number *is* before saying which way to turn
+                // it. «Температура» is the model's own term and stays — it is what every other
+                // tool calls this and what the user will meet elsewhere — but a term nobody
+                // defines is a number nobody dares move.
+                Text("Насколько модель вольна отступать от буквального перевода. "
+                     + "Ниже — предсказуемее и ближе к оригиналу. По умолчанию 0,2.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
