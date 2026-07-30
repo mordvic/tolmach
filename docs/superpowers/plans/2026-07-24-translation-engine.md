@@ -44,7 +44,7 @@ Sources/
     LemmaMatcher.swift        # lemma-sequence matching for inflected languages
     GlossaryVerifier.swift    # 3-state glossary check over LemmaMatcher
     DocumentGlossary.swift    # per-document term glossary + merge with user glossary
-    PromptBuilder.swift       # TranslationRequest + system/user/corrector/term-list messages
+    PromptBuilder.swift       # TranslationRequest + system/user/term-list messages
     ResponseCleaner.swift     # strip preambles + unwrap whole-answer code fence
     MarkupSkeleton.swift      # structural token sequence + diff
     ModelPolicy.swift         # role→model mapping + blacklist with reasons
@@ -129,13 +129,12 @@ let package = Package(
     platforms: [.macOS(.v14)],
     targets: [
         .target(name: "TranslationCore", swiftSettings: [.swiftLanguageMode(.v5)]),
-        .target(name: "OllamaKit", dependencies: ["TranslationCore"], swiftSettings: [.swiftLanguageMode(.v5)]),
-        .executableTarget(name: "translate-cli", dependencies: ["TranslationCore", "OllamaKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
         .testTarget(name: "TranslationCoreTests", dependencies: ["TranslationCore"], swiftSettings: [.swiftLanguageMode(.v5)]),
-        .testTarget(name: "OllamaKitTests", dependencies: ["OllamaKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
     ]
 )
 ```
+
+**Declare a target only in the task that creates its sources.** SwiftPM errors on a declared target whose directory does not exist, and git does not track empty directories — so declaring `OllamaKit`, `translate-cli` or `acceptance` here would leave every commit until Task 13 unbuildable from a fresh clone. Tasks 13, 14 and 15 each add their own target declaration alongside their first source file.
 
 ```swift
 // Sources/TranslationCore/Language.swift
@@ -284,7 +283,7 @@ Expected: FAIL — `Chunker` not defined.
 
 - [ ] **Step 3: Write the implementation**
 
-Adapt the prototype's validated `Chunker` (branch `prototype/translation-engine`, `Sources/TranslationEngine/Chunker.swift`). Behaviour required: split on blank lines into paragraph blocks; keep a ```` ``` ```` fenced block whole even when it exceeds `maxCharacters` and even when it contains blank lines; a non-code block larger than the budget is split on sentence boundaries via `enumerateSubstrings(..., options: .bySentences)`; accumulate blocks into chunks under the budget; a chunk is flagged `containsCodeFence` if any block folded into it was a fence; empty input yields no chunks, non-empty-but-blank yields one chunk.
+Adapt the prototype's validated `Chunker` (branch `prototype/translation-engine`, `Sources/TranslationEngine/Chunker.swift`). Behaviour required: split on blank lines into paragraph blocks; keep a ```` ``` ```` fenced block whole even when it exceeds `maxCharacters` and even when it contains blank lines; a non-code block larger than the budget is split on sentence boundaries via `enumerateSubstrings(..., options: .bySentences)`; accumulate blocks into chunks under the budget; a chunk is flagged `containsCodeFence` if any block folded into it was a fence; input that is empty or contains only whitespace yields no chunks at all — there is nothing to translate, and emitting a whitespace chunk would send it to the model.
 
 ```swift
 // Sources/TranslationCore/Chunker.swift
@@ -648,7 +647,9 @@ public enum TermExtractor {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `swift test --filter TermExtractorTests`
-Expected: PASS (3 tests). If NLTagger tags differ on this OS build and a specific assertion is brittle, keep the `resource`/cap/`minFrequency` assertions (robust) and relax only the noun-phrase `||` branch — do not weaken the frequency or cap guarantees.
+Expected: PASS (4 tests).
+
+If a test fails, the implementation is wrong — do not weaken the assertion to make it pass. The one genuine uncertainty is which *specific* surface form `NLTagger` returns for a noun phrase on a given OS build, which is why `extractsRepeatedContentTermsInFrequencyOrder` accepts either `"resource"` alone or the phrase containing it. Every other assertion — frequency floor, cap, sentence-boundary containment — is a hard guarantee.
 
 - [ ] **Step 5: Commit**
 
@@ -972,7 +973,7 @@ public enum GlossaryMerge {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `swift test --filter DocumentGlossaryTests`
-Expected: PASS (3 tests).
+Expected: PASS (5 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -1168,7 +1169,7 @@ public enum PromptBuilder {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `swift test --filter PromptBuilderTests`
-Expected: PASS (4 tests).
+Expected: PASS (3 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -1520,7 +1521,7 @@ public enum MarkupSkeleton {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `swift test --filter MarkupSkeletonTests`
-Expected: PASS (5 tests).
+Expected: PASS (7 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -1869,6 +1870,11 @@ git commit -m "feat(core): translator orchestration with document glossary"
 - Create: `Sources/OllamaKit/OllamaError.swift`
 - Create: `Sources/OllamaKit/OllamaClient.swift`
 - Test: `Tests/OllamaKitTests/OllamaStreamParserTests.swift`
+- Modify: `Package.swift` — add both targets here, in the task that creates their sources:
+  ```swift
+  .target(name: "OllamaKit", dependencies: ["TranslationCore"], swiftSettings: [.swiftLanguageMode(.v5)]),
+  .testTarget(name: "OllamaKitTests", dependencies: ["OllamaKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
+  ```
 
 **Interfaces:**
 - Consumes: `ChatMessage`, `ChatOptions`, `ChatEvent`, `ChatStats`, `LLMClient` from `TranslationCore`.
@@ -2064,6 +2070,10 @@ git commit -m "feat(ollama): stream parser discarding thinking, and HTTP client"
 
 **Files:**
 - Create: `Sources/translate-cli/main.swift`
+- Modify: `Package.swift` — add the target here, in the task that creates its source:
+  ```swift
+  .executableTarget(name: "translate-cli", dependencies: ["TranslationCore", "OllamaKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
+  ```
 - Manual test only (exercises a live Ollama; not in CI).
 
 **Interfaces:**
@@ -2239,6 +2249,11 @@ for name in corpus {
         print("    markup: expected \(String(describing: diff.expected)) actual \(String(describing: diff.actual))")
     }
 
+    // A chunked text with nothing to measure is a silent failure, not a pass: it means
+    // the glossary was empty or no term recurred, so the mechanism did nothing at all.
+    if outcome.chunks.count > 1 && applicable == 0 {
+        failures.append("\(name): chunked into \(outcome.chunks.count) but no term was measurable — document glossary did nothing")
+    }
     if applicable > 0 && adherence < 85 { failures.append("\(name): adherence \(String(format: "%.1f%%", adherence)) < 85%") }
     if !markupOK { failures.append("\(name): \(outcome.markupDiffs.count) markup diffs, expected 0") }
     if ttft >= 1000 { failures.append("\(name): TTFT \(Int(ttft)) ms >= 1000 ms") }

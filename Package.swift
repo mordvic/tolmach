@@ -1,0 +1,24 @@
+// swift-tools-version: 6.0
+import PackageDescription
+
+let package = Package(
+    name: "local-translator",
+    platforms: [.macOS(.v14)],
+    targets: [
+        .target(name: "TranslationCore", swiftSettings: [.swiftLanguageMode(.v5)]),
+        .testTarget(name: "TranslationCoreTests", dependencies: ["TranslationCore"], swiftSettings: [.swiftLanguageMode(.v5)]),
+        .target(name: "OllamaKit", dependencies: ["TranslationCore"], swiftSettings: [.swiftLanguageMode(.v5)]),
+        .testTarget(name: "OllamaKitTests", dependencies: ["OllamaKit", "TranslationCore"], swiftSettings: [.swiftLanguageMode(.v5)]),
+        .executableTarget(name: "translate-cli", dependencies: ["TranslationCore", "OllamaKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
+        .executableTarget(name: "acceptance", dependencies: ["TranslationCore", "OllamaKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
+        .target(name: "TextCapture", swiftSettings: [.swiftLanguageMode(.v5)]),
+        .testTarget(name: "TextCaptureTests", dependencies: ["TextCapture"], swiftSettings: [.swiftLanguageMode(.v5)]),
+        .executableTarget(name: "TranslatorApp", dependencies: ["TranslationCore", "OllamaKit", "TextCapture"],
+                          exclude: ["Info.plist"], swiftSettings: [.swiftLanguageMode(.v5)]),
+        .testTarget(name: "TranslatorAppTests", dependencies: ["TranslatorApp", "TranslationCore", "OllamaKit", "TextCapture"],
+                    swiftSettings: [.swiftLanguageMode(.v5)]),
+        // Depends on no product: it reads Package.swift and the documents as text, and exists
+        // so that documentation drift fails the build the way a broken test does.
+        .testTarget(name: "DocumentationTests", swiftSettings: [.swiftLanguageMode(.v5)]),
+    ]
+)

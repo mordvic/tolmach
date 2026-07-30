@@ -1,0 +1,202 @@
+import Testing
+import Foundation
+import AppKit
+import Observation
+@testable import TranslatorApp
+@testable import TranslationCore
+import TextCapture
+
+/// An empty, isolated defaults store per test. In-memory rather than a real
+/// `UserDefaults` suite, because a suite that gets written to leaves a plist in
+/// ~/Library/Preferences that nothing can reliably remove — see `InMemoryDefaults`.
+private func freshDefaults() -> InMemoryDefaults { InMemoryDefaults(prefix: "test") }
+
+@Test func factoryValuesMatchTheSpec() {
+    let settings = AppSettings(defaults: freshDefaults())
+    #expect(settings.primaryLanguage == .ru)
+    #expect(settings.workingLanguage == .en)
+    #expect(settings.defaultTone == .neutral)
+    #expect(settings.keepAlive == "30m")
+    #expect(settings.chunkSize == 900)
+    #expect(settings.temperature == 0.2)
+    #expect(settings.autoCopy == false)
+    #expect(settings.warmUpOnLaunch == true)
+    #expect(settings.interactiveModel == ModelPolicy.defaultModel(for: .interactive))
+}
+
+@Test func valuesSurviveAReload() {
+    let defaults = freshDefaults()
+    let first = AppSettings(defaults: defaults)
+    first.chunkSize = 1200
+    first.defaultTone = .technical
+    let second = AppSettings(defaults: defaults)
+    #expect(second.chunkSize == 1200)
+    #expect(second.defaultTone == .technical)
+}
+
+/// The hand-check the Settings task asked for — change the primary language, quit,
+/// relaunch, see it stick — needs a GUI this environment does not have. Its actual claim
+/// does not: `AppSettings` caches nothing in memory, so a second instance over the same
+/// store sees precisely what a relaunched app would read back. These five are the
+/// properties the General tab binds. `valuesSurviveAReload` above happens to cover two of
+/// them; this covers the tab's whole set on purpose, so adding a control to that tab
+/// without a working setter behind it fails here.
+///
+/// What this pins is that every General-tab setter writes through to the store and every
+/// getter reads back from it, with nothing cached in between — the failure it is built to
+/// catch is a setter that silently drops its write. The store is in-memory (see
+/// `InMemoryDefaults`), so the round trip is no longer through a plist on disk; the values
+/// involved are strings, ints, doubles and bools, which is not where a serialisation bug
+/// would hide, and the alternative was leaking a preferences file on every single run.
+@Test func everySettingTheGeneralTabBindsSurvivesARelaunch() {
+    let defaults = freshDefaults()
+
+    let beforeQuit = AppSettings(defaults: defaults)
+    // Every value differs from the factory default, so a setter that quietly drops its
+    // write leaves the factory value in place and is caught rather than matching by luck.
+    beforeQuit.primaryLanguage = .de
+    beforeQuit.workingLanguage = .fr
+    beforeQuit.defaultTone = .formal
+    beforeQuit.autoCopy = true
+    beforeQuit.warmUpOnLaunch = false
+
+    let afterRelaunch = AppSettings(defaults: defaults)
+    #expect(afterRelaunch.primaryLanguage == .de)
+    #expect(afterRelaunch.workingLanguage == .fr)
+    #expect(afterRelaunch.defaultTone == .formal)
+    #expect(afterRelaunch.autoCopy == true)
+    #expect(afterRelaunch.warmUpOnLaunch == false)
+}
+
+/// Beyond the brief, and the whole contract of the first-launch prompt in one test.
+/// `TranslatorApp.launch()` raises the system Accessibility dialog only while this reads
+/// false, so a getter that defaulted to `true` would mean the dialog is never shown at all,
+/// and a setter that dropped its write would mean it is shown on every single launch. Both
+/// failures are silent in a build that otherwise works, and neither is visible in the two
+/// existing round-trip tests, which cover only the properties the General tab binds — this
+/// one is deliberately not bound to any control.
+@Test func theAccessibilityPromptIsRaisedOnceAndThenLatched() {
+    let defaults = freshDefaults()
+    #expect(AppSettings(defaults: defaults).hasRequestedAccessibility == false)
+
+    AppSettings(defaults: defaults).hasRequestedAccessibility = true
+    // A second instance over the same store is what the next launch reads.
+    #expect(AppSettings(defaults: defaults).hasRequestedAccessibility == true)
+}
+
+@Test func directionFollowsThePrimaryLanguageRule() {
+    let settings = AppSettings(defaults: freshDefaults())   // ru primary, en working
+    // Source is the primary language -> translate into the working one.
+    #expect(settings.targetLanguage(forDetected: .ru) == .en)
+    // Anything else -> translate into the primary one.
+    #expect(settings.targetLanguage(forDetected: .de) == .ru)
+    #expect(settings.targetLanguage(forDetected: .en) == .ru)
+    // Undetected is not the primary language, so it goes to the primary one too.
+    #expect(settings.targetLanguage(forDetected: nil) == .ru)
+}
+
+/// `onChange` is `@Sendable`, so a captured `var` can't be mutated inside it under
+/// strict concurrency checking. A small reference box sidesteps that without
+/// weakening what's actually being asserted.
+private final class FiredFlag: @unchecked Sendable {
+    var value = false
+}
+
+@Test func changingAValueNotifiesObservers() {
+    let settings = AppSettings(defaults: freshDefaults())
+    let fired = FiredFlag()
+    withObservationTracking {
+        _ = settings.chunkSize
+    } onChange: {
+        fired.value = true
+    }
+    settings.chunkSize = 1200
+    #expect(fired.value)
+}
+
+@Test func theHotkeyDefaultsToOptionCommandTAndSurvivesARelaunch() {
+    let defaults = freshDefaults()
+    #expect(AppSettings(defaults: defaults).hotkey == HotkeyCombo.default)
+
+    let custom = HotkeyCombo(keyCode: 0x23, modifiers: NSEvent.ModifierFlags([.control, .shift]).rawValue)
+    AppSettings(defaults: defaults).hotkey = custom
+    // A second instance over the same suite is what a relaunch looks like from here.
+    #expect(AppSettings(defaults: defaults).hotkey == custom)
+}
+
+@Test func aCorruptStoredHotkeyFallsBackToTheDefaultRatherThanLeavingNoHotkeyAtAll() {
+    // The value is JSON in a single key and the file is user-writable. A half-written or
+    // hand-mangled value must not leave the app with nothing registered and no way to fix
+    // it, since the settings pane is reachable from the menu but the hotkey is not.
+    let defaults = freshDefaults()
+    defaults.set(Data("{ not json".utf8), forKey: "hotkey")
+    // Pinned so this cannot pass for the wrong reason. `InMemoryDefaults` overrides
+    // `object(forKey:)` but not `data(forKey:)`; the two are only connected because
+    // `NSUserDefaults` implements the latter on top of the former, which is an
+    // implementation detail this suite depends on. Were that to stop holding, the getter
+    // below would see no data at all, return `.default`, and this test would pass while
+    // testing nothing. Measured today: it holds.
+    #expect(defaults.data(forKey: "hotkey") != nil)
+    #expect(AppSettings(defaults: defaults).hotkey == HotkeyCombo.default)
+}
+
+/// Beyond the brief. A stored value that decodes cleanly can still be one the app must not
+/// use: `{"keyCode":17,"modifiers":0}` is valid JSON and a valid `HotkeyCombo`, and it is a
+/// bare «T». The recorder refuses those, but the recorder is not the only writer — a
+/// hand-edited plist is exactly the threat the corrupt-value case above is written for, and
+/// this half of it is the worse half. Undecodable bytes cost the user their custom
+/// shortcut; a decodable invalid one gets handed to `HotkeyManager.register`, which refuses
+/// it and leaves the app with *no* hotkey — and the hotkey is the only way to the panel.
+/// A bare letter that did somehow register would be worse still, taking «T» away from every
+/// other program on the machine.
+@Test func aStoredHotkeyWithNoUsableModifierFallsBackToTheDefault() {
+    let defaults = freshDefaults()
+    let bareLetter = HotkeyCombo(keyCode: 0x11, modifiers: 0)
+    #expect(!bareLetter.isValid)   // the premise, not the claim
+    defaults.set(try? JSONEncoder().encode(bareLetter), forKey: "hotkey")
+    #expect(AppSettings(defaults: defaults).hotkey == HotkeyCombo.default)
+
+    // Shift alone is the same hole through a narrower gap, and the one a plausible typo
+    // reaches: ⇧T is how the whole world types a capital T.
+    let shiftOnly = HotkeyCombo(keyCode: 0x11, modifiers: NSEvent.ModifierFlags.shift.rawValue)
+    defaults.set(try? JSONEncoder().encode(shiftOnly), forKey: "hotkey")
+    #expect(AppSettings(defaults: defaults).hotkey == HotkeyCombo.default)
+}
+
+/// Beyond the brief. `HotkeyCombo.init(from:)` is hand-written precisely so a stored value
+/// gets masked on the way back in, and nothing at this layer pinned that the settings store
+/// actually goes through it. Bytes in a plist are not necessarily bytes this build wrote:
+/// caps lock, the numeric pad and the fn key all set bits that survive
+/// `deviceIndependentFlagsMask`, and an unmasked `modifiers` compares unequal to the same
+/// visible combination recorded fresh — so the settings pane would show ⌘T, the manager
+/// would register ⌘T, and `settings.hotkey == recordedCombo` would be false anyway.
+///
+/// Written as raw JSON rather than by encoding a `HotkeyCombo`, because encoding one would
+/// have masked the bits before they ever reached the store and the test would prove nothing.
+@Test func aStoredHotkeyWithStrayModifierBitsReadsBackAsTheVisibleCombination() {
+    let defaults = freshDefaults()
+    let dirty = NSEvent.ModifierFlags([.command, .capsLock, .numericPad, .function]).rawValue
+    defaults.set(Data(#"{"keyCode":17,"modifiers":\#(dirty)}"#.utf8), forKey: "hotkey")
+
+    let expected = HotkeyCombo(keyCode: 0x11, modifiers: NSEvent.ModifierFlags.command.rawValue)
+    // Distinct from `.default` (⌥⌘, same key code), so a decode that failed outright and
+    // fell back would fail this rather than sail past it.
+    #expect(expected != HotkeyCombo.default)
+    #expect(AppSettings(defaults: defaults).hotkey == expected)
+}
+
+/// Beyond the brief. Neither of the brief's two tests can see a missing `access(keyPath:)`
+/// or `withMutation(keyPath:_:)` — a round trip through `UserDefaults` succeeds just as
+/// well without them. That is the exact defect Plan 2 shipped on this class, and adding a
+/// property is when it comes back.
+@Test func changingTheHotkeyNotifiesObservers() {
+    let settings = AppSettings(defaults: freshDefaults())
+    let fired = FiredFlag()
+    withObservationTracking {
+        _ = settings.hotkey
+    } onChange: {
+        fired.value = true
+    }
+    settings.hotkey = HotkeyCombo(keyCode: 0x23, modifiers: NSEvent.ModifierFlags.control.rawValue)
+    #expect(fired.value)
+}

@@ -1,0 +1,230 @@
+import Testing
+import Foundation
+@testable import TranslatorApp
+@testable import TranslationCore
+import OllamaKit
+
+@Test func everyToneHasANonEmptyRussianName() {
+    for tone in Tone.allCases {
+        #expect(!tone.russianName.trimmingCharacters(in: .whitespaces).isEmpty,
+                "\(tone.rawValue) has no Russian name")
+    }
+}
+
+@Test func toneNamesAreDistinct() {
+    let names = Tone.allCases.map(\.russianName)
+    #expect(Set(names).count == Tone.allCases.count)
+}
+
+/// The picker sits in a Russian UI, so `Text($0.rawValue)` — «neutral», «formal» — is the
+/// bug this guards against. Latin letters anywhere in a tone name mean the raw value, or
+/// part of it, leaked into the label.
+@Test func toneNamesContainNoLatinLetters() {
+    let latin = CharacterSet(charactersIn: "a"..."z").union(CharacterSet(charactersIn: "A"..."Z"))
+    for tone in Tone.allCases {
+        #expect(tone.russianName.rangeOfCharacter(from: latin) == nil,
+                "\(tone.rawValue) → «\(tone.russianName)» contains Latin letters")
+    }
+}
+
+@Test func everyLanguageHasANonEmptyRussianName() {
+    for language in Language.allCases {
+        #expect(!language.russianName.trimmingCharacters(in: .whitespaces).isEmpty,
+                "\(language.rawValue) has no Russian name")
+    }
+}
+
+@Test func languageNamesAreDistinct() {
+    let names = Language.allCases.map(\.russianName)
+    #expect(Set(names).count == Language.allCases.count)
+}
+
+/// `Language.englishName` exists for the *prompt* — the model is told "translate into
+/// German" — and reaching for it in a picker is the easy mistake, since it is the only
+/// name the type ships. Latin letters in a label mean `englishName`, or the raw code,
+/// leaked onto a Russian screen.
+@Test func languageNamesContainNoLatinLetters() {
+    let latin = CharacterSet(charactersIn: "a"..."z").union(CharacterSet(charactersIn: "A"..."Z"))
+    for language in Language.allCases {
+        #expect(language.russianName.rangeOfCharacter(from: latin) == nil,
+                "\(language.rawValue) → «\(language.russianName)» contains Latin letters")
+    }
+}
+
+/// Language names are written lowercase in running Russian text, unlike English, and the
+/// pickers put them in a sentence-shaped list. Capitalising them is the transliteration
+/// of an English habit, so it is worth pinning rather than trusting to review.
+@Test func languageNamesAreLowercase() {
+    for language in Language.allCases {
+        let first = language.russianName.first
+        #expect(first?.isUppercase == false,
+                "\(language.rawValue) → «\(language.russianName)» starts with a capital")
+    }
+}
+
+/// Russian picks one of three forms from the last two digits, and 11-14 are the trap: they
+/// end in 1-4 but take the same form as 5-20. The whole 11-14 span is listed rather than
+/// just its ends, because the branch is a range test and an off-by-one at either edge
+/// would still satisfy 11 and 14 alone.
+///
+/// 0 and 100 are here because they are the two counts whose last digit is 0 — the branch
+/// no other case in this list reaches — and because the helper's doc comment names them.
+@Test(arguments: [
+    (0, "0 фрагментов"),
+    (1, "1 фрагмент"),
+    (2, "2 фрагмента"),
+    (4, "4 фрагмента"),
+    (5, "5 фрагментов"),
+    (11, "11 фрагментов"),
+    (12, "12 фрагментов"),
+    (13, "13 фрагментов"),
+    (14, "14 фрагментов"),
+    (21, "21 фрагмент"),
+    (22, "22 фрагмента"),
+    (25, "25 фрагментов"),
+    (100, "100 фрагментов"),
+    (101, "101 фрагмент"),
+    (111, "111 фрагментов"),
+])
+func chunkCountUsesTheRightPluralForm(count: Int, expected: String) {
+    #expect(RussianCopy.chunkCount(count) == expected)
+}
+
+/// The helper documents itself as general over sign — the magnitude picks the form. A
+/// chunk count is never negative, so nothing in the app exercises this; the assertion is
+/// what stops the doc comment and the code drifting apart.
+@Test(arguments: [
+    (1, "фрагмент"),
+    (2, "фрагмента"),
+    (4, "фрагмента"),
+    (5, "фрагментов"),
+    (11, "фрагментов"),
+    (13, "фрагментов"),
+    (21, "фрагмент"),
+    (22, "фрагмента"),
+    (100, "фрагментов"),
+])
+func negativeCountsTakeTheSameFormAsTheirMagnitude(magnitude: Int, expected: String) {
+    #expect(RussianCopy.plural(-magnitude, "фрагмент", "фрагмента", "фрагментов") == expected)
+    // Paired with the positive twin in the same test, so the claim under scrutiny is
+    // "sign does not matter" rather than two independent tables that could both be wrong.
+    #expect(RussianCopy.plural(magnitude, "фрагмент", "фрагмента", "фрагментов") == expected)
+}
+
+/// `abs(Int.min)` traps, which is why the helper takes `% 100` *before* `abs`. Reordering
+/// those two operations turns a hint into a crash, and this is the only thing that would
+/// notice.
+@Test func extremeCountsDoNotTrap() {
+    // Int.min ends in …08 and Int.max in …07; both land in the "many" branch.
+    #expect(RussianCopy.plural(Int.min, "один", "два", "много") == "много")
+    #expect(RussianCopy.plural(Int.max, "один", "два", "много") == "много")
+}
+
+@Test func pluralHelperIsNotTiedToOneNoun() {
+    #expect(RussianCopy.plural(1, "термин", "термина", "терминов") == "термин")
+    #expect(RussianCopy.plural(13, "термин", "термина", "терминов") == "терминов")
+    #expect(RussianCopy.plural(22, "термин", "термина", "терминов") == "термина")
+}
+
+// MARK: - Direction
+
+/// The panel's header. Both halves are `russianName`, so the two assertions that would
+/// merely restate `russianName` are left to the tests above; what is pinned here is the
+/// arrow, the order of the operands, and — the part that is a decision rather than a
+/// format — that an undetected source is *stated* instead of silently dropped.
+@Test func theDirectionLineNamesBothLanguagesInRussian() {
+    #expect(RussianCopy.direction(from: .en, to: .ru) == "английский → русский")
+    #expect(RussianCopy.direction(from: nil, to: .ru) == "язык не определён → русский")
+}
+
+// MARK: - Blacklist reasons
+
+/// The engine decides *whether* a model is blacklisted and the app decides *what to say*,
+/// which is two tables that can drift. `ModelPolicy` is engine-side and `translate-cli`
+/// prints its English; a prefix added there without Russian here would show the user
+/// «Port: corrupts identifiers character-by-character…» in a Russian pane. This is the only
+/// thing that would notice.
+@Test func everyBlacklistedPrefixHasRussianCopy() {
+    for prefix in ModelPolicy.blacklist.keys {
+        #expect(RussianCopy.blacklistReasons[prefix] != nil,
+                "ModelPolicy.blacklist has no Russian counterpart for «\(prefix)»; add one to RussianCopy.blacklistReasons")
+    }
+}
+
+/// Documenting the fallback by exercising it rather than by comment: a prefix the engine
+/// blacklists and this layer has no Russian for still warns, in English. A warning in the
+/// wrong language is worse than Russian and far better than silence — silence would let a
+/// model that mangles identifiers look approved.
+@Test func aMissingTranslationFallsBackToTheEnglishReasonNotToSilence() {
+    let reason = RussianCopy.blacklistReason(for: "gemma3n:e4b", russian: [:])
+    #expect(reason == ModelPolicy.blacklistReason(for: "gemma3n:e4b"))
+    #expect(reason != nil)
+    // A model the engine does not blacklist stays unmarked whatever the table holds.
+    #expect(RussianCopy.blacklistReason(for: "aya-expanse:8b", russian: [:]) == nil)
+}
+
+@Test func blacklistReasonsAreKeyedByPrefixLikeTheEngines() {
+    // `blacklistReason(for:)` must agree with `ModelPolicy` on *which* models are marked,
+    // for every tag, and only disagree on the language of the answer.
+    for name in ["gemma3n", "gemma3n:e4b", "gemma3n:e2b", "qwen3:30b", "qwen3:30b-a3b",
+                 "aya-expanse:8b", "qwen3:8b", "gpt-oss:20b"] {
+        #expect((RussianCopy.blacklistReason(for: name) == nil)
+                == (ModelPolicy.blacklistReason(for: name) == nil),
+                "«\(name)» is marked by one layer and not the other")
+    }
+}
+
+// MARK: - Pull statuses
+
+/// Ollama's `/api/pull` stream carries English status lines, and putting them straight into
+/// `pullStatus` would show «verifying sha256 digest» in a Russian pane. Strings taken from
+/// ollama v0.31.1's own source (`server/images.go`, `server/download.go`) — the running
+/// server here — plus the wording the published API docs still show.
+@Test(arguments: [
+    ("pulling manifest", "Получаю манифест…"),
+    ("pulling model", "Загружаю модель…"),
+    ("pulling 65f986688a01", "Загружаю файлы модели…"),
+    // Only a real digest takes the layer caption. A future "pulling …" wording must reach
+    // the raw-string fallback instead of being mislabelled as a layer download — that is
+    // the one status family the fallback would otherwise not protect.
+    ("pulling from mirror", "pulling from mirror"),
+    ("verifying sha256 digest", "Проверяю контрольную сумму…"),
+    ("writing manifest", "Записываю манифест…"),
+    ("removing unused layers", "Убираю неиспользуемые слои…"),
+    ("removing any unused layers", "Убираю неиспользуемые слои…"),
+    ("success", "Готово."),
+])
+func pullStatusesAreShownInRussian(raw: String, expected: String) {
+    #expect(RussianCopy.pullStatus(raw) == expected)
+}
+
+/// Ollama has renamed these before — v0.31.1 emits «removing unused layers» where the
+/// published docs still say «removing any unused layers» — so an unrecognised line must
+/// reach the user as-is. Swallowing it would leave the pane captionless with no clue why.
+@Test func anUnrecognisedPullStatusIsShownRatherThanSwallowed() {
+    #expect(RussianCopy.pullStatus("recomputing the flux capacitor") == "recomputing the flux capacitor")
+    #expect(RussianCopy.pullStatus("") == "")
+}
+
+// MARK: - OllamaError → Russian
+
+/// `TranslationViewModel.message(for:)` casts to `OllamaErrorBridge`; without the
+/// conformance the cast fails and the user gets `errorDescription`'s English
+/// («Ollama is not reachable on 127.0.0.1:11434»).
+@MainActor
+@Test func everyOllamaErrorCaseReachesTheUserInRussian() {
+    let cases: [OllamaError] = [.notRunning, .httpStatus(503, "upstream"), .decoding("bad shape")]
+    for error in cases {
+        let message = TranslationViewModel.message(for: error)
+        #expect(message != error.errorDescription,
+                "\(error) still surfaces OllamaKit's English: \(message)")
+        #expect(message.rangeOfCharacter(from: CharacterSet(charactersIn: "а"..."я")) != nil,
+                "\(error) produced no Russian: \(message)")
+    }
+}
+
+@MainActor
+@Test func theHttpStatusCodeSurvivesTheTranslation() {
+    // The code is the one piece of the message that helps diagnose anything.
+    #expect(TranslationViewModel.message(for: OllamaError.httpStatus(503, "upstream")).contains("503"))
+}

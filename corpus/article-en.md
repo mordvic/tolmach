@@ -1,0 +1,11 @@
+Local language models have quietly crossed a threshold. Two years ago, running a capable multilingual model on a laptop meant accepting output that was obviously worse than what a cloud service would give you. That gap has narrowed to the point where, for many everyday tasks, it is no longer the deciding factor.
+
+The shift has less to do with raw parameter counts than with training data curation. A model trained deliberately on balanced multilingual corpora will outperform a much larger model that saw English for ninety percent of its tokens. This is why an eight-billion-parameter model tuned for twenty-three languages can beat a thirty-billion generalist on translation into Portuguese or Turkish, while losing badly to it on mathematical reasoning.
+
+Latency tells a similar story. The perceived speed of a local translator is dominated not by generation throughput but by whether the model is already resident in memory. A model that has been evicted costs several seconds to load from disk before it emits a single token, which is precisely the delay that makes a keyboard-shortcut workflow feel broken. Keeping the model warm turns the same hardware from unusable into instant.
+
+The remaining honest weakness is consistency across long documents. A model translating a fifteen-page specification in pieces has no memory of how it rendered a term on page two by the time it reaches page eleven. Cloud services solve this with translation memories and enforced glossaries. Local tooling has to do the same work explicitly, carrying terminology forward between chunks rather than hoping the model remembers.
+
+Quantization has done more for this shift than most people appreciate. A four-bit quantized model keeps almost all of the quality of the full-precision version while cutting memory footprint by roughly seventy percent, which is the difference between a model that fits comfortably alongside a browser and a dozen other applications and one that forces everything else to close. That single engineering trade is what turned local translation from a curiosity into something a normal laptop can run without drama.
+
+None of this makes local translation strictly better. It makes it different, with a trade that many people will take: slightly rougher output, in exchange for text that never leaves the machine.

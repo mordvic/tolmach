@@ -1,0 +1,147 @@
+import Testing
+import Foundation
+@testable import TranslatorApp
+@testable import TranslationCore
+
+/// What a view *draws* needs a human. What it *decides* does not, and this file is the
+/// second kind only: the status row's contents and the rule that governs the header line.
+/// The layout, the fonts, the scroll caps and the three-way `selection` switch are checked
+/// by hand — see the report.
+
+// MARK: - The status row
+
+/// Spec 8 gives «Повторить» to a failed request and to nothing else. Written as a count
+/// over every state rather than as a table of five expected values, so that it fails both
+/// ways: a state that loses the button and a state that grows one.
+@Test func onlyAFailureOffersARetry() {
+    let states: [TranslationState] = [.idle, .running, .finished, .interrupted,
+                                      .failed("Ollama не запущена.")]
+    let offering = states.filter { PanelView.status(for: $0)?.offersRetry == true }
+    #expect(offering.count == 1)
+    #expect(PanelView.status(for: .failed("что угодно"))?.offersRetry == true)
+}
+
+/// `TranslationViewModel.message(for:)` has already put the failure into Russian, and it is
+/// the only part that says what to do about it. A panel that replaced it with a generic
+/// «Ошибка» would throw away «Запустите её командой «ollama serve»» — the sentence that
+/// turns a dead end into an instruction.
+@Test func aFailureShowsTheViewModelsOwnSentenceRatherThanAGenericOne() {
+    let message = "Ollama не запущена. Запустите её командой «ollama serve»."
+    #expect(PanelView.status(for: .failed(message))?.message == message)
+    #expect(PanelView.status(for: .failed(message))?.kind == .failure)
+}
+
+/// The two states with nothing to report say nothing. `.finished` is the one that matters:
+/// a status row that still reads «Перевожу…» over a finished translation is a spinner that
+/// never goes away.
+@Test func aQuietStateProducesNoStatusRow() {
+    #expect(PanelView.status(for: .idle) == nil)
+    #expect(PanelView.status(for: .finished) == nil)
+    #expect(PanelView.status(for: .running) != nil)
+    #expect(PanelView.status(for: .interrupted) != nil)
+}
+
+// MARK: - The header line
+
+private final class PacedClient: LLMClient, @unchecked Sendable {
+    private var responses: [String]
+    private let delayPerToken: Duration
+    init(responses: [String], delayPerToken: Duration = .zero) {
+        self.responses = responses; self.delayPerToken = delayPerToken
+    }
+    func chat(messages: [ChatMessage], options: ChatOptions) -> AsyncThrowingStream<ChatEvent, Error> {
+        let reply = responses.isEmpty ? "" : responses.removeFirst()
+        let delay = delayPerToken
+        return AsyncThrowingStream { continuation in
+            Task {
+                for piece in reply.map(String.init) {
+                    if delay > .zero { try? await Task.sleep(for: delay) }
+                    continuation.yield(.token(piece))
+                }
+                continuation.yield(.done(ChatStats(loadDurationMS: 0, promptEvalCount: 0,
+                                                   promptEvalDurationMS: 0, evalCount: reply.count,
+                                                   evalDurationMS: 1)))
+                continuation.finish()
+            }
+        }
+    }
+}
+
+@MainActor
+private func makeModel(_ client: LLMClient) -> TranslationViewModel {
+    TranslationViewModel(translator: Translator(client: client),
+                         settings: AppSettings(defaults: InMemoryDefaults(prefix: "panel")),
+                         glossary: GlossaryStore(url: FileManager.default.temporaryDirectory
+                             .appendingPathComponent("panel-\(UUID().uuidString).json")))
+}
+
+private let english = "The profile server validates every incoming bundle against the published profile."
+private let russian = "Сервер профилей проверяет каждый входящий пакет по опубликованному профилю."
+
+/// End to end through a real run, so that both halves are the ones the engine actually
+/// resolved rather than values handed to a formatter. Two runs in opposite directions,
+/// because a header built from a constant would satisfy either one alone.
+@MainActor
+@Test func theHeaderNamesTheDirectionTheRunActuallyResolved() async {
+    let model = makeModel(PacedClient(responses: ["Перевод.", "A translation."]))
+
+    model.sourceText = english
+    await model.translate()
+    #expect(model.state == .finished)
+    #expect(PanelView.direction(outcome: model.outcome, target: model.resolvedTarget)
+            == "английский → русский")
+
+    model.sourceText = russian
+    await model.translate()
+    #expect(model.state == .finished)
+    #expect(PanelView.direction(outcome: model.outcome, target: model.resolvedTarget)
+            == "русский → английский")
+}
+
+/// The reason the header is built from `outcome` and `resolvedTarget` **together** rather
+/// than from `resolvedTarget` alone, measured rather than argued.
+///
+/// `TranslationViewModel` publishes both only when a run completes, and then clears
+/// `outcome` — but *not* `resolvedTarget` — at the instant the next run's first token
+/// replaces the text in the pane. So mid-run the pair comes apart: `detectedSource` is gone
+/// while `resolvedTarget` still holds the **previous** run's target. Reading them
+/// independently, as the brief's version did, renders «язык не определён → русский» over a
+/// translation that is on its way to English — a direction wrong in both halves, on screen
+/// for the whole streaming phase, which is most of the panel's visible life.
+///
+/// Withholding it is the honest answer, and it is what the assertions below pin.
+@MainActor
+@Test func theHeaderIsWithheldWhileTheNextRunReplacesTheTextInThePane() async {
+    let second = "Первая строка.\n" + String(repeating: "б", count: 400)
+    let model = makeModel(PacedClient(responses: ["Перевод.", second],
+                                      delayPerToken: .milliseconds(5)))
+
+    model.sourceText = english
+    await model.translate()
+    #expect(model.state == .finished)
+    #expect(model.resolvedTarget == .ru)
+
+    model.sourceText = russian
+    let run = Task { await model.translate() }
+    // Waits for the state the assertions are about — the new run's output has replaced the
+    // old text — rather than for a duration that could drift into or out of it.
+    let deadline = Date().addingTimeInterval(5)
+    while Date() < deadline, model.translatedText.isEmpty || model.translatedText == "Перевод." {
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(model.state == .running)
+    #expect(model.translatedText != "Перевод.")   // the new run is genuinely on screen
+
+    // The measurement: the target is a whole run out of date while the source is unknown.
+    #expect(model.resolvedTarget == .ru)          // stale — this run is heading for English
+    #expect(model.outcome == nil)
+    // Which is why nothing is shown. `RussianCopy.direction(from: nil, to: .ru)` would have
+    // produced «язык не определён → русский» from exactly these two values.
+    #expect(PanelView.direction(outcome: model.outcome, target: model.resolvedTarget) == nil)
+
+    model.cancel()
+    await run.value
+    #expect(model.state == .interrupted)
+    // Still withheld: an interrupted run leaves partial text and no outcome to describe it.
+    #expect(PanelView.direction(outcome: model.outcome, target: model.resolvedTarget) == nil)
+}
