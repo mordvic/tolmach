@@ -58,14 +58,30 @@ scrolling at the cost of making it unreachable **without** scrolling, always.
 ## 3. The invariant that must not break
 
 **The measured variant must stay flat.** `PanelController.measure` asks a detached host for
-`fittingSize` and `sizeThatFits(in:)`, and a `ScrollView` anywhere in what it measures compresses
-to nothing — measured on the running bundle at 380 × 120 regardless of content, before
-`hosting.sizingOptions = []` existed. `PanelContentVariant.measured` already reports
-`scrolls == false`, so the flat path is what gets measured; the requirement is that **the flat
-layout and the scrolling layout have the same ideal height for the same content.**
+`fittingSize` and then `sizeThatFits(in:)`, and `PanelContentVariant.measured` already reports
+`scrolls == false`, so the flat path is what gets measured.
 
-If they diverge, the panel is sized against a layout it is not showing, and the symptom is the
-one this project has already paid for twice: a panel whose height is right for something else.
+**Corrected after implementation, because the first version of this section was wrong.** It said
+a `ScrollView` «compresses to nothing» under measurement and required that «the flat layout and
+the scrolling layout have the same ideal height». Both claims are false, and a test written to
+the second one would have asserted something that cannot hold. Probed on the two calls the
+controller actually makes:
+
+```
+flat        fittingSize 6901 × 64   sizeThatFits@400  368
+scrolling   fittingSize 6901 × 64   sizeThatFits@400  greatestFiniteMagnitude
+```
+
+A `ScrollView` is **greedy**, not compressible. The width pass is unaffected — `fittingSize`
+ignores it entirely — and the height pass answers the whole unbounded proposal. So the two
+layouts *cannot* agree on ideal height, by construction.
+
+What actually protects the measurement is narrower and enforceable: the `.measured` case of
+`PanelContentVariant` reports `scrolls == false`. Break that and `PanelSizer` reads
+`greatestFiniteMagnitude` as a real measurement — it is finite — clamps to the ceiling, and
+every panel comes out 0.6 × the screen and scrolling, for a one-word result as readily as for a
+long one. Measured by mutation: every panel settled at 774 pt on this display, short and long
+alike.
 
 `fillsPanel` is unrelated to this change and must keep its current behaviour — `false` while
 measuring, or the view answers `greatestFiniteMagnitude` on both axes and every panel comes out
@@ -75,17 +91,30 @@ measuring, or the view answers `greatestFiniteMagnitude` on both axes and every 
 
 The panel's structure is not observable from a test process, so the proof is split.
 
-**Testable, and must be tested:**
+**Testable — and, as it turned out, already tested.**
 
-- The flat and scrolling layouts agree on ideal height. Build a `PanelController`, drive it to a
-  content size that scrolls, and assert the frame `PanelSizer` settles on is the same as the one
-  the same content produces when it does not scroll. If the split changed the ideal height, this
-  fails.
-- `PanelView.status(for:)` and `PanelView.direction(outcome:target:)` keep their signatures and
-  behaviour. They are pure and already covered; the existing tests must still pass untouched.
-- Whatever new type or property the split introduces, if it carries a decision, it is testable
-  and gets a test. If it carries none, say so rather than writing a test that cannot fail —
-  three tests on the previous branch passed under the defects they named.
+The invariant worth pinning is the corrected one above: the measured variant never scrolls.
+Mutating `PanelContentVariant.measured` to report `scrolls == true` and running the whole suite
+fails three existing tests —
+`theRealPanelViewIsMeasuredRatherThanEchoingTheProposalBackAtTheSizer`,
+`aReusedControllerMeasuresThePressItIsShowingNotThePreviousOne` and
+`aShortTranslationInTheRealPanelViewDoesNotAskToScroll` — each reporting every panel at 774 pt,
+short and long alike.
+
+**So no new test is added, deliberately.** The split introduces `scrollingMiddle`, which carries
+no decision of its own: it wraps or does not wrap according to a flag whose only interesting
+value is already pinned three times over. A fourth test asserting the same thing would be
+ceremony, and this project has already shipped three tests that passed under the defect they
+named. `PanelView.status(for:)` and `direction(outcome:target:)` keep their signatures and stay
+covered by their existing tests.
+
+**And the change itself is unguarded, which has to be said rather than left to be discovered.**
+Reverting the fix — putting the `ScrollView` back around the whole content — was applied and the
+full suite run: **346 tests, zero failures.** That is not a gap in the tests, it is the shape of
+the defect. Scrolling everything and scrolling the middle produce the same *sizing*, because the
+measured variant is flat either way; what differs is only which rows are on screen when the user
+scrolls, and no test in this environment can see a row's position. The `docs/OPEN-ITEMS.md` §1
+row added by this change is the only thing standing guard over it.
 
 **Not testable here, and must be recorded rather than claimed:**
 
