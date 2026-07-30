@@ -1,7 +1,10 @@
 import Testing
 import AppKit
 import SwiftUI
+import Foundation
 @testable import TranslatorApp
+@testable import TranslationCore
+@testable import TextCapture
 
 @MainActor
 @Test func thePanelIsNonActivatingAndFloating() {
@@ -39,7 +42,7 @@ import SwiftUI
 @Test func showingThePanelTakesKeyStatusWithoutItsProcessBecomingActive() {
     let before = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
     let menuBarBefore = NSWorkspace.shared.menuBarOwningApplication?.bundleIdentifier
-    let controller = PanelController { AnyView(Text("перевод")) }
+    let controller = PanelController { _ in AnyView(Text("перевод")) }
     controller.show(at: CGPoint(x: 300, y: 300))
     defer { controller.hide() }
 
@@ -55,7 +58,7 @@ import SwiftUI
 
 @MainActor
 @Test func hidingIsIdempotent() {
-    let controller = PanelController { AnyView(Text("перевод")) }
+    let controller = PanelController { _ in AnyView(Text("перевод")) }
     controller.show(at: CGPoint(x: 300, y: 300))
     controller.hide()
     #expect(controller.isVisible == false)
@@ -76,12 +79,15 @@ import SwiftUI
 @MainActor
 @Test func thePanelLandsOnTheScreenThatHoldsTheCursor() throws {
     let screen = try #require(NSScreen.main, "no display attached; this test cannot run headless")
-    let controller = PanelController { AnyView(Text("перевод")) }
-    let size = controller.panel.frame.size
+    let controller = PanelController { _ in AnyView(Text("перевод")) }
     let cursor = CGPoint(x: screen.visibleFrame.midX, y: screen.visibleFrame.midY)
     controller.show(at: cursor)
     defer { controller.hide() }
 
+    // The size is read *after* the show, not before. It used to be readable before, because
+    // the panel was born 380 × 260 and stayed that way; it is now whatever the content
+    // measured to, and the panel's own frame is the only place that number exists.
+    let size = controller.panel.frame.size
     let expected = PanelPlacement.frame(cursor: cursor, size: size, screen: screen.visibleFrame)
     #expect(controller.panel.frame == expected)
     #expect(screen.visibleFrame.contains(controller.panel.frame))
@@ -93,12 +99,16 @@ import SwiftUI
 /// distinguishes the two only engages for a panel tall enough to reach the top of the
 /// screen — which is precisely the long translation this panel exists to display.
 ///
-/// The height is set on the panel directly, and the state it creates is **not currently
-/// reachable in the app**: the panel is a fixed 380 × 260 and nothing resizes it, so at that
-/// height the upward flip never comes near the menu bar. The test is kept anyway, and the
-/// reason is narrow rather than defensive — `show(at:)` using `visibleFrame` is correct at
-/// any size, the panel's size is one edit away from changing, and this is the only thing
-/// that would notice if that edit and a `frame`-based `show` ever met.
+/// The state this needs used to be **unreachable in the app** — the panel was a fixed
+/// 380 × 260, so the height was forced onto it by hand and the note here said as much. It is
+/// reachable now: content past the ceiling produces exactly this panel, so the height comes
+/// from the content and the test exercises the real path.
+///
+/// `visibleFrame` also governs one more thing than it did. It is the screen rect handed to
+/// `PanelSizer`, so it sets the height ceiling as well as the placement — which gives this
+/// test a second, machine-independent way to catch the swap: `frame` is taller than
+/// `visibleFrame` by the menu bar band, and 0.6 of the taller number is a taller panel. The
+/// `#require` above is what makes that difference exist.
 @MainActor
 @Test func aTallPanelOpensBelowTheMenuBarRatherThanUnderIt() throws {
     let screen = try #require(NSScreen.main, "no display attached; this test cannot run headless")
@@ -106,34 +116,39 @@ import SwiftUI
     try #require(screen.frame.maxY > visible.maxY,
                  "this display reports no menu bar band, so the two frames cannot be told apart")
 
-    let controller = PanelController { AnyView(Text("перевод")) }
-    controller.show(at: CGPoint(x: visible.midX, y: visible.midY))
-    var tall = controller.panel.frame
-    tall.size = CGSize(width: 380, height: visible.height - 40)
-    controller.panel.setFrame(tall, display: false)
-    controller.hide()
-
-    // Low enough that the panel flips upward, tall enough that the flip then clamps — the
-    // one arrangement in which `frame` and `visibleFrame` give different answers.
-    let cursor = CGPoint(x: visible.midX, y: visible.minY + 100)
+    // Far past any ceiling, so the panel opens at exactly `maxHeightFraction` of the screen.
+    let controller = PanelController { _ in
+        AnyView(Text(String(repeating: "строка ", count: 4000)).padding(14))
+    }
+    // Halfway up: with a panel this tall the downward placement overflows the bottom, so it
+    // flips upward, and the flip then overflows the top and clamps — the one arrangement in
+    // which `frame` and `visibleFrame` give different answers.
+    let cursor = CGPoint(x: visible.midX, y: visible.midY)
     controller.show(at: cursor)
     defer { controller.hide() }
+    let frame = controller.panel.frame
 
-    #expect(controller.panel.frame
-            == PanelPlacement.frame(cursor: cursor, size: tall.size, screen: visible))
-    #expect(controller.panel.frame.maxY <= visible.maxY)
-    #expect(controller.panel.frame.maxY < screen.frame.maxY)
+    #expect(frame.height <= visible.height * PanelSizer.maxHeightFraction)
+    #expect(frame == PanelPlacement.frame(cursor: cursor, size: frame.size, screen: visible))
+    #expect(frame.maxY <= visible.maxY)
+    #expect(frame.maxY < screen.frame.maxY)
 }
 
 /// Beyond the brief, and a real defect it left in.
 ///
 /// `NSWindow` runs every frame through `constrainFrameRect(_:to:)` when the window is
-/// ordered in, and for a `.titled` window that is not a no-op. Measured on this machine:
-/// a frame at x = 19 came back at x = **221** — AppKit reserving the Stage Manager strip
-/// down the left edge — so a selection near the left of the screen would open its panel
-/// 202pt away from the pointer, and `PanelPlacement`'s whole flip-then-clamp arithmetic
-/// would be silently overruled. The menu-bar case below is the machine-independent half:
-/// a titled window whose frame crosses the menu bar band is pulled down on every Mac.
+/// ordered in, and it is not a no-op. Measured on this machine when the panel was still
+/// `.titled`: a frame at x = 19 came back at x = **221** — AppKit reserving the Stage
+/// Manager strip down the left edge — so a selection near the left of the screen would open
+/// its panel 202pt away from the pointer, and `PanelPlacement`'s whole flip-then-clamp
+/// arithmetic would be silently overruled.
+///
+/// Dropping `.titled` did not retire that. Re-measured against a *stock* `NSPanel` carrying
+/// this panel's new mask, i.e. with no override: a frame whose top crossed the menu bar band
+/// came back pulled down by the height of the band, identically to the titled panel. The
+/// menu-bar case below is the machine-independent half; the Stage Manager one depends on
+/// whether Stage Manager is enabled and did not reproduce on the re-measurement, which is
+/// exactly why it is asserted rather than relied upon.
 ///
 /// Overriding costs nothing, because `PanelPlacement` already clamps to `visibleFrame` —
 /// which is strictly stronger than what AppKit's constraint guarantees. The brief's
@@ -155,11 +170,13 @@ import SwiftUI
 
     // End to end: a pointer near the left edge, through `show`, must land where
     // `PanelPlacement` said and not where AppKit would prefer.
-    let controller = PanelController { AnyView(Text("перевод")) }
-    let size = controller.panel.frame.size
+    let controller = PanelController { _ in AnyView(Text("перевод")) }
     let cursor = CGPoint(x: screen.visibleFrame.minX + 5, y: screen.visibleFrame.midY)
     controller.show(at: cursor)
     defer { controller.hide() }
+    // Size read after the show: the panel is sized from its content now, so there is no
+    // size to know beforehand.
+    let size = controller.panel.frame.size
     #expect(controller.panel.frame
             == PanelPlacement.frame(cursor: cursor, size: size, screen: screen.visibleFrame))
 }
@@ -181,7 +198,7 @@ private func keyDown(_ keyCode: UInt16, _ characters: String) -> NSEvent {
 /// the Escape handler, and nothing else in the app would notice.
 @MainActor
 @Test func escapeReachesTheEscapeHandlerThroughTheRealKeyPath() {
-    let controller = PanelController { AnyView(Text("перевод")) }
+    let controller = PanelController { _ in AnyView(Text("перевод")) }
     var escapes = 0
     var enters = 0
     controller.onEscape = { escapes += 1 }
@@ -199,7 +216,7 @@ private func keyDown(_ keyCode: UInt16, _ characters: String) -> NSEvent {
 /// Handling only 36 would leave that user pressing Enter at a panel that ignores it.
 @MainActor
 @Test func returnAndKeypadEnterReachTheEnterHandler() {
-    let controller = PanelController { AnyView(Text("перевод")) }
+    let controller = PanelController { _ in AnyView(Text("перевод")) }
     var escapes = 0
     var enters = 0
     controller.onEscape = { escapes += 1 }
@@ -212,5 +229,364 @@ private func keyDown(_ keyCode: UInt16, _ characters: String) -> NSEvent {
     controller.panel.sendEvent(keyDown(76, "\u{3}"))
     #expect(enters == 2)
     #expect(escapes == 0)
+}
+
+// MARK: - The panel sized to its content
+
+@MainActor
+@Test func theUntitledPanelStillTakesKeyStatusWithoutItsProcessBecomingActive() {
+    // The measurement this replaces was taken with `.titled` in the mask. Dropping `.titled`
+    // is what buys the rounded material panel, and it is also the one change that could
+    // silently cost the panel its key status — and with it Esc and Enter, which are the
+    // only way to close and copy. This process runs at `.prohibited` activation policy,
+    // where activation is impossible, so `isKeyWindow == true` here has exactly one
+    // possible cause. Same reasoning as the test above it; re-run because the mask changed.
+    //
+    // It has more teeth than it looks. Measured against a stock `NSPanel` with no override:
+    // with `.titled` in the mask `canBecomeKey` answered `true`, with the mask this panel
+    // now carries it answered `false` and `makeKeyAndOrderFront` left `isKeyWindow` false.
+    // So this test now covers `TranslationPanel.canBecomeKey` as well as the style mask.
+    let controller = PanelController { _ in AnyView(Text("готово")) }
+    controller.show(at: CGPoint(x: 300, y: 400))
+    #expect(controller.panel.isKeyWindow)
+    #expect(NSRunningApplication.current.isActive == false)
+    controller.hide()
+}
+
+@MainActor
+@Test func aPanelWithLittleToSayOpensSmallerThanOneWithALot() {
+    // The change in one line. Both panels are built the same way and differ only in their
+    // content, so a fixed-size panel fails this and a content-sized one does not.
+    let short = PanelController { _ in AnyView(Text("Готово.").padding(14)) }
+    let long = PanelController { _ in
+        AnyView(Text(String(repeating: "Длинная строка перевода. ", count: 40)).padding(14))
+    }
+    short.show(at: CGPoint(x: 300, y: 500))
+    long.show(at: CGPoint(x: 300, y: 500))
+    #expect(short.panel.frame.height < long.panel.frame.height)
+    short.hide()
+    long.hide()
+}
+
+@MainActor
+@Test func theMeasuredPanelStaysInsideTheSizersBounds() {
+    // Whatever the hosting view reports, the frame that reaches AppKit is the sizer's.
+    let controller = PanelController { _ in
+        AnyView(Text(String(repeating: "строка ", count: 4000)).padding(14))
+    }
+    controller.show(at: CGPoint(x: 300, y: 500))
+    let frame = controller.panel.frame
+    #expect(frame.width >= PanelSizer.minWidth)
+    #expect(frame.width <= PanelSizer.maxWidth)
+    #expect(frame.height >= PanelSizer.minHeight)
+    #expect(frame.width.isFinite && frame.height.isFinite)
+    controller.hide()
+}
+
+@MainActor
+@Test func growingContentLeavesTheAnchoredCornerWhereItWas() {
+    // The reason the panel was a fixed size for so long: growth that moves the corner
+    // nearest the pointer drags every already-read line with it.
+    let text = Box("Готово.")
+    let controller = PanelController { _ in AnyView(Text(text.value).padding(14)) }
+    controller.show(at: CGPoint(x: 300, y: 700))
+    let before = controller.panel.frame
+    text.value = String(repeating: "Ещё одна строка перевода. ", count: 30)
+    controller.contentDidChange()
+    let after = controller.panel.frame
+    #expect(after.height > before.height)
+    #expect(after.minX == before.minX)
+    #expect(after.maxY == before.maxY)
+    controller.hide()
+}
+
+/// Beyond the brief, and it closes a hole the brief's own cases leave open.
+///
+/// Every other test here puts the pointer where the panel hangs down and to the right, so
+/// the anchor is `.topLeading` — which is also the field's initial value. Deleting
+/// `anchor = placement.anchor` from `show(at:)` therefore left all of them green: the
+/// placement's anchor was never consulted and nothing noticed. That mutation was run; this
+/// test is what fails on it.
+///
+/// A pointer near the bottom of the screen flips the panel upward, and the corner nearest
+/// it is then the bottom-left. Growth must push the *top* edge up and leave `minY` alone;
+/// with the anchor stuck at `.topLeading` it holds `maxY` instead and the panel grows down
+/// off the bottom of the screen, where the clamp then drags the whole thing — and every
+/// line the user has already read — downwards.
+///
+/// Only the vertical half of the anchor can be checked from here, and that is a property of
+/// the app rather than of the test: `frozenWidth` fixes the width for the whole
+/// presentation, so no resize during a presentation changes it, so `isLeading` has nothing
+/// to act on. `growingFromATopRightAnchorLeavesTheTopRightCornerWhereItWas` in
+/// `PanelPlacementTests` covers the horizontal half at the level where it is reachable.
+@MainActor
+@Test func aPanelThatOpenedUpwardsGrowsUpwardsToo() throws {
+    let screen = try #require(NSScreen.main, "no display attached; this test cannot run headless")
+    let visible = screen.visibleFrame
+    let text = Box("Готово.")
+    let controller = PanelController { _ in AnyView(Text(text.value).padding(14)) }
+    // Close enough to the bottom edge that hanging downwards would leave the screen.
+    controller.show(at: CGPoint(x: visible.midX, y: visible.minY + 30))
+    let before = controller.panel.frame
+    text.value = String(repeating: "Ещё одна строка перевода. ", count: 30)
+    controller.contentDidChange()
+    let after = controller.panel.frame
+    #expect(after.height > before.height)
+    #expect(after.minY == before.minY)
+    controller.hide()
+}
+
+@MainActor
+@Test func hidingThePanelForgetsTheSizeSoTheNextPressStartsFresh() {
+    let text = Box(String(repeating: "Длинный первый перевод. ", count: 30))
+    let controller = PanelController { _ in AnyView(Text(text.value).padding(14)) }
+    controller.show(at: CGPoint(x: 300, y: 700))
+    let tall = controller.panel.frame.height
+    controller.hide()
+    text.value = "Да."
+    controller.show(at: CGPoint(x: 300, y: 700))
+    #expect(controller.panel.frame.height < tall)
+    controller.hide()
+}
+
+/// A reference box so a test can change the content a `@escaping` builder closes over.
+/// `@MainActor` rather than `Sendable`: everything here runs on the main actor.
+@MainActor final class Box {
+    var value: String
+    init(_ value: String) { self.value = value }
+}
+
+// MARK: - The sizer in front of the view that actually ships
+
+/// A client that is never asked for anything. These tests set `translatedText` directly
+/// rather than run a translation, because what is being measured is the view's geometry and
+/// a run would only add a delay and a source of variation.
+private final class SilentClient: LLMClient, @unchecked Sendable {
+    func chat(messages: [ChatMessage], options: ChatOptions) -> AsyncThrowingStream<ChatEvent, Error> {
+        AsyncThrowingStream { $0.finish() }
+    }
+}
+
+@MainActor
+private func panelModel(showing translated: String) -> TranslationViewModel {
+    let model = TranslationViewModel(
+        translator: Translator(client: SilentClient()),
+        settings: AppSettings(defaults: InMemoryDefaults(prefix: "panel-size")),
+        glossary: GlossaryStore(url: FileManager.default.temporaryDirectory
+            .appendingPathComponent("panel-size-\(UUID().uuidString).json")))
+    model.translatedText = translated
+    return model
+}
+
+@MainActor
+private func realPanelContent(_ model: TranslationViewModel) -> (PanelContentVariant) -> AnyView {
+    { variant in
+        AnyView(PanelView(model: model, selection: .text("исходный текст"),
+                          adoptionRefusal: nil,
+                          scrolls: variant.scrolls, fillsPanel: variant.fillsPanel))
+    }
+}
+
+/// The same claim as `aPanelWithLittleToSayOpensSmallerThanOneWithALot`, made against the
+/// view that ships instead of against a `Text` standing in for it — and it is the substitution
+/// that made the first version of this task wrong.
+///
+/// Every other measuring test here hands the controller `Text(…).padding(14)`, which pins the
+/// controller's arithmetic and nothing about the panel. The real `PanelView` behaves
+/// differently in a way none of them could see: it carries `frame(maxWidth: .infinity,
+/// maxHeight: .infinity)` so its material paints to the window's edge, and a view that accepts
+/// whatever proposal it is given answers the proposal back. Measured through the same two
+/// calls `PanelController.measure` makes, before the fix:
+///
+///     PanelView short: unbounded=(1.797e+308, 1.797e+308)  at400=(400.0, 1.797e+308)
+///     PanelView long:  unbounded=(1.797e+308, 1.797e+308)  at400=(400.0, 1.797e+308)
+///
+/// `greatestFiniteMagnitude` is finite and positive, so `PanelSizer.measured` takes it for a
+/// real measurement rather than for «no idea»: every panel came out `maxWidth` wide and at the
+/// height ceiling, `scrolls` was always true, and `applyFit`'s `guard fit.size !=
+/// panel.frame.size` then returned early on every token — so the panel never resized at all,
+/// and the whole task was inert in the shipped app while thirteen tests stayed green.
+///
+/// After the fix the same two calls answer 274 × 94 and 6929 × 302, which is why both axes are
+/// asserted below: the height alone would pass on a build that still clamped every width to
+/// `maxWidth`.
+@MainActor
+@Test func theRealPanelViewIsMeasuredRatherThanEchoingTheProposalBackAtTheSizer() {
+    let short = PanelController(content: realPanelContent(panelModel(showing: "Готово.")))
+    let long = PanelController(content: realPanelContent(panelModel(
+        showing: String(repeating: "Длинная строка перевода. ", count: 40))))
+    short.show(at: CGPoint(x: 300, y: 500))
+    long.show(at: CGPoint(x: 300, y: 500))
+
+    #expect(short.panel.frame.height < long.panel.frame.height)
+    #expect(short.panel.frame.width < long.panel.frame.width)
+    // Named rather than merely relative, because "smaller than the other one" is also true of
+    // two panels that are both wrong. A one-word translation belongs at the floors.
+    #expect(short.panel.frame.width == PanelSizer.minWidth)
+    #expect(short.panel.frame.height == PanelSizer.minHeight)
+    short.hide()
+    long.hide()
+}
+
+/// A second press must be sized for what it is showing, not for what the last one showed.
+///
+/// Every other measuring test builds a **fresh** `PanelController`, which is the one shape
+/// where this cannot fail: a host that has never measured anything has nothing stale to
+/// return. The app reuses one controller for the life of the process.
+///
+/// The content has to change the way the app's does, and that is the whole point of the test.
+/// `hidingThePanelForgetsTheSizeSoTheNextPressStartsFresh` above also reuses a controller, but
+/// its builder reads a captured `String`, so each rebuild produces a genuinely different view
+/// and SwiftUI re-evaluates it unasked. `PanelHost` instead reads `coordinator.selection` and
+/// the view model *inside* `body`: the rebuilt view's stored properties are identical — the
+/// same model reference — so nothing looks changed and the pending observation invalidation is
+/// not flushed until something forces layout. Measured on one reused host: after the text
+/// changed and `rootView` was reassigned, `fittingSize` still answered the previous 274 and
+/// `sizeThatFits(560)` still answered 94 tall; only `layoutSubtreeIfNeeded()` moved them to
+/// 6929 and 302. Through the controller, and re-taken against the real `PanelHost` driven
+/// through the real `HotkeyCoordinator.handlePress`, five presses — short, long, `.empty`,
+/// `.notPermitted`, short — came out 300 × 120 / 300 × 120 / 326 × 120 / 560 × 131 / 560 × 305
+/// with that call and 300 × 120 / 300 × 120 / **560 × 305 / 326 × 120 / 560 × 131** without it.
+/// An earlier version of this comment said four alternating presses «all came out 300 × 120»
+/// without the call; that came from a probe that stood in for `PanelHost` and is refuted —
+/// against the real type the size lags by about one press rather than freezing.
+///
+/// `show(at:)` is where it does the most damage, because it measures in the same turn of the
+/// main actor as the selection it is showing — nothing has yielded in between. A `.text` press
+/// corrects itself on its first token, in both axes since `show(at:)` stopped freezing the
+/// width; an `.empty` or `.notPermitted` press runs no translation, so `contentDidChange` is
+/// never called and the panel keeps the wrong size for its whole life. Those are the two states
+/// a new user meets first.
+///
+/// **Five alternations rather than two, and that is a measurement about this test itself.**
+/// With one long press and one short one it caught the `layoutSubtreeIfNeeded()` mutation 3/3
+/// under `--filter Panel` but only 39/40 under the full suite, which is the suite the project
+/// gates on. The escape is per *measurement*, not per run — on the one escaping run of forty,
+/// `aPanelShownBeforeItsTranslationArrivesEndsUpAsWideAsThatTranslationNeeds` caught the same
+/// mutation in the same process, so the host was freshened for one measurement and not the
+/// other. Something outside this test occasionally flushes SwiftUI's pending update before the
+/// read; what that something is was not isolated. Alternating five times makes every one of
+/// them have to be lucky at once. It is not a proof of determinism and is not claimed as one —
+/// see `docs/OPEN-ITEMS.md` §2 — it is a measured reduction, from 1 escape in 40 to 0 in 40.
+@MainActor
+@Test func aReusedControllerMeasuresThePressItIsShowingNotThePreviousOne() {
+    let longText = String(repeating: "Длинная строка перевода. ", count: 40)
+    let model = panelModel(showing: "Готово.")
+    let controller = PanelController(content: realPanelContent(model))
+
+    // Content changed through observation, exactly as a run changes it — no value the builder
+    // captured, which is the whole point: a captured `String` rebuilds into a genuinely
+    // different view and SwiftUI re-evaluates it unasked.
+    func press(showing text: String) -> CGSize {
+        model.translatedText = text
+        controller.show(at: CGPoint(x: 300, y: 600))
+        let size = controller.panel.frame.size
+        controller.hide()
+        return size
+    }
+
+    let short = press(showing: "Готово.")
+    let long = press(showing: longText)
+
+    #expect(long.height > short.height)
+    #expect(long.width > short.width)
+    // Both named, because "the second is bigger" would also pass on a build that lagged one
+    // press behind in a way that happened to grow.
+    #expect(short == CGSize(width: PanelSizer.minWidth, height: PanelSizer.minHeight))
+    #expect(long.width == PanelSizer.maxWidth)
+
+    // And back down again, four more times. Shrinking is the direction `PanelSizer`'s monotonic
+    // height makes easy to miss, and a lagging host is just as wrong in it.
+    for _ in 0..<2 {
+        #expect(press(showing: "Да.") == short)
+        #expect(press(showing: longText) == long)
+    }
+}
+
+/// The panel is shown *before* the text it is going to show exists, and it must still end up
+/// the width that text deserves.
+///
+/// This drives the app's real ordering rather than a convenient one. `HotkeyCoordinator`
+/// assigns `panelModel.sourceText` **after** the `afterCapture()` that calls `show(at:)`, and
+/// the translation only lands token by token after that — so at the moment the panel is placed,
+/// the measuring host legitimately holds the previous presentation's result, or nothing at all
+/// on the first press of a session. Every other measuring test in this file assigns the content
+/// first, which is the one ordering under which a width chosen in `show(at:)` looks right.
+///
+/// It is not the staleness `layoutSubtreeIfNeeded()` fixes, and no layout call can reach it:
+/// the host reflects the model correctly, the model has not been written yet.
+///
+/// What it cost while `show(at:)` froze the width: the first hotkey translation of a session
+/// came up at `minWidth`, and because height is monotonic and width was not, it compensated by
+/// growing to roughly twice its proper height — which on a laptop display crosses the 0.6
+/// ceiling and swaps in the scrolling variant for content that would have fitted unscrolled.
+/// The control below is the assertion that matters: the same content assigned *before* the
+/// show is the size this press deserves, and for this long reply the two agree — both land at
+/// `maxWidth`. That does not generalize to every length: the same comparison with a short
+/// reply has `afterRun` stuck at the button-row width the run started from (347 × 120)
+/// against a deserved 300 × 120, and with a medium reply `afterRun` settles at 560 × 134
+/// against a deserved 560 × 120 — the width only grows and the height only grows within a
+/// run, so a reply that never needed the room it grew through disagrees with what a fresh
+/// `show(at:)` would give it. Long text is the one case where growth and deserved size land
+/// on the same number.
+@MainActor
+@Test func aPanelShownBeforeItsTranslationArrivesEndsUpAsWideAsThatTranslationNeeds() {
+    let longText = String(repeating: "Длинная строка перевода. ", count: 40)
+
+    let model = panelModel(showing: "")
+    let controller = PanelController(content: realPanelContent(model))
+    controller.show(at: CGPoint(x: 300, y: 600))
+    let atShow = controller.panel.frame.size
+
+    // The reply arrives. Exactly one content update, and it is `settling: false` — which is
+    // what `PanelHost` passes for every change of `translatedText`. Both halves of that are
+    // forced rather than chosen: `contentDidChange` throttles to ten a second and defers the
+    // rest onto a trailing `Task`, so a second synchronous call in the same turn would be
+    // coalesced away; and `applyFit` *animates* the settling resize, so after a
+    // `settling: true` call `panel.frame` still reads the old frame for the length of the
+    // tween. Neither is worth a sleep here. The freeze itself — that the width stops moving
+    // once the settle has chosen it — is pinned in `PanelSizerTests`, where it is arithmetic
+    // and can fail.
+    model.translatedText = longText
+    controller.contentDidChange()
+    let afterRun = controller.panel.frame.size
+    controller.hide()
+
+    let control = PanelController(content: realPanelContent(panelModel(showing: longText)))
+    control.show(at: CGPoint(x: 300, y: 600))
+    let deserved = control.panel.frame.size
+    control.hide()
+
+    // Nothing to measure at the show — this is the state the defect froze a width against.
+    #expect(atShow.width == PanelSizer.minWidth)
+    // The width catches up with the reply instead of having been decided before it existed.
+    #expect(afterRun.width > atShow.width)
+    #expect(afterRun == deserved)
+    // Named as well as compared, because "the two agree" would also hold if both were wrong.
+    #expect(afterRun.width == PanelSizer.maxWidth)
+}
+
+/// The other half of the same defect, and the one the height check above cannot see: a panel
+/// whose content fits must not be handed the scrolling variant. Before the fix every
+/// measurement exceeded every ceiling, so `scrolls` was true for a one-word result — which is
+/// a scroll view wrapped around a line of text, inside a panel sized to the whole screen.
+///
+/// Checked through `PanelSizer` on the numbers the real view now reports, because `scrolls` is
+/// private to the controller and the thing worth pinning is the measurement that feeds it.
+@MainActor
+@Test func aShortTranslationInTheRealPanelViewDoesNotAskToScroll() throws {
+    let screen = try #require(NSScreen.main, "no display attached; this test cannot run headless")
+    let host = NSHostingController(rootView: realPanelContent(panelModel(showing: "Готово."))(.measured))
+    let idealWidth = host.view.fittingSize.width
+    let idealHeight = host.sizeThatFits(
+        in: CGSize(width: PanelSizer.minWidth, height: CGFloat.greatestFiniteMagnitude)).height
+    #expect(idealWidth.isFinite)
+    #expect(idealHeight.isFinite)
+
+    let fit = PanelSizer.fit(ideal: CGSize(width: idealWidth, height: idealHeight),
+                             frozenWidth: nil, previous: .zero,
+                             screen: screen.visibleFrame, userSized: false)
+    #expect(fit.scrolls == false)
+    #expect(fit.size.height < screen.visibleFrame.height * PanelSizer.maxHeightFraction)
 }
 

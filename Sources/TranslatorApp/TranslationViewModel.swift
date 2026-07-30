@@ -1,8 +1,10 @@
 // Sources/TranslatorApp/TranslationViewModel.swift
 import Foundation
 import Observation
+import AppKit
 import OllamaKit
 import TranslationCore
+import TextCapture
 
 /// Why one view model will not take over another's run.
 ///
@@ -34,6 +36,9 @@ final class TranslationViewModel {
     private let translator: Translator
     private let settings: AppSettings
     private let glossary: GlossaryStore
+    /// Injected so tests can write to a board of their own rather than the real clipboard —
+    /// same reasoning and the same default as `HotkeyCoordinator.pasteboard`.
+    private let pasteboard: NSPasteboard
     private var task: Task<TranslationOutcome, Error>?
     private var clearedPrevious = false
 
@@ -51,8 +56,22 @@ final class TranslationViewModel {
     var targetOverride: Language?
     var toneOverride: Tone?
 
-    init(translator: Translator, settings: AppSettings, glossary: GlossaryStore) {
+    init(translator: Translator, settings: AppSettings, glossary: GlossaryStore,
+         pasteboard: NSPasteboard = .general) {
         self.translator = translator; self.settings = settings; self.glossary = glossary
+        self.pasteboard = pasteboard
+    }
+
+    /// The window's «Скопировать».
+    ///
+    /// Same shape as `HotkeyCoordinator.copyResult()` for the panel — both delegate to
+    /// `GeneralPasteboard.write`, which is where the empty-guard and the serialised,
+    /// off-actor write live, so the two copy paths cannot diverge in how they touch
+    /// `NSPasteboard.general`. Kept here rather than in `TranslatorApp` so it is testable
+    /// against a scratch board the way the panel's copy already is, without constructing
+    /// the whole app.
+    func copyToPasteboard() async {
+        await GeneralPasteboard.write(translatedText, to: pasteboard)
     }
 
     /// Why `adopt(from:)` would refuse right now, or `nil` if it would not.
@@ -118,6 +137,48 @@ final class TranslationViewModel {
     /// say "3 фрагмента" up front instead of leaving the user with an opaque spinner.
     var expectedChunkCount: Int {
         Chunker.chunk(sourceText, maxCharacters: settings.chunkSize).count
+    }
+
+    /// The source language as the next run would resolve it, or nil if nobody knows yet.
+    ///
+    /// The override first, then what the last finished run detected. Not
+    /// `LanguageDetector.detect(sourceText)`: detection is the *translation's* job and
+    /// running it here would make a toolbar button re-detect on every keystroke, and would
+    /// promise a language the run may not agree with.
+    private var knownSource: Language? { sourceOverride ?? outcome?.detectedSource }
+    private var knownTarget: Language? { targetOverride ?? resolvedTarget }
+
+    /// Whether ⇄ has two languages to exchange.
+    ///
+    /// A property rather than a `Bool` returned by `swapLanguages()`, for the same reason
+    /// `adoptionRefusal(from:)` is a property of the rule and not of the attempt: the button
+    /// must answer before it is pressed, and a view that re-derived the condition would
+    /// keep offering a swap for a case added later.
+    var canSwapLanguages: Bool {
+        state != .running && knownSource != nil && knownTarget != nil
+    }
+
+    /// Translate the other way: the languages change places and the translation becomes the
+    /// new source.
+    ///
+    /// The translation is moved rather than copied because the alternative is worse in both
+    /// directions — left in place it would be a translation of text that is no longer in the
+    /// source pane, and cleared without being moved it would throw away the only thing the
+    /// user has to translate back.
+    func swapLanguages() {
+        guard canSwapLanguages, let source = knownSource, let target = knownTarget else { return }
+        sourceOverride = target
+        targetOverride = source
+        if !translatedText.isEmpty {
+            sourceText = translatedText
+            translatedText = ""
+        }
+        // Dropped with the text it described, the same pairing `translate()` maintains: an
+        // outcome that outlives its text renders the previous run's markup diffs and
+        // glossary checks under whatever is on screen now.
+        outcome = nil
+        resolvedTarget = nil
+        state = .idle
     }
 
     func translate() async {

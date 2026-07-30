@@ -14,7 +14,10 @@ private func silentPuller() -> ModelsViewModel.Puller {
 private func makeModel(installed: [String] = [],
                        failure: Error? = nil,
                        puller: @escaping ModelsViewModel.Puller = silentPuller()) -> ModelsViewModel {
-    ModelsViewModel(probe: StubProbe(installed: installed, failure: failure), puller: puller)
+    // Callers only ever care about names here; the size-carrying tests build `StubProbe`
+    // directly instead of going through this helper.
+    let models = installed.map { OllamaModel(name: $0, sizeBytes: 0) }
+    return ModelsViewModel(probe: StubProbe(installed: models, failure: failure), puller: puller)
 }
 
 // MARK: - Blacklist warnings
@@ -59,18 +62,25 @@ private func makeModel(installed: [String] = [],
 @Test func reloadPublishesTheInstalledList() async {
     let model = makeModel(installed: ["aya-expanse:8b", "gpt-oss:20b"])
     await model.reload()
-    #expect(model.installed == ["aya-expanse:8b", "gpt-oss:20b"])
+    #expect(model.installedNames == ["aya-expanse:8b", "gpt-oss:20b"])
     #expect(model.error == nil)
 }
 
 @MainActor
 @Test func aProbeFailureIsReportedInRussianAndLeavesTheListAlone() async {
-    let model = makeModel(installed: ["aya-expanse:8b"])
+    // "Leaves the list alone" is only a claim about a failure *after* a success — a fresh
+    // instance's `installed` starts at `[]` from `init` alone, so testing a second, separate
+    // model built straight from a failing probe would find it empty regardless of whether
+    // `reload()`'s `catch` preserves anything. `FlakyProbe`, reused across both calls on one
+    // `model`, is what lets the assertion below actually depend on that behaviour.
+    let probe = FlakyProbe()
+    let model = ModelsViewModel(probe: probe, puller: silentPuller())
     await model.reload()
-    let broken = makeModel(failure: OllamaError.notRunning)
-    await broken.reload()
-    #expect(broken.installed.isEmpty)
-    guard let message = broken.error else {
+    #expect(model.installedNames == ["gpt-oss:20b"])
+    probe.fail = true
+    await model.reload()
+    #expect(model.installedNames == ["gpt-oss:20b"], "the installed list must survive a failure")
+    guard let message = model.error else {
         Issue.record("a failed reload must set `error`"); return
     }
     #expect(message.contains("Ollama не запущена"),
@@ -122,7 +132,7 @@ private func makeModel(installed: [String] = [],
     #expect(model.pullStatus == nil)
     #expect(model.error == nil)
     // A finished pull is exactly when the installed list changed, so it is refetched.
-    #expect(model.installed == ["aya-expanse:8b"])
+    #expect(model.installedNames == ["aya-expanse:8b"])
 }
 
 @MainActor
@@ -225,12 +235,58 @@ private func makeModel(installed: [String] = [],
 /// `OllamaProbe` is `Sendable` and `installedModels()` is `async`, so the switchable flag
 /// cannot be a plain `var` on a struct. Access is confined to the main actor by the tests
 /// that use it, which is what `@unchecked` is asserting here.
+///
+/// A class, not a struct, and deliberately so: a test that flips `fail` (or `resident`) on
+/// an instance already handed to a `ModelsViewModel` needs that mutation to reach the same
+/// probe the view model calls through. `StubProbe` is a struct — passing one to
+/// `ModelsViewModel.init` copies it into storage, and mutating the caller's own copy
+/// afterwards changes nothing the view model sees. That gap is exactly what let
+/// `aFailedReloadStopsClaimingAnythingIsInMemory` pass whether or not `reload()`'s `catch`
+/// actually cleared `resident` — see that test's own comment.
 private final class FlakyProbe: OllamaProbe, @unchecked Sendable {
     var fail = false
-    func installedModels() async throws -> [String] {
+    var resident: [String] = []
+    func installedModels() async throws -> [OllamaModel] {
         if fail { throw OllamaError.notRunning }
-        return ["gpt-oss:20b"]
+        return [OllamaModel(name: "gpt-oss:20b", sizeBytes: 0)]
     }
-    func residentModels() async throws -> [String] { [] }
+    func residentModels() async throws -> [String] {
+        if fail { throw OllamaError.notRunning }
+        return resident
+    }
+}
+
+@MainActor
+@Test func theInstalledListKeepsTheSizeTheServerReported() async {
+    // The size is what makes the list worth showing: a user deciding whether to pull a
+    // second model is deciding about disk space. It exists in `OllamaModel` already and
+    // used to be discarded at the protocol boundary.
+    let probe = StubProbe(installed: [OllamaModel(name: "aya-expanse:8b", sizeBytes: 5_100_273_664)])
+    let model = ModelsViewModel(probe: probe, puller: { _ in .init { $0.finish() } })
+    await model.reload()
+    #expect(model.installed.first?.sizeBytes == 5_100_273_664)
+    #expect(model.installedNames == ["aya-expanse:8b"])
+    #expect(model.availability(of: "aya-expanse:8b") == .installed)
+}
+
+@MainActor
+@Test func aFailedReloadStopsClaimingAnythingIsInMemory() async {
+    // The installed list survives a failure on purpose — emptying it would blank the picker
+    // — but «в памяти» is a claim about right now, and right now the server did not answer.
+    //
+    // One `models` instance, reused across both reloads, built over `FlakyProbe` rather than
+    // `StubProbe`: `StubProbe` is a struct, so a second instance built from a mutated copy of
+    // it never shares state with the first, and `broken.resident.isEmpty` would hold simply
+    // because a fresh `ModelsViewModel.resident` starts at `[]` — true whether or not
+    // `reload()`'s `catch` clears anything. `FlakyProbe` is a class, so flipping `fail` after
+    // the first `reload()` is a mutation the *same* `models` instance's next `reload()` sees.
+    let probe = FlakyProbe()
+    probe.resident = ["gpt-oss:20b"]
+    let models = ModelsViewModel(probe: probe, puller: silentPuller())
+    await models.reload()
+    #expect(models.resident == ["gpt-oss:20b"])
+    probe.fail = true
+    await models.reload()
+    #expect(models.resident.isEmpty)
 }
 

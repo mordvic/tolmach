@@ -78,6 +78,14 @@ private func makeModel(_ client: LLMClient) -> TranslationViewModel {
 private let english = "The profile server validates every incoming bundle against the published profile."
 private let russian = "Сервер профилей проверяет каждый входящий пакет по опубликованному профилю."
 
+/// A view model for tests that only need one to exist, not one that has run a translation.
+/// Built the same way `theHeaderNamesTheDirectionTheRunActuallyResolved` builds its own —
+/// through `makeModel` — rather than a second construction shape.
+@MainActor
+private func model() -> TranslationViewModel {
+    makeModel(PacedClient(responses: []))
+}
+
 /// End to end through a real run, so that both halves are the ones the engine actually
 /// resolved rather than values handed to a formatter. Two runs in opposite directions,
 /// because a header built from a constant would satisfy either one alone.
@@ -144,4 +152,20 @@ private let russian = "Сервер профилей проверяет кажд
     #expect(model.state == .interrupted)
     // Still withheld: an interrupted run leaves partial text and no outcome to describe it.
     #expect(PanelView.direction(outcome: model.outcome, target: model.resolvedTarget) == nil)
+}
+
+// MARK: - The close control
+
+@MainActor
+@Test func thePanelOffersACloseControlOfItsOwn() {
+    // The titlebar goes away with `.titled` in Task 4, and its close button with it. A
+    // panel a mouse cannot dismiss would leave Esc as the only way out, which is fine for
+    // the keyboard and not fine for anyone else.
+    //
+    // Constructed, not rendered: this process has no GUI automation, so what is checked is
+    // that the view takes the callback and that a default exists — not that a glyph appears.
+    var closed = false
+    let view = PanelView(model: model(), selection: .empty, onClose: { closed = true })
+    view.onClose()
+    #expect(closed)
 }

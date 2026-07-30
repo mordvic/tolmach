@@ -1,4 +1,5 @@
 // Sources/TranslatorApp/RussianCopy.swift
+import Foundation
 import TranslationCore
 
 extension Tone {
@@ -89,6 +90,12 @@ enum RussianCopy {
         "\(count) \(plural(count, "фрагмент", "фрагмента", "фрагментов"))"
     }
 
+    /// "12 символов" — the source pane's own character count, next to `chunkCount` in its
+    /// footer.
+    static func characterCount(_ count: Int) -> String {
+        "\(count) " + plural(count, "символ", "символа", "символов")
+    }
+
     /// Keyed by the same model-name prefixes as `ModelPolicy.blacklist`, because the engine
     /// matches by prefix so that every tag of a bad model is covered.
     ///
@@ -161,5 +168,18 @@ enum RussianCopy {
     /// about why an operation failed.
     static func failureDetail(_ error: Error) -> String {
         (error as? OllamaErrorBridge)?.russianMessage ?? error.localizedDescription
+    }
+
+    /// A model's size on disk, in the notation the rest of this app uses.
+    ///
+    /// Comma for the decimal separator, and the locale pinned rather than taken from the
+    /// system: every string in this app is Russian and there is no localisation to switch,
+    /// so on a machine set to en_US the default format would put «4.8 ГБ» in a Russian
+    /// sentence next to «4,8» elsewhere — the same reasoning as the temperature slider's
+    /// pinned locale in this same pane.
+    static func modelSize(_ bytes: Int64) -> String {
+        let gigabytes = Double(bytes) / 1_073_741_824
+        return gigabytes.formatted(.number.precision(.fractionLength(1))
+            .locale(Locale(identifier: "ru_RU"))) + " ГБ"
     }
 }

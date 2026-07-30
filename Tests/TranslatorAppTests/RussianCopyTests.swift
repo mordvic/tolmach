@@ -126,6 +126,17 @@ func negativeCountsTakeTheSameFormAsTheirMagnitude(magnitude: Int, expected: Str
     #expect(RussianCopy.plural(22, "термин", "термина", "терминов") == "термина")
 }
 
+@Test func theCharacterCountAgreesWithRussianGrammar() {
+    // Through `plural`, like the chunk count, because the number comes from the user's
+    // typing and every form is reachable within a sentence of it.
+    #expect(RussianCopy.characterCount(1) == "1 символ")
+    #expect(RussianCopy.characterCount(2) == "2 символа")
+    #expect(RussianCopy.characterCount(5) == "5 символов")
+    #expect(RussianCopy.characterCount(11) == "11 символов")
+    #expect(RussianCopy.characterCount(21) == "21 символ")
+    #expect(RussianCopy.characterCount(0) == "0 символов")
+}
+
 // MARK: - Direction
 
 /// The panel's header. Both halves are `russianName`, so the two assertions that would
@@ -227,4 +238,15 @@ func pullStatusesAreShownInRussian(raw: String, expected: String) {
 @Test func theHttpStatusCodeSurvivesTheTranslation() {
     // The code is the one piece of the message that helps diagnose anything.
     #expect(TranslationViewModel.message(for: OllamaError.httpStatus(503, "upstream")).contains("503"))
+}
+
+// MARK: - Model size
+
+@Test func aModelSizeIsWrittenInRussianNotation() {
+    // Comma for the decimal separator, and the locale pinned rather than taken from the
+    // system: every string in this app is Russian and there is no localisation to switch,
+    // so on a machine set to en_US the default format would put «4.8 ГБ» in a Russian
+    // sentence next to «4,8» elsewhere.
+    #expect(RussianCopy.modelSize(5_100_273_664) == "4,8 ГБ")
+    #expect(RussianCopy.modelSize(0) == "0,0 ГБ")
 }

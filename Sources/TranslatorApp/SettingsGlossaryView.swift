@@ -19,6 +19,10 @@ struct SettingsGlossaryView: View {
     /// captured once, at the first render, and then silently stop following the setting.
     @State private var languageOverride: Language?
 
+    @State private var query = ""
+    @State private var order: [Int] = []
+    @State private var selection: Set<Int> = []
+
     private var editingLanguage: Language { languageOverride ?? settings.workingLanguage }
 
     /// Not observable — `FileManager` has nothing to notify SwiftUI with. It does not need
@@ -43,6 +47,59 @@ struct SettingsGlossaryView: View {
                     .font(.caption)
                     .foregroundStyle(.red)
                 }
+                GlossaryHeader(query: $query, language: languageBinding,
+                               count: glossary.file.entries.count,
+                               canRemove: !selection.isEmpty,
+                               onAdd: add, onRemove: removeSelected)
+            }
+
+            Section("Термины") {
+                if glossary.file.entries.isEmpty {
+                    Text("Глоссарий пуст. Термины из него попадают в каждый перевод — "
+                         + "добавьте первый кнопкой «плюс».")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if order.isEmpty {
+                    Text("Ничего не найдено.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    // C3: by index, and not a `Table`. `Table` needs a stable identity per
+                    // row, and rows have none: `term` is the only candidate, nothing on the
+                    // path into `file.entries` uniques it — the file is hand-edited and
+                    // «Добавить термин» appends a blank — so keying by term collapses two
+                    // real rows into one and silently drops the other's translation.
+                    List(order, id: \.self, selection: $selection) { index in
+                        GlossaryEntryRow(entry: entryBinding(index),
+                                         language: editingLanguage,
+                                         onRemove: { remove(at: index) })
+                    }
+                    .frame(minHeight: 200)
+                }
+            }
+
+            if !glossary.file.mutedTerms.isEmpty {
+                Section("Скрытые предупреждения") {
+                    ForEach(Array(glossary.file.mutedTerms.indices), id: \.self) { index in
+                        HStack {
+                            // Indexed for the same reason as the entries above: `mute` dedupes
+                            // what it adds, but the file is hand-editable and can hold two
+                            // identical lines, and removing "one of the two" by value would
+                            // take both.
+                            // Bounds-checked for the same reason `entryBinding` is: during
+                            // the update that follows a removal SwiftUI can still evaluate
+                            // the body of a row that no longer exists, and an unchecked
+                            // subscript traps there.
+                            Text(glossary.file.mutedTerms.indices.contains(index)
+                                 ? glossary.file.mutedTerms[index] : "")
+                            Spacer()
+                            Button("вернуть") { unmute(at: index) }
+                                .buttonStyle(.link)
+                        }
+                    }
+                }
+            }
+
+            Section {
                 HStack {
                     // Reveals in Finder rather than opening — hence the label. The plan said
                     // «Открыть файл», but `activateFileViewerSelecting` does not open
@@ -73,57 +130,28 @@ struct SettingsGlossaryView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-
-            Section("Термины") {
-                Picker("Показывать перевод на", selection: languageBinding) {
-                    ForEach(Language.allCases, id: \.self) { Text($0.russianName).tag($0) }
-                }
-                // C3: by index, and not a `Table`. Two independent reasons, both load-bearing.
-                // `Table` needs bindings into its rows, and until this task `GlossaryEntry`'s
-                // stored properties were `let`, so there was nothing to bind to. And rows
-                // have no stable identity: `term` is the only candidate, nothing on the path
-                // into `file.entries` uniques it — the file is hand-edited and «Добавить
-                // термин» appends a blank — so keying by term collapses two real rows into
-                // one and silently drops the other's translation.
-                ForEach(Array(glossary.file.entries.indices), id: \.self) { index in
-                    GlossaryEntryRow(entry: entryBinding(index),
-                                     language: editingLanguage,
-                                     onRemove: { remove(at: index) })
-                }
-                Button("Добавить термин") {
-                    glossary.file.entries.append(GlossaryEntry(term: ""))
-                    persist()
-                }
-            }
-
-            if !glossary.file.mutedTerms.isEmpty {
-                Section("Скрытые предупреждения") {
-                    ForEach(Array(glossary.file.mutedTerms.indices), id: \.self) { index in
-                        HStack {
-                            // Indexed for the same reason as the entries above: `mute` dedupes
-                            // what it adds, but the file is hand-editable and can hold two
-                            // identical lines, and removing "one of the two" by value would
-                            // take both.
-                            // Bounds-checked for the same reason `entryBinding` is: during
-                            // the update that follows a removal SwiftUI can still evaluate
-                            // the body of a row that no longer exists, and an unchecked
-                            // subscript traps there.
-                            Text(glossary.file.mutedTerms.indices.contains(index)
-                                 ? glossary.file.mutedTerms[index] : "")
-                            Spacer()
-                            Button("вернуть") { unmute(at: index) }
-                                .buttonStyle(.link)
-                        }
-                    }
-                }
-            }
         }
-        .formStyle(.grouped)
-        .frame(width: 520, height: 440)
+        .settingsPane()
+        .onAppear { reorder() }
+        .onChange(of: query) { _, _ in reorder() }
     }
 
     private var languageBinding: Binding<Language> {
         Binding(get: { editingLanguage }, set: { languageOverride = $0 })
+    }
+
+    /// Recomputed here and nowhere else. See `GlossaryOrder`'s doc comment: recomputing on
+    /// every keystroke would move the row the user is editing out from under the caret.
+    ///
+    /// `indicesMayHaveShifted` must be true from `remove(at:)` and `reload()`: a removal
+    /// shifts every later index down by one, and a re-read can replace what an index points
+    /// at, so a selected index surviving `order.contains(_:)` there can silently now denote a
+    /// different row. `.onAppear`, the search changing and `add()` never shift or repurpose
+    /// an existing index, so the default lets a selection survive them.
+    private func reorder(indicesMayHaveShifted: Bool = false) {
+        order = GlossaryOrder.visibleOrder(entries: glossary.file.entries, query: query)
+        selection = GlossaryOrder.selection(selection, survivingIn: order,
+                                            indicesMayHaveShifted: indicesMayHaveShifted)
     }
 
     /// Bounds-checked in both directions on purpose. The rows are identified by index, so
@@ -147,10 +175,36 @@ struct SettingsGlossaryView: View {
             })
     }
 
+    private func add() {
+        glossary.file.entries.append(GlossaryEntry(term: ""))
+        persist()
+        reorder()
+    }
+
     private func remove(at index: Int) {
         guard glossary.file.entries.indices.contains(index) else { return }
         glossary.file.entries.remove(at: index)
         persist()
+        reorder(indicesMayHaveShifted: true)
+    }
+
+    /// Descending, so each removal cannot shift the index of one not yet removed.
+    private func removeSelected() {
+        for index in selection.sorted(by: >) where glossary.file.entries.indices.contains(index) {
+            glossary.file.entries.remove(at: index)
+        }
+        // `indicesMayHaveShifted: true`, because removal is exactly the situation that
+        // parameter names — every index after the smallest one removed now points at a
+        // different row. `selection = []` two lines up already empties the set `reorder`
+        // would filter, so today the flag cannot change the outcome; it is passed anyway so
+        // the truth sits in the contract instead of in the order of these statements. Belt
+        // and braces on purpose: swap these two lines, or add a second removal path that
+        // forgets the clear, and `false` here would silently reintroduce the stale-index
+        // defect `indicesMayHaveShifted` exists to prevent — a selection surviving past a
+        // removal it should not have survived, deleting the wrong term on the next edit.
+        selection = []
+        persist()
+        reorder(indicesMayHaveShifted: true)
     }
 
     private func unmute(at index: Int) {
@@ -202,55 +256,11 @@ struct SettingsGlossaryView: View {
             glossary.lastProblem = "Не удалось прочитать файл глоссария, в приложении осталась "
                 + "прежняя версия. Файл на диске не изменён: \(error.localizedDescription)"
         }
-    }
-}
-
-/// A view of its own so each row owns one `Binding<GlossaryEntry>` and SwiftUI can tell the
-/// rows apart; also the only place that knows how an empty translation field maps onto the
-/// dictionary.
-private struct GlossaryEntryRow: View {
-    @Binding var entry: GlossaryEntry
-    let language: Language
-    let onRemove: () -> Void
-
-    /// An empty field means "this entry has no translation into this language", which is
-    /// the absence of a key and not an empty string: `requiredTranslation(for:)` would
-    /// otherwise hand `PromptBuilder` a rule instructing the model to render the term as
-    /// nothing at all, and `GlossaryVerifier` would then look for that nothing in the output.
-    ///
-    /// The emptiness test trims but the stored value does not, so a user midway through
-    /// typing «сервер профилей» does not have the space they just typed taken back out from
-    /// under the cursor.
-    private var translation: Binding<String> {
-        Binding(
-            get: { entry.translations[language.rawValue] ?? "" },
-            set: { typed in
-                if typed.trimmingCharacters(in: .whitespaces).isEmpty {
-                    entry.translations.removeValue(forKey: language.rawValue)
-                } else {
-                    entry.translations[language.rawValue] = typed
-                }
-            })
-    }
-
-    var body: some View {
-        HStack {
-            TextField("термин", text: $entry.term)
-                .frame(minWidth: 110)
-            Toggle("не переводить", isOn: $entry.doNotTranslate)
-                .toggleStyle(.checkbox)
-            // Disabled rather than hidden, and the text stays readable: `doNotTranslate`
-            // wins over `translations` everywhere it is consulted (see
-            // `GlossaryEntry.requiredTranslation(for:)`), so an enabled field here would
-            // accept edits that change nothing about any translation.
-            TextField("перевод", text: translation)
-                .frame(minWidth: 110)
-                .disabled(entry.doNotTranslate)
-            Button(role: .destructive) { onRemove() } label: {
-                Image(systemName: "minus.circle")
-            }
-            .buttonStyle(.borderless)
-            .help("Удалить термин")
-        }
+        // A file re-read at the same or a greater row count leaves every selected index in
+        // range, but now naming whatever term is at that position in the new file — not the
+        // row the user actually selected. Only a shrink past the selected index would be
+        // caught by a plain membership filter, which is why this must clear rather than
+        // filter, on both the success and the failure path.
+        reorder(indicesMayHaveShifted: true)
     }
 }

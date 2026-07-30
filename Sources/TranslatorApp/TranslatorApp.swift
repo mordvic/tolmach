@@ -71,7 +71,7 @@ struct TranslatorApp: App {
         // real content needs — the panel itself, for «закрыть», and `openWindow` — either
         // does not exist yet here or is not readable outside a scene, and the panel is never
         // ordered in before that point.
-        _panel = State(initialValue: PanelController { AnyView(EmptyView()) })
+        _panel = State(initialValue: PanelController { _ in AnyView(EmptyView()) })
     }
 
     var body: some Scene {
@@ -83,20 +83,33 @@ struct TranslatorApp: App {
         // (`Scene.defaultLaunchBehavior(.suppressed)`, the declarative fix, is macOS 15+
         // and the platform floor here is macOS 14.)
         MenuBarExtra {
-            MenuContent()
+            MenuContent(status: statusModel.status)
         } label: {
             // The `MenuBarExtra(_:systemImage:)` convenience initialiser this used to be
             // takes no view, and `warmUp()` needs one to hang a `.task` on — this label is
             // the only thing the app renders at launch. Its title argument was only ever an
             // accessibility label, so that is restored explicitly rather than dropped.
-            Image(systemName: "character.bubble")
+            //
+            // `statusModel.status` is read here, not hard-coded, so this glyph is the same
+            // "the app renders it at scene-body-evaluation time" pattern the `Window` and
+            // `Settings` scenes below already rely on for their own `status:` arguments —
+            // there is no second reactivity mechanism to keep in step with those.
+            Image(systemName: statusModel.status.menuBarSymbol)
                 .accessibilityLabel("Толмач")
                 .task { await launch() }
         }
 
         Window("Толмач", id: TranslatorApp.mainWindowID) {
-            MainWindowView(model: translation, settings: settings,
-                           glossary: glossary, status: statusModel.status)
+            MainWindowView(model: translation,
+                           glossary: glossary, status: statusModel.status,
+                           // Same shape as the panel's own `onCopy` below: the write
+                           // itself is `TranslationViewModel.copyToPasteboard()`, which
+                           // shares `GeneralPasteboard.write` with `HotkeyCoordinator`'s,
+                           // so there is one write to test rather than two to keep in sync.
+                           onCopy: { Task { await translation.copyToPasteboard() } },
+                           onRunFinished: {
+                               await statusModel.refresh(interactiveModel: settings.interactiveModel)
+                           })
                 .task { await statusModel.refresh(interactiveModel: settings.interactiveModel) }
         }
 
@@ -107,13 +120,20 @@ struct TranslatorApp: App {
             TabView {
                 SettingsGeneralView(settings: settings)
                     .tabItem { Text("Основные") }
-                SettingsModelsView(settings: settings, models: models)
+                SettingsModelsView(settings: settings, models: models,
+                                   status: statusModel.status,
+                                   onRefresh: {
+                                       await statusModel.refresh(
+                                           interactiveModel: settings.interactiveModel)
+                                   })
                     .tabItem { Text("Модели") }
                 SettingsGlossaryView(glossary: glossary, settings: settings)
                     .tabItem { Text("Глоссарий") }
-                SettingsAdvancedView(settings: settings)
-                    .tabItem { Text("Дополнительно") }
             }
+            // «Модели» now shows Ollama's health line, which this scene's own `Window` also
+            // shows independently — so the pane needs its own initial check rather than
+            // relying on the main window having opened first.
+            .task { await statusModel.refresh(interactiveModel: settings.interactiveModel) }
         }
     }
 
@@ -123,7 +143,7 @@ struct TranslatorApp: App {
     ///
     /// The hotkey is registered **before** the warm-up, which is not what Task 10's brief
     /// said. `warmUp()` awaits a real HTTP request whose `timeoutIntervalForRequest` is 120
-    /// seconds (`OllamaClient.swift:18`), so registering after it would leave the app's only
+    /// seconds (`OllamaClient.swift:33`), so registering after it would leave the app's only
     /// shortcut dead for as long as Ollama takes to answer — two seconds on a cold model,
     /// and two *minutes* if Ollama accepts the connection and then never replies. Registration
     /// is synchronous and takes no I/O, so there is nothing to gain by deferring it.
@@ -167,6 +187,21 @@ struct TranslatorApp: App {
             settings.hasRequestedAccessibility = true
             PermissionsGate.requestTrust()
         }
+        // Ahead of `warmUp()`, not after — corrected from an earlier version of this method
+        // that put it last for `OllamaProbe.ps()`'s residency accuracy. That reasoning named a
+        // benefit `menuBarSymbol` cannot receive: the glyph maps *both* `.running` cases to the
+        // same symbol (see its doc comment), so residency only ever changes `status.label`'s
+        // text, never the icon. What refreshing after `warmUp()` actually costs is the glyph's
+        // *first* honest reading: `warmUp()` awaits a request whose timeout is 120 seconds
+        // (`OllamaClient.swift:33`) — the same hazard the comment above this one registers the
+        // hotkey ahead of — so an Ollama that accepts the connection and then never answers
+        // would leave `.unknown` (which reads as the healthy glyph) on screen for up to two
+        // minutes, which is the one situation this indicator exists to reveal. Refreshing first
+        // still costs something, just not to the glyph: if `warmUpOnLaunch` is about to make the
+        // model resident, `status.label`'s text can read "не загружена" for a few seconds until
+        // the next refresh trigger corrects it — text-only, and already inside the staleness
+        // `menuBarSymbol`'s doc comment accepts.
+        await statusModel.refresh(interactiveModel: settings.interactiveModel)
         await warmUp()
     }
 
@@ -200,21 +235,54 @@ struct TranslatorApp: App {
     /// referenced while it is being constructed, and «Открыть в окне» needs `openWindow`,
     /// which is only readable from inside a scene.
     private func configurePanel() {
-        panel.setContent(AnyView(PanelHost(
-            coordinator: coordinator,
-            windowModel: translation,
-            // Copying does not close. Enter is the shortcut that means «скопировать и
-            // закрыть» (spec 7.2); the button is for a user who wants to keep reading.
-            onCopy: { Task { await coordinator.copyResult() } },
-            onOpenInWindow: { handOffToWindow() },
-            onGrantPermission: {
-                // Both, and in this order. `requestTrust` is what actually puts this app into
-                // the Accessibility list — a user sent straight to the pane by `openSettings`
-                // alone would have to find the app with the «+» button first — and
-                // `openSettings` is what the button's label promises.
-                PermissionsGate.requestTrust()
-                PermissionsGate.openSettings()
-            })))
+        // A builder rather than a view: the controller builds the content twice over, once to
+        // measure and once to install, and the two are not the same view — see
+        // `PanelContentVariant`.
+        panel.setContentBuilder { variant in
+            AnyView(PanelHost(
+                coordinator: coordinator,
+                windowModel: translation,
+                scrolls: variant.scrolls,
+                fillsPanel: variant.fillsPanel,
+                // Copying does not close. Enter is the shortcut that means «скопировать и
+                // закрыть» (spec 7.2); the button is for a user who wants to keep reading.
+                onCopy: { Task { await coordinator.copyResult() } },
+                onOpenInWindow: { handOffToWindow() },
+                // The panel's own ⨯, which exists because dropping `.titled` from the style
+                // mask took the standard close button with it. Same two steps as Esc.
+                onClose: {
+                    coordinator.panelModel.cancel()
+                    panel.hide()
+                },
+                onGrantPermission: {
+                    // Both, and in this order. `requestTrust` is what actually puts this app
+                    // into the Accessibility list — a user sent straight to the pane by
+                    // `openSettings` alone would have to find the app with the «+» button
+                    // first — and `openSettings` is what the button's label promises.
+                    PermissionsGate.requestTrust()
+                    PermissionsGate.openSettings()
+                },
+                onContentChange: { settling in panel.contentDidChange(settling: settling) },
+                // Gated on `variant`, not unconditional: `PanelController` builds *two* live
+                // hosts from this same closure — `hosting` (installed) and `measuring`
+                // (measured, for `PanelController.measure`) — and both carry a `PanelHost`
+                // with its own `.onChange(of: coordinator.panelModel.state)`, because that
+                // hook lives on `PanelHost` itself rather than varying by variant. Wiring
+                // `onRunFinished` unconditionally, as `onContentChange` above is, would fire
+                // the refresh twice per settle — measured, in a scratch test with one
+                // `NSHostingView` and one detached `NSHostingController` over the same
+                // `@Observable`, both laid out: `installed=1 measured=1`. `onContentChange`
+                // tolerates that doubling because `applyFit` is idempotent against the frame
+                // it already set and `contentDidChange` gates on `panel.isVisible`; `refresh()`
+                // has neither guard, so a second call is a second live HTTP round trip and a
+                // second unguarded write to `status`. Restricting the real closure to
+                // `.installed` — the variant `hosting` builds — makes the measured copy's
+                // closure a no-op instead, so only one host ever calls it.
+                onRunFinished: {
+                    guard case .installed = variant else { return }
+                    await statusModel.refresh(interactiveModel: settings.interactiveModel)
+                }))
+        }
         panel.onEscape = {
             coordinator.panelModel.cancel()
             panel.hide()
@@ -312,9 +380,22 @@ private struct PanelHost: View {
     /// would be refused lives here. Asked inside `body`, so observation picks the change up
     /// and the button re-enables when the window finishes.
     let windowModel: TranslationViewModel
+    /// Decided by `PanelController` from the measurement, not by this view: the content is
+    /// measured in its non-scrolling form, and only the variant that is *displayed* scrolls.
+    let scrolls: Bool
+    /// False only for the copy the controller measures. Both of these come from one
+    /// `PanelContentVariant` at the call site, so they cannot be set to a combination that
+    /// does not exist.
+    let fillsPanel: Bool
     let onCopy: () -> Void
     let onOpenInWindow: () -> Void
+    let onClose: () -> Void
     let onGrantPermission: () -> Void
+    let onContentChange: (Bool) -> Void
+    /// Refreshes `OllamaStatusModel` after a hotkey run settles. Folded into the
+    /// `panelModel.state` hook below rather than a second `.onChange` on the same value —
+    /// two observers of one `@Observable` property race on ordering for no benefit here.
+    let onRunFinished: () async -> Void
 
     var body: some View {
         PanelView(model: coordinator.panelModel,
@@ -323,7 +404,26 @@ private struct PanelHost: View {
                   onCopy: onCopy,
                   onOpenInWindow: onOpenInWindow,
                   onRetry: { Task { await coordinator.retry() } },
-                  onGrantPermission: onGrantPermission)
+                  onGrantPermission: onGrantPermission,
+                  scrolls: scrolls,
+                  onClose: onClose,
+                  fillsPanel: fillsPanel)
+            // Deferred to a later turn of the main actor on purpose. These fire *during*
+            // the view update that produced the new text, and resizing a window from
+            // inside a SwiftUI update re-enters layout on a view AppKit is already laying
+            // out. The controller's own throttle then coalesces the burst.
+            .onChange(of: coordinator.panelModel.translatedText) { _, _ in
+                Task { @MainActor in onContentChange(false) }
+            }
+            .onChange(of: coordinator.panelModel.state) { _, new in
+                // A state that is no longer `.running` is the settle: the last size this
+                // presentation will be asked for, and the only one animated — and also the
+                // point a hotkey run has something new to say about whether Ollama answered.
+                Task { @MainActor in
+                    onContentChange(new != .running)
+                    if new != .running { await onRunFinished() }
+                }
+            }
     }
 }
 
@@ -331,8 +431,20 @@ private struct PanelHost: View {
 /// type to live on.
 private struct MenuContent: View {
     @Environment(\.openWindow) private var openWindow
+    /// Spec §6: "the menu gains a first row stating the same thing [as the glyph] in words."
+    /// A plain value, not a refresh hook — this view has no `.task` of its own. An earlier
+    /// draft of this task also threaded an `onRefresh: () async -> Void` through here to
+    /// trigger a refresh when the menu opens, but `MenuBarExtra`'s content is not guaranteed
+    /// to re-run `.task`/`.onAppear` on every opening (it is cached and reused on some macOS
+    /// versions and rebuilt on others), so that refresh would have been unreliable exactly
+    /// when a user opens the menu to check. That trigger is dropped rather than shipped
+    /// silently broken; see `OllamaStatus.menuBarSymbol`'s doc comment for what does drive
+    /// the refresh instead.
+    let status: OllamaStatus
 
     var body: some View {
+        Text(status.label)
+        Divider()
         Button("Открыть окно перевода") {
             openWindow(id: TranslatorApp.mainWindowID)
             // The app is an `LSUIElement`, so it is not activated by the menu click alone
@@ -348,7 +460,9 @@ private struct MenuContent: View {
         //
         // The button above works around this app not being activated by a menu click;
         // `SettingsLink` exposes no action to hang that on. Measured on the real bundle:
-        // the settings window opens (420x450, visible) with `NSApp.isActive == false` and
+        // the settings window opens (measured then at 420x450; every pane takes one
+        // 560 × 480 frame from `settingsPane()` since, and the size is not what this
+        // measurement was about) with `NSApp.isActive == false` and
         // no key window, so the caveat applies here too — the pane comes up unfocused
         // until it is clicked. Fixing it would mean swapping this standard control for a
         // `Button` calling `openSettings()` plus `NSApp.activate`, and nothing in this

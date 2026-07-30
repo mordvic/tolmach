@@ -14,7 +14,7 @@ window. Batch file translation is v2.
 ```bash
 swift build                       # build everything
 swift build --build-tests         # must stay at zero warnings — this is a standing rule
-swift test                        # ~289 tests, all offline (fake LLMClient), a few seconds
+swift test                        # ~341 tests, all offline (fake LLMClient), a few seconds
 swift test --filter someTestName  # one test, by name (Swift Testing function names)
 swift test --filter TranslationCoreTests   # one test target
 
@@ -109,6 +109,25 @@ Facts that will bite you if you "tidy" them:
   press is measured, not preferred: hide the old panel → read the selection off the main actor →
   show the panel → translate. Showing the panel first breaks the capture, because a
   `.nonactivatingPanel` still becomes *key* and system-wide accessibility focus follows the key window.
+- **The panel sizes itself to its content and is not `.titled`.** Three types share the job and
+  none of them may be collapsed into another: `PanelSizer` owns the rules (width clamped to
+  300–560 pt and frozen for a whole presentation, height floored at 120 pt, monotonic within a
+  presentation and capped at 0.6 of `visibleFrame`, past which the content scrolls; a
+  hand-resize wins until the
+  panel hides), `PanelPlacement` picks the anchor corner nearest the pointer so growth moves the
+  *far* edge and not the text already read, and `PanelController` does the measuring.
+  It measures with a **second, detached `NSHostingController`** — never the installed view,
+  which measures what it is showing rather than what the content wants — and the two passes use
+  `fittingSize` for the ideal width and `sizeThatFits(in:)` for the height at that width,
+  because a greedy SwiftUI view hands a proposal straight back. `layoutSubtreeIfNeeded()` after
+  reassigning `rootView` is load-bearing, not tidy-up: without it the measuring host never sees
+  content that changed through `@Observable`. All four facts are in `docs/PLATFORM-TRAPS.md`
+  with their measurements.
+- The main window is a toolbar plus `SourcePane` | `TranslationPane` over a collapsible
+  `RunStatusBar`; the translation side is a read-only `Text`, deliberately, because the
+  `TextEditor` it replaced took a caret and discarded typing. The settings are **three** tabs,
+  not four — «Дополнительно» was folded into «Модели» — and all three take one 560 × 480 frame
+  from `settingsPane()`, so adding a pane means checking it fits rather than sizing it itself.
 - Capture order is Accessibility first, synthetic ⌘C fallback second, and the fallback must restore
   the *whole* pasteboard. The only path allowed to write the user's clipboard unasked is `autoCopy`,
   off by default — and it is read only by `HotkeyCoordinator`, so it governs the panel and not
@@ -157,15 +176,16 @@ Read the one that answers your question; do not read them all.
 |---|---|
 | `docs/RUNBOOK.md` | Building, signing, permissions, running the acceptance harness. |
 | `docs/OPEN-ITEMS.md` | «May I change this?» / «Is this unfinished on purpose?» — manual checks owed to a human, accepted limitations, and open questions. |
-| `docs/PLATFORM-TRAPS.md` | Before writing a *new* call into `NSPasteboard`, Accessibility, Carbon, `CGEvent` or `NSPanel`. An index of the eleven behaviours that each cost a defect. |
+| `docs/PLATFORM-TRAPS.md` | Before writing a *new* call into `NSPasteboard`, Accessibility, Carbon, `CGEvent`, `NSPanel`, or anything that measures a SwiftUI view. An index of the behaviours that each cost a defect. |
 | `docs/TESTING.md` | Writing a test. The mutation rule and nine shapes of test that pass under the defect they name. |
 | `docs/MEASUREMENTS.md` | «Where did this number come from?» |
 | `docs/BASELINE.md` | After running `swift run acceptance` — whether the result is normal, and where to record it. |
 | `docs/adr/` | The code looks inconsistent and you want to know whether it is deliberate. |
-| `docs/superpowers/specs/…-design.md` | Changing engine behaviour. **Note its status header — it is the pre-implementation design, and where it and the code disagree the code is right.** |
-| `docs/history/` | «What did we already try?» The build ledgers, including rejected approaches and defects found in the plans themselves. |
+| `docs/superpowers/specs/2026-07-24-local-translator-design.md` | Changing engine behaviour. **Note its status header — it is the pre-implementation design, and where it and the code disagree the code is right.** |
+| `docs/superpowers/specs/2026-07-30-ui-redesign-design.md` | Changing the panel, the window or the settings: why each surface has the shape it has. Same status header, same rule — the code wins. Its §8 lists what only a human can check; `docs/OPEN-ITEMS.md` §1 is where that list is kept current. |
+| `docs/history/` | «What did we already try?» The build ledgers, including rejected approaches and defects found in the plans themselves. `2026-07-30-ui-redesign-ledger.md` is the newest and the one to read before touching panel sizing, the window's decomposition or the settings panes. |
 | `CONTEXT.md` | Writing UI copy or naming something. |
-| `docs/superpowers/plans/` | Rarely. The three plans the codebase was built from; parts of them are known wrong where the ledgers record a correction. |
+| `docs/superpowers/plans/` | Rarely. The four plans the codebase was built from; parts of them are known wrong where the ledgers record a correction. The UI redesign plan is the worst offender — seven of its defects reached the code verbatim. |
 
 ### Traps, by where you are about to write
 
@@ -175,7 +195,9 @@ to the code. `docs/PLATFORM-TRAPS.md` has the same list with the facts attached.
 - `NSPasteboard`, anything clipboard → `TextCapture/PasteboardSnapshot.swift`, `GeneralPasteboard.swift`
 - Accessibility reads, synthetic key events → `TextCapture/SelectionReader.swift`
 - Carbon hotkeys, key codes, modifier masks → `TextCapture/HotkeyManager.swift`, `HotkeyCombo.swift`
-- `NSPanel` framing, sizing, key status → `TranslatorApp/TranslationPanel.swift`
+- `NSPanel` framing, sizing, key status → `TranslatorApp/TranslationPanel.swift`, `PanelSizer.swift`
+- Measuring SwiftUI content, `NSHostingView`/`NSHostingController` → `PanelController.measure` in
+  `TranslatorApp/TranslationPanel.swift`
 - App activation, scene order → `TranslatorApp/TranslatorApp.swift`
 - Recording a shortcut, `performKeyEquivalent` → `TranslatorApp/HotkeyRecorder.swift`
 - `UserDefaults` in tests → `Tests/TranslatorAppTests/InMemoryDefaults.swift`

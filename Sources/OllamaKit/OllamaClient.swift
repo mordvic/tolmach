@@ -6,13 +6,28 @@ public struct OllamaModel: Sendable {
     public let name: String
     public let sizeBytes: Int64
     public var sizeGB: Double { Double(sizeBytes) / 1_073_741_824 }
+
+    /// Public so the app's tests can build one. A struct with public stored properties gets
+    /// only an internal memberwise initialiser, which is invisible across the module
+    /// boundary — the reason this is spelled out rather than synthesised.
+    public init(name: String, sizeBytes: Int64) {
+        self.name = name
+        self.sizeBytes = sizeBytes
+    }
 }
 
 public struct OllamaClient: LLMClient {
+    /// Where Ollama is expected to be, and the one place that address is written.
+    ///
+    /// Public because the settings pane shows it to the user — spec §5.3 asks the «Ollama»
+    /// section for whether it is running, *the address*, and a re-check — and an address
+    /// typed into a view is an address that can disagree with the one being called.
+    public static let defaultBaseURL = URL(string: "http://127.0.0.1:11434")!
+
     let baseURL: URL
     let session: URLSession
 
-    public init(baseURL: URL = URL(string: "http://127.0.0.1:11434")!) {
+    public init(baseURL: URL = OllamaClient.defaultBaseURL) {
         self.baseURL = baseURL
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 120

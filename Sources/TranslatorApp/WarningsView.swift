@@ -20,26 +20,47 @@ struct WarningsView: View {
         }
     }
 
+    /// How many separate things this view has to say: one per markup diff, one per missing
+    /// glossary term, one for `problem`, and one for the document glossary as a whole (its
+    /// own term count is shown in its disclosure title, not multiplied in here).
+    ///
+    /// `hasContent` is defined in terms of this count rather than restating the same four
+    /// conditions as a second boolean expression, and `RunStatusBar.summary` reads this same
+    /// property rather than re-deriving a total from the outcome itself. That is what makes
+    /// the two agree structurally instead of by coincidence: there is exactly one count in
+    /// the program that says how many warnings exist, and both the disclosure's visibility
+    /// and its label read that one value.
+    var warningCount: Int {
+        outcome.markupDiffs.count
+            + glossaryWarnings.count
+            + (outcome.documentGlossary.isEmpty ? 0 : 1)
+            + (problem != nil ? 1 : 0)
+    }
+
     /// Whether this view would draw anything at all.
     ///
-    /// It exists so a caller can decide not to reserve space for nothing. The panel does:
-    /// it hands the warnings a fixed 120pt slot, and an outcome with no diffs, no missing
-    /// terms and no document glossary — the ordinary case for a short, clean translation —
-    /// left that slot claiming its height while rendering an empty `VStack`, costing 86 of
-    /// the panel's 260 points. The translation went from nine visible lines while running
-    /// to four and a half once it finished, which reads as the result being truncated at
-    /// the moment it completed.
+    /// It exists so a caller can decide not to reserve space for nothing, and the defect it
+    /// was written for is **historical** — the panel it describes no longer exists.
     ///
-    /// The conditions are the disjunction of `body`'s own, deliberately, and that is why
+    /// What was measured, on the panel of the time: it handed the warnings a fixed 120 pt
+    /// slot, and an outcome with no diffs, no missing terms and no document glossary — the
+    /// ordinary case for a short, clean translation — left that slot claiming its height
+    /// while rendering an empty `VStack`, costing 86 of the panel's 260 points. The
+    /// translation went from nine visible lines while running to four and a half once it
+    /// finished, which reads as the result being truncated at the moment it completed.
+    ///
+    /// Neither number describes today's panel. The UI redesign removed the fixed slot and the
+    /// fixed 260 pt height together — `PanelView` says so where the gate now lives, and
+    /// `PanelSizer` owns the ceiling. This flag survives that change on a narrower claim: the
+    /// panel measures whatever its content view contains, so an empty `VStack` still
+    /// contributes its stack spacing to a height nothing is asking for. Smaller, and still a
+    /// reason not to render it.
+    ///
+    /// `warningCount > 0` rather than a repeated disjunction, deliberately, and that is why
     /// this lives here rather than in the caller: the two must not be able to drift. If
     /// they did, the failure is either this bug again or the opposite one — a warning with
     /// nowhere to appear.
-    var hasContent: Bool {
-        problem != nil
-            || !outcome.markupDiffs.isEmpty
-            || !glossaryWarnings.isEmpty
-            || !outcome.documentGlossary.isEmpty
-    }
+    var hasContent: Bool { warningCount > 0 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {

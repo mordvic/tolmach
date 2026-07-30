@@ -10,35 +10,125 @@ here rather than assumed.
 Engine-level limitations are not repeated here — they are in §11a of the design spec, which
 owns them.
 
-Last reviewed against the code at commit `5a4d5f8`.
+Last reviewed against the code at commit `75d9be1`, the final fix wave that closed the UI
+redesign branch's whole-branch review. This line is a commit later than the code it names,
+because a file cannot cite the hash of the commit that writes it.
 
 ---
 
 ## 1. Owed to a human
 
-Verified by a person during the Plan 3 acceptance pass and **not** re-checked since — the code
-under them has not changed:
+### What a person has already seen
 
-- Hotkey → capture → translation → panel, in a native app, a browser and an Electron app.
-- Esc, Enter and ⌘. on the panel; «Скопировать»; the clipboard surviving the ⌘C fallback.
+A person verified the following during the Plan 3 acceptance pass. The UI redesign rewrote the
+code under half of them, so the list is split. Anything below the second heading has been
+verified *once*, against code that no longer exists.
+
+**Still standing — the code under these was not touched by the redesign:**
+
+- The capture itself, in a native app, a browser and an Electron app: TextEdit took the
+  Accessibility path, Safari and Obsidian both fell back to the synthetic ⌘C.
+- The clipboard surviving the ⌘C fallback, checked with a real ⌘V against a marker.
 - The hotkey recorder, including ⌘W/⌘Q being captured rather than firing menu items, and a
   bare key being refused.
 - Live re-registration after changing the shortcut.
-- The permission prompt at first launch, in the panel, and as a standing indicator.
-- All four settings tabs, and the main window end to end.
+- The permission prompt at first launch.
 - The Accessibility grant surviving a rebuild under the stable signing identity.
 
-**Not yet seen by anyone.** These changed after that pass and no one has looked at them:
+**Invalidated by the UI redesign — seen once, on code that has since been replaced:**
+
+- Hotkey → capture → translation → panel, end to end. The capture half stands; the panel half
+  does not. The panel lost `.titled`, gained `.resizable`, sizes itself from a measurement and
+  had its content rebuilt around a header and a ⨯.
+- Esc, Enter and ⌘. on the panel, and «Скопировать». Those presses were made on a `.titled`
+  panel. See the note under the Task 4 table: the panel's *key status* is no longer owed to a
+  human, but a physical key press on the untitled panel is.
+- The permission prompt in the panel and as a standing indicator. The panel's prompt lost the
+  fixed frame it was read inside, and in «Основные» the «Доступ» row is now rendered whether
+  or not the grant is missing — only its explanation and its button are conditional.
+- All four settings tabs, and the main window end to end. There are **three** tabs now:
+  «Дополнительно» was folded into «Модели» and its view deleted. Every pane of the window and
+  of the settings was rewritten.
+
+### Not yet seen by anyone
+
+These changed after the acceptance pass and no one has looked at them.
 
 | What to check | Why it needs eyes | Code |
 |---|---|---|
-| A finished translation with **no** warnings fills the panel | The empty warnings slot used to eat 86 of 260 pt; the fix gates the slot on `WarningsView.hasContent`, and only a screenshot confirms the nine lines came back | `PanelView.swift`, `WarningsView.swift` |
-| «Открыть в окне» with a **finished** translation already in the window | The hand-off now moves `outcome`, `resolvedTarget` and `state` together; the failure it fixes was the window showing the previous run's elapsed time and warnings under the new text | `TranslationViewModel.adopt(from:)` |
+| A finished translation with **no** warnings fills the panel | The empty warnings slot used to eat 86 pt of a fixed 260; the fix gates the slot on `WarningsView.hasContent`. The panel is no longer 260 pt tall, so the original arithmetic no longer applies — what is owed now is simply that a finished result with no warnings looks whole | `PanelView.swift`, `WarningsView.swift` |
+| «Открыть в окне» with a **finished** translation already in the window | The hand-off moves `outcome`, `resolvedTarget` and `state` together; the failure it fixes was the window showing the previous run's elapsed time and warnings under the new text. The window it hands to has since been rebuilt | `TranslationViewModel.adopt(from:)` |
 | «Открыть в окне» while the window is **busy** | The button should be disabled with «Окно занято своим переводом» beneath it, and re-enable itself when the window finishes | `PanelView.swift`, `AdoptionRefusal` |
 | The window and Settings actually coming **forward** | `NSApp.activate(ignoringOtherApps:)` does not activate on macOS 14; replaced with cooperative activation, which no one has watched work | `activateThisApp()` in `TranslatorApp.swift` |
 | The permission row clearing after granting and returning | It is refreshed on `didBecomeActiveNotification`; the failure it fixes was telling the user their grant had not worked | `SettingsGeneralView.swift` |
 | The icon in Finder, Spotlight and the Accessibility list | Nothing here can see the screen; the rendered PNGs were checked, how macOS composites and caches them was not. Finder caches icons aggressively — a blank sheet right after the first build is a cache artefact, not a failure | `Scripts/make-icon.swift` |
 | The ink tile against a **dark** desktop background | The dark ground was chosen over the parchment one with this trade-off stated and accepted; whether it separates well enough in practice has not been looked at | `Scripts/make-icon.swift`, spec §2.4 |
+
+**Owed by the UI redesign, Task 4 — the panel sized to its content.** The tests pin the
+numbers the controller computes; none of them can say what the panel looks like.
+
+| What to check | Why it needs eyes | Code |
+|---|---|---|
+| ⌥⌘T on a one-word phrase, then on a long paragraph | The whole point of the task: two visibly different panel sizes, neither of them 380 × 260. The measurement is checked in the test process, but nothing here has seen it reach a real screen | `PanelController.measure`, `show(at:)` |
+| **The panel widening while the first line or two of a reply arrives** | New in the final fix wave, and the one part of it that changes what a user sees. The panel now opens at a provisional width and reaches its real one as the reply comes in, instead of being frozen at `show(at:)` against content that had not arrived. Whether that reads as the panel finding its size or as a flinch is exactly the thing no test can say, and it is the trade the fix rests on | `PanelSizer.fit`'s width rule, `PanelController.applyFit` |
+| Esc closing the panel and Enter copying and closing, from a **physical** keyboard | Narrowed deliberately. The panel's key status is **not** owed to a human: `theUntitledPanelStillTakesKeyStatusWithoutItsProcessBecomingActive` runs at `.prohibited` activation policy, where activation is impossible, so `isKeyWindow == true` there has exactly one possible cause. What that test cannot do is press a key. Plan 3's manual pass pressed them on a `.titled` panel | `TranslationPanel.canBecomeKey`, `cancelOperation`, `keyDown` |
+| The corner nearest the pointer staying put while text streams | The reason the panel was fixed-size for so long. The frames are asserted; whether the already-read lines actually hold still is a thing you have to watch | `applyFit`, `PanelPlacement.reframe` |
+| The rounded corners, with no grey notch behind them | `isOpaque = false` / `backgroundColor = .clear` / `hasShadow` are what make the material corner work, and a square window background showing through is invisible to every test | `TranslationPanel.init` |
+| The panel not shivering while a run streams | Growth is deliberately unanimated during a run and animated once on the settle. Both the 100 ms throttle and the 150 ms tween are chosen against each other, and only watching a real stream says whether that was right | `contentDidChange`, `applyFit` |
+| Dragging the panel's edge, then more text arriving — **and then the next press sizing itself again** | `.resizable` is new to the mask, and `windowDidEndLiveResize` is the only thing that sets `userSized`. Nothing in the suite performs a live resize, so the delegate hookup itself is unexercised. The second half matters as much: `userSized` is cleared in `show(at:)`, so the press after a hand-resize must go back to fitting its content | `PanelController.windowDidEndLiveResize`, `show(at:)` |
+| A translation past the ceiling scrolling inside the panel | The scrolling variant is swapped in from the measurement. `PanelSizer` decides it and is tested; the swap reaching the screen is not | `setScrolling`, `PanelView.scrolls` |
+| The permission prompt and the empty hint each getting a panel that **fits** | Spec §8 asks for three states, not two. The one-word and long-paragraph sizes are measured; `.notPermitted` and `.empty` are the two states a new user meets first and neither has been seen at any size | `PanelView.permissionPrompt`, `emptyHint` |
+| **The measurement holding up in the assembled bundle, not just in the test process** | Spec §8, and it has bitten once already: the 380 × 120 hosting-view collapse reproduced in the bundle and not in a test process. Every size in this section was taken in-process | `PanelController.measure` |
+| **Re-measure `hosting.sizingOptions = []`** | Its evidence — 380 × 120 before, 380 × 260 after, on the running bundle — was taken on a `.titled` panel against a fixed size, and **neither condition exists any more**, so the numbers cannot be reproduced from here. The mechanism it records is sound and the line stays on that basis; someone with the bundle on a screen should take the number again, or delete it | `PanelController.init` |
+| **A hand-dragged panel taller than the screen** | `PanelSizer.fit`'s `userSized` branch now honours the user on both axes — floors only, no ceilings — so nothing stops a drag from producing a frame taller than `maxHeightFraction` would allow, and `PanelPlacement.clamp` only moves the origin, it does not shrink the frame. The one mitigation is that `show(at:)` clears `userSized` on the next press. Whether an over-tall hand-dragged panel actually reads as a problem worth a shrink-back is a thing only someone looking at a screen can judge | `PanelSizer.fit`, `PanelPlacement.clamp` |
+
+**Owed by the UI redesign, Task 3 — the panel's content.** The header, the ⨯ and the material
+are all new, and the suite can only prove the closure is stored, not that the button calls it.
+
+| What to check | Why it needs eyes | Code |
+|---|---|---|
+| The ⨯ in the panel header actually closing the panel | `thePanelOffersACloseControlOfItsOwn` proves `onClose` is stored and callable. A copy-paste wiring the button to a different closure would pass it. Inherent to an environment with no GUI automation | `PanelView.header` |
+| The ⨯'s appearance and hit area beside the direction line | Borderless, an `xmark` glyph, `accessibilityLabel("Закрыть")`. Nothing has rendered it | `PanelView.header` |
+
+**Owed by the UI redesign, Tasks 5–7 — the main window.** The window was rebuilt around a
+toolbar, two panes and a collapsible status bar. Nothing in it has been rendered.
+
+| What to check | Why it needs eyes | Code |
+|---|---|---|
+| **The translation pane refusing the caret** | Spec §8 names this one specifically, because the defect being fixed is precisely that the old pane accepted a caret and silently discarded typing. The replacement is a read-only `Text`, which should have no caret by construction — but that was reasoned from the type, not observed | `TranslationPane.swift` |
+| Text in the translation pane still being selectable by hand | `.textSelection(.enabled)` is what is supposed to keep copying possible once the `TextEditor` is gone. Never exercised | `TranslationPane.swift` |
+| The toolbar: two language pickers, the tone picker and ⇄ on the leading side, «Перевести»/«Отмена» on the trailing side | `.navigation` and `.primaryAction` were checked for availability against the macOS 14 floor by reading the SDK interface, not by looking at a window | `MainWindowView.toolbar` |
+| ⇄ enabled and disabled at the right moments, and swapping what it says it swaps | `canSwapLanguages` and `swapLanguages()` are unit-tested; the button's own disabled state and the pickers updating under it are not | `TranslationViewModel.swapLanguages`, `MainWindowView` |
+| The status bar collapsing and expanding, and its disclosure triangle appearing only when there is something to disclose | The triangle's condition and the warning count are tested as values. Whether the row reads as one line of status, and whether the expanded warnings stop at the 200 pt cap instead of eating the window, is a thing you have to see | `RunStatusBar.swift` |
+| «Скопировать» in the window putting the translation on the real pasteboard | The write now goes through `GeneralPasteboard.write(_:to:)` and is tested against a scratch board, never against `NSPasteboard.general` | `TranslationViewModel.copyToPasteboard`, `GeneralPasteboard.swift` |
+| The two pane headers, the source placeholder and the empty translation state | Placeholder position and its padding, the empty state's centring, and whether `PaneHeader`'s divider and tint read correctly side by side — all five were listed as unobserved when they were written | `SourcePane.swift`, `TranslationPane.swift` |
+
+**Owed by the UI redesign, Tasks 9, 10 and 12 — the settings.** All three panes now share one
+`settingsPane()` frame, and two of them grew sections while that frame stayed fixed.
+
+| What to check | Why it needs eyes | Code |
+|---|---|---|
+| **The settings window no longer resizing between tabs** | Spec §8. The three panes used to fix 420, 420, 520 × 440 and 420 of their own; they now all take 560 × 480 from one modifier. That the resizing actually stopped has not been seen | `SettingsPane.swift` and its three call sites |
+| «Основные» — five sections at 560 × 480 without clipping, and the hotkey recorder still behaving inside a `Section` | The pane went from one flat `Form` to five sections and a fixed height in the same change | `SettingsGeneralView.swift` |
+| The «Доступ» row reading correctly **when the grant is present** | It used to exist only when the permission was missing; it is now always rendered, and the granted state has never been rendered at all | `SettingsGeneralView.swift` |
+| «Модели» — five sections at the same 560 × 480 | This pane gained two sections after the height was fixed by Task 9, and nothing has checked that they fit | `SettingsModelsView.swift` |
+| «в памяти» appearing against the right models, against a **live** Ollama | The residency list is only ever exercised through an offline `StubProbe`. No live server has been in the loop | `ModelsViewModel.resident`, `SettingsModelsView` |
+| Model sizes rendering as «4,8 ГБ» in the list | `RussianCopy.modelSize` is pinned to `ru_RU` and unit-tested; the column it feeds has not been seen | `RussianCopy.modelSize`, `SettingsModelsView` |
+| The fourth tab actually being gone | Established by reading the source and by `git rm`, not by opening the window | `TranslatorApp.swift` |
+| **The «Адрес» row in the «Ollama» section** | New in the final fix wave, to close spec §5.3, which asks that section for the address as well as the state and the re-check. It reads `OllamaClient.defaultBaseURL` so it cannot disagree with the address being called. Whether it fits the row, and whether a fifth control pushes «Модели» past its fixed 560 × 480, has not been seen | `SettingsModelsView.swift`, `OllamaClient.defaultBaseURL` |
+| «Глоссарий» — the header row, and multi-selection by ⌘-click, ⇧-click and marquee | Selection is a `Set<Int>` over shifting indices. The rule that keeps it honest is now a tested pure function, but `List`'s own selection gestures have never been performed | `GlossaryList.swift`, `SettingsGlossaryView.swift` |
+| The ± buttons' disabled state and tooltips, and whether the language picker's 140 pt frame fits the longest Russian language name | Layout arithmetic no test can reach. The picker's hidden label and its new `.help` tooltip are in the same position: the strings are in the source, nothing has hovered them | `GlossaryList.swift` |
+| The empty-glossary message and «Ничего не найдено» being distinguishable | Two different empty states, one string each, never rendered | `SettingsGlossaryView.swift` |
+
+**Owed by the UI redesign, Task 13 — the menu bar glyph and status row.** The whole visible
+result of this task is unobserved: it is a menu-bar icon and a new first row of menu text, and
+nothing in this environment can see either.
+
+| What to check | Why it needs eyes | Code |
+|---|---|---|
+| The `MenuBarExtra` glyph actually switching between `character.bubble` and `exclamationmark.bubble` as Ollama is stopped and started | `menuBarSymbol` is unit-tested; whether `Image(systemName:)` picks up the new value and repaints the real status item is not | `OllamaStatus.menuBarSymbol`, `TranslatorApp.body` |
+| The new first menu row (`Text(status.label)`) rendering above the divider, at a sane width, without truncating or pushing the existing items around | Never opened on a real status item | `MenuContent` in `TranslatorApp.swift` |
+| **A launch loop from `.task { await launch() }` re-running.** Before this task the label view had a constant body with no observation dependencies; it now reads `statusModel.status`, and `launch()` — which the same `.task` calls — writes that property via `statusModel.refresh(...)`. SwiftUI's documented contract re-runs `.task` on the *view's identity* changing, not on every body re-evaluation, so this should be safe, and it is exactly the same shape the `Window` and `Settings` scenes already use with their own `.task`s reading and writing through `statusModel`. But nobody has watched it run. If it is not safe, the failure is not cosmetic: a re-triggered `launch()` re-runs `configurePanel()`, re-registers the hotkey through `coordinator.start`, and re-awaits `warmUp()`, on every status change | `TranslatorApp.body` (the `MenuBarExtra` label), `launch()` |
 
 ---
 
@@ -46,13 +136,96 @@ under them has not changed:
 
 Deliberate, with the reason. Do not "fix" these without reading the reason first.
 
-- **The panel is a fixed 380 × 260.** Nothing resizes it. A one-line result leaves the lower
-  half empty; a long translation scrolls inside it. `PanelController.resize(to:)` existed,
-  was never called, and was deleted rather than wired up. The reasoning and the measured
-  ideal heights (97 pt short, 301 pt long) are in `TranslationPanel.init`'s doc comment.
-  `NSHostingController.sizeThatFits(in:)` with an unbounded height proposal is the candidate
-  measurement if this is revisited — `fittingSize` and `intrinsicContentSize` are both known
-  useless here.
+- **The panel is sized to its content, within bounds it will not leave.** This entry used to
+  say the opposite — a fixed 380 × 260 that nothing resized — and that was retired by the UI
+  redesign's Task 4, which took the candidate measurement the old entry pointed at and wired
+  it up. What is deliberate now: the width is clamped to 300–560 pt; the height has a 120 pt
+  floor, is monotonic within a presentation and is capped at 0.6 of `visibleFrame`, past which
+  the content scrolls instead; and dragging an edge hands the size to the user until the panel
+  hides. `PanelSizer` owns all four rules and is where to change them.
+  Measured through the two calls `PanelController.measure` makes, on the real `PanelView`:
+  274 × 94 for a one-word translation, 6929 × 302 for a forty-sentence one — which clamp to
+  the width floor and the width ceiling respectively. The old entry's ideal heights (97 pt
+  short, 301 pt long) are gone with the doc comment that held them.
+- **The width is chosen while the reply arrives and frozen at the settle — not chosen up
+  front.** This entry said the opposite until the final fix wave: that the width was «frozen
+  for a whole presentation», which is what `show(at:)` did. It could not be right.
+  `HotkeyCoordinator.handlePress` assigns `panelModel.sourceText` *after* the `afterCapture()`
+  that shows the panel, and the translation streams in after that, so at `show(at:)` the panel
+  is being measured against the previous press's result — or, on the first press of a session,
+  against nothing. The first hotkey translation of every session came up at the 300 pt floor
+  and compensated with height, which on a laptop display crosses the 0.6 ceiling and swaps in
+  the scrolling variant for content that would have fitted unscrolled.
+  Spec §3.3 puts the freeze on «the first content update after `show(at:)`». That is not
+  enough either, and the measurement is in `PanelSizer.fit`'s width rule: the real `PanelView`
+  asks for 347 pt before a single character has arrived and 6929 once the whole reply has, and
+  every point in between is a wrong answer — an independent probe measured a forty-sentence
+  reply frozen at 330/347 pt as 462 pt tall, against 560 × 302 correct, a much worse shape (not,
+  as this entry said until now, a case that crosses the 0.6 ceiling on a laptop display: that
+  probe's own numbers need `visibleFrame.height` ≤ 770 pt to scroll at 330/347, and a 14-inch
+  MacBook Pro reports ≈ 875, a 13-inch Air ≈ 850 — the only width that scrolls on every current
+  laptop is the 300 pt floor above, the defect's width, not a candidate freeze point).
+  **No early moment knows the final width.** So the width now tracks the content —
+  monotonically, never shrinking — and `frozenWidth` pins it at the settle, which is when the
+  reader starts reading. Measured per streaming run, repeated and stable to ±1: flowing prose
+  at ~125 chars/s re-wraps 4–5 times over 48 ms–0.9 s with 86–89 chars on screen when it stops;
+  slow prose at ~25 chars/s re-wraps 8 times over 48 ms–3.4 s with 79 chars on screen; hard-broken
+  short lines (a list, a poem, dialogue) re-wrap 12 times over 42 ms–6.7 s with 626 chars on
+  screen. The first re-wrap always happens with zero characters on screen, and flowing prose
+  pins at `maxWidth` once its longest unwrapped line passes ~80 characters, so most of a long
+  reply arrives at a fixed width — the bad case is content whose lines are individually short.
+  From the settle the width does not move again for the rest of the presentation, including
+  through a «Повторить».
+  **This is a deliberate deviation from the review that asked for the fix**, which required the
+  width to be frozen from the moment it is first set. It was refused on the measurement above
+  and the reason is recorded here rather than only in the fix report.
+  `aPanelShownBeforeItsTranslationArrivesEndsUpAsWideAsThatTranslationNeeds` is the guard.
+- **Growth can now move the anchored corner near the right edge of a screen, and that is
+  accepted.** New with the width rule above, and the same family as the three imprecisions
+  below. `show(at:)` picks the anchor from a *provisional* size, so a panel that opened narrow
+  enough to fit to the right of the pointer and then grew to 560 pt can overflow the screen,
+  at which point `PanelPlacement`'s clamp — the only thing that pulls a grown panel back on
+  screen — slides it left, taking the already-read lines with it. Re-running `place` from the
+  stored cursor at the first width change would fix it and was not done: it would re-decide
+  the *vertical* placement too, at the one moment the panel has just appeared. Never observed;
+  nothing here can see a screen.
+- **Three small imprecisions in the panel's resize path, left alone with the reason.** All
+  three were found by review during the UI redesign and judged not worth the machinery:
+  a trailing-fit `Task` scheduled in one presentation can be consumed by the next when a hide
+  and a show land inside 100 ms (benign — `applyFit` re-measures live state — but it jitters
+  the throttle, and a generation token would make it exact); `lastFit` is not reset in
+  `show(at:)`, so a presentation opening within 100 ms of the previous one's last fit has its
+  first growth delayed by up to that interval; and `windowDidEndLiveResize` sets `userSized`
+  but never re-fits, so **dragging a finished panel smaller clips its content, with no scroll
+  view, until the panel hides**. The last of these is the one a user could actually meet.
+- **The stale-measuring comment in `PanelController.measure` is left as written, including the
+  word «every».** The UI redesign's own ledger proposed narrowing it — claiming that because
+  `PanelHost` hands `selection` to `PanelView` as a stored value, a change of *selection kind*
+  re-evaluates without a layout pass, so `.empty` and `.notPermitted` presses were never sized
+  against the previous press. **That claim is retracted.** Settled against the real `PanelHost`,
+  driven through the real `HotkeyCoordinator.handlePress` with an injected `SelectionReader`,
+  reading the frame at `show(at:)`. Five presses — short text, long text, `.empty`,
+  `.notPermitted`, short text — with `measuring.view.layoutSubtreeIfNeeded()` in place:
+  300 × 120 / 300 × 120 / 326 × 120 / 560 × 131 / 560 × 305. With it commented out:
+  300 × 120 / 300 × 120 / **560 × 305 / 326 × 120 / 560 × 131**. Deterministic over repeated
+  runs, identical whether or not the panel is hidden between presses. So a selection-*kind*
+  change is stale too, and `.empty` and `.notPermitted` are exactly the presses that never run
+  a translation and so never get a second chance. The stale size also **changes press to
+  press** rather than freezing — presses 4 and 5 are each precisely the previous press's size —
+  which makes «sizes every press against the previous one» the accurate wording. Reproducing
+  this needs `PanelHost`'s `private` lifted so `@testable import` can see it; two earlier probes
+  that used a stand-in instead each got a different wrong answer, which is the lesson worth
+  keeping. One qualification since the final fix wave: those frames are the size at `show(at:)`,
+  and for a `.text` press that is now **provisional** — the width is no longer frozen there, so
+  such a press does get a second chance, in both axes. For an `.empty` or a `.notPermitted`
+  press nothing changes, and they are the two the entry turns on.
+- **`TranslationPanel.constrainFrameRect`'s two observations no longer have equal standing, and
+  the comment now says so.** Task 4 re-measured the constraint against the current mask: the
+  menu-bar-band pull-down reproduces, the Stage Manager case — a frame at x = 19 coming back at
+  x = 221 — does **not**, consistent with the original note saying it was taken on a machine
+  with Stage Manager on. For a while only the first half reached the comment while the second
+  lived in a task report, which is where measurements go to be lost. Both are in the comment
+  now. The override stands on the first alone.
 - **A refused `start()` at launch is swallowed.** If `HotkeyManager.register` ever fails the
   user gets no shortcut and no message. Unreachable today: `AppSettings.hotkey` guarantees a
   valid combination, and the only other failure is `-9878` for a combination another component
@@ -72,8 +245,35 @@ Deliberate, with the reason. Do not "fix" these without reading the reason first
   `UserDefaults`, unread. Found while correcting §5 against the code.
 - **`swift run acceptance` is not in CI, deliberately.** It needs a live Ollama and a resident
   model. There is no CI at all for that reason.
-- **Cosmetics on the Модели tab** — the `aya-expanse:8b` value wraps to three lines, and the
-  settings window changes size between tabs.
+- **Cosmetics on the Модели tab** — the `aya-expanse:8b` value wraps to three lines. The other
+  half of this entry, «the settings window changes size between tabs», is retired: all three
+  panes now take one 560 × 480 frame from `settingsPane()`. Whether the resizing has actually
+  stopped is in §1, unobserved.
+- **One regression guard is strengthened rather than proven deterministic.**
+  `aReusedControllerMeasuresThePressItIsShowingNotThePreviousOne` catches the removal of
+  `measuring.view.layoutSubtreeIfNeeded()` by observing that a reused measuring host is stale.
+  With one long press and one short one it caught that mutation 3/3 under `--filter Panel` and
+  **39/40 under the full suite**, which is the suite this project gates on. The escape is per
+  *measurement*, not per run: on the one escaping run of forty,
+  `aPanelShownBeforeItsTranslationArrivesEndsUpAsWideAsThatTranslationNeeds` caught the same
+  mutation in the same process, so something outside the test freshened one host and not the
+  other. What that something is was **not isolated** — the test has no suspension point of its
+  own, so it is inside AppKit or SwiftUI. The guard now alternates five times instead of once,
+  which measured 0 escapes in 40 runs. That is a reduction, not a proof, and it is written here
+  rather than left as a guard that «usually works».
+- **Two copy strings ship differently from the spec, on purpose.** Spec §5.4 names the glossary
+  header's language control «Показывать перевод на»; it ships with that wording but
+  `.labelsHidden()`, so the string is the accessibility label and a `.help` tooltip rather than
+  a visible one — the header already carries a search field, a term count and two buttons, and
+  the picker itself is capped at 140 pt, which is listed in §1 as not yet known to fit the
+  longest Russian language name. Spec §5.3 names the download section «Загрузка»; it ships as
+  «Загрузить модель», because this pane says «модель в памяти» and «модель не загружена» a few
+  rows above, so the bare noun reads as «loading into memory» as readily as «downloading».
+- **The smaller findings the UI redesign deferred are listed in its ledger**, not repeated
+  here: `docs/history/2026-07-30-ui-redesign-ledger.md`. They are test-coverage gaps and
+  comment imprecisions rather than behaviour, with the exception of the resize items above,
+  which are here because a user could meet them. Most of that list was closed by the final fix
+  wave; the ledger's own «Deferred» section says which.
 
 ---
 
@@ -103,6 +303,9 @@ to be.
   what `MainActor.assumeIsolated` in the Carbon callback relies on. That the *OS* uses the same
   queue for a genuine press could not be established from a test process. If it does not, the
   failure is a loud trap rather than silent misbehaviour.
+- **Whether `MenuBarExtra` caches its content view.** `TranslatorApp.swift` states it as fact.
+  The claim is inherited from general SwiftUI behaviour, not measured on this system, and it is
+  part of why «when the menu opens» is not one of the glyph's refresh points.
 
 ---
 
