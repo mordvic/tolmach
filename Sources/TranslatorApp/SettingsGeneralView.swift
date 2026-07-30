@@ -68,12 +68,27 @@ struct SettingsGeneralView: View {
             }
 
             Section("Языки") {
-                Picker("Основной язык", selection: $settings.primaryLanguage) {
+                // «Мой язык» and «Второй язык», not «Основной» and «Рабочий». The old pair
+                // named nothing a user could act on — which of two languages is «основной»
+                // and which is «рабочий» is a question about this app's internals, not about
+                // translation — so the whole direction rule had to be spelled out in a
+                // caption underneath. The rule is now split across the two labels' own
+                // captions, where each half sits next to the control it governs.
+                //
+                // The settings' stored names stay `primaryLanguage` and `workingLanguage`.
+                // Renaming those would rewrite `UserDefaults` keys and silently reset every
+                // existing install's languages, which is a far worse trade than a label and a
+                // property that read differently.
+                Picker("Мой язык", selection: $settings.primaryLanguage) {
                     ForEach(Language.allCases, id: \.self) { Text($0.russianName).tag($0) }
                 }
-                Picker("Рабочий язык", selection: $settings.workingLanguage) {
+                Text("На него переводится всё, что написано на других языках.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Picker("Второй язык", selection: $settings.workingLanguage) {
                     ForEach(Language.allCases, id: \.self) { Text($0.russianName).tag($0) }
                 }
+                Text("На него переводится текст, который уже на моём языке.")
+                    .font(.caption).foregroundStyle(.secondary)
                 // Equal languages make `targetLanguage(forDetected:)` return the same
                 // language whatever the source is, so every translation becomes a round trip
                 // into the primary language and the app quietly stops doing anything useful.
@@ -81,18 +96,19 @@ struct SettingsGeneralView: View {
                 // user is mid-edit, and only they know which of the two pickers they meant.
                 if languagesCollide {
                     Label {
-                        Text("Основной и рабочий языки совпадают: любой текст, на каком бы "
-                             + "языке он ни был, будет переводиться на "
-                             + "\(settings.primaryLanguage.russianName) — включая текст, "
-                             + "который уже на нём написан. Выберите разные языки.")
+                        Text("Оба языка совпадают: любой текст, на каком бы языке он ни был, "
+                             + "будет переводиться на \(settings.primaryLanguage.russianName) — "
+                             + "включая текст, который уже на нём написан. Выберите разные языки.")
                     } icon: {
                         Image(systemName: "exclamationmark.triangle.fill")
                     }
                     .font(.caption).foregroundStyle(.orange)
                 }
-                Text("Направление выбирается само: текст на основном языке переводится в "
-                     + "рабочий, любой другой — в основной.")
-                    .font(.caption).foregroundStyle(.secondary)
+                // The section-wide caption that used to sit here — «Направление выбирается
+                // само: текст на основном языке переводится в рабочий, любой другой — в
+                // основной» — is gone. It existed to explain two labels that explained
+                // nothing; each half now sits under the picker it describes, which is where
+                // a reader looks for it.
             }
 
             Section("Перевод") {
@@ -102,13 +118,21 @@ struct SettingsGeneralView: View {
             }
 
             Section("Поведение") {
-                // «по хоткею» is not padding. `autoCopy` is read in exactly one place —
-                // `HotkeyCoordinator.runTranslation` — so a translation done in the main
-                // window never touches the clipboard whatever this says. Spec §7.2 puts
-                // automatic copying in the panel's section deliberately; the label used to
-                // promise the whole app and quietly mean a third of it.
-                Toggle("Копировать результат по хоткею автоматически", isOn: $settings.autoCopy)
-                Toggle("Прогревать модель при запуске", isOn: $settings.warmUpOnLaunch)
+                // Naming the shortcut is not padding, and it must stay. `autoCopy` is read in
+                // exactly one place — `HotkeyCoordinator.runTranslation` — so a translation
+                // done in the main window never touches the clipboard whatever this says.
+                // Spec §7.2 puts automatic copying in the panel's section deliberately; the
+                // label used to promise the whole app and quietly mean a third of it.
+                //
+                // «по сочетанию клавиш» and no longer «по хоткею», because the section above
+                // this one is called «Сочетание клавиш». One concept under two names is the
+                // drift `CONTEXT.md` exists to stop, and «хоткей» was also the only English
+                // word in a window that is otherwise entirely Russian.
+                Toggle("Копировать перевод по сочетанию клавиш", isOn: $settings.autoCopy)
+                // «Прогревать модель при запуске» used to sit here. It moved to «Модели», next
+                // to «Держать модель в памяти»: both settings govern the same thing — whether
+                // the model is resident when the user presses the shortcut — and having them
+                // in two different tabs meant neither could be understood without the other.
             }
         }
         .settingsPane()

@@ -70,21 +70,21 @@ import OllamaKit
 /// 0 and 100 are here because they are the two counts whose last digit is 0 — the branch
 /// no other case in this list reaches — and because the helper's doc comment names them.
 @Test(arguments: [
-    (0, "0 фрагментов"),
-    (1, "1 фрагмент"),
-    (2, "2 фрагмента"),
-    (4, "4 фрагмента"),
-    (5, "5 фрагментов"),
-    (11, "11 фрагментов"),
-    (12, "12 фрагментов"),
-    (13, "13 фрагментов"),
-    (14, "14 фрагментов"),
-    (21, "21 фрагмент"),
-    (22, "22 фрагмента"),
-    (25, "25 фрагментов"),
-    (100, "100 фрагментов"),
-    (101, "101 фрагмент"),
-    (111, "111 фрагментов"),
+    (0, "0 частей"),
+    (1, "1 часть"),
+    (2, "2 части"),
+    (4, "4 части"),
+    (5, "5 частей"),
+    (11, "11 частей"),
+    (12, "12 частей"),
+    (13, "13 частей"),
+    (14, "14 частей"),
+    (21, "21 часть"),
+    (22, "22 части"),
+    (25, "25 частей"),
+    (100, "100 частей"),
+    (101, "101 часть"),
+    (111, "111 частей"),
 ])
 func chunkCountUsesTheRightPluralForm(count: Int, expected: String) {
     #expect(RussianCopy.chunkCount(count) == expected)
@@ -94,21 +94,21 @@ func chunkCountUsesTheRightPluralForm(count: Int, expected: String) {
 /// chunk count is never negative, so nothing in the app exercises this; the assertion is
 /// what stops the doc comment and the code drifting apart.
 @Test(arguments: [
-    (1, "фрагмент"),
-    (2, "фрагмента"),
-    (4, "фрагмента"),
-    (5, "фрагментов"),
-    (11, "фрагментов"),
-    (13, "фрагментов"),
-    (21, "фрагмент"),
-    (22, "фрагмента"),
-    (100, "фрагментов"),
+    (1, "часть"),
+    (2, "части"),
+    (4, "части"),
+    (5, "частей"),
+    (11, "частей"),
+    (13, "частей"),
+    (21, "часть"),
+    (22, "части"),
+    (100, "частей"),
 ])
 func negativeCountsTakeTheSameFormAsTheirMagnitude(magnitude: Int, expected: String) {
-    #expect(RussianCopy.plural(-magnitude, "фрагмент", "фрагмента", "фрагментов") == expected)
+    #expect(RussianCopy.plural(-magnitude, "часть", "части", "частей") == expected)
     // Paired with the positive twin in the same test, so the claim under scrutiny is
     // "sign does not matter" rather than two independent tables that could both be wrong.
-    #expect(RussianCopy.plural(magnitude, "фрагмент", "фрагмента", "фрагментов") == expected)
+    #expect(RussianCopy.plural(magnitude, "часть", "части", "частей") == expected)
 }
 
 /// `abs(Int.min)` traps, which is why the helper takes `% 100` *before* `abs`. Reordering

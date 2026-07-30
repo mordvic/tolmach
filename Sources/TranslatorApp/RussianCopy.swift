@@ -84,10 +84,17 @@ enum RussianCopy {
         return "\(left) → \(target.russianName)"
     }
 
-    /// "3 фрагмента" — the hint the main window shows over the source pane when the text
-    /// will be translated in more than one piece.
+    /// "3 части" — the hint the main window shows over the source pane when the text will be
+    /// translated in more than one request.
+    ///
+    /// «часть» and not «фрагмент». The concept is `CONTEXT.md`'s «чанк», whose _Avoid_ list
+    /// names «фрагмент» outright — and those lists are words that caused a real ambiguity,
+    /// not preferences. «Чанк» itself is no better on screen: it is a transliteration that
+    /// means nothing to someone translating a document. `CONTEXT.md` now records «часть» as
+    /// the one word this concept wears in the interface, so the glossary keeps doing its job
+    /// — one concept, one name per audience — instead of being quietly broken.
     static func chunkCount(_ count: Int) -> String {
-        "\(count) \(plural(count, "фрагмент", "фрагмента", "фрагментов"))"
+        "\(count) \(plural(count, "часть", "части", "частей"))"
     }
 
     /// "12 символов" — the source pane's own character count, next to `chunkCount` in its
