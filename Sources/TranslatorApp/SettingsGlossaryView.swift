@@ -193,9 +193,18 @@ struct SettingsGlossaryView: View {
         for index in selection.sorted(by: >) where glossary.file.entries.indices.contains(index) {
             glossary.file.entries.remove(at: index)
         }
+        // `indicesMayHaveShifted: true`, because removal is exactly the situation that
+        // parameter names — every index after the smallest one removed now points at a
+        // different row. `selection = []` two lines up already empties the set `reorder`
+        // would filter, so today the flag cannot change the outcome; it is passed anyway so
+        // the truth sits in the contract instead of in the order of these statements. Belt
+        // and braces on purpose: swap these two lines, or add a second removal path that
+        // forgets the clear, and `false` here would silently reintroduce the stale-index
+        // defect `indicesMayHaveShifted` exists to prevent — a selection surviving past a
+        // removal it should not have survived, deleting the wrong term on the next edit.
         selection = []
         persist()
-        reorder()
+        reorder(indicesMayHaveShifted: true)
     }
 
     private func unmute(at index: Int) {

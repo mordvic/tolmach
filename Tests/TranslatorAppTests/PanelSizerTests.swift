@@ -123,6 +123,25 @@ private let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)   // ceiling: 
     #expect(fit.scrolls)
 }
 
+@Test func aHandWidenedPanelKeepsWidthPastTheNormalCeiling() {
+    // maxWidth (560) is a preference the app holds on the user's behalf; an explicit drag
+    // overrules it. Only the floor still applies on this axis.
+    let fit = PanelSizer.fit(ideal: CGSize(width: 500, height: 200), frozenWidth: 380,
+                             previous: CGSize(width: 700, height: 200), screen: screen,
+                             userSized: true)
+    #expect(fit.size.width == 700)
+}
+
+@Test func aHandHeightenedPanelKeepsHeightPastTheNormalCeiling() {
+    // The height ceiling (0.6 of the screen here: 540) is the same kind of preference as
+    // maxWidth, not the same kind of limit as minHeight — an explicit drag overrules it too,
+    // so a hand-dragged panel can end up taller than the ceiling would otherwise allow.
+    let fit = PanelSizer.fit(ideal: CGSize(width: 380, height: 200), frozenWidth: 380,
+                             previous: CGSize(width: 380, height: 700), screen: screen,
+                             userSized: true)
+    #expect(fit.size.height == 700)
+}
+
 @Test func aUserResizedPanelCannotProduceADegenerateZeroSizeFrame() {
     // Before the first show, previous is .zero. If userSized is true on that call,
     // returning previous unguarded would hand NSWindow.setFrame a non-window-compatible

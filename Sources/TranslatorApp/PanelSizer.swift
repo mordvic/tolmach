@@ -46,16 +46,24 @@ enum PanelSizer {
                             height: measured(ideal.height, unmeasured: minHeight,
                                              unbounded: .greatestFiniteMagnitude))
 
-        // The user's choice wins outright — but never produces a degenerate frame. A panel
-        // smaller than its own buttons is the worse failure, even when the user chose it. The
-        // result still respects the floors and the monotonic height from previous, keeping the
-        // user's size where possible. Not "wins until the content grows past it": resizing a
-        // panel is an instruction, and taking the size back the moment another line arrives
-        // would make the handle useless exactly when it is reached for.
+        // The user's choice wins outright on both axes — but never produces a degenerate
+        // frame. `maxWidth` and the height ceiling both exist to hold a preference the app
+        // keeps on the user's behalf (a narrower reading line, a panel that leaves room to see
+        // the work underneath), and an explicit drag overrules a preference; that is why
+        // neither ceiling is applied here. `minWidth` and `minHeight` are a different kind of
+        // limit — a panel smaller than its own button row is unusable, not merely unpreferred
+        // — so the floors still apply even to a hand-chosen size.
+        //
+        // Consequence, not a defect to hide: with no height ceiling here, a hand-dragged panel
+        // can end up taller than the screen — `PanelPlacement.clamp` only moves the origin, and
+        // `TranslationPanel.constrainFrameRect` returns frames untouched by design, so nothing
+        // pulls an over-tall frame back. The one mitigation is that `show(at:)` clears
+        // `userSized`, so the *next* press sizes itself fresh rather than inheriting it. See
+        // `docs/OPEN-ITEMS.md` §1 for the standing question of whether that mitigation is
+        // enough.
         guard !userSized else {
-            let ceiling = max(minHeight, screen.height * maxHeightFraction)
             let userWidth = max(previous.width, minWidth)
-            let userHeight = min(max(previous.height, minHeight), ceiling)
+            let userHeight = max(previous.height, minHeight)
             return Fit(size: CGSize(width: userWidth, height: userHeight), scrolls: wanted.height > userHeight)
         }
 
