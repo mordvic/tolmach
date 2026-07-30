@@ -382,6 +382,86 @@ private func makeModel(_ client: LLMClient) -> TranslationViewModel {
 }
 
 @MainActor
+@Test func swappingIsRefusedUntilBothLanguagesAreActuallyKnown() {
+    // Exchanging «определить» and «по правилу» exchanges two absences. The button has to be
+    // able to say so before it is pressed, which is why this is a property and not a
+    // `Bool` returned by the swap.
+    let model = makeModel(ScriptedClient(responses: []))
+    #expect(model.canSwapLanguages == false)
+    model.sourceOverride = .en
+    #expect(model.canSwapLanguages == false)   // the target is still «по правилу»
+    model.targetOverride = .ru
+    #expect(model.canSwapLanguages)
+}
+
+@MainActor
+@Test func afinishedRunSuppliesTheLanguagesTheOverridesDidNot() async {
+    // The ordinary case: the user typed English, left both pickers alone, and pressed
+    // translate. Both languages are now known — one detected, one resolved — so the swap
+    // is available even though neither override was ever set.
+    let model = makeModel(ScriptedClient(responses: ["Готово"]))
+    model.sourceText = "Ready"
+    await model.translate()
+    #expect(model.canSwapLanguages)
+}
+
+@MainActor
+@Test func swappingExchangesTheLanguagesAndMovesTheTranslationIntoTheSource() {
+    let model = makeModel(ScriptedClient(responses: []))
+    model.sourceOverride = .en
+    model.targetOverride = .ru
+    model.sourceText = "Ready"
+    model.translatedText = "Готово"
+    model.swapLanguages()
+    #expect(model.sourceOverride == .ru)
+    #expect(model.targetOverride == .en)
+    #expect(model.sourceText == "Готово")
+    #expect(model.translatedText.isEmpty)
+}
+
+@MainActor
+@Test func swappingDropsTheOutcomeWithTheTextItDescribed() async {
+    // `outcome` and `translatedText` are cleared as a pair everywhere else in this type,
+    // and this is not the place to break that: an outcome left behind would render the old
+    // run's markup diffs and glossary checks under an empty pane.
+    let model = makeModel(ScriptedClient(responses: ["Готово"]))
+    model.sourceText = "Ready"
+    await model.translate()
+    #expect(model.outcome != nil)
+    model.swapLanguages()
+    #expect(model.outcome == nil)
+}
+
+@MainActor
+@Test func swappingWithNoTranslationYetLeavesTheSourceAlone() {
+    // Pressing ⇄ before translating should exchange the pickers, not blank the text the
+    // user has just typed.
+    let model = makeModel(ScriptedClient(responses: []))
+    model.sourceOverride = .en
+    model.targetOverride = .ru
+    model.sourceText = "Ready"
+    model.swapLanguages()
+    #expect(model.sourceText == "Ready")
+    #expect(model.sourceOverride == .ru)
+}
+
+@MainActor
+@Test func swappingIsRefusedWhileARunIsInFlight() async {
+    // The running task writes into `translatedText`. Moving it out from under that task
+    // would put half a translation into the source field. Waits on the state itself
+    // (`waitUntil`) rather than a fixed sleep, for the reason recorded on that helper: a
+    // wall-clock guess can only ever be "long enough on the machines we tried".
+    let model = makeModel(ScriptedClient(responses: ["Готово"], delayPerToken: .milliseconds(5)))
+    model.sourceOverride = .en
+    model.targetOverride = .ru
+    model.sourceText = "Ready"
+    let run = Task { await model.translate() }
+    await waitUntil("the run has started") { model.state == .running }
+    #expect(model.canSwapLanguages == false)
+    await run.value
+}
+
+@MainActor
 @Test func adoptRefusesExactlyWhenTheReasonSaysItWill() async {
     // The two must not be able to disagree: `adopt` is defined as "no reason to refuse", and
     // this is what stops a later edit adding a guard to one and not the other.

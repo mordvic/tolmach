@@ -120,6 +120,48 @@ final class TranslationViewModel {
         Chunker.chunk(sourceText, maxCharacters: settings.chunkSize).count
     }
 
+    /// The source language as the next run would resolve it, or nil if nobody knows yet.
+    ///
+    /// The override first, then what the last finished run detected. Not
+    /// `LanguageDetector.detect(sourceText)`: detection is the *translation's* job and
+    /// running it here would make a toolbar button re-detect on every keystroke, and would
+    /// promise a language the run may not agree with.
+    private var knownSource: Language? { sourceOverride ?? outcome?.detectedSource }
+    private var knownTarget: Language? { targetOverride ?? resolvedTarget }
+
+    /// Whether ⇄ has two languages to exchange.
+    ///
+    /// A property rather than a `Bool` returned by `swapLanguages()`, for the same reason
+    /// `adoptionRefusal(from:)` is a property of the rule and not of the attempt: the button
+    /// must answer before it is pressed, and a view that re-derived the condition would
+    /// keep offering a swap for a case added later.
+    var canSwapLanguages: Bool {
+        state != .running && knownSource != nil && knownTarget != nil
+    }
+
+    /// Translate the other way: the languages change places and the translation becomes the
+    /// new source.
+    ///
+    /// The translation is moved rather than copied because the alternative is worse in both
+    /// directions — left in place it would be a translation of text that is no longer in the
+    /// source pane, and cleared without being moved it would throw away the only thing the
+    /// user has to translate back.
+    func swapLanguages() {
+        guard canSwapLanguages, let source = knownSource, let target = knownTarget else { return }
+        sourceOverride = target
+        targetOverride = source
+        if !translatedText.isEmpty {
+            sourceText = translatedText
+            translatedText = ""
+        }
+        // Dropped with the text it described, the same pairing `translate()` maintains: an
+        // outcome that outlives its text renders the previous run's markup diffs and
+        // glossary checks under whatever is on screen now.
+        outcome = nil
+        resolvedTarget = nil
+        state = .idle
+    }
+
     func translate() async {
         // One run at a time. Two concurrent runs share `translatedText` and
         // `clearedPrevious`, so both consumers append into the same pane and the user sees
