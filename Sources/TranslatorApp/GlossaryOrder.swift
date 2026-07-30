@@ -20,9 +20,11 @@ enum GlossaryOrder {
         let matching = entries.indices.filter { index in
             needle.isEmpty || matches(entries[index], needle)
         }
-        // `enumerated` and the index tiebreaker make this a stable sort. Swift's `sort` is
-        // not guaranteed stable, and two rows with the same term swapping places between
-        // recomputations would leave the user unable to tell which one they were editing.
+        // The index tiebreaker makes the ordering total: the output is uniquely determined
+        // by the input and does not depend on sort's unspecified handling of equal elements.
+        // Without it, two rows with the same term could swap places between recomputations.
+        // No black-box test catches the tiebreaker's absence on this toolchain — tested with
+        // 3, 50, 200, and 5000 entries. Record this contract to prevent tidying it away.
         let indexed = matching.map { (index: $0, term: entries[$0].term.lowercased()) }
         let sorted = indexed.sorted { left, right in
             left.term == right.term ? left.index < right.index : left.term < right.term

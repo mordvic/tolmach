@@ -21,15 +21,15 @@ private func entries(_ terms: String...) -> [GlossaryEntry] {
 }
 
 @Test func theSearchMatchesTermsCaseInsensitively() {
-    let order = GlossaryOrder.visibleOrder(entries: entries("Толмач", "чанк", "глоссарий"),
-                                           query: "ЧАН")
+    let order = GlossaryOrder.visibleOrder(entries: entries("Толмач", "ЧАНК", "глоссарий"),
+                                           query: "чан")
     #expect(order == [1])
 }
 
 @Test func theSearchAlsoMatchesTheTranslations() {
     // A user looking for the English side of a pair should not have to remember the Russian.
     var withTranslation = GlossaryEntry(term: "чанк")
-    withTranslation.translations["en"] = "chunk"
+    withTranslation.translations["en"] = "CHUNK"
     let order = GlossaryOrder.visibleOrder(entries: [GlossaryEntry(term: "тон"), withTranslation],
                                            query: "chunk")
     #expect(order == [1])
@@ -48,9 +48,10 @@ private func entries(_ terms: String...) -> [GlossaryEntry] {
     #expect(order.sorted() == [0, 1])
 }
 
-@Test func theOrderIsStableForTermsThatCompareEqual() {
-    // Two equal terms must keep their file order, or the two rows swap places whenever the
-    // list is recomputed and the user cannot tell which one they were editing.
+@Test func equalTermsAreOrderedByTheirFilePosition() {
+    // Equal terms must keep their file order. The tiebreaker makes the ordering total so the
+    // result is uniquely determined by the input and does not depend on sort's unspecified
+    // handling of equal elements.
     let order = GlossaryOrder.visibleOrder(entries: entries("чанк", "чанк", "чанк"), query: "")
     #expect(order == [0, 1, 2])
 }
