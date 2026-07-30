@@ -71,7 +71,7 @@ struct TranslatorApp: App {
         // real content needs — the panel itself, for «закрыть», and `openWindow` — either
         // does not exist yet here or is not readable outside a scene, and the panel is never
         // ordered in before that point.
-        _panel = State(initialValue: PanelController { AnyView(EmptyView()) })
+        _panel = State(initialValue: PanelController { _ in AnyView(EmptyView()) })
     }
 
     var body: some Scene {
@@ -200,21 +200,34 @@ struct TranslatorApp: App {
     /// referenced while it is being constructed, and «Открыть в окне» needs `openWindow`,
     /// which is only readable from inside a scene.
     private func configurePanel() {
-        panel.setContent(AnyView(PanelHost(
-            coordinator: coordinator,
-            windowModel: translation,
-            // Copying does not close. Enter is the shortcut that means «скопировать и
-            // закрыть» (spec 7.2); the button is for a user who wants to keep reading.
-            onCopy: { Task { await coordinator.copyResult() } },
-            onOpenInWindow: { handOffToWindow() },
-            onGrantPermission: {
-                // Both, and in this order. `requestTrust` is what actually puts this app into
-                // the Accessibility list — a user sent straight to the pane by `openSettings`
-                // alone would have to find the app with the «+» button first — and
-                // `openSettings` is what the button's label promises.
-                PermissionsGate.requestTrust()
-                PermissionsGate.openSettings()
-            })))
+        // A builder rather than a view: the controller rebuilds the content in its
+        // non-scrolling variant to measure it, and in whichever variant the measurement then
+        // calls for to display it.
+        panel.setContentBuilder { scrolls in
+            AnyView(PanelHost(
+                coordinator: coordinator,
+                windowModel: translation,
+                scrolls: scrolls,
+                // Copying does not close. Enter is the shortcut that means «скопировать и
+                // закрыть» (spec 7.2); the button is for a user who wants to keep reading.
+                onCopy: { Task { await coordinator.copyResult() } },
+                onOpenInWindow: { handOffToWindow() },
+                // The panel's own ⨯, which exists because dropping `.titled` from the style
+                // mask took the standard close button with it. Same two steps as Esc.
+                onClose: {
+                    coordinator.panelModel.cancel()
+                    panel.hide()
+                },
+                onGrantPermission: {
+                    // Both, and in this order. `requestTrust` is what actually puts this app
+                    // into the Accessibility list — a user sent straight to the pane by
+                    // `openSettings` alone would have to find the app with the «+» button
+                    // first — and `openSettings` is what the button's label promises.
+                    PermissionsGate.requestTrust()
+                    PermissionsGate.openSettings()
+                },
+                onContentChange: { settling in panel.contentDidChange(settling: settling) }))
+        }
         panel.onEscape = {
             coordinator.panelModel.cancel()
             panel.hide()
@@ -312,9 +325,14 @@ private struct PanelHost: View {
     /// would be refused lives here. Asked inside `body`, so observation picks the change up
     /// and the button re-enables when the window finishes.
     let windowModel: TranslationViewModel
+    /// Decided by `PanelController` from the measurement, not by this view: the content is
+    /// measured in its non-scrolling form, and only the variant that is *displayed* scrolls.
+    let scrolls: Bool
     let onCopy: () -> Void
     let onOpenInWindow: () -> Void
+    let onClose: () -> Void
     let onGrantPermission: () -> Void
+    let onContentChange: (Bool) -> Void
 
     var body: some View {
         PanelView(model: coordinator.panelModel,
@@ -323,7 +341,21 @@ private struct PanelHost: View {
                   onCopy: onCopy,
                   onOpenInWindow: onOpenInWindow,
                   onRetry: { Task { await coordinator.retry() } },
-                  onGrantPermission: onGrantPermission)
+                  onGrantPermission: onGrantPermission,
+                  scrolls: scrolls,
+                  onClose: onClose)
+            // Deferred to a later turn of the main actor on purpose. These fire *during*
+            // the view update that produced the new text, and resizing a window from
+            // inside a SwiftUI update re-enters layout on a view AppKit is already laying
+            // out. The controller's own throttle then coalesces the burst.
+            .onChange(of: coordinator.panelModel.translatedText) { _, _ in
+                Task { @MainActor in onContentChange(false) }
+            }
+            .onChange(of: coordinator.panelModel.state) { _, new in
+                // A state that is no longer `.running` is the settle: the last size this
+                // presentation will be asked for, and the only one animated.
+                Task { @MainActor in onContentChange(new != .running) }
+            }
     }
 }
 

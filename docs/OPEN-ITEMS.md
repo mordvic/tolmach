@@ -38,6 +38,20 @@ under them has not changed:
 | The window and Settings actually coming **forward** | `NSApp.activate(ignoringOtherApps:)` does not activate on macOS 14; replaced with cooperative activation, which no one has watched work | `activateThisApp()` in `TranslatorApp.swift` |
 | The permission row clearing after granting and returning | It is refreshed on `didBecomeActiveNotification`; the failure it fixes was telling the user their grant had not worked | `SettingsGeneralView.swift` |
 
+**Owed by the UI redesign, Task 4 — the panel sized to its content.** The tests pin the
+numbers the controller computes; none of them can say what the panel looks like. Task 14 is
+where these are meant to be answered.
+
+| What to check | Why it needs eyes | Code |
+|---|---|---|
+| ⌥⌘T on a one-word phrase, then on a long paragraph | The whole point of the task: two visibly different panel sizes, neither of them 380 × 260. The measurement is checked in the test process, but nothing here has seen it reach a real screen | `PanelController.measure`, `show(at:)` |
+| Esc closes the panel, Enter copies and closes | `.titled` left the style mask, and without it a stock `NSPanel` answers `canBecomeKey == false` — measured. The override restores it and the test says the panel is key, but no one has pressed a physical key on the untitled panel | `TranslationPanel.canBecomeKey` |
+| The corner nearest the pointer staying put while text streams | The reason the panel was fixed-size for so long. The frames are asserted; whether the already-read lines actually hold still is a thing you have to watch | `applyFit`, `PanelPlacement.reframe` |
+| The rounded corners, with no grey notch behind them | `isOpaque = false` / `backgroundColor = .clear` / `hasShadow` are what make the material corner work, and a square window background showing through is invisible to every test | `TranslationPanel.init` |
+| The panel not shivering while a run streams | Growth is deliberately unanimated during a run and animated once on the settle. Both the 100 ms throttle and the 150 ms tween are chosen against each other, and only watching a real stream says whether that was right | `contentDidChange`, `applyFit` |
+| Dragging the panel's edge, then more text arriving | `.resizable` is new to the mask, and `windowDidEndLiveResize` is the only thing that sets `userSized`. Nothing in the suite performs a live resize, so the delegate hookup itself is unexercised | `PanelController.windowDidEndLiveResize` |
+| A translation past the ceiling scrolling inside the panel | The scrolling variant is swapped in from the measurement. `PanelSizer` decides it and is tested; the swap reaching the screen is not | `setScrolling`, `PanelView.scrolls` |
+
 ---
 
 ## 2. Known and accepted

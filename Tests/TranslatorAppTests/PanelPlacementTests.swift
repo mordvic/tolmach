@@ -164,6 +164,21 @@ private let size = CGSize(width: 360, height: 240)
     #expect(grown.minY == 500)
 }
 
+/// The two cases above are both anchors where `isTop == isLeading`, so an implementation
+/// that drove x from `isTop` and y from `isLeading` would satisfy them both. This is the
+/// case that tells the two flags apart: the top edge must hold while the *right* edge does,
+/// and the left edge is the one that moves.
+@Test func growingFromATopRightAnchorLeavesTheTopRightCornerWhereItWas() {
+    let start = CGRect(x: 100, y: 500, width: 360, height: 240)
+    let grown = PanelPlacement.reframe(current: start,
+                                       newSize: CGSize(width: 420, height: 400),
+                                       anchor: .topTrailing, screen: screen)
+    #expect(grown.maxX == 460)                 // the right edge, unmoved
+    #expect(grown.maxY == 740)                 // the top edge, unmoved
+    #expect(grown.minX == 40)                  // the left edge is what gave way
+    #expect(grown.minY == 340)
+}
+
 @Test func aPanelThatOutgrowsTheScreenIsClampedRatherThanLeftHangingOffIt() {
     // Re-clamping on every resize is not belt and braces. `constrainFrameRect` is
     // overridden to return the frame untouched — deliberately, because Stage Manager was

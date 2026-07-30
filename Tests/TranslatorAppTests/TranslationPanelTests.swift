@@ -39,7 +39,7 @@ import SwiftUI
 @Test func showingThePanelTakesKeyStatusWithoutItsProcessBecomingActive() {
     let before = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
     let menuBarBefore = NSWorkspace.shared.menuBarOwningApplication?.bundleIdentifier
-    let controller = PanelController { AnyView(Text("перевод")) }
+    let controller = PanelController { _ in AnyView(Text("перевод")) }
     controller.show(at: CGPoint(x: 300, y: 300))
     defer { controller.hide() }
 
@@ -55,7 +55,7 @@ import SwiftUI
 
 @MainActor
 @Test func hidingIsIdempotent() {
-    let controller = PanelController { AnyView(Text("перевод")) }
+    let controller = PanelController { _ in AnyView(Text("перевод")) }
     controller.show(at: CGPoint(x: 300, y: 300))
     controller.hide()
     #expect(controller.isVisible == false)
@@ -76,12 +76,15 @@ import SwiftUI
 @MainActor
 @Test func thePanelLandsOnTheScreenThatHoldsTheCursor() throws {
     let screen = try #require(NSScreen.main, "no display attached; this test cannot run headless")
-    let controller = PanelController { AnyView(Text("перевод")) }
-    let size = controller.panel.frame.size
+    let controller = PanelController { _ in AnyView(Text("перевод")) }
     let cursor = CGPoint(x: screen.visibleFrame.midX, y: screen.visibleFrame.midY)
     controller.show(at: cursor)
     defer { controller.hide() }
 
+    // The size is read *after* the show, not before. It used to be readable before, because
+    // the panel was born 380 × 260 and stayed that way; it is now whatever the content
+    // measured to, and the panel's own frame is the only place that number exists.
+    let size = controller.panel.frame.size
     let expected = PanelPlacement.frame(cursor: cursor, size: size, screen: screen.visibleFrame)
     #expect(controller.panel.frame == expected)
     #expect(screen.visibleFrame.contains(controller.panel.frame))
@@ -93,12 +96,16 @@ import SwiftUI
 /// distinguishes the two only engages for a panel tall enough to reach the top of the
 /// screen — which is precisely the long translation this panel exists to display.
 ///
-/// The height is set on the panel directly, and the state it creates is **not currently
-/// reachable in the app**: the panel is a fixed 380 × 260 and nothing resizes it, so at that
-/// height the upward flip never comes near the menu bar. The test is kept anyway, and the
-/// reason is narrow rather than defensive — `show(at:)` using `visibleFrame` is correct at
-/// any size, the panel's size is one edit away from changing, and this is the only thing
-/// that would notice if that edit and a `frame`-based `show` ever met.
+/// The state this needs used to be **unreachable in the app** — the panel was a fixed
+/// 380 × 260, so the height was forced onto it by hand and the note here said as much. It is
+/// reachable now: content past the ceiling produces exactly this panel, so the height comes
+/// from the content and the test exercises the real path.
+///
+/// `visibleFrame` also governs one more thing than it did. It is the screen rect handed to
+/// `PanelSizer`, so it sets the height ceiling as well as the placement — which gives this
+/// test a second, machine-independent way to catch the swap: `frame` is taller than
+/// `visibleFrame` by the menu bar band, and 0.6 of the taller number is a taller panel. The
+/// `#require` above is what makes that difference exist.
 @MainActor
 @Test func aTallPanelOpensBelowTheMenuBarRatherThanUnderIt() throws {
     let screen = try #require(NSScreen.main, "no display attached; this test cannot run headless")
@@ -106,34 +113,39 @@ import SwiftUI
     try #require(screen.frame.maxY > visible.maxY,
                  "this display reports no menu bar band, so the two frames cannot be told apart")
 
-    let controller = PanelController { AnyView(Text("перевод")) }
-    controller.show(at: CGPoint(x: visible.midX, y: visible.midY))
-    var tall = controller.panel.frame
-    tall.size = CGSize(width: 380, height: visible.height - 40)
-    controller.panel.setFrame(tall, display: false)
-    controller.hide()
-
-    // Low enough that the panel flips upward, tall enough that the flip then clamps — the
-    // one arrangement in which `frame` and `visibleFrame` give different answers.
-    let cursor = CGPoint(x: visible.midX, y: visible.minY + 100)
+    // Far past any ceiling, so the panel opens at exactly `maxHeightFraction` of the screen.
+    let controller = PanelController { _ in
+        AnyView(Text(String(repeating: "строка ", count: 4000)).padding(14))
+    }
+    // Halfway up: with a panel this tall the downward placement overflows the bottom, so it
+    // flips upward, and the flip then overflows the top and clamps — the one arrangement in
+    // which `frame` and `visibleFrame` give different answers.
+    let cursor = CGPoint(x: visible.midX, y: visible.midY)
     controller.show(at: cursor)
     defer { controller.hide() }
+    let frame = controller.panel.frame
 
-    #expect(controller.panel.frame
-            == PanelPlacement.frame(cursor: cursor, size: tall.size, screen: visible))
-    #expect(controller.panel.frame.maxY <= visible.maxY)
-    #expect(controller.panel.frame.maxY < screen.frame.maxY)
+    #expect(frame.height <= visible.height * PanelSizer.maxHeightFraction)
+    #expect(frame == PanelPlacement.frame(cursor: cursor, size: frame.size, screen: visible))
+    #expect(frame.maxY <= visible.maxY)
+    #expect(frame.maxY < screen.frame.maxY)
 }
 
 /// Beyond the brief, and a real defect it left in.
 ///
 /// `NSWindow` runs every frame through `constrainFrameRect(_:to:)` when the window is
-/// ordered in, and for a `.titled` window that is not a no-op. Measured on this machine:
-/// a frame at x = 19 came back at x = **221** — AppKit reserving the Stage Manager strip
-/// down the left edge — so a selection near the left of the screen would open its panel
-/// 202pt away from the pointer, and `PanelPlacement`'s whole flip-then-clamp arithmetic
-/// would be silently overruled. The menu-bar case below is the machine-independent half:
-/// a titled window whose frame crosses the menu bar band is pulled down on every Mac.
+/// ordered in, and it is not a no-op. Measured on this machine when the panel was still
+/// `.titled`: a frame at x = 19 came back at x = **221** — AppKit reserving the Stage
+/// Manager strip down the left edge — so a selection near the left of the screen would open
+/// its panel 202pt away from the pointer, and `PanelPlacement`'s whole flip-then-clamp
+/// arithmetic would be silently overruled.
+///
+/// Dropping `.titled` did not retire that. Re-measured against a *stock* `NSPanel` carrying
+/// this panel's new mask, i.e. with no override: a frame whose top crossed the menu bar band
+/// came back pulled down by the height of the band, identically to the titled panel. The
+/// menu-bar case below is the machine-independent half; the Stage Manager one depends on
+/// whether Stage Manager is enabled and did not reproduce on the re-measurement, which is
+/// exactly why it is asserted rather than relied upon.
 ///
 /// Overriding costs nothing, because `PanelPlacement` already clamps to `visibleFrame` —
 /// which is strictly stronger than what AppKit's constraint guarantees. The brief's
@@ -155,11 +167,13 @@ import SwiftUI
 
     // End to end: a pointer near the left edge, through `show`, must land where
     // `PanelPlacement` said and not where AppKit would prefer.
-    let controller = PanelController { AnyView(Text("перевод")) }
-    let size = controller.panel.frame.size
+    let controller = PanelController { _ in AnyView(Text("перевод")) }
     let cursor = CGPoint(x: screen.visibleFrame.minX + 5, y: screen.visibleFrame.midY)
     controller.show(at: cursor)
     defer { controller.hide() }
+    // Size read after the show: the panel is sized from its content now, so there is no
+    // size to know beforehand.
+    let size = controller.panel.frame.size
     #expect(controller.panel.frame
             == PanelPlacement.frame(cursor: cursor, size: size, screen: screen.visibleFrame))
 }
@@ -181,7 +195,7 @@ private func keyDown(_ keyCode: UInt16, _ characters: String) -> NSEvent {
 /// the Escape handler, and nothing else in the app would notice.
 @MainActor
 @Test func escapeReachesTheEscapeHandlerThroughTheRealKeyPath() {
-    let controller = PanelController { AnyView(Text("перевод")) }
+    let controller = PanelController { _ in AnyView(Text("перевод")) }
     var escapes = 0
     var enters = 0
     controller.onEscape = { escapes += 1 }
@@ -199,7 +213,7 @@ private func keyDown(_ keyCode: UInt16, _ characters: String) -> NSEvent {
 /// Handling only 36 would leave that user pressing Enter at a panel that ignores it.
 @MainActor
 @Test func returnAndKeypadEnterReachTheEnterHandler() {
-    let controller = PanelController { AnyView(Text("перевод")) }
+    let controller = PanelController { _ in AnyView(Text("перевод")) }
     var escapes = 0
     var enters = 0
     controller.onEscape = { escapes += 1 }
@@ -212,5 +226,130 @@ private func keyDown(_ keyCode: UInt16, _ characters: String) -> NSEvent {
     controller.panel.sendEvent(keyDown(76, "\u{3}"))
     #expect(enters == 2)
     #expect(escapes == 0)
+}
+
+// MARK: - The panel sized to its content
+
+@MainActor
+@Test func theUntitledPanelStillTakesKeyStatusWithoutItsProcessBecomingActive() {
+    // The measurement this replaces was taken with `.titled` in the mask. Dropping `.titled`
+    // is what buys the rounded material panel, and it is also the one change that could
+    // silently cost the panel its key status — and with it Esc and Enter, which are the
+    // only way to close and copy. This process runs at `.prohibited` activation policy,
+    // where activation is impossible, so `isKeyWindow == true` here has exactly one
+    // possible cause. Same reasoning as the test above it; re-run because the mask changed.
+    //
+    // It has more teeth than it looks. Measured against a stock `NSPanel` with no override:
+    // with `.titled` in the mask `canBecomeKey` answered `true`, with the mask this panel
+    // now carries it answered `false` and `makeKeyAndOrderFront` left `isKeyWindow` false.
+    // So this test now covers `TranslationPanel.canBecomeKey` as well as the style mask.
+    let controller = PanelController { _ in AnyView(Text("готово")) }
+    controller.show(at: CGPoint(x: 300, y: 400))
+    #expect(controller.panel.isKeyWindow)
+    #expect(NSRunningApplication.current.isActive == false)
+    controller.hide()
+}
+
+@MainActor
+@Test func aPanelWithLittleToSayOpensSmallerThanOneWithALot() {
+    // The change in one line. Both panels are built the same way and differ only in their
+    // content, so a fixed-size panel fails this and a content-sized one does not.
+    let short = PanelController { _ in AnyView(Text("Готово.").padding(14)) }
+    let long = PanelController { _ in
+        AnyView(Text(String(repeating: "Длинная строка перевода. ", count: 40)).padding(14))
+    }
+    short.show(at: CGPoint(x: 300, y: 500))
+    long.show(at: CGPoint(x: 300, y: 500))
+    #expect(short.panel.frame.height < long.panel.frame.height)
+    short.hide()
+    long.hide()
+}
+
+@MainActor
+@Test func theMeasuredPanelStaysInsideTheSizersBounds() {
+    // Whatever the hosting view reports, the frame that reaches AppKit is the sizer's.
+    let controller = PanelController { _ in
+        AnyView(Text(String(repeating: "строка ", count: 4000)).padding(14))
+    }
+    controller.show(at: CGPoint(x: 300, y: 500))
+    let frame = controller.panel.frame
+    #expect(frame.width >= PanelSizer.minWidth)
+    #expect(frame.width <= PanelSizer.maxWidth)
+    #expect(frame.height >= PanelSizer.minHeight)
+    #expect(frame.width.isFinite && frame.height.isFinite)
+    controller.hide()
+}
+
+@MainActor
+@Test func growingContentLeavesTheAnchoredCornerWhereItWas() {
+    // The reason the panel was a fixed size for so long: growth that moves the corner
+    // nearest the pointer drags every already-read line with it.
+    let text = Box("Готово.")
+    let controller = PanelController { _ in AnyView(Text(text.value).padding(14)) }
+    controller.show(at: CGPoint(x: 300, y: 700))
+    let before = controller.panel.frame
+    text.value = String(repeating: "Ещё одна строка перевода. ", count: 30)
+    controller.contentDidChange()
+    let after = controller.panel.frame
+    #expect(after.height > before.height)
+    #expect(after.minX == before.minX)
+    #expect(after.maxY == before.maxY)
+    controller.hide()
+}
+
+/// Beyond the brief, and it closes a hole the brief's own cases leave open.
+///
+/// Every other test here puts the pointer where the panel hangs down and to the right, so
+/// the anchor is `.topLeading` — which is also the field's initial value. Deleting
+/// `anchor = placement.anchor` from `show(at:)` therefore left all of them green: the
+/// placement's anchor was never consulted and nothing noticed. That mutation was run; this
+/// test is what fails on it.
+///
+/// A pointer near the bottom of the screen flips the panel upward, and the corner nearest
+/// it is then the bottom-left. Growth must push the *top* edge up and leave `minY` alone;
+/// with the anchor stuck at `.topLeading` it holds `maxY` instead and the panel grows down
+/// off the bottom of the screen, where the clamp then drags the whole thing — and every
+/// line the user has already read — downwards.
+///
+/// Only the vertical half of the anchor can be checked from here, and that is a property of
+/// the app rather than of the test: `frozenWidth` fixes the width for the whole
+/// presentation, so no resize during a presentation changes it, so `isLeading` has nothing
+/// to act on. `growingFromATopRightAnchorLeavesTheTopRightCornerWhereItWas` in
+/// `PanelPlacementTests` covers the horizontal half at the level where it is reachable.
+@MainActor
+@Test func aPanelThatOpenedUpwardsGrowsUpwardsToo() throws {
+    let screen = try #require(NSScreen.main, "no display attached; this test cannot run headless")
+    let visible = screen.visibleFrame
+    let text = Box("Готово.")
+    let controller = PanelController { _ in AnyView(Text(text.value).padding(14)) }
+    // Close enough to the bottom edge that hanging downwards would leave the screen.
+    controller.show(at: CGPoint(x: visible.midX, y: visible.minY + 30))
+    let before = controller.panel.frame
+    text.value = String(repeating: "Ещё одна строка перевода. ", count: 30)
+    controller.contentDidChange()
+    let after = controller.panel.frame
+    #expect(after.height > before.height)
+    #expect(after.minY == before.minY)
+    controller.hide()
+}
+
+@MainActor
+@Test func hidingThePanelForgetsTheSizeSoTheNextPressStartsFresh() {
+    let text = Box(String(repeating: "Длинный первый перевод. ", count: 30))
+    let controller = PanelController { _ in AnyView(Text(text.value).padding(14)) }
+    controller.show(at: CGPoint(x: 300, y: 700))
+    let tall = controller.panel.frame.height
+    controller.hide()
+    text.value = "Да."
+    controller.show(at: CGPoint(x: 300, y: 700))
+    #expect(controller.panel.frame.height < tall)
+    controller.hide()
+}
+
+/// A reference box so a test can change the content a `@escaping` builder closes over.
+/// `@MainActor` rather than `Sendable`: everything here runs on the main actor.
+@MainActor final class Box {
+    var value: String
+    init(_ value: String) { self.value = value }
 }
 
