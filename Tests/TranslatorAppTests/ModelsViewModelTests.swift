@@ -14,7 +14,10 @@ private func silentPuller() -> ModelsViewModel.Puller {
 private func makeModel(installed: [String] = [],
                        failure: Error? = nil,
                        puller: @escaping ModelsViewModel.Puller = silentPuller()) -> ModelsViewModel {
-    ModelsViewModel(probe: StubProbe(installed: installed, failure: failure), puller: puller)
+    // Callers only ever care about names here; the size-carrying tests build `StubProbe`
+    // directly instead of going through this helper.
+    let models = installed.map { OllamaModel(name: $0, sizeBytes: 0) }
+    return ModelsViewModel(probe: StubProbe(installed: models, failure: failure), puller: puller)
 }
 
 // MARK: - Blacklist warnings
@@ -59,7 +62,7 @@ private func makeModel(installed: [String] = [],
 @Test func reloadPublishesTheInstalledList() async {
     let model = makeModel(installed: ["aya-expanse:8b", "gpt-oss:20b"])
     await model.reload()
-    #expect(model.installed == ["aya-expanse:8b", "gpt-oss:20b"])
+    #expect(model.installedNames == ["aya-expanse:8b", "gpt-oss:20b"])
     #expect(model.error == nil)
 }
 
@@ -122,7 +125,7 @@ private func makeModel(installed: [String] = [],
     #expect(model.pullStatus == nil)
     #expect(model.error == nil)
     // A finished pull is exactly when the installed list changed, so it is refetched.
-    #expect(model.installed == ["aya-expanse:8b"])
+    #expect(model.installedNames == ["aya-expanse:8b"])
 }
 
 @MainActor
@@ -227,10 +230,23 @@ private func makeModel(installed: [String] = [],
 /// that use it, which is what `@unchecked` is asserting here.
 private final class FlakyProbe: OllamaProbe, @unchecked Sendable {
     var fail = false
-    func installedModels() async throws -> [String] {
+    func installedModels() async throws -> [OllamaModel] {
         if fail { throw OllamaError.notRunning }
-        return ["gpt-oss:20b"]
+        return [OllamaModel(name: "gpt-oss:20b", sizeBytes: 0)]
     }
     func residentModels() async throws -> [String] { [] }
+}
+
+@MainActor
+@Test func theInstalledListKeepsTheSizeTheServerReported() async {
+    // The size is what makes the list worth showing: a user deciding whether to pull a
+    // second model is deciding about disk space. It exists in `OllamaModel` already and
+    // used to be discarded at the protocol boundary.
+    let probe = StubProbe(installed: [OllamaModel(name: "aya-expanse:8b", sizeBytes: 5_100_273_664)])
+    let model = ModelsViewModel(probe: probe, puller: { _ in .init { $0.finish() } })
+    await model.reload()
+    #expect(model.installed.first?.sizeBytes == 5_100_273_664)
+    #expect(model.installedNames == ["aya-expanse:8b"])
+    #expect(model.availability(of: "aya-expanse:8b") == .installed)
 }
 

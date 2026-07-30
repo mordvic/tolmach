@@ -6,6 +6,14 @@ public struct OllamaModel: Sendable {
     public let name: String
     public let sizeBytes: Int64
     public var sizeGB: Double { Double(sizeBytes) / 1_073_741_824 }
+
+    /// Public so the app's tests can build one. A struct with public stored properties gets
+    /// only an internal memberwise initialiser, which is invisible across the module
+    /// boundary — the reason this is spelled out rather than synthesised.
+    public init(name: String, sizeBytes: Int64) {
+        self.name = name
+        self.sizeBytes = sizeBytes
+    }
 }
 
 public struct OllamaClient: LLMClient {

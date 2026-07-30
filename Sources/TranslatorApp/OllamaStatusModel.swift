@@ -24,14 +24,16 @@ enum OllamaStatus: Equatable {
 }
 
 protocol OllamaProbe: Sendable {
-    func installedModels() async throws -> [String]
+    /// The whole model and not just its name: `sizeBytes` is what the settings pane shows,
+    /// and flattening to `[String]` here is where it used to be lost.
+    func installedModels() async throws -> [OllamaModel]
     func residentModels() async throws -> [String]
 }
 
 struct LiveOllamaProbe: OllamaProbe {
     let client: OllamaClient
     init(client: OllamaClient = OllamaClient()) { self.client = client }
-    func installedModels() async throws -> [String] { try await client.models().map(\.name) }
+    func installedModels() async throws -> [OllamaModel] { try await client.models() }
     func residentModels() async throws -> [String] { try await client.ps().map(\.name) }
 }
 

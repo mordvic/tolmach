@@ -22,7 +22,12 @@ final class ModelsViewModel {
     private let probe: OllamaProbe
     private let puller: Puller
 
-    var installed: [String] = []
+    var installed: [OllamaModel] = []
+
+    /// The names alone, for the picker and for `availability(of:)`. A computed property
+    /// rather than a second stored one, so the two cannot fall out of step.
+    var installedNames: [String] { installed.map(\.name) }
+
     var pullProgress: Double?
     var pullStatus: String?
     var error: String?
@@ -89,14 +94,14 @@ final class ModelsViewModel {
 
     func availability(of model: String) -> ModelAvailability {
         guard listIsConfirmed else { return .unknown }
-        return installed.contains(model) ? .installed : .notInstalled
+        return installedNames.contains(model) ? .installed : .notInstalled
     }
 
     /// A `Picker` bound to a value absent from its options renders blank, and a blank
     /// picker is indistinguishable from «nothing selected». The configured model is
     /// therefore always an option — `optionLabel` is what says it is not installed.
     func options(selecting selected: String) -> [String] {
-        installed.contains(selected) ? installed : installed + [selected]
+        installedNames.contains(selected) ? installedNames : installedNames + [selected]
     }
 
     func optionLabel(_ model: String) -> String {

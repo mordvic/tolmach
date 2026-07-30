@@ -6,10 +6,10 @@ import Testing
 /// both view models take the same `OllamaProbe`, and a second copy of this would be a
 /// second thing to keep in step with the protocol.
 struct StubProbe: OllamaProbe {
-    var installed: [String] = []
+    var installed: [OllamaModel] = []
     var resident: [String] = []
     var failure: Error? = nil
-    func installedModels() async throws -> [String] { if let failure { throw failure }; return installed }
+    func installedModels() async throws -> [OllamaModel] { if let failure { throw failure }; return installed }
     func residentModels() async throws -> [String] { if let failure { throw failure }; return resident }
 }
 
@@ -23,7 +23,7 @@ struct StubProbe: OllamaProbe {
 
 @MainActor
 @Test func aRunningServerWithoutTheModelLoadedIsHealthyButNotResident() async {
-    let probe = StubProbe(installed: ["aya-expanse:8b"], resident: [])
+    let probe = StubProbe(installed: [OllamaModel(name: "aya-expanse:8b", sizeBytes: 0)], resident: [])
     let model = OllamaStatusModel(probe: probe)
     await model.refresh(interactiveModel: "aya-expanse:8b")
     #expect(model.status == .running(modelResident: false))
@@ -32,7 +32,7 @@ struct StubProbe: OllamaProbe {
 
 @MainActor
 @Test func theModelBeingResidentIsReportedSeparately() async {
-    let probe = StubProbe(installed: ["aya-expanse:8b"], resident: ["aya-expanse:8b"])
+    let probe = StubProbe(installed: [OllamaModel(name: "aya-expanse:8b", sizeBytes: 0)], resident: ["aya-expanse:8b"])
     let model = OllamaStatusModel(probe: probe)
     await model.refresh(interactiveModel: "aya-expanse:8b")
     #expect(model.status == .running(modelResident: true))
@@ -41,7 +41,10 @@ struct StubProbe: OllamaProbe {
 @MainActor
 @Test func residencyIsJudgedForTheConfiguredModelNotAnyModel() async {
     // Another model being warm says nothing about the one the hotkey will use.
-    let probe = StubProbe(installed: ["aya-expanse:8b", "gpt-oss:20b"], resident: ["gpt-oss:20b"])
+    let probe = StubProbe(
+        installed: [OllamaModel(name: "aya-expanse:8b", sizeBytes: 0), OllamaModel(name: "gpt-oss:20b", sizeBytes: 0)],
+        resident: ["gpt-oss:20b"]
+    )
     let model = OllamaStatusModel(probe: probe)
     await model.refresh(interactiveModel: "aya-expanse:8b")
     #expect(model.status == .running(modelResident: false))
