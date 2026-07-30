@@ -10,7 +10,9 @@ here rather than assumed.
 Engine-level limitations are not repeated here — they are in §11a of the design spec, which
 owns them.
 
-Last reviewed against the code at commit `96e2e7f`, the last commit of the UI redesign branch.
+Last reviewed against the code at commit `75d9be1`, the final fix wave that closed the UI
+redesign branch's whole-branch review. This line is a commit later than the code it names,
+because a file cannot cite the hash of the commit that writes it.
 
 ---
 
