@@ -51,9 +51,9 @@ struct SettingsGeneralView: View {
                          + "безопасность» → «Универсальный доступ». Главное окно работает "
                          + "и без него.")
                         .font(.caption).foregroundStyle(.secondary)
-                        // A `Text` given less width than it wants truncates rather than
-                        // wrapping, and the clause that gets cut is the one saying where the
-                        // setting actually lives.
+                        // Same reason as the panel's prompt: a `Text` given less width than it
+                        // wants truncates rather than wrapping, and the clause that would go
+                        // is the one saying where the setting actually lives.
                         .fixedSize(horizontal: false, vertical: true)
                     Button("Открыть настройки системы") { PermissionsGate.openSettings() }
                 }
@@ -112,6 +112,10 @@ struct SettingsGeneralView: View {
             }
         }
         .settingsPane()
+        // On appearance rather than in the property's initialiser: `@State`'s initial value is
+        // evaluated once for the lifetime of the view's storage, so a pane opened before the
+        // permission was granted would keep the value it was born with. It starts `true` so a
+        // granted user never sees the warning flash on the way in.
         .onAppear { isTrusted = PermissionsGate.isTrusted() }
         .onReceive(NotificationCenter.default.publisher(
             for: NSApplication.didBecomeActiveNotification)) { _ in
