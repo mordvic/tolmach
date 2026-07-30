@@ -28,6 +28,10 @@ final class ModelsViewModel {
     /// rather than a second stored one, so the two cannot fall out of step.
     var installedNames: [String] { installed.map(\.name) }
 
+    /// Which installed models Ollama currently holds in memory. Read from `/api/ps` on the
+    /// same reload as the installed list, so the two describe the same moment.
+    var resident: [String] = []
+
     var pullProgress: Double?
     var pullStatus: String?
     var error: String?
@@ -51,10 +55,12 @@ final class ModelsViewModel {
     func reload() async {
         do {
             installed = try await probe.installedModels()
+            resident = try await probe.residentModels()
             listIsConfirmed = true
             error = nil
         } catch {
             listIsConfirmed = false
+            resident = []
             self.error = "Не удалось получить список моделей. " + RussianCopy.failureDetail(error)
         }
     }

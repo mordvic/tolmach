@@ -250,3 +250,18 @@ private final class FlakyProbe: OllamaProbe, @unchecked Sendable {
     #expect(model.availability(of: "aya-expanse:8b") == .installed)
 }
 
+@MainActor
+@Test func aFailedReloadStopsClaimingAnythingIsInMemory() async {
+    // The installed list survives a failure on purpose — emptying it would blank the picker
+    // — but «в памяти» is a claim about right now, and right now the server did not answer.
+    var probe = StubProbe(installed: [OllamaModel(name: "aya-expanse:8b", sizeBytes: 1)],
+                          resident: ["aya-expanse:8b"])
+    let models = ModelsViewModel(probe: probe, puller: { _ in .init { $0.finish() } })
+    await models.reload()
+    #expect(models.resident == ["aya-expanse:8b"])
+    probe.failure = URLError(.cannotConnectToHost)
+    let broken = ModelsViewModel(probe: probe, puller: { _ in .init { $0.finish() } })
+    await broken.reload()
+    #expect(broken.resident.isEmpty)
+}
+

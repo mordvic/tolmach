@@ -239,3 +239,14 @@ func pullStatusesAreShownInRussian(raw: String, expected: String) {
     // The code is the one piece of the message that helps diagnose anything.
     #expect(TranslationViewModel.message(for: OllamaError.httpStatus(503, "upstream")).contains("503"))
 }
+
+// MARK: - Model size
+
+@Test func aModelSizeIsWrittenInRussianNotation() {
+    // Comma for the decimal separator, and the locale pinned rather than taken from the
+    // system: every string in this app is Russian and there is no localisation to switch,
+    // so on a machine set to en_US the default format would put «4.8 ГБ» in a Russian
+    // sentence next to «4,8» elsewhere.
+    #expect(RussianCopy.modelSize(5_100_273_664) == "4,8 ГБ")
+    #expect(RussianCopy.modelSize(0) == "0,0 ГБ")
+}

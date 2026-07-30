@@ -112,13 +112,20 @@ struct TranslatorApp: App {
             TabView {
                 SettingsGeneralView(settings: settings)
                     .tabItem { Text("Основные") }
-                SettingsModelsView(settings: settings, models: models)
+                SettingsModelsView(settings: settings, models: models,
+                                   status: statusModel.status,
+                                   onRefresh: {
+                                       await statusModel.refresh(
+                                           interactiveModel: settings.interactiveModel)
+                                   })
                     .tabItem { Text("Модели") }
                 SettingsGlossaryView(glossary: glossary, settings: settings)
                     .tabItem { Text("Глоссарий") }
-                SettingsAdvancedView(settings: settings)
-                    .tabItem { Text("Дополнительно") }
             }
+            // «Модели» now shows Ollama's health line, which this scene's own `Window` also
+            // shows independently — so the pane needs its own initial check rather than
+            // relying on the main window having opened first.
+            .task { await statusModel.refresh(interactiveModel: settings.interactiveModel) }
         }
     }
 
