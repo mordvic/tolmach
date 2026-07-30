@@ -137,8 +137,25 @@ enum PanelContentVariant: Equatable {
     /// Held by the detached host and only ever asked for a size.
     case measured
 
-    /// Never true while measuring: a `ScrollView` compresses to nothing, so the measured copy
-    /// would report a tiny ideal height and the panel would never grow back.
+    /// Never true while measuring, and the reason is the opposite of what this comment used to
+    /// say. It claimed a `ScrollView` «compresses to nothing, so the measured copy would report
+    /// a tiny ideal height». Measured, on the real `PanelView` through the same two calls
+    /// `PanelController.measure` makes: a `ScrollView` is **greedy**, not compressible.
+    ///
+    ///     flat        fittingSize 6901 × 64   sizeThatFits@400  368
+    ///     scrolling   fittingSize 6901 × 64   sizeThatFits@400  greatestFiniteMagnitude
+    ///
+    /// So the width pass is unaffected — `fittingSize` ignores the scroll view entirely — and
+    /// the height pass answers the whole unbounded proposal. `PanelSizer.measured` reads
+    /// `greatestFiniteMagnitude` as a real measurement, because it is finite, and clamps it to
+    /// the ceiling: every panel would come out at 0.6 × the screen and `scrolls` would be true
+    /// for a one-word result. Measured by mutating this case to `true` and running the suite —
+    /// every panel settled at 774 pt on this display, short and long alike.
+    ///
+    /// Same failure shape as `fillsPanel` below, which is why the two sit together, and the
+    /// same three tests catch both: `theRealPanelViewIsMeasuredRatherThanEchoingTheProposal…`,
+    /// `aReusedControllerMeasuresThePressItIsShowing…` and
+    /// `aShortTranslationInTheRealPanelViewDoesNotAskToScroll`.
     var scrolls: Bool {
         switch self {
         case .installed(let scrolls): scrolls
