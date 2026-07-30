@@ -45,11 +45,17 @@ enum PanelSizer {
                             height: measured(ideal.height, unmeasured: minHeight,
                                              unbounded: .greatestFiniteMagnitude))
 
-        // The user's choice wins outright. Not "wins until the content grows past it":
-        // resizing a panel is an instruction, and taking the size back the moment another
-        // line arrives would make the handle useless exactly when it is reached for.
+        // The user's choice wins outright — but never produces a degenerate frame. A panel
+        // smaller than its own buttons is the worse failure, even when the user chose it. The
+        // result still respects the floors and the monotonic height from previous, keeping the
+        // user's size where possible. Not "wins until the content grows past it": resizing a
+        // panel is an instruction, and taking the size back the moment another line arrives
+        // would make the handle useless exactly when it is reached for.
         guard !userSized else {
-            return Fit(size: previous, scrolls: wanted.height > previous.height)
+            let ceiling = max(minHeight, screen.height * maxHeightFraction)
+            let userWidth = max(previous.width, minWidth)
+            let userHeight = min(max(previous.height, minHeight), ceiling)
+            return Fit(size: CGSize(width: userWidth, height: userHeight), scrolls: wanted.height > userHeight)
         }
 
         let width = frozenWidth ?? min(max(wanted.width, minWidth), maxWidth)

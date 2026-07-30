@@ -88,3 +88,12 @@ private let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)   // ceiling: 
     #expect(fit.size.height == 120)
     #expect(fit.scrolls)
 }
+
+@Test func aUserResizedPanelCannotProduceADegenerateZeroSizeFrame() {
+    // Before the first show, previous is .zero. If userSized is true on that call,
+    // returning previous unguarded would hand NSWindow.setFrame a non-window-compatible
+    // size. The user's choice still wins, but floors are applied.
+    let fit = PanelSizer.fit(ideal: CGSize(width: 500, height: 900), frozenWidth: nil,
+                             previous: .zero, screen: screen, userSized: true)
+    #expect(fit.size == CGSize(width: 300, height: 120))
+}
