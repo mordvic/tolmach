@@ -117,3 +117,61 @@ private let size = CGSize(width: 360, height: 240)
     #expect(covered.count == 0, "panel covered the pointer at \(covered.prefix(3).joined(separator: "; "))")
     #expect(offScreen.count == 0, "panel left the screen at \(offScreen.prefix(3).joined(separator: "; "))")
 }
+
+// MARK: - The anchor corner, and growing from it
+
+@Test func thePreferredPlacementIsAnchoredByItsTopLeftCorner() {
+    // The panel hangs down and to the right of the pointer, so the corner nearest the
+    // pointer — the one the reader's eye is already on — is the top left.
+    let placement = PanelPlacement.place(cursor: CGPoint(x: 400, y: 600), size: size, screen: screen)
+    #expect(placement.anchor == .topLeading)
+    #expect(placement.frame == PanelPlacement.frame(cursor: CGPoint(x: 400, y: 600),
+                                                    size: size, screen: screen))
+}
+
+@Test func flippingLeftMovesTheAnchorToTheTopRight() {
+    let placement = PanelPlacement.place(cursor: CGPoint(x: 1400, y: 600), size: size, screen: screen)
+    #expect(placement.anchor == .topTrailing)
+}
+
+@Test func flippingUpwardMovesTheAnchorToTheBottomLeft() {
+    let placement = PanelPlacement.place(cursor: CGPoint(x: 400, y: 100), size: size, screen: screen)
+    #expect(placement.anchor == .bottomLeading)
+}
+
+@Test func aPointerInTheBottomRightCornerAnchorsTheBottomRight() {
+    let placement = PanelPlacement.place(cursor: CGPoint(x: 1400, y: 100), size: size, screen: screen)
+    #expect(placement.anchor == .bottomTrailing)
+}
+
+@Test func growingFromATopLeftAnchorLeavesTheTopLeftCornerWhereItWas() {
+    // The whole point of the anchor: text the user has already read must not move.
+    let start = CGRect(x: 100, y: 500, width: 360, height: 240)
+    let grown = PanelPlacement.reframe(current: start,
+                                       newSize: CGSize(width: 360, height: 400),
+                                       anchor: .topLeading, screen: screen)
+    #expect(grown.minX == 100)
+    #expect(grown.maxY == 740)
+    #expect(grown.height == 400)
+}
+
+@Test func growingFromABottomRightAnchorLeavesTheBottomRightCornerWhereItWas() {
+    let start = CGRect(x: 100, y: 500, width: 360, height: 240)
+    let grown = PanelPlacement.reframe(current: start,
+                                       newSize: CGSize(width: 420, height: 400),
+                                       anchor: .bottomTrailing, screen: screen)
+    #expect(grown.maxX == 460)
+    #expect(grown.minY == 500)
+}
+
+@Test func aPanelThatOutgrowsTheScreenIsClampedRatherThanLeftHangingOffIt() {
+    // Re-clamping on every resize is not belt and braces. `constrainFrameRect` is
+    // overridden to return the frame untouched — deliberately, because Stage Manager was
+    // measured moving a frame 202pt sideways — so nothing else will pull a grown panel back.
+    let start = CGRect(x: 100, y: 40, width: 360, height: 240)
+    let grown = PanelPlacement.reframe(current: start,
+                                       newSize: CGSize(width: 360, height: 800),
+                                       anchor: .topLeading, screen: screen)
+    #expect(grown.minY >= screen.minY)
+    #expect(grown.maxY <= screen.maxY)
+}
