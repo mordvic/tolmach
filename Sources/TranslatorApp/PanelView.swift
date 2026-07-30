@@ -36,13 +36,34 @@ struct PanelView: View {
     /// glossary can put the button row off the bottom on its own.
     var scrolls = false
     var onClose: () -> Void = {}
+    /// Whether this view is the one *installed* in the panel, as opposed to the copy
+    /// `PanelController` keeps only to measure. Defaults to the installed behaviour, so no
+    /// call site that does not know about measuring can be surprised by it.
+    ///
+    /// The one thing it governs is the fill frame below, and the difference is not cosmetic.
+    /// Measured through the same two `sizeThatFits` calls the controller makes: with the fill
+    /// frame, this view answers `greatestFiniteMagnitude` on **both** axes to an unbounded
+    /// proposal, and `400 × greatestFiniteMagnitude` to a 400pt-wide one — the same answer for
+    /// a one-word translation and a forty-sentence one. That number is finite and positive, so
+    /// `PanelSizer` reads it as a real measurement rather than as «no idea»: every panel would
+    /// come out `maxWidth` × the height ceiling, `scrolls` would always be true, and
+    /// `applyFit`'s `guard fit.size != panel.frame.size` would then return early on every
+    /// token, so the panel would never resize at all.
+    var fillsPanel = true
 
     var body: some View {
         Group {
             if scrolls { ScrollView { content } } else { content }
         }
         .padding(14)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // Fills the window so the material paints all the way to its edge — which still
+        // matters, because a panel the user has dragged larger than its content would
+        // otherwise carry a transparent border. Dropped for the measured copy, where
+        // accepting the whole proposal is the difference between a measurement and an echo
+        // of the question. See `fillsPanel` above.
+        .frame(maxWidth: fillsPanel ? .infinity : nil,
+               maxHeight: fillsPanel ? .infinity : nil,
+               alignment: .topLeading)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 

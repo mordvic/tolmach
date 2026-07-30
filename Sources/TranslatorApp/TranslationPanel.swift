@@ -38,9 +38,14 @@ final class TranslationPanel: NSPanel {
         // and load-bearing the moment anyone touches the mask, which is the case it guards.
         hidesOnDeactivate = false
         isMovableByWindowBackground = true
-        // A rounded corner needs the window to stop painting: the material and the
-        // `clipShape` are drawn by `PanelView`, and without these two lines the square
-        // window background stays visible behind them as a grey notch in each corner.
+        // A rounded corner needs the window to stop painting its own. `PanelView` draws the
+        // material and clips it to a `RoundedRectangle`, but that only shapes what SwiftUI
+        // draws: an `NSWindow` is a rectangle and fills its whole frame with `backgroundColor`
+        // underneath, so the corners the `clipShape` cuts away expose the window's fill rather
+        // than what is behind the window. The first two lines stop that fill; the third puts
+        // the shadow back, because a window with no background loses the one AppKit derives
+        // from it. **Not observed** — nothing in this environment can see the screen, and the
+        // corners are listed in `docs/OPEN-ITEMS.md` §1 as owed to a human.
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
@@ -109,6 +114,38 @@ final class TranslationPanel: NSPanel {
     }
 }
 
+/// Which of the two jobs a build of the panel's content is for.
+///
+/// The two are not interchangeable, and an enum rather than a pair of `Bool`s because the
+/// combination that must never exist — measured *and* filling the panel — is then unspeakable
+/// rather than merely discouraged. It cost a defect once: the measured copy carried
+/// `PanelView`'s fill frame, answered `greatestFiniteMagnitude` on both axes to every
+/// proposal, and the panel silently stopped resizing. See `PanelView.fillsPanel`.
+enum PanelContentVariant: Equatable {
+    /// Installed as the panel's content view and looked at.
+    case installed(scrolls: Bool)
+    /// Held by the detached host and only ever asked for a size.
+    case measured
+
+    /// Never true while measuring: a `ScrollView` compresses to nothing, so the measured copy
+    /// would report a tiny ideal height and the panel would never grow back.
+    var scrolls: Bool {
+        switch self {
+        case .installed(let scrolls): scrolls
+        case .measured: false
+        }
+    }
+
+    /// Never true while measuring: a view that accepts whatever proposal it is given cannot
+    /// be asked how big it wants to be.
+    var fillsPanel: Bool {
+        switch self {
+        case .installed: true
+        case .measured: false
+        }
+    }
+}
+
 @MainActor
 final class PanelController: NSObject, NSWindowDelegate {
     /// Internal rather than private so the tests can drive real `NSEvent`s through it and
@@ -123,18 +160,23 @@ final class PanelController: NSObject, NSWindowDelegate {
     /// the panel would report a tiny ideal height and never grow back. This one always holds
     /// the variant whose height means something.
     ///
-    /// An `NSHostingController` and not the `NSHostingView` the plan named, because the view
-    /// cannot answer the question. Measured in this process on the same content: an
-    /// `NSHostingView` reports `fittingSize` and `intrinsicContentSize` of 6929 × 44 for a
-    /// long paragraph — the whole of it on one line — and goes on reporting 6929 × 44 after
-    /// its frame is set to 560 wide, so there is no way to ask it for a height *at a width*.
+    /// An `NSHostingController` and not the `NSHostingView` the plan named, because the two
+    /// passes below need two different questions asked and only the controller can ask the
+    /// second. Measured in this process on the same content: an `NSHostingView` reports
+    /// `fittingSize` and `intrinsicContentSize` of 6929 × 44 for a long paragraph — the whole
+    /// of it on one line — and goes on reporting 6929 × 44 after its frame is set to 560 wide,
+    /// so it cannot be asked for a height *at a width*.
     /// `NSHostingController.sizeThatFits(in:)` answers 374 × 348 for the same content at 400
-    /// and is the only public API on either type that takes a proposal. It works fully
+    /// and is the only public API on either type that takes a proposal.
+    ///
+    /// Both questions are asked of this one object: `sizeThatFits(in:)` on the controller for
+    /// the height, and `fittingSize` on its own `view` for the ideal width — see `measure`,
+    /// which carries the reason the width cannot come from a proposal. It works fully
     /// detached: no window, no superview, no `layoutSubtreeIfNeeded`.
     private let measuring: NSHostingController<AnyView>
     /// Not a `let`: the real content is only knowable from inside a scene, so it is replaced
     /// once at launch — see `setContentBuilder(_:)`.
-    private var build: (Bool) -> AnyView
+    private var build: (PanelContentVariant) -> AnyView
 
     private var anchor: PanelAnchor = .topLeading
     private var frozenWidth: CGFloat?
@@ -148,28 +190,34 @@ final class PanelController: NSObject, NSWindowDelegate {
 
     var isVisible: Bool { panel.isVisible }
 
-    init(content: @escaping (Bool) -> AnyView) {
+    init(content: @escaping (PanelContentVariant) -> AnyView) {
         build = content
-        hosting = NSHostingView(rootView: content(false))
-        measuring = NSHostingController(rootView: content(false))
+        hosting = NSHostingView(rootView: content(.installed(scrolls: false)))
+        measuring = NSHostingController(rootView: content(.measured))
         super.init()
         // The panel must not be sized by its hosting view, and this line is what stops it.
-        //
-        // Measured on the running bundle before it existed: the panel opened **380 × 120**
-        // no matter what was in it, because an `NSHostingView` installed as a window's
+        // The mechanism is what carries forward: an `NSHostingView` installed as a window's
         // `contentView` publishes Auto Layout constraints derived from SwiftUI's *compressed*
-        // measurement, and AppKit then shrinks the window to satisfy them; a `ScrollView`
+        // measurement, and AppKit then shrinks the window to satisfy them. A `ScrollView`
         // compresses to nothing, so the panel collapsed to the height of its chrome and the
-        // permission prompt's instructions truncated to one line. Content-sizing does not
-        // undo that — the size is still this controller's decision, it is merely computed
-        // now instead of hard-coded, and `measuring` above is where it is computed.
+        // permission prompt's instructions truncated to one line. `[]` leaves the frame to
+        // this controller, which is now the only thing that knows how big the content is.
         //
-        // **No test in this file can hold this, and one was written and deleted rather than
-        // kept.** The shrink does not happen in the test process: a `PanelController` built
-        // with a `ScrollView`, shown, and laid out reported the same content view size with
-        // these three lines *and without them* — all three removals were applied and all
-        // three passed. The evidence is the running bundle, measured three times at 380×120
-        // before and twice at 380×260 after, with nothing else changed between the builds.
+        // **The numbers behind it can no longer be reproduced, and that is recorded rather
+        // than quietly dropped.** They were 380 × 120 before the line and 380 × 260 after,
+        // taken on the running bundle three times and twice respectively — but on a `.titled`
+        // panel, where 120 was 97pt of content plus the title bar, and against a fixed 380 ×
+        // 260 that was the whole of the panel's sizing. Neither condition still holds: the
+        // title bar is gone with `.titled`, and there is no fixed size to come back to. Nobody
+        // can re-take that measurement from here — it needs the assembled bundle on a screen —
+        // so the line stays on the strength of the mechanism above, and re-measuring it is
+        // listed in `docs/OPEN-ITEMS.md` §1 with everything else this task owes a human.
+        //
+        // **No test in this file can hold it either, and one was written and deleted rather
+        // than kept.** The shrink does not reproduce in the test process: a `PanelController`
+        // built with a `ScrollView`, shown, and laid out reported the same content view size
+        // with these three lines *and without them* — all three removals were applied and all
+        // three passed.
         hosting.sizingOptions = []
         hosting.translatesAutoresizingMaskIntoConstraints = true
         hosting.autoresizingMask = [.width, .height]
@@ -187,10 +235,10 @@ final class PanelController: NSObject, NSWindowDelegate {
     /// once at launch rather than passed to `init`. This is what `setContent(_:)` used to be;
     /// it takes a builder now because the controller has to be able to rebuild the content in
     /// its other variant when the ceiling is reached.
-    func setContentBuilder(_ builder: @escaping (Bool) -> AnyView) {
+    func setContentBuilder(_ builder: @escaping (PanelContentVariant) -> AnyView) {
         build = builder
-        hosting.rootView = builder(scrolls)
-        measuring.rootView = builder(false)
+        hosting.rootView = builder(.installed(scrolls: scrolls))
+        measuring.rootView = builder(.measured)
     }
 
     func show(at cursor: CGPoint) {
@@ -295,14 +343,23 @@ final class PanelController: NSObject, NSWindowDelegate {
         // changed, `sizeThatFits` went on answering the *old* 74 × 44 — and answered
         // 275 × 396 the instant `rootView` was reassigned, with no layout pass in between.
         // Without this the panel would size itself to whatever the content was at launch.
-        measuring.rootView = build(false)
-        let unbounded = CGSize(width: CGFloat.greatestFiniteMagnitude,
-                               height: CGFloat.greatestFiniteMagnitude)
+        measuring.rootView = build(.measured)
         // Two passes, and the order matters. The first asks how wide the content would like
         // to be with nothing wrapping it; the second asks how tall it is *once the width is
         // settled*, because height without a width is not a number — it is a different
         // number for every width.
-        let idealWidth = measuring.sizeThatFits(in: unbounded).width
+        //
+        // The first pass reads `fittingSize` and **not** a second `sizeThatFits`, and the two
+        // are not interchangeable here. `sizeThatFits` answers a *proposal*, and the panel's
+        // content contains three `Spacer`s and a `Text` under `frame(maxWidth: .infinity)` —
+        // all of which take whatever they are offered. Measured on the real `PanelView`:
+        // `sizeThatFits(in: unbounded)` answered `greatestFiniteMagnitude` wide for both a
+        // one-word translation and a forty-sentence one, which `PanelSizer` reads as a real
+        // measurement and clamps to `maxWidth`, so every panel came out 560 wide.
+        // `fittingSize` asks for the *ideal* size instead, where a `Spacer` is 0: the same two
+        // views answer 274 and 6929, which clamp to `minWidth` and `maxWidth` respectively.
+        // It tracks a reassigned `rootView` just as `sizeThatFits` does — measured.
+        let idealWidth = measuring.view.fittingSize.width
         // `height: 0` is not a measurement and is not meant to be one. `PanelSizer` reads a
         // non-positive height as «not measured yet» and hands back `minHeight`; this call
         // discards that and reads only `.size.width`, so the floor is not applied twice.
@@ -319,7 +376,7 @@ final class PanelController: NSObject, NSWindowDelegate {
     private func setScrolling(_ wanted: Bool) {
         guard wanted != scrolls else { return }
         scrolls = wanted
-        hosting.rootView = build(wanted)
+        hosting.rootView = build(.installed(scrolls: wanted))
     }
 
     /// The user dragged an edge. That is an instruction, and it holds until the panel hides.

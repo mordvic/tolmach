@@ -1,7 +1,10 @@
 import Testing
 import AppKit
 import SwiftUI
+import Foundation
 @testable import TranslatorApp
+@testable import TranslationCore
+@testable import TextCapture
 
 @MainActor
 @Test func thePanelIsNonActivatingAndFloating() {
@@ -351,5 +354,101 @@ private func keyDown(_ keyCode: UInt16, _ characters: String) -> NSEvent {
 @MainActor final class Box {
     var value: String
     init(_ value: String) { self.value = value }
+}
+
+// MARK: - The sizer in front of the view that actually ships
+
+/// A client that is never asked for anything. These tests set `translatedText` directly
+/// rather than run a translation, because what is being measured is the view's geometry and
+/// a run would only add a delay and a source of variation.
+private final class SilentClient: LLMClient, @unchecked Sendable {
+    func chat(messages: [ChatMessage], options: ChatOptions) -> AsyncThrowingStream<ChatEvent, Error> {
+        AsyncThrowingStream { $0.finish() }
+    }
+}
+
+@MainActor
+private func panelModel(showing translated: String) -> TranslationViewModel {
+    let model = TranslationViewModel(
+        translator: Translator(client: SilentClient()),
+        settings: AppSettings(defaults: InMemoryDefaults(prefix: "panel-size")),
+        glossary: GlossaryStore(url: FileManager.default.temporaryDirectory
+            .appendingPathComponent("panel-size-\(UUID().uuidString).json")))
+    model.translatedText = translated
+    return model
+}
+
+@MainActor
+private func realPanelContent(_ model: TranslationViewModel) -> (PanelContentVariant) -> AnyView {
+    { variant in
+        AnyView(PanelView(model: model, selection: .text("исходный текст"),
+                          adoptionRefusal: nil,
+                          scrolls: variant.scrolls, fillsPanel: variant.fillsPanel))
+    }
+}
+
+/// The same claim as `aPanelWithLittleToSayOpensSmallerThanOneWithALot`, made against the
+/// view that ships instead of against a `Text` standing in for it — and it is the substitution
+/// that made the first version of this task wrong.
+///
+/// Every other measuring test here hands the controller `Text(…).padding(14)`, which pins the
+/// controller's arithmetic and nothing about the panel. The real `PanelView` behaves
+/// differently in a way none of them could see: it carries `frame(maxWidth: .infinity,
+/// maxHeight: .infinity)` so its material paints to the window's edge, and a view that accepts
+/// whatever proposal it is given answers the proposal back. Measured through the same two
+/// calls `PanelController.measure` makes, before the fix:
+///
+///     PanelView short: unbounded=(1.797e+308, 1.797e+308)  at400=(400.0, 1.797e+308)
+///     PanelView long:  unbounded=(1.797e+308, 1.797e+308)  at400=(400.0, 1.797e+308)
+///
+/// `greatestFiniteMagnitude` is finite and positive, so `PanelSizer.measured` takes it for a
+/// real measurement rather than for «no idea»: every panel came out `maxWidth` wide and at the
+/// height ceiling, `scrolls` was always true, and `applyFit`'s `guard fit.size !=
+/// panel.frame.size` then returned early on every token — so the panel never resized at all,
+/// and the whole task was inert in the shipped app while thirteen tests stayed green.
+///
+/// After the fix the same two calls answer 274 × 94 and 6929 × 302, which is why both axes are
+/// asserted below: the height alone would pass on a build that still clamped every width to
+/// `maxWidth`.
+@MainActor
+@Test func theRealPanelViewIsMeasuredRatherThanEchoingTheProposalBackAtTheSizer() {
+    let short = PanelController(content: realPanelContent(panelModel(showing: "Готово.")))
+    let long = PanelController(content: realPanelContent(panelModel(
+        showing: String(repeating: "Длинная строка перевода. ", count: 40))))
+    short.show(at: CGPoint(x: 300, y: 500))
+    long.show(at: CGPoint(x: 300, y: 500))
+
+    #expect(short.panel.frame.height < long.panel.frame.height)
+    #expect(short.panel.frame.width < long.panel.frame.width)
+    // Named rather than merely relative, because "smaller than the other one" is also true of
+    // two panels that are both wrong. A one-word translation belongs at the floors.
+    #expect(short.panel.frame.width == PanelSizer.minWidth)
+    #expect(short.panel.frame.height == PanelSizer.minHeight)
+    short.hide()
+    long.hide()
+}
+
+/// The other half of the same defect, and the one the height check above cannot see: a panel
+/// whose content fits must not be handed the scrolling variant. Before the fix every
+/// measurement exceeded every ceiling, so `scrolls` was true for a one-word result — which is
+/// a scroll view wrapped around a line of text, inside a panel sized to the whole screen.
+///
+/// Checked through `PanelSizer` on the numbers the real view now reports, because `scrolls` is
+/// private to the controller and the thing worth pinning is the measurement that feeds it.
+@MainActor
+@Test func aShortTranslationInTheRealPanelViewDoesNotAskToScroll() throws {
+    let screen = try #require(NSScreen.main, "no display attached; this test cannot run headless")
+    let host = NSHostingController(rootView: realPanelContent(panelModel(showing: "Готово."))(.measured))
+    let idealWidth = host.view.fittingSize.width
+    let idealHeight = host.sizeThatFits(
+        in: CGSize(width: PanelSizer.minWidth, height: CGFloat.greatestFiniteMagnitude)).height
+    #expect(idealWidth.isFinite)
+    #expect(idealHeight.isFinite)
+
+    let fit = PanelSizer.fit(ideal: CGSize(width: idealWidth, height: idealHeight),
+                             frozenWidth: nil, previous: .zero,
+                             screen: screen.visibleFrame, userSized: false)
+    #expect(fit.scrolls == false)
+    #expect(fit.size.height < screen.visibleFrame.height * PanelSizer.maxHeightFraction)
 }
 

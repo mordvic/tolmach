@@ -200,14 +200,15 @@ struct TranslatorApp: App {
     /// referenced while it is being constructed, and «Открыть в окне» needs `openWindow`,
     /// which is only readable from inside a scene.
     private func configurePanel() {
-        // A builder rather than a view: the controller rebuilds the content in its
-        // non-scrolling variant to measure it, and in whichever variant the measurement then
-        // calls for to display it.
-        panel.setContentBuilder { scrolls in
+        // A builder rather than a view: the controller builds the content twice over, once to
+        // measure and once to install, and the two are not the same view — see
+        // `PanelContentVariant`.
+        panel.setContentBuilder { variant in
             AnyView(PanelHost(
                 coordinator: coordinator,
                 windowModel: translation,
-                scrolls: scrolls,
+                scrolls: variant.scrolls,
+                fillsPanel: variant.fillsPanel,
                 // Copying does not close. Enter is the shortcut that means «скопировать и
                 // закрыть» (spec 7.2); the button is for a user who wants to keep reading.
                 onCopy: { Task { await coordinator.copyResult() } },
@@ -328,6 +329,10 @@ private struct PanelHost: View {
     /// Decided by `PanelController` from the measurement, not by this view: the content is
     /// measured in its non-scrolling form, and only the variant that is *displayed* scrolls.
     let scrolls: Bool
+    /// False only for the copy the controller measures. Both of these come from one
+    /// `PanelContentVariant` at the call site, so they cannot be set to a combination that
+    /// does not exist.
+    let fillsPanel: Bool
     let onCopy: () -> Void
     let onOpenInWindow: () -> Void
     let onClose: () -> Void
@@ -343,7 +348,8 @@ private struct PanelHost: View {
                   onRetry: { Task { await coordinator.retry() } },
                   onGrantPermission: onGrantPermission,
                   scrolls: scrolls,
-                  onClose: onClose)
+                  onClose: onClose,
+                  fillsPanel: fillsPanel)
             // Deferred to a later turn of the main actor on purpose. These fire *during*
             // the view update that produced the new text, and resizing a window from
             // inside a SwiftUI update re-enters layout on a view AppKit is already laying

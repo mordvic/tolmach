@@ -51,6 +51,7 @@ where these are meant to be answered.
 | The panel not shivering while a run streams | Growth is deliberately unanimated during a run and animated once on the settle. Both the 100 ms throttle and the 150 ms tween are chosen against each other, and only watching a real stream says whether that was right | `contentDidChange`, `applyFit` |
 | Dragging the panel's edge, then more text arriving | `.resizable` is new to the mask, and `windowDidEndLiveResize` is the only thing that sets `userSized`. Nothing in the suite performs a live resize, so the delegate hookup itself is unexercised | `PanelController.windowDidEndLiveResize` |
 | A translation past the ceiling scrolling inside the panel | The scrolling variant is swapped in from the measurement. `PanelSizer` decides it and is tested; the swap reaching the screen is not | `setScrolling`, `PanelView.scrolls` |
+| **Re-measure `hosting.sizingOptions = []`** | Its evidence — 380 × 120 before, 380 × 260 after, on the running bundle — was taken on a `.titled` panel against a fixed size, and **neither condition exists any more**, so the numbers cannot be reproduced from here. The mechanism it records is sound and the line stays on that basis; someone with the bundle on a screen should take the number again, or delete it | `PanelController.init` |
 
 ---
 
@@ -58,13 +59,20 @@ where these are meant to be answered.
 
 Deliberate, with the reason. Do not "fix" these without reading the reason first.
 
-- **The panel is a fixed 380 × 260.** Nothing resizes it. A one-line result leaves the lower
-  half empty; a long translation scrolls inside it. `PanelController.resize(to:)` existed,
-  was never called, and was deleted rather than wired up. The reasoning and the measured
-  ideal heights (97 pt short, 301 pt long) are in `TranslationPanel.init`'s doc comment.
-  `NSHostingController.sizeThatFits(in:)` with an unbounded height proposal is the candidate
-  measurement if this is revisited — `fittingSize` and `intrinsicContentSize` are both known
-  useless here.
+- **The panel is sized to its content, within bounds it will not leave.** This entry used to
+  say the opposite — a fixed 380 × 260 that nothing resized — and that was retired by the UI
+  redesign's Task 4, which took the candidate measurement the old entry pointed at and wired
+  it up. What is deliberate now: the width is clamped to 300–560 pt and **frozen for a whole
+  presentation**, so a panel never changes width while the user reads it; the height is
+  monotonic within a presentation and capped at 0.6 of `visibleFrame`, past which the content
+  scrolls instead; and dragging an edge hands the size to the user until the panel hides.
+  `PanelSizer` owns all four rules and is where to change them. The old entry's ideal heights
+  (97 pt short, 301 pt long) are gone with the doc comment that held them — they described a
+  size the controller now measures directly, and quoting stale numbers for a live measurement
+  is worse than having none.
+  Measured through the two calls `PanelController.measure` makes, on the real `PanelView`:
+  274 × 94 for a one-word translation, 6929 × 302 for a forty-sentence one — which clamp to
+  the width floor and the width ceiling respectively.
 - **A refused `start()` at launch is swallowed.** If `HotkeyManager.register` ever fails the
   user gets no shortcut and no message. Unreachable today: `AppSettings.hotkey` guarantees a
   valid combination, and the only other failure is `-9878` for a combination another component
