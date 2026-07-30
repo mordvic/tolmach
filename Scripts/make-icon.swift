@@ -106,11 +106,18 @@ func drawIcon(in ctx: CGContext, pixels: CGFloat, simplified: Bool) throws {
     // A substitution invalidates the cap-height maths the whole sizing scheme rests on — the
     // font above was sized to *this* font's cap height, not whatever CoreText might swap in —
     // so confirm the line is one glyph run in exactly the font that was asked for.
-    let runs = CTLineGetGlyphRuns(line) as! [CTRun]
+    guard let runs = CTLineGetGlyphRuns(line) as? [CTRun] else {
+        throw Failure("CoreText returned glyph runs that are not a [CTRun]")
+    }
     guard CTLineGetGlyphCount(line) == 1, runs.count == 1 else {
         throw Failure("Т produced \(CTLineGetGlyphCount(line)) glyph(s) across \(runs.count) run(s), expected one of each")
     }
     let runAttributes = CTRunGetAttributes(runs[0]) as NSDictionary
+    // `as! CTFont?` and not `as? CTFont`: Swift rejects a conditional downcast to a CoreFoundation
+    // type outright — «conditional downcast to CoreFoundation type 'CTFont' will always succeed»
+    // is an error, not a warning. Forcing into an *optional* is the form the language leaves, and
+    // it does not trap on an absent attribute: a nil subscript result casts to nil and this guard
+    // throws. Do not «tidy» this into `as?`; it will not compile.
     guard let runFont = runAttributes[kCTFontAttributeName as String] as! CTFont? else {
         throw Failure("the rendered run for Т carries no font attribute")
     }
