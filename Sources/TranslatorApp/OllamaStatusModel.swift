@@ -26,8 +26,11 @@ enum OllamaStatus: Equatable {
     /// rather than silently keep the healthy glyph.
     ///
     /// **No polling timer drives this.** The status behind it refreshes at launch, when the
-    /// main window or the settings window opens, and after a translation attempt finishes
-    /// (hotkey panel or main window) — never on a clock. Between those moments this glyph can
+    /// main window or the settings window opens, after a translation attempt finishes (hotkey
+    /// panel or main window), and when the user presses «Проверить снова» in the «Модели» pane
+    /// — never on a clock. That last one is listed because it is the one a user reaches for
+    /// *precisely* when they distrust this glyph, so a list that omitted it would read as
+    /// though there were no way to force the question. Between those moments this glyph can
     /// lag the truth: Ollama can stop right after a refresh and the menu bar will keep saying
     /// `character.bubble` until the next one of those moments. Deliberately absent from that
     /// list is "when the menu opens" — `MenuBarExtra`'s content is not reliably re-instantiated

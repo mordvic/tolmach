@@ -45,9 +45,14 @@ struct SourcePane: View {
 /// As a separate view value holding a single class reference, SwiftUI compares the re-created
 /// value against the previous one, finds the reference identical, and skips its body.
 /// Observation then re-runs it only when `sourceText` itself changes. The character count is
-/// here for the same protection, not for tidiness. This carries forward the measurement
-/// `ChunkHint` in `MainWindowView.swift` recorded; that type is deleted once Task 7 rebuilds
-/// the window around this pane, and this doc comment is where the reasoning survives it.
+/// here for the same protection, not for tidiness.
+///
+/// This carries forward a measurement `ChunkHint` in `MainWindowView.swift` recorded — 2
+/// evaluations of `expectedChunkCount` per streamed token, for a value whose only inputs are
+/// `sourceText` and `settings.chunkSize` and so cannot change while a run is streaming. That
+/// type was deleted when the window was rebuilt around this pane, and this doc comment is the
+/// only place the reasoning still lives, which is why the inputs are named here: without them
+/// the claim that they cannot change mid-run is not checkable from the comment.
 private struct SourceFooter: View {
     let model: TranslationViewModel
 

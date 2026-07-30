@@ -39,13 +39,22 @@ struct WarningsView: View {
 
     /// Whether this view would draw anything at all.
     ///
-    /// It exists so a caller can decide not to reserve space for nothing. The panel does:
-    /// it hands the warnings a fixed 120pt slot, and an outcome with no diffs, no missing
-    /// terms and no document glossary — the ordinary case for a short, clean translation —
-    /// left that slot claiming its height while rendering an empty `VStack`, costing 86 of
-    /// the panel's 260 points. The translation went from nine visible lines while running
-    /// to four and a half once it finished, which reads as the result being truncated at
-    /// the moment it completed.
+    /// It exists so a caller can decide not to reserve space for nothing, and the defect it
+    /// was written for is **historical** — the panel it describes no longer exists.
+    ///
+    /// What was measured, on the panel of the time: it handed the warnings a fixed 120 pt
+    /// slot, and an outcome with no diffs, no missing terms and no document glossary — the
+    /// ordinary case for a short, clean translation — left that slot claiming its height
+    /// while rendering an empty `VStack`, costing 86 of the panel's 260 points. The
+    /// translation went from nine visible lines while running to four and a half once it
+    /// finished, which reads as the result being truncated at the moment it completed.
+    ///
+    /// Neither number describes today's panel. The UI redesign removed the fixed slot and the
+    /// fixed 260 pt height together — `PanelView` says so where the gate now lives, and
+    /// `PanelSizer` owns the ceiling. This flag survives that change on a narrower claim: the
+    /// panel measures whatever its content view contains, so an empty `VStack` still
+    /// contributes its stack spacing to a height nothing is asking for. Smaller, and still a
+    /// reason not to render it.
     ///
     /// `warningCount > 0` rather than a repeated disjunction, deliberately, and that is why
     /// this lives here rather than in the caller: the two must not be able to drift. If

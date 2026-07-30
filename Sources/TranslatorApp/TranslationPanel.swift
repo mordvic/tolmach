@@ -73,17 +73,27 @@ final class TranslationPanel: NSPanel {
     /// would make the app behave as though it had been activated.
     override var canBecomeMain: Bool { false }
 
-    /// AppKit runs every frame through this on the way in, and it is not a no-op: measured
-    /// on the development machine, a frame at x = 19 came back at x = 221, because Stage
-    /// Manager reserves a strip down the left edge. A panel that is placed relative to the
-    /// pointer cannot accept that — a selection near the left of the screen would open its
-    /// result 202pt away from where the user is looking, with `PanelPlacement`'s
-    /// flip-and-clamp arithmetic silently overruled. It matters twice over now that the
-    /// panel resizes: every growth step goes through here too.
+    /// AppKit runs every frame through this on the way in, and it is not a no-op. A panel that
+    /// is placed relative to the pointer cannot accept a frame being rewritten under it, and
+    /// it matters twice over now that the panel resizes: every growth step goes through here
+    /// too.
     ///
-    /// Dropping `.titled` did not retire it. Re-measured against a stock `NSPanel` carrying
-    /// this panel's new mask: a frame whose top crossed the menu bar band still came back
-    /// pulled down by the height of the band, exactly as the titled one did.
+    /// Two observations, and they no longer have the same standing — which is the point of
+    /// spelling both out. Re-measured against a *stock* `NSPanel` carrying this panel's
+    /// current mask, i.e. with no override at all:
+    ///
+    /// - **The menu-bar band reproduces.** A frame whose top crossed it still came back pulled
+    ///   down by the height of the band, exactly as it did on the `.titled` panel this
+    ///   evidence was first taken on.
+    /// - **The Stage Manager case did not reproduce.** The original figure — a frame at x = 19
+    ///   coming back at x = 221, AppKit reserving the strip down the left edge, so a selection
+    ///   near the left of the screen would open its result 202 pt from where the user is
+    ///   looking — was taken on a machine with Stage Manager switched on, and the
+    ///   re-measurement did not have it on. The observation is not withdrawn; it is no longer
+    ///   live evidence for this override, and it is recorded here rather than left in a task
+    ///   report where nobody would find it.
+    ///
+    /// The first alone is enough to keep the override.
     ///
     /// Returning the rect untouched is safe rather than reckless: `PanelPlacement` already
     /// clamps the whole frame inside `visibleFrame`, which is strictly stronger than what
@@ -162,10 +172,12 @@ final class PanelController: NSObject, NSWindowDelegate {
     ///
     /// An `NSHostingController` and not the `NSHostingView` the plan named, because the two
     /// passes below need two different questions asked and only the controller can ask the
-    /// second. Measured in this process on the same content: an `NSHostingView` reports
-    /// `fittingSize` and `intrinsicContentSize` of 6929 × 44 for a long paragraph — the whole
-    /// of it on one line — and goes on reporting 6929 × 44 after its frame is set to 560 wide,
-    /// so it cannot be asked for a height *at a width*.
+    /// second. Measured in this process on the same content — and re-taken since, because the
+    /// `intrinsicContentSize` half of it was once stated without a probe behind it: an
+    /// `NSHostingView` over `Text(long).padding(14)` answers `fittingSize` **and**
+    /// `intrinsicContentSize` of 6929 × 44 for a long paragraph — the whole of it on one line —
+    /// and goes on answering 6929 × 44 from both after its frame is set to 560 × 120, so it
+    /// cannot be asked for a height *at a width*.
     /// `NSHostingController.sizeThatFits(in:)` answers 374 × 348 for the same content at 400
     /// and is the only public API on either type that takes a proposal.
     ///
@@ -181,6 +193,9 @@ final class PanelController: NSObject, NSWindowDelegate {
     private var build: (PanelContentVariant) -> AnyView
 
     private var anchor: PanelAnchor = .topLeading
+    /// Nil until this presentation's run settles, and the presentation's width from then on.
+    /// It is deliberately *not* set by `show(at:)` — see the comment there, and the width rule
+    /// in `PanelSizer.fit` for the measurement that says why no earlier moment will do.
     private var frozenWidth: CGFloat?
     private var userSized = false
     private var scrolls = false
@@ -208,8 +223,12 @@ final class PanelController: NSObject, NSWindowDelegate {
         // **The numbers behind it can no longer be reproduced, and that is recorded rather
         // than quietly dropped.** They were 380 × 120 before the line and 380 × 260 after,
         // taken on the running bundle three times and twice respectively — but on a `.titled`
-        // panel, where 120 was 97pt of content plus the title bar, and against a fixed 380 ×
-        // 260 that was the whole of the panel's sizing. Neither condition still holds: the
+        // panel, where the 120 included the title bar, and against a fixed 380 × 260 that was
+        // the whole of the panel's sizing. (An earlier version of this line decomposed the 120
+        // as «97 pt of content plus the title bar»; the title bar is 22 pt, so those two come
+        // to 119 and the decomposition was never the arithmetic it looked like. The 97 was the
+        // ideal height the panel then reported, retired with the doc comment that held it.)
+        // Neither condition still holds: the
         // title bar is gone with `.titled`, and there is no fixed size to come back to. Nobody
         // can re-take that measurement from here — it needs the assembled bundle on a screen —
         // so the line stays on the strength of the mechanism above, and re-measuring it is
@@ -237,10 +256,14 @@ final class PanelController: NSObject, NSWindowDelegate {
     /// once at launch rather than passed to `init`. This is what `setContent(_:)` used to be;
     /// it takes a builder now because the controller has to be able to rebuild the content in
     /// its other variant when the ceiling is reached.
+    ///
+    /// Only the *installed* host is refreshed here. The measuring one used to be refreshed
+    /// alongside it and that line was dead: `measure()` reassigns `measuring.rootView` on
+    /// every single pass — it has to, for the staleness reason recorded there — so nothing
+    /// could ever read the copy assigned in this method.
     func setContentBuilder(_ builder: @escaping (PanelContentVariant) -> AnyView) {
         build = builder
         hosting.rootView = builder(.installed(scrolls: scrolls))
-        measuring.rootView = builder(.measured)
     }
 
     func show(at cursor: CGPoint) {
@@ -260,10 +283,24 @@ final class PanelController: NSObject, NSWindowDelegate {
         // `PanelSizer` derives from it — so a `frame`-based show opens a tall panel both
         // under the menu bar and 0.6 × the menu-bar band too tall.
         let visible = screen?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
-        // `previous: .zero` is what makes a press start fresh: `PanelSizer`'s height is
-        // monotonic *within* a presentation, and this is where the presentation begins.
+        // `previous: .zero` is what makes a press start fresh: `PanelSizer`'s height and width
+        // are both monotonic *within* a presentation, and this is where the presentation
+        // begins.
+        //
+        // **Provisional, and it does not freeze the width.** This runs in the same turn of the
+        // main actor as the press that asked for it, and `HotkeyCoordinator.handlePress`
+        // assigns `panelModel.sourceText` *after* the `afterCapture()` that calls this — so for
+        // a `.text` press the measuring host legitimately still holds the previous run's
+        // translation, and no layout call can help, because the model has not been written yet.
+        // Spec §3.3 puts the width freeze on the first content update after `show(at:)` for
+        // exactly this reason. What is needed here is only *a* size: somewhere to put the panel
+        // and a corner to anchor it by. `applyFit` corrects both as the reply arrives.
+        //
+        // `selection` is the half that *is* right by now — `handlePress` assigns it before
+        // `afterCapture()` — so an `.empty` or a `.notPermitted` press is measured against its
+        // real content here and is correct at this point, which matters because neither runs a
+        // translation and so neither ever reaches `applyFit`.
         let fit = measure(previous: .zero, screen: visible)
-        frozenWidth = fit.size.width
         setScrolling(fit.scrolls)
         let placement = PanelPlacement.place(cursor: cursor, size: fit.size, screen: visible)
         anchor = placement.anchor
@@ -317,6 +354,15 @@ final class PanelController: NSObject, NSWindowDelegate {
         let visible = panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame
             ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
         let fit = measure(previous: panel.frame.size, screen: visible)
+        // The settle is where the width stops being provisional and becomes this
+        // presentation's width, for the reason `PanelSizer.fit`'s width rule measures out: the
+        // panel asks for 347 pt before any of the reply has arrived and for 6929 once all of it
+        // has, so a width chosen any earlier is a width chosen against content that is not
+        // there. From here it does not move again — a «Повторить» inside the same presentation
+        // re-runs into the width the first result earned, which is the one the user is already
+        // reading at. Set before the early return below, because the frame not needing to
+        // change is not a reason to leave the width unsettled.
+        if settling { frozenWidth = fit.size.width }
         setScrolling(fit.scrolls)
         guard fit.size != panel.frame.size else { return }
         let frame = PanelPlacement.reframe(current: panel.frame, newSize: fit.size,
@@ -355,18 +401,35 @@ final class PanelController: NSObject, NSWindowDelegate {
         // reused host with an app-shaped builder: after the view model's text changed and
         // `rootView` was reassigned, `fittingSize` still answered the previous 274 × 94 and
         // `sizeThatFits(560)` still answered 94 tall; after `layoutSubtreeIfNeeded()` they
-        // answered 6929 × 94 and 302. Through a whole `PanelController`, four presses with
-        // alternating short and long content all came out 300 × 120 without this line, and
-        // 300 × 120 / 560 × 302 / 300 × 120 / 560 × 302 with it.
+        // answered 6929 × 94 and 302.
         //
-        // The earlier note here claimed the reassignment alone was enough, «measured». That
-        // measurement was real but narrow: it was taken with a builder that captured a
+        // Through a whole `PanelController` the sequence is this, and it was re-taken against
+        // the **real** `PanelHost` driven through the real `HotkeyCoordinator.handlePress`,
+        // frame read at `show(at:)`. Five presses — short text, long text, `.empty`,
+        // `.notPermitted`, short text — deterministic over repeated runs and identical whether
+        // or not the panel is hidden between them:
+        //
+        //     with this line     300 × 120 / 300 × 120 / 326 × 120 / 560 × 131 / 560 × 305
+        //     without it         300 × 120 / 300 × 120 / 560 × 305 / 326 × 120 / 560 × 131
+        //
+        // An earlier note here read «four presses with alternating short and long content all
+        // came out 300 × 120 without this line». That is refuted: it came from a probe that
+        // replaced `PanelHost` with a look-alike, and against the real type the size **lags**
+        // by roughly one press rather than freezing. Presses 1 and 2 agreeing in both columns
+        // is not staleness at all — see `show(at:)`, which measures before the press's own text
+        // has been assigned.
+        //
+        // The earlier note here also claimed the reassignment alone was enough, «measured».
+        // That measurement was real but narrow: it was taken with a builder that captured a
         // `String`, where the rebuilt view genuinely differs and SwiftUI re-evaluates without
         // being asked. It does not generalise to the observation case, and the app is the
-        // observation case. `show(at:)` is where it bites hardest — it measures in the same
-        // turn of the main actor as the selection it is showing, so a stale host sizes every
-        // press against the previous one, and an `.empty` or `.notPermitted` press never runs
-        // a translation and so never gets a second chance to correct itself.
+        // observation case. `show(at:)` is where it bites hardest, because it measures in the
+        // same turn of the main actor as the selection it is showing: an `.empty` or
+        // `.notPermitted` press runs no translation, so `contentDidChange` is never called and
+        // whatever size `show(at:)` computed is the size that press keeps for its whole life.
+        // A `.text` press does get a second chance — every fit after the first re-measures both
+        // axes now, because `show(at:)` no longer freezes the width — but a stale host would
+        // still open it at the previous press's size for as long as the first token takes.
         measuring.rootView = build(.measured)
         measuring.view.layoutSubtreeIfNeeded()
         // Two passes, and the order matters. The first asks how wide the content would like

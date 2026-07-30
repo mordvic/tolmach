@@ -53,8 +53,14 @@ enum PanelPlacement {
                          anchor: anchor)
     }
 
-    /// The frame alone, for callers that do not resize. Kept so the placement rules have one
-    /// implementation rather than two that drift.
+    /// The frame alone, without the anchor.
+    ///
+    /// **No production caller.** It was written for callers that do not resize, and once the
+    /// panel started resizing there were none left — `PanelController` needs the anchor and so
+    /// calls `place` directly. What keeps it is the thirteen tests that use it as an oracle:
+    /// they assert a frame and have nothing to say about the corner, and `place(…).frame` at
+    /// every one of them would be noise. It delegates rather than reimplementing, so it cannot
+    /// drift from the rule it is checking.
     static func frame(cursor: CGPoint, size: CGSize, screen: CGRect,
                       gap: CGFloat = 14) -> CGRect {
         place(cursor: cursor, size: size, screen: screen, gap: gap).frame

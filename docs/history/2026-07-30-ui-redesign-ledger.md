@@ -38,7 +38,7 @@ supposed to be long.
 |---|---|---|---|
 | 1 | `c0637ad..3e07668` | 296 | `PanelPlacement` gained `PanelAnchor` (the corner nearest the pointer), a `Placement` struct and `reframe(current:newSize:anchor:screen:)`, so a growing panel moves its *far* edge. The old `frame(cursor:size:screen:gap:)` stayed as a wrapper with unchanged behaviour. |
 | 2 | `3e07668..6fbda70` | 307 | New `PanelSizer.swift`: `minWidth 300`, `maxWidth 560`, `minHeight 120`, `maxHeightFraction 0.6`, and `fit(ideal:frozenWidth:previous:screen:userSized:) -> Fit`. Every sizing rule in one testable enum with no AppKit in it. |
-| 3 | `6fbda70..ec1cb5f` | 308 | `PanelView` gained a header with a ⨯, a material background with a 12 pt continuous corner radius, and a `scrolls` flag. **Removed** the inner 220 pt text ceiling, the warnings' `ViewThatFits` 120 pt slot and the 340–520 pt width frame — the four internal ceilings that never added up to the panel. |
+| 3 | `6fbda70..ec1cb5f` | 308 | `PanelView` gained a header with a ⨯, a material background with a 12 pt continuous corner radius, and a `scrolls` flag. **Removed** the inner 220 pt text ceiling, the warnings' `ViewThatFits` 120 pt slot and the 340–520 pt width frame — the three internal ceilings that never added up to the panel. |
 | 4 | `ec1cb5f..ac29815` | 318 | The panel measures itself. `.titled` left the style mask, `.resizable` joined it, `isOpaque = false` / `backgroundColor = .clear` / `hasShadow = true` make the rounded material work. `PanelController` rewritten: a second detached measuring host, a 100 ms leading-edge throttle with a trailing call, `applyFit(settling:)` animating only the settle and only when Reduce Motion is off, `windowDidEndLiveResize` handing the size to the user. Two fix rounds. |
 | 5 | `ac29815..f469cc0` | 324 | `TranslationViewModel.canSwapLanguages` and `swapLanguages()`, deriving the pair from a finished run when the user set no overrides. |
 | 6 | `f469cc0..f075acd` | 325 | `SourcePane.swift` and `TranslationPane.swift`, sharing a `PaneHeader`. The translation side became a read-only `Text` — the defect it replaces is a `TextEditor` bound to `.constant(...)`, which took a caret and silently discarded typing. `RussianCopy.characterCount`. |
@@ -51,9 +51,11 @@ supposed to be long.
 | 13 | `7e54765..96e2e7f` | 341 | `OllamaStatus.menuBarSymbol`, so the menu-bar glyph says whether Ollama is answering, and a first menu row saying the same in words. Five wired refresh points, no polling timer. |
 | 14 | this commit | 341 | This document, and making `docs/` true again. |
 
-The plan's own test-count checksum predicted 332 and every task brief from Task 5 onward
-carried a stale number (320, 321, 321, 324, 331, 331, 332 against actual 326, 328, 328, 330,
-337, 337, 341). The drift is not mysterious — the plan counted only the tests it listed, and
+The plan's own test-count checksum predicted 332 and every task brief from Task 7 onward
+carried a stale number (320, 321, 321, 324, 331, 331, 332 against actual 327, 328, 328, 330,
+337, 340, 341 — the seven figures the table above gives for Tasks 7 to 13; an earlier version
+of this line said «Task 5 onward» and misquoted two of its own table's numbers as 326 and a
+second 337). The drift is not mysterious — the plan counted only the tests it listed, and
 seven fix rounds added tests it could not have listed. The checksum did its job anyway: each
 implementer verified the real baseline with `swift test` before touching a file rather than
 trusting the brief, which is what the plan asked for.
@@ -109,10 +111,14 @@ pending invalidation is never flushed. Restoring the line was fix round 2.
 
 ## Over-claims
 
-Eight over-claims are what the branch's running ledger counted through Task 13; enumerated by
-shape below they come to eleven entries, because Task 9's two comment losses and Task 13's four
-comment findings can each reasonably be grouped as one — and because the last row was committed
-by **Task 14**, the task written to close the pattern. **The count is not the point.** The
+The branch's running ledger counted eight over-claims through Task 13. The table below has
+eleven rows. The two numbers do not reconcile cleanly and no attempt is made here to force
+them: the running tally folded Task 9's two comment losses under one heading and Task 13's four
+comment findings under another, the table splits a task across rows wherever the *shape*
+differs (Tasks 4 and 7 each have two), and the last row was committed by **Task 14**, the task
+written to close the pattern, after the tally was taken. An earlier version of this paragraph
+explained the eleven *by* that folding, which is backwards — folding makes a count smaller.
+**The count is not the point.** The
 pattern is, and it is the most transferable thing on this branch: on work that cannot be seen,
 the failure mode is not writing broken code, it is writing a true-sounding sentence about code
 nobody checked.
@@ -130,6 +136,7 @@ nobody checked.
 | 12 | **A comment promising two load-bearing reasons when one had been invalidated.** | The by-index comment said "Two independent reasons, both load-bearing". One of them — `Table` needing bindings into `let` properties — had been stale since `GlossaryEntry`'s properties became `var`, in the very commit the comment's own ledger tag pointed at. Cut to the one reason that still holds, tag restored. |
 | 13 | **Rationale claiming more precision than it has.** | Four at once. A defaulted closure justified by "the existing tests that construct this view directly" — `grep -rn "MainWindowView" Tests/` returns nothing, and the default would have let a future second call site compile while silently never refreshing. A fold comment arguing why one observer beats two, which never mentioned that the panel builds *two* hosts and both would call it. An ordering rationale justified on residency accuracy, when residency can only ever change the label's text and never the glyph. And `MenuBarExtra` content caching stated as fact, inherited from general SwiftUI behaviour and measured on nothing. |
 | 14 | **A stand-in's artefact recorded as a measurement — in the file that exists for provenance.** | This document, `PLATFORM-TRAPS.md`, `OPEN-ITEMS.md` and `MEASUREMENTS.md` all carried "five presses all came out 300 × 120 — it freezes at the first content it ever laid out". Both halves were artefacts of a probe that replaced `PanelHost` with a look-alike; against the real type the size lags rather than freezing. The `MEASUREMENTS.md` row — the one a future reader cites — carried the sequence with no mention that the content was a stand-in at all. Caught on review, re-taken against the real `PanelHost`, and written up above. Recorded here rather than quietly fixed, because a catalogue of over-claims that omits its own author's is the same failure one level up. |
+| 14 | **The correction was applied to the documents and not to the code.** | Six carriers, not four. The re-take corrected this document, `PLATFORM-TRAPS.md`, `OPEN-ITEMS.md` and `MEASUREMENTS.md`, and touched no product code — leaving the refuted "four presses … all came out 300 × 120" alive in `TranslationPanel.swift` and in `TranslationPanelTests.swift`, the two places `MEASUREMENTS.md` had just started citing as where the corrected observation lives. A `docs`-only fix for a number that also sits in a comment is half a fix, and the half left behind is the one the project's own rule says is authoritative. Corrected in the final fix wave. |
 
 Two things about this list are worth more than the list itself.
 
@@ -173,7 +180,9 @@ works on some machines.
   stock `NSPanel` with the new mask: a frame crossing the menu-bar band still comes back pulled
   down by the height of the band, identically. The Stage Manager case — x = 19 → x = 221 — did
   **not** reproduce, which is consistent with the original note saying it was taken on a machine
-  with Stage Manager on. Both facts are now in the comment and mirrored in the test's doc.
+  with Stage Manager on. The test's doc carried both facts from the start; the *code* comment
+  carried only the menu-bar half and went on presenting x = 19 → x = 221 unqualified, which this
+  line claimed for a while it did not. Both are in both now, closed by the final fix wave.
 - **The panel's ideal heights, 97 pt and 301 pt.** Retired with the doc comment that held them.
   They described a size the controller now measures directly, and quoting stale numbers beside a
   live measurement is worse than having none. Replaced by 274 × 94 / 6929 × 302 above.
@@ -284,9 +293,18 @@ for the thing being measured, the stand-in is the measurement.
 
 ## Deferred, with the reason
 
-None of these was fixed. They are recorded so that a future reader can tell «unfinished» from
-«decided». The three that a user could actually meet are promoted into `docs/OPEN-ITEMS.md` §2;
-the rest live only here.
+None of these was fixed **at the time**. They are recorded so that a future reader can tell
+«unfinished» from «decided». The three that a user could actually meet are promoted into
+`docs/OPEN-ITEMS.md` §2; the rest live only here.
+
+> **Most of this list has since been closed by the final whole-branch fix wave**, which is
+> recorded in `.superpowers/sdd/2026-07-30-ui-redesign/final-fix-report.md`. Closed there: the
+> `PanelSizer.measured` NaN gap and the two unasserted lines of `swapLanguages()` (tests added,
+> all three mutations reproduced and then killed); every comment in the «claim more than they
+> hold» group; and all five «dead or stray» items except the `120 < 120` degeneracy and the
+> property-order note. The entries are left standing rather than struck through, because what
+> they record is what the *build* left behind, and that is the thing this document is for.
+> `docs/OPEN-ITEMS.md` is the file to read for what is open **now**.
 
 **Behaviour, and therefore promoted:**
 

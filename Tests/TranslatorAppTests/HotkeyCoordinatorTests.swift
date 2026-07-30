@@ -43,7 +43,8 @@ private final class ScriptedReader: @unchecked Sendable {
 
 /// Never `.general`: `copyResult()` writes for real, and the user's clipboard is not the
 /// suite's to spend. A uniquely named board is also the only shape `NSPasteboard` is safe in
-/// concurrently — see `SelectionReader.clipboardLock`.
+/// concurrently — the serialisation lives inside `GeneralPasteboard`, not on
+/// `SelectionReader`, which an earlier version of this line named.
 private func scratchPasteboard() -> NSPasteboard {
     NSPasteboard(name: NSPasteboard.Name("ru.tolmach.test.hk.\(UUID().uuidString)"))
 }

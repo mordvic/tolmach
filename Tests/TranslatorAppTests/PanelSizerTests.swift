@@ -24,12 +24,33 @@ private let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)   // ceiling: 
     #expect(fit.size.width == 560)
 }
 
-@Test func theWidthIsFrozenOnceARunHasStarted() {
-    // A width that moved while tokens arrived would re-wrap every line on every token.
+@Test func theWidthIsFrozenOnceTheRunHasSettled() {
+    // A width that moved after the settle would re-wrap every line under a reader who has
+    // started reading. `frozenWidth` is non-nil only from the settle onwards.
     let fit = PanelSizer.fit(ideal: CGSize(width: 520, height: 300), frozenWidth: 380,
                              previous: CGSize(width: 380, height: 200), screen: screen,
                              userSized: false)
     #expect(fit.size.width == 380)
+}
+
+@Test func theWidthGrowsWithTheContentUntilItIsFrozen() {
+    // The panel is shown before the text it will show exists, so the width has to be able to
+    // catch up. Without this a first press comes up at the floor and stays there — see
+    // `aPanelShownBeforeItsTranslationArrivesEndsUpAsWideAsThatTranslationNeeds`.
+    let fit = PanelSizer.fit(ideal: CGSize(width: 520, height: 300), frozenWidth: nil,
+                             previous: CGSize(width: 300, height: 120), screen: screen,
+                             userSized: false)
+    #expect(fit.size.width == 520)
+}
+
+@Test func theWidthNeverShrinksBackWhileTheRunIsStillGoing() {
+    // The other direction, and it is not symmetrical with the height: the panel's ideal width
+    // drops when the status row's «Перевожу…» goes away at the settle, and a panel that
+    // narrowed at that exact moment would re-wrap the whole result just as it became readable.
+    let fit = PanelSizer.fit(ideal: CGSize(width: 340, height: 300), frozenWidth: nil,
+                             previous: CGSize(width: 500, height: 200), screen: screen,
+                             userSized: false)
+    #expect(fit.size.width == 500)
 }
 
 @Test func theHeightNeverDecreasesWhileMoreTextArrives() {
@@ -77,6 +98,19 @@ private let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)   // ceiling: 
     #expect(infinite.size == CGSize(width: 560, height: 540))
     #expect(infinite.size.width.isFinite)
     #expect(infinite.size.height.isFinite)
+
+    // NaN, which nothing asserted until now and which the `isFinite` half of the guard is the
+    // only thing catching. It matters because the obvious simplification is wrong in a way
+    // that reads as equivalent: weakening the test to `value != 0` lets NaN through, since
+    // IEEE says NaN compares unequal to everything including zero — and a NaN frame reaches
+    // `NSWindow.setFrame`, where it is unrecoverable. That mutation was run; these four lines
+    // are what fails on it.
+    let notANumber = PanelSizer.fit(ideal: CGSize(width: CGFloat.nan, height: CGFloat.nan),
+                                    frozenWidth: nil, previous: .zero, screen: screen,
+                                    userSized: false)
+    #expect(notANumber.size == CGSize(width: 300, height: 120))
+    #expect(notANumber.size.width.isFinite)
+    #expect(notANumber.size.height.isFinite)
 }
 
 @Test func aScreenTooShortForTheHeightFloorStillYieldsTheFloor() {

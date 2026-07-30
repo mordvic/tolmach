@@ -128,7 +128,10 @@ struct PanelView: View {
                 // sentence wraps happily. In the shipped panel it does not: the real
                 // `NSHostingView` sizes the window to what the content will compress to, and
                 // a `Text` given less height than it wants truncates rather than wrapping.
-                // Measured on the running bundle at the panel's own 380pt: this rendered as
+                // Measured on the running bundle at the 380pt the panel was fixed at then —
+                // it is sized to its content now, so the width is no longer that number, but
+                // `PanelSizer.minWidth` is 300 and the sentence is longer than either: this
+                // rendered as
                 // «Чтобы переводить выделенное по сочетанию клавиш, приложению…», i.e. the
                 // whole of *where the setting actually lives* was cut — from the one screen
                 // every new user sees before anything else works.
@@ -223,7 +226,9 @@ struct PanelView: View {
 
     /// `fixedSize(horizontal: false, vertical: true)` and the `Spacer` are not tidiness.
     ///
-    /// Rendered without them, in a real `NSHostingView` at the panel's own 380pt width,
+    /// Rendered without them, in a real `NSHostingView` at the 380pt the panel was fixed at
+    /// when this was taken — it is sized to its content now, and `PanelSizer.minWidth` is
+    /// narrower still, so the squeeze this describes has not gone away —
     /// «Ollama не запущена. Запустите её командой «ollama serve».» came out as «…командой
     /// «oll…»: an `HStack` splits its width between a `Text` and a `Button`, and a `Text`
     /// that is short of room truncates to one line rather than wrapping. The clipped half

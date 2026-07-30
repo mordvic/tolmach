@@ -443,28 +443,50 @@ private func realPanelContent(_ model: TranslationViewModel) -> (PanelContentVar
 /// not flushed until something forces layout. Measured on one reused host: after the text
 /// changed and `rootView` was reassigned, `fittingSize` still answered the previous 274 and
 /// `sizeThatFits(560)` still answered 94 tall; only `layoutSubtreeIfNeeded()` moved them to
-/// 6929 and 302. Through the controller, four alternating presses came out 300 × 120 four
-/// times without that call.
+/// 6929 and 302. Through the controller, and re-taken against the real `PanelHost` driven
+/// through the real `HotkeyCoordinator.handlePress`, five presses — short, long, `.empty`,
+/// `.notPermitted`, short — came out 300 × 120 / 300 × 120 / 326 × 120 / 560 × 131 / 560 × 305
+/// with that call and 300 × 120 / 300 × 120 / **560 × 305 / 326 × 120 / 560 × 131** without it.
+/// An earlier version of this comment said four alternating presses «all came out 300 × 120»
+/// without the call; that came from a probe that stood in for `PanelHost` and is refuted —
+/// against the real type the size lags by about one press rather than freezing.
 ///
 /// `show(at:)` is where it does the most damage, because it measures in the same turn of the
 /// main actor as the selection it is showing — nothing has yielded in between. A `.text` press
-/// would at least correct itself on its first token; an `.empty` or `.notPermitted` press runs
-/// no translation, so `contentDidChange` is never called and the panel keeps the wrong size for
-/// its whole life. Those are the two states a new user meets first.
+/// corrects itself on its first token, in both axes since `show(at:)` stopped freezing the
+/// width; an `.empty` or `.notPermitted` press runs no translation, so `contentDidChange` is
+/// never called and the panel keeps the wrong size for its whole life. Those are the two states
+/// a new user meets first.
+///
+/// **Five alternations rather than two, and that is a measurement about this test itself.**
+/// With one long press and one short one it caught the `layoutSubtreeIfNeeded()` mutation 3/3
+/// under `--filter Panel` but only 39/40 under the full suite, which is the suite the project
+/// gates on. The escape is per *measurement*, not per run — on the one escaping run of forty,
+/// `aPanelShownBeforeItsTranslationArrivesEndsUpAsWideAsThatTranslationNeeds` caught the same
+/// mutation in the same process, so the host was freshened for one measurement and not the
+/// other. Something outside this test occasionally flushes SwiftUI's pending update before the
+/// read; what that something is was not isolated. Alternating five times makes every one of
+/// them have to be lucky at once. It is not a proof of determinism and is not claimed as one —
+/// see `docs/OPEN-ITEMS.md` §2 — it is a measured reduction, from 1 escape in 40 to 0 in 40.
 @MainActor
 @Test func aReusedControllerMeasuresThePressItIsShowingNotThePreviousOne() {
+    let longText = String(repeating: "Длинная строка перевода. ", count: 40)
     let model = panelModel(showing: "Готово.")
     let controller = PanelController(content: realPanelContent(model))
 
-    controller.show(at: CGPoint(x: 300, y: 600))
-    let short = controller.panel.frame.size
-    controller.hide()
+    // Content changed through observation, exactly as a run changes it — no value the builder
+    // captured, which is the whole point: a captured `String` rebuilds into a genuinely
+    // different view and SwiftUI re-evaluates it unasked.
+    func press(showing text: String) -> CGSize {
+        model.translatedText = text
+        controller.show(at: CGPoint(x: 300, y: 600))
+        let size = controller.panel.frame.size
+        controller.hide()
+        return size
+    }
 
-    // Changed through observation, exactly as a run does — no value the builder captured.
-    model.translatedText = String(repeating: "Длинная строка перевода. ", count: 40)
-    controller.show(at: CGPoint(x: 300, y: 600))
-    let long = controller.panel.frame.size
-    controller.hide()
+    let short = press(showing: "Готово.")
+    let long = press(showing: longText)
 
     #expect(long.height > short.height)
     #expect(long.width > short.width)
@@ -473,12 +495,68 @@ private func realPanelContent(_ model: TranslationViewModel) -> (PanelContentVar
     #expect(short == CGSize(width: PanelSizer.minWidth, height: PanelSizer.minHeight))
     #expect(long.width == PanelSizer.maxWidth)
 
-    // And back down again: a lagging host is just as wrong when the content shrinks, and
-    // shrinking is the direction `PanelSizer`'s monotonic height makes easy to miss.
-    model.translatedText = "Да."
+    // And back down again, four more times. Shrinking is the direction `PanelSizer`'s monotonic
+    // height makes easy to miss, and a lagging host is just as wrong in it.
+    for _ in 0..<2 {
+        #expect(press(showing: "Да.") == short)
+        #expect(press(showing: longText) == long)
+    }
+}
+
+/// The panel is shown *before* the text it is going to show exists, and it must still end up
+/// the width that text deserves.
+///
+/// This drives the app's real ordering rather than a convenient one. `HotkeyCoordinator`
+/// assigns `panelModel.sourceText` **after** the `afterCapture()` that calls `show(at:)`, and
+/// the translation only lands token by token after that — so at the moment the panel is placed,
+/// the measuring host legitimately holds the previous presentation's result, or nothing at all
+/// on the first press of a session. Every other measuring test in this file assigns the content
+/// first, which is the one ordering under which a width chosen in `show(at:)` looks right.
+///
+/// It is not the staleness `layoutSubtreeIfNeeded()` fixes, and no layout call can reach it:
+/// the host reflects the model correctly, the model has not been written yet.
+///
+/// What it cost while `show(at:)` froze the width: the first hotkey translation of a session
+/// came up at `minWidth`, and because height is monotonic and width was not, it compensated by
+/// growing to roughly twice its proper height — which on a laptop display crosses the 0.6
+/// ceiling and swaps in the scrolling variant for content that would have fitted unscrolled.
+/// The control below is the assertion that matters: the same content assigned *before* the
+/// show is the size this press deserves, and the two must agree.
+@MainActor
+@Test func aPanelShownBeforeItsTranslationArrivesEndsUpAsWideAsThatTranslationNeeds() {
+    let longText = String(repeating: "Длинная строка перевода. ", count: 40)
+
+    let model = panelModel(showing: "")
+    let controller = PanelController(content: realPanelContent(model))
     controller.show(at: CGPoint(x: 300, y: 600))
-    #expect(controller.panel.frame.size == short)
+    let atShow = controller.panel.frame.size
+
+    // The reply arrives. Exactly one content update, and it is `settling: false` — which is
+    // what `PanelHost` passes for every change of `translatedText`. Both halves of that are
+    // forced rather than chosen: `contentDidChange` throttles to ten a second and defers the
+    // rest onto a trailing `Task`, so a second synchronous call in the same turn would be
+    // coalesced away; and `applyFit` *animates* the settling resize, so after a
+    // `settling: true` call `panel.frame` still reads the old frame for the length of the
+    // tween. Neither is worth a sleep here. The freeze itself — that the width stops moving
+    // once the settle has chosen it — is pinned in `PanelSizerTests`, where it is arithmetic
+    // and can fail.
+    model.translatedText = longText
+    controller.contentDidChange()
+    let afterRun = controller.panel.frame.size
     controller.hide()
+
+    let control = PanelController(content: realPanelContent(panelModel(showing: longText)))
+    control.show(at: CGPoint(x: 300, y: 600))
+    let deserved = control.panel.frame.size
+    control.hide()
+
+    // Nothing to measure at the show — this is the state the defect froze a width against.
+    #expect(atShow.width == PanelSizer.minWidth)
+    // The width catches up with the reply instead of having been decided before it existed.
+    #expect(afterRun.width > atShow.width)
+    #expect(afterRun == deserved)
+    // Named as well as compared, because "the two agree" would also hold if both were wrong.
+    #expect(afterRun.width == PanelSizer.maxWidth)
 }
 
 /// The other half of the same defect, and the one the height check above cannot see: a panel

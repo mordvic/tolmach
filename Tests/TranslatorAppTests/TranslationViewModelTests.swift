@@ -404,7 +404,7 @@ private func makeModel(_ client: LLMClient, pasteboard: NSPasteboard? = nil) -> 
 }
 
 @MainActor
-@Test func afinishedRunSuppliesTheLanguagesTheOverridesDidNot() async {
+@Test func aFinishedRunSuppliesTheLanguagesTheOverridesDidNot() async {
     // The ordinary case: the user typed English, left both pickers alone, and pressed
     // translate. Both languages are now known — one detected, one resolved — so the swap
     // is available even though neither override was ever set.
@@ -439,6 +439,14 @@ private func makeModel(_ client: LLMClient, pasteboard: NSPasteboard? = nil) -> 
     #expect(model.outcome != nil)
     model.swapLanguages()
     #expect(model.outcome == nil)
+    // The other two lines of the same clearing, which nothing asserted until now: deleting
+    // either `resolvedTarget = nil` or `state = .idle` from `swapLanguages()` used to pass
+    // every test in this file. `resolvedTarget` is what `WarningsView` looks a term's
+    // translation up by, and `state` is what the window's «Перевести» and this type's own
+    // re-entrancy guard read — a swap that left `.finished` behind would describe a run whose
+    // text has just been moved into the source pane.
+    #expect(model.resolvedTarget == nil)
+    #expect(model.state == .idle)
 }
 
 @MainActor

@@ -18,10 +18,19 @@ struct GlossaryHeader: View {
             Text("\(count) " + RussianCopy.plural(count, "термин", "термина", "терминов"))
                 .font(.caption).foregroundStyle(.secondary)
             Spacer()
-            Picker("Перевод на", selection: $language) {
+            // Spec §5.4 names this control «Показывать перевод на», and that wording is
+            // restored here. It stays `.labelsHidden()` all the same: this is a header row
+            // that already carries a search field, a term count and two buttons, and a
+            // visible four-word label would take the width from the picker itself, which is
+            // capped at 140 pt and is listed in `docs/OPEN-ITEMS.md` §1 as not yet known to
+            // fit the longest Russian language name. Hidden is visual only — the string is
+            // still the control's accessibility label — and `.help` gives a sighted user the
+            // same sentence on hover, which is what a bare popup was missing.
+            Picker("Показывать перевод на", selection: $language) {
                 ForEach(Language.allCases, id: \.self) { Text($0.russianName).tag($0) }
             }
             .labelsHidden().frame(maxWidth: 140)
+            .help("Показывать перевод на выбранный язык")
             Button(action: onAdd) { Image(systemName: "plus") }
                 .help("Добавить термин")
             Button(action: onRemove) { Image(systemName: "minus") }

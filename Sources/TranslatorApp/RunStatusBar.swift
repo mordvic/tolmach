@@ -112,7 +112,7 @@ struct RunStatusBar: View {
     /// warning behind a triangle nobody is told to press.
     ///
     /// The agreement is structural, not two formulas kept in sync by hand: this reads
-    /// `WarningsView.warningCount`, the same stored count `hasContent` is itself defined as
+    /// `WarningsView.warningCount`, the same computed count `hasContent` is itself defined as
     /// `> 0` of. There is one count in the program that says how many warnings an outcome
     /// carries, and both the disclosure's visibility and its label are read from it, so they
     /// cannot drift apart the way two independently-written conditions could.

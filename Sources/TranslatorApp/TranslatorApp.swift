@@ -100,7 +100,7 @@ struct TranslatorApp: App {
         }
 
         Window("Толмач", id: TranslatorApp.mainWindowID) {
-            MainWindowView(model: translation, settings: settings,
+            MainWindowView(model: translation,
                            glossary: glossary, status: statusModel.status,
                            // Same shape as the panel's own `onCopy` below: the write
                            // itself is `TranslationViewModel.copyToPasteboard()`, which
@@ -143,7 +143,7 @@ struct TranslatorApp: App {
     ///
     /// The hotkey is registered **before** the warm-up, which is not what Task 10's brief
     /// said. `warmUp()` awaits a real HTTP request whose `timeoutIntervalForRequest` is 120
-    /// seconds (`OllamaClient.swift:18`), so registering after it would leave the app's only
+    /// seconds (`OllamaClient.swift:26`), so registering after it would leave the app's only
     /// shortcut dead for as long as Ollama takes to answer — two seconds on a cold model,
     /// and two *minutes* if Ollama accepts the connection and then never replies. Registration
     /// is synchronous and takes no I/O, so there is nothing to gain by deferring it.
@@ -193,7 +193,7 @@ struct TranslatorApp: App {
         // same symbol (see its doc comment), so residency only ever changes `status.label`'s
         // text, never the icon. What refreshing after `warmUp()` actually costs is the glyph's
         // *first* honest reading: `warmUp()` awaits a request whose timeout is 120 seconds
-        // (`OllamaClient.swift:18`) — the same hazard the comment above this one registers the
+        // (`OllamaClient.swift:26`) — the same hazard the comment above this one registers the
         // hotkey ahead of — so an Ollama that accepts the connection and then never answers
         // would leave `.unknown` (which reads as the healthy glyph) on screen for up to two
         // minutes, which is the one situation this indicator exists to reveal. Refreshing first
@@ -460,7 +460,9 @@ private struct MenuContent: View {
         //
         // The button above works around this app not being activated by a menu click;
         // `SettingsLink` exposes no action to hang that on. Measured on the real bundle:
-        // the settings window opens (420x450, visible) with `NSApp.isActive == false` and
+        // the settings window opens (measured then at 420x450; every pane takes one
+        // 560 × 480 frame from `settingsPane()` since, and the size is not what this
+        // measurement was about) with `NSApp.isActive == false` and
         // no key window, so the caveat applies here too — the pane comes up unfocused
         // until it is clicked. Fixing it would mean swapping this standard control for a
         // `Button` calling `openSettings()` plus `NSApp.activate`, and nothing in this

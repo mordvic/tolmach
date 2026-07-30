@@ -1,5 +1,6 @@
 // Sources/TranslatorApp/SettingsModelsView.swift
 import SwiftUI
+import OllamaKit
 
 struct SettingsModelsView: View {
     /// `@Bindable` for the same reason as in `SettingsGeneralView`: the pickers write back
@@ -35,6 +36,17 @@ struct SettingsModelsView: View {
                         .foregroundStyle(status.isHealthy ? .green : .orange)
                         .labelStyle(.titleAndIcon)
                 }
+                // Spec §5.3 asks this section for three things: whether Ollama is running,
+                // the address, and a re-check. The address was missing until now. Read from
+                // `OllamaClient.defaultBaseURL` rather than typed here, because a literal in
+                // a view can disagree with the address the app is actually calling, and a
+                // wrong address is worse than none — it is the first thing a user checks
+                // when the state above says «не запущена».
+                LabeledContent("Адрес") {
+                    Text(OllamaClient.defaultBaseURL.absoluteString)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
                 Button("Проверить снова") { Task { await refresh() } }
             }
 
@@ -67,6 +79,11 @@ struct SettingsModelsView: View {
                 }
             }
 
+            // Spec §5.3 calls this section «Загрузка» and it ships as «Загрузить модель»,
+            // deliberately. «Загрузка» is ambiguous in exactly the place it cannot afford to
+            // be: this pane says «модель в памяти» and «модель не загружена» a few rows above,
+            // so the bare noun reads as «loading into memory» as readily as «downloading»,
+            // which is the one thing this section does not do. The verb phrase says which.
             Section("Загрузить модель") {
                 LabeledContent("Загрузить модель") {
                     HStack {

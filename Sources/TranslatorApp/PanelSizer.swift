@@ -34,8 +34,9 @@ enum PanelSizer {
     /// - Parameters:
     ///   - ideal: what the content measured to, unconstrained. `.zero` before the first
     ///     layout pass; may be infinite if a subview hands an unbounded proposal back.
-    ///   - frozenWidth: the width already chosen for this presentation, or nil if none has
-    ///     been chosen yet.
+    ///   - frozenWidth: the width this presentation has finally settled on, or nil while it is
+    ///     still being chosen. Until it is set the width tracks the content and may only grow;
+    ///     the width rule below carries the measurement behind that.
     ///   - previous: the panel's current size. `.zero` before it is first shown.
     ///   - screen: the `visibleFrame` of the screen the panel is on.
     ///   - userSized: the user has dragged the panel's edge, so it is theirs until it hides.
@@ -58,7 +59,31 @@ enum PanelSizer {
             return Fit(size: CGSize(width: userWidth, height: userHeight), scrolls: wanted.height > userHeight)
         }
 
-        let width = frozenWidth ?? min(max(wanted.width, minWidth), maxWidth)
+        // Until `frozenWidth` is set, the width is the widest this presentation's content has
+        // *ever* asked to be, not the widest it is asking for now — so it grows with the reply
+        // and never shrinks under the reader. That it cannot simply be chosen once at the
+        // start is measured, not preferred. The real `PanelView`, through the same two calls
+        // `PanelController.measure` makes, at each phase of one run — ideal width first, then
+        // the height that width yields:
+        //
+        //     running, no text yet    347 →  116 at 560
+        //     running, one token      347 →  118 at 560
+        //     running, first line     370 →  134 at 330, 118 at 560
+        //     running, whole reply   6929 →  486 at 330, 326 at 560
+        //     finished, whole reply  6929 →  462 at 330, 302 at 560
+        //     finished, one word      274 →   94 at 560
+        //
+        // There is no early moment at which the final width is knowable: the panel asks for
+        // 347 pt before a single character has arrived — that is its button row, which is also
+        // what `minWidth` is — and stays under 400 until one line of the reply is longer than
+        // the panel itself. Freezing at any of those points puts a forty-sentence translation
+        // into a ~370 pt column at 462 pt tall instead of 560 × 302, which is past the 0.6
+        // ceiling on a laptop display and so scrolls content that would have fitted. Growing
+        // instead costs a re-wrap or two in the first few hundred milliseconds, while there is
+        // a line or two on screen and nobody is reading yet; `frozenWidth` pins it for the rest
+        // of the presentation at the settle, which is when reading starts. `PanelController`
+        // is what decides that moment — see `applyFit`.
+        let width = frozenWidth ?? min(max(max(wanted.width, previous.width), minWidth), maxWidth)
         // `max(minHeight, …)` and not the fraction alone: on a very short screen — a strip
         // display, or a `visibleFrame` squeezed by a tall menu bar — the fraction falls
         // below the floor, and a panel shorter than its own buttons is the worse failure.

@@ -15,7 +15,8 @@ final class HotkeyCoordinator {
     private let manager: HotkeyManager
     /// Injected so the tests can write to a board of their own. The user's clipboard is not
     /// the suite's to spend, and `NSPasteboard` is only safe concurrently across *distinct*
-    /// names — see `SelectionReader.clipboardLock`.
+    /// names — see the lock inside `GeneralPasteboard`, which is where that serialisation
+    /// lives; it is not on `SelectionReader`, which an earlier version of this line said.
     private let pasteboard: NSPasteboard
 
     /// Kept so a re-registration after a settings change can reinstall the same action.

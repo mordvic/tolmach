@@ -4,7 +4,6 @@ import TranslationCore
 
 struct MainWindowView: View {
     @Bindable var model: TranslationViewModel
-    @Bindable var settings: AppSettings
     /// Plain `let`, not `@Bindable`: nothing here binds to the store, it is only read
     /// (`lastProblem`) and messaged (`mute`/`save`). Observation still tracks the reads.
     let glossary: GlossaryStore
@@ -12,9 +11,15 @@ struct MainWindowView: View {
     /// owns the model and the refresh schedule.
     let status: OllamaStatus
     var onCopy: () -> Void = {}
-    /// Refreshes `OllamaStatusModel` after a run in *this* window settles — the window's
-    /// own half of the "after a translation attempt" trigger; `PanelHost` covers the hotkey
-    /// half. Not defaulted, matching `PanelHost.onRunFinished`: there is exactly one call
+    /// Refreshes `OllamaStatusModel` whenever this window's `state` moves to anything that is
+    /// not `.running` — the window's own half of the "after a translation attempt" trigger;
+    /// `PanelHost` covers the hotkey half. That guard is deliberately wider than "a run
+    /// settled": `swapLanguages()` and `adopt(from:)` both write `state` without a run having
+    /// happened, and both therefore fire this too. Harmless in the direction it errs — every
+    /// extra fire makes the glyph fresher, and `refresh()` is one probe — but it is a wider
+    /// trigger than the name suggests, so the name is not what to trust here.
+    ///
+    /// Not defaulted, matching `PanelHost.onRunFinished`: there is exactly one call
     /// site (`TranslatorApp.swift`'s `Window` scene), and a default here would let a future
     /// second call site compile while silently never refreshing — the same trap a default
     /// would have been worth taking on `PanelHost` too, if it had more than one caller.
@@ -35,9 +40,10 @@ struct MainWindowView: View {
         .frame(minWidth: 700, minHeight: 480)
         .toolbar { toolbar }
         .onChange(of: model.state) { _, new in
-            // Same settle condition `PanelHost` uses for the hotkey path: a state that is
-            // no longer `.running` is the point this window has something new to say about
-            // whether Ollama answered.
+            // Same condition `PanelHost` uses for the hotkey path: a state that is no longer
+            // `.running` is the point this window may have something new to say about whether
+            // Ollama answered. It is not only translation attempts — see `onRunFinished`,
+            // which names the other two writers of `state`.
             guard new != .running else { return }
             Task { @MainActor in await onRunFinished() }
         }

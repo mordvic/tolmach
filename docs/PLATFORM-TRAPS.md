@@ -161,7 +161,11 @@ the accurate description. And a change of selection *kind* is stale too: `.empty
 `.notPermitted` come out at the wrong size, and neither runs a translation, so neither ever gets
 a second chance to correct itself. (Presses 1 and 2 are equal in both columns for a reason that
 is not staleness: `handlePress` assigns `sourceText` *after* the panel is shown, so a text press
-legitimately opens on the previous run's content either way.)
+legitimately opens on the previous run's content either way — which is a trap of its own, and is
+why `show(at:)` no longer freezes the panel's width there. The frames above are the size at
+`show(at:)`, which for a `.text` press is now **provisional**: the panel corrects itself as the
+reply arrives. For an `.empty` or a `.notPermitted` press it is still the final size, because
+neither runs a translation.)
 → `PanelController.measure` in `Sources/TranslatorApp/TranslationPanel.swift`
 
 **`constrainFrameRect(_:to:)` rewrites the frame on order-in**, and **not only for `.titled`
