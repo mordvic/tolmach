@@ -36,4 +36,19 @@ enum GlossaryOrder {
         if entry.term.lowercased().contains(needle) { return true }
         return entry.translations.values.contains { $0.lowercased().contains(needle) }
     }
+
+    /// Which of a set of selected indices remain valid once `order` changes.
+    ///
+    /// Membership in the new `order` is only a safe test when the change that produced it
+    /// could not have shifted or repurposed an index — a search or an append. A removal
+    /// shifts every later index down by one, and a re-read of the file can replace what an
+    /// index points at without ever removing that index from `order`; in both cases a
+    /// selected index can still satisfy `order.contains(_:)` while denoting a different row
+    /// than the one the user selected. `indicesMayHaveShifted` is the caller's declaration of
+    /// which situation this is — see `SettingsGlossaryView.reorder(indicesMayHaveShifted:)`,
+    /// whose call sites are the only place that knows which of the two just happened.
+    static func selection(_ selection: Set<Int>, survivingIn order: [Int],
+                          indicesMayHaveShifted: Bool) -> Set<Int> {
+        indicesMayHaveShifted ? [] : selection.filter { order.contains($0) }
+    }
 }

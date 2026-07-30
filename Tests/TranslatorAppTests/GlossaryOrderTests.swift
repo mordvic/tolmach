@@ -55,3 +55,30 @@ private func entries(_ terms: String...) -> [GlossaryEntry] {
     let order = GlossaryOrder.visibleOrder(entries: entries("чанк", "чанк", "чанк"), query: "")
     #expect(order == [0, 1, 2])
 }
+
+@Test func aSelectionSurvivesASearchThatKeepsItsRow() {
+    // Search never shifts or repurposes an index — it only narrows `order` — so a selected
+    // row still present in the narrowed order must stay selected.
+    let order = GlossaryOrder.visibleOrder(entries: entries("чанк", "тон"), query: "чан")
+    let survived = GlossaryOrder.selection([0], survivingIn: order, indicesMayHaveShifted: false)
+    #expect(survived == [0])
+}
+
+@Test func aSelectionDoesNotSurviveARemoval() {
+    // A removal shifts every later index down by one, so a selected index that still
+    // satisfies `order.contains(_:)` can now denote a different row. The caller declares
+    // this with `indicesMayHaveShifted: true`, which must clear rather than filter.
+    let survived = GlossaryOrder.selection([1], survivingIn: [0, 1], indicesMayHaveShifted: true)
+    #expect(survived.isEmpty)
+}
+
+@Test func removingAnEarlierRowDoesNotLeaveTheFollowingRowSelected() {
+    // The exact trace the defect was found from: select «бета» (index 1) out of
+    // «альфа», «бета», «гамма», then delete «альфа» (index 0). Every later index shifts
+    // down by one, so index 1 in the surviving file is «гамма» — a plain membership filter
+    // against the new order would keep {1} selected and let «гамма» be deleted instead of
+    // the row the user actually chose.
+    let afterRemoval = GlossaryOrder.visibleOrder(entries: entries("бета", "гамма"), query: "")
+    let survived = GlossaryOrder.selection([1], survivingIn: afterRemoval, indicesMayHaveShifted: true)
+    #expect(survived.isEmpty)
+}

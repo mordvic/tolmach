@@ -63,12 +63,11 @@ struct SettingsGlossaryView: View {
                     Text("Ничего не найдено.")
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
-                    // By index, and not a `Table`. Two independent reasons, both
-                    // load-bearing. `Table` needs a stable identity per row, and rows have
-                    // none: `term` is the only candidate, nothing on the path into
-                    // `file.entries` uniques it — the file is hand-edited and «Добавить
-                    // термин» appends a blank — so keying by term collapses two real rows
-                    // into one and silently drops the other's translation.
+                    // C3: by index, and not a `Table`. `Table` needs a stable identity per
+                    // row, and rows have none: `term` is the only candidate, nothing on the
+                    // path into `file.entries` uniques it — the file is hand-edited and
+                    // «Добавить термин» appends a blank — so keying by term collapses two
+                    // real rows into one and silently drops the other's translation.
                     List(order, id: \.self, selection: $selection) { index in
                         GlossaryEntryRow(entry: entryBinding(index),
                                          language: editingLanguage,
@@ -143,9 +142,16 @@ struct SettingsGlossaryView: View {
 
     /// Recomputed here and nowhere else. See `GlossaryOrder`'s doc comment: recomputing on
     /// every keystroke would move the row the user is editing out from under the caret.
-    private func reorder() {
+    ///
+    /// `indicesMayHaveShifted` must be true from `remove(at:)` and `reload()`: a removal
+    /// shifts every later index down by one, and a re-read can replace what an index points
+    /// at, so a selected index surviving `order.contains(_:)` there can silently now denote a
+    /// different row. `.onAppear`, the search changing and `add()` never shift or repurpose
+    /// an existing index, so the default lets a selection survive them.
+    private func reorder(indicesMayHaveShifted: Bool = false) {
         order = GlossaryOrder.visibleOrder(entries: glossary.file.entries, query: query)
-        selection = selection.filter { order.contains($0) }
+        selection = GlossaryOrder.selection(selection, survivingIn: order,
+                                            indicesMayHaveShifted: indicesMayHaveShifted)
     }
 
     /// Bounds-checked in both directions on purpose. The rows are identified by index, so
@@ -179,7 +185,7 @@ struct SettingsGlossaryView: View {
         guard glossary.file.entries.indices.contains(index) else { return }
         glossary.file.entries.remove(at: index)
         persist()
-        reorder()
+        reorder(indicesMayHaveShifted: true)
     }
 
     /// Descending, so each removal cannot shift the index of one not yet removed.
@@ -241,6 +247,11 @@ struct SettingsGlossaryView: View {
             glossary.lastProblem = "Не удалось прочитать файл глоссария, в приложении осталась "
                 + "прежняя версия. Файл на диске не изменён: \(error.localizedDescription)"
         }
-        reorder()
+        // A file re-read at the same or a greater row count leaves every selected index in
+        // range, but now naming whatever term is at that position in the new file — not the
+        // row the user actually selected. Only a shrink past the selected index would be
+        // caught by a plain membership filter, which is why this must clear rather than
+        // filter, on both the success and the failure path.
+        reorder(indicesMayHaveShifted: true)
     }
 }
