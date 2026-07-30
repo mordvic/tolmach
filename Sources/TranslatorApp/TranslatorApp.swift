@@ -97,7 +97,11 @@ struct TranslatorApp: App {
         Window("Толмач", id: TranslatorApp.mainWindowID) {
             MainWindowView(model: translation, settings: settings,
                            glossary: glossary, status: statusModel.status,
-                           onCopy: { copyWindowResult() })
+                           // Same shape as the panel's own `onCopy` below: the write
+                           // itself is `TranslationViewModel.copyToPasteboard()`, which
+                           // shares `GeneralPasteboard.write` with `HotkeyCoordinator`'s,
+                           // so there is one write to test rather than two to keep in sync.
+                           onCopy: { Task { await translation.copyToPasteboard() } })
                 .task { await statusModel.refresh(interactiveModel: settings.interactiveModel) }
         }
 
@@ -267,30 +271,6 @@ struct TranslatorApp: App {
         // brought it to the foreground; without this the window opens behind the application
         // the user was reading.
         activateThisApp()
-    }
-
-    /// The window's «Скопировать», wired here rather than inside `MainWindowView` because
-    /// `GeneralPasteboard` lives in `TextCapture`, which `TranslatorApp.swift` already
-    /// imports for `HotkeyCoordinator` and `PermissionsGate` — a view has no reason to know
-    /// the pasteboard exists at all.
-    ///
-    /// Not `GeneralPasteboard.write(_:)` — that method does not exist; the type's only API
-    /// is `withExclusiveAccess`, a lock around whatever the caller does to the board. This
-    /// mirrors `HotkeyCoordinator.copyResult()` rather than inventing a second way to reach
-    /// `NSPasteboard.general`: an empty result is left alone rather than blanking whatever
-    /// the user already has copied, the write happens off the main actor because the lock's
-    /// other holder can keep it for up to half a second, and the text is read here, on the
-    /// actor, before the hop.
-    private func copyWindowResult() {
-        let text = translation.translatedText
-        guard !text.isEmpty else { return }
-        Task.detached(priority: .userInitiated) {
-            GeneralPasteboard.withExclusiveAccess {
-                let board = NSPasteboard.general
-                board.clearContents()
-                board.setString(text, forType: .string)
-            }
-        }
     }
 
     /// One throwaway request at launch, so the first hotkey press does not pay to load the

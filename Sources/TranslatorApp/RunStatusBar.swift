@@ -22,7 +22,10 @@ struct RunStatusBar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                if let summary, model.state == .finished {
+                // Not `if let summary`: the label never reads the string, only whether
+                // there is one, and binding a name for a value nobody uses is what the
+                // compiler's `#no-usage` warning is for.
+                if summary != nil, model.state == .finished {
                     Button {
                         expanded.toggle()
                     } label: {
@@ -34,7 +37,14 @@ struct RunStatusBar: View {
                 line
                 Spacer(minLength: 0)
             }
-            if expanded, let outcome = model.outcome, model.state == .finished {
+            // `summary != nil` gates this branch too, not just `expanded`: `expanded` is
+            // `@State` and survives across runs, so without this a run that leaves
+            // warnings expanded, followed by a second, quiet run, would show no triangle
+            // to press — `summary` would be nil — while still drawing an empty
+            // `WarningsView` plus this stack's own spacing underneath. That is the exact
+            // failure `summary`'s own doc comment exists to prevent, reached through
+            // stale `@State` rather than through a disagreeing count.
+            if expanded, summary != nil, let outcome = model.outcome, model.state == .finished {
                 let warnings = WarningsView(outcome: outcome, target: model.resolvedTarget,
                                             problem: glossaryProblem, onMute: onMute)
                 // `ViewThatFits` and not a bare `ScrollView`, because a `ScrollView` is

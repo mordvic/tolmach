@@ -1,8 +1,10 @@
 // Sources/TranslatorApp/TranslationViewModel.swift
 import Foundation
 import Observation
+import AppKit
 import OllamaKit
 import TranslationCore
+import TextCapture
 
 /// Why one view model will not take over another's run.
 ///
@@ -34,6 +36,9 @@ final class TranslationViewModel {
     private let translator: Translator
     private let settings: AppSettings
     private let glossary: GlossaryStore
+    /// Injected so tests can write to a board of their own rather than the real clipboard —
+    /// same reasoning and the same default as `HotkeyCoordinator.pasteboard`.
+    private let pasteboard: NSPasteboard
     private var task: Task<TranslationOutcome, Error>?
     private var clearedPrevious = false
 
@@ -51,8 +56,22 @@ final class TranslationViewModel {
     var targetOverride: Language?
     var toneOverride: Tone?
 
-    init(translator: Translator, settings: AppSettings, glossary: GlossaryStore) {
+    init(translator: Translator, settings: AppSettings, glossary: GlossaryStore,
+         pasteboard: NSPasteboard = .general) {
         self.translator = translator; self.settings = settings; self.glossary = glossary
+        self.pasteboard = pasteboard
+    }
+
+    /// The window's «Скопировать».
+    ///
+    /// Same shape as `HotkeyCoordinator.copyResult()` for the panel — both delegate to
+    /// `GeneralPasteboard.write`, which is where the empty-guard and the serialised,
+    /// off-actor write live, so the two copy paths cannot diverge in how they touch
+    /// `NSPasteboard.general`. Kept here rather than in `TranslatorApp` so it is testable
+    /// against a scratch board the way the panel's copy already is, without constructing
+    /// the whole app.
+    func copyToPasteboard() async {
+        await GeneralPasteboard.write(translatedText, to: pasteboard)
     }
 
     /// Why `adopt(from:)` would refuse right now, or `nil` if it would not.

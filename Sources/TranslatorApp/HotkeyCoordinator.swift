@@ -206,33 +206,17 @@ final class HotkeyCoordinator {
     }
 
     /// Enter on the panel, and the «Скопировать» button.
+    ///
+    /// Delegates to `GeneralPasteboard.write`, which is where the empty-guard, the
+    /// serialisation and the off-actor write actually live now — shared with the window's
+    /// own «Скопировать», so the two cannot diverge in how they touch the pasteboard. This
+    /// method exists only because it knows which board and which text belong to *this*
+    /// press: today the write and the ⌘C fallback cannot overlap, because the panel that
+    /// offers «Скопировать» is hidden for the duration of a capture; but that is a fact
+    /// about the current UI rather than about this code, which is exactly why the actual
+    /// serialisation lives in `GeneralPasteboard` and not here.
     func copyResult() async {
-        // An empty result is not copied. `clearContents()` alone would destroy whatever the
-        // user has, in exchange for putting nothing there — the exact failure spec 6 is about.
-        guard !panelModel.translatedText.isEmpty else { return }
-        // The text is read here, on the main actor; the write happens off it, through the
-        // same serialisation `SelectionReader.clipboardText()` uses.
-        //
-        // Serialised because two threads touching one pasteboard name abort the process —
-        // measured 10 times out of 10 for one name, 0 out of 10 for distinct names — and
-        // `NSPasteboard.general` is one name. Today this and the ⌘C fallback cannot overlap,
-        // because the panel that offers «Скопировать» is hidden for the duration of a
-        // capture; but that is a fact about the current UI rather than about this code, and
-        // the failure mode is a hard abort rather than a wrong value.
-        //
-        // Off the main actor because the lock's other holder keeps it for the whole of its
-        // poll — up to half a second whenever the target application ignores the ⌘C — and
-        // blocking the main thread for that long stops drawing and event delivery outright.
-        // `async` rather than fire-and-forget so callers that need the write to have landed,
-        // and the test that checks it, can await it; the suspension does not block the actor.
-        let text = panelModel.translatedText
-        let board = pasteboard
-        await Task.detached(priority: .userInitiated) {
-            GeneralPasteboard.withExclusiveAccess {
-                board.clearContents()
-                board.setString(text, forType: .string)
-            }
-        }.value
+        await GeneralPasteboard.write(panelModel.translatedText, to: pasteboard)
     }
 
 }

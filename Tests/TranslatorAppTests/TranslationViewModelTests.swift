@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import AppKit
 @testable import TranslatorApp
 @testable import TranslationCore
 
@@ -76,15 +77,23 @@ private func waitUntil(_ description: String, within timeout: Duration = .second
     }
 }
 
+/// Never `.general`: `copyToPasteboard()` writes for real, and the user's clipboard is not
+/// the suite's to spend. A uniquely named board is also the only shape `NSPasteboard` is
+/// safe in concurrently — see `GeneralPasteboard`'s own doc comment.
+private func scratchPasteboard() -> NSPasteboard {
+    NSPasteboard(name: NSPasteboard.Name("ru.tolmach.test.vm.\(UUID().uuidString)"))
+}
+
 @MainActor
-private func makeModel(_ client: LLMClient) -> TranslationViewModel {
+private func makeModel(_ client: LLMClient, pasteboard: NSPasteboard? = nil) -> TranslationViewModel {
     // In-memory rather than a real `UserDefaults` suite: nothing here writes a
     // setting today, but a suite that ever gets written to leaves a plist behind in
     // ~/Library/Preferences that nothing can reliably remove — see `InMemoryDefaults`.
     return TranslationViewModel(translator: Translator(client: client),
                                 settings: AppSettings(defaults: InMemoryDefaults(prefix: "vm")),
                                 glossary: GlossaryStore(url: FileManager.default.temporaryDirectory
-                                    .appendingPathComponent("g-\(UUID().uuidString).json")))
+                                    .appendingPathComponent("g-\(UUID().uuidString).json")),
+                                pasteboard: pasteboard ?? scratchPasteboard())
 }
 
 @MainActor
@@ -474,4 +483,27 @@ private func makeModel(_ client: LLMClient) -> TranslationViewModel {
     #expect(window.adopt(from: window) == false)
     #expect(window.adoptionRefusal(from: panel) == nil)
     #expect(window.adopt(from: panel))
+}
+
+// MARK: - The pasteboard
+
+@MainActor
+@Test func theWindowsCopyPutsTheTranslationOnThePasteboardAndLeavesAnEmptyOneAlone() async {
+    // Mirrors `HotkeyCoordinatorTests.copyingPutsTheTranslationOnThePasteboardAndLeavesAnEmptyOneAlone`
+    // for the panel: the window's copy path shares `GeneralPasteboard.write` with the
+    // panel's, so this is what became testable once that seam existed, rather than only
+    // being reachable by hand through the real app.
+    let board = scratchPasteboard()
+    defer { board.releaseGlobally() }
+    board.clearContents()
+    board.setString("буфер пользователя", forType: .string)
+
+    let model = makeModel(ScriptedClient(responses: []), pasteboard: board)
+    // Nothing translated yet: an empty result must not clear what the user already has.
+    await model.copyToPasteboard()
+    #expect(board.string(forType: .string) == "буфер пользователя")
+
+    model.translatedText = "Привет."
+    await model.copyToPasteboard()
+    #expect(board.string(forType: .string) == "Привет.")
 }
