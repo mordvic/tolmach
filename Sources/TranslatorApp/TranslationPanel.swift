@@ -171,8 +171,10 @@ final class PanelController: NSObject, NSWindowDelegate {
     ///
     /// Both questions are asked of this one object: `sizeThatFits(in:)` on the controller for
     /// the height, and `fittingSize` on its own `view` for the ideal width — see `measure`,
-    /// which carries the reason the width cannot come from a proposal. It works fully
-    /// detached: no window, no superview, no `layoutSubtreeIfNeeded`.
+    /// which carries the reason the width cannot come from a proposal. It works fully detached:
+    /// no window and no superview. It does need `layoutSubtreeIfNeeded()`, for the reason
+    /// `measure` gives — an earlier version of this comment said it did not, on a measurement
+    /// that only covered content changing through a captured value.
     private let measuring: NSHostingController<AnyView>
     /// Not a `let`: the real content is only knowable from inside a scene, so it is replaced
     /// once at launch — see `setContentBuilder(_:)`.
@@ -337,13 +339,36 @@ final class PanelController: NSObject, NSWindowDelegate {
     }
 
     private func measure(previous: CGSize, screen: CGRect) -> PanelSizer.Fit {
-        // Rebuilt on every measurement rather than once in `init`, and this line is what
-        // makes growth work at all. Measured in this process: an `NSHostingController` holds
-        // whatever `rootView` it was last assigned, so after the content behind the builder
-        // changed, `sizeThatFits` went on answering the *old* 74 × 44 — and answered
-        // 275 × 396 the instant `rootView` was reassigned, with no layout pass in between.
-        // Without this the panel would size itself to whatever the content was at launch.
+        // Rebuilt on every measurement rather than once in `init`, and then laid out. Both
+        // lines are load-bearing and they answer two different kinds of staleness.
+        //
+        // The assignment is what makes the host see new content at all: an
+        // `NSHostingController` keeps whatever `rootView` it was last assigned, so without
+        // this the panel would size itself to whatever the content was at launch, for ever.
+        //
+        // The layout pass is what makes the host see content that changed **through
+        // observation**, which is how the app's content changes — `PanelHost` reads
+        // `coordinator.selection` and the view model inside `body` rather than capturing
+        // values. Reassigning `rootView` then hands SwiftUI a view whose stored properties
+        // are identical (the same model *reference*), so nothing looks changed and the
+        // pending invalidation is not flushed until something forces layout. Measured on one
+        // reused host with an app-shaped builder: after the view model's text changed and
+        // `rootView` was reassigned, `fittingSize` still answered the previous 274 × 94 and
+        // `sizeThatFits(560)` still answered 94 tall; after `layoutSubtreeIfNeeded()` they
+        // answered 6929 × 94 and 302. Through a whole `PanelController`, four presses with
+        // alternating short and long content all came out 300 × 120 without this line, and
+        // 300 × 120 / 560 × 302 / 300 × 120 / 560 × 302 with it.
+        //
+        // The earlier note here claimed the reassignment alone was enough, «measured». That
+        // measurement was real but narrow: it was taken with a builder that captured a
+        // `String`, where the rebuilt view genuinely differs and SwiftUI re-evaluates without
+        // being asked. It does not generalise to the observation case, and the app is the
+        // observation case. `show(at:)` is where it bites hardest — it measures in the same
+        // turn of the main actor as the selection it is showing, so a stale host sizes every
+        // press against the previous one, and an `.empty` or `.notPermitted` press never runs
+        // a translation and so never gets a second chance to correct itself.
         measuring.rootView = build(.measured)
+        measuring.view.layoutSubtreeIfNeeded()
         // Two passes, and the order matters. The first asks how wide the content would like
         // to be with nothing wrapping it; the second asks how tall it is *once the width is
         // settled*, because height without a width is not a number — it is a different
@@ -358,7 +383,11 @@ final class PanelController: NSObject, NSWindowDelegate {
         // measurement and clamps to `maxWidth`, so every panel came out 560 wide.
         // `fittingSize` asks for the *ideal* size instead, where a `Spacer` is 0: the same two
         // views answer 274 and 6929, which clamp to `minWidth` and `maxWidth` respectively.
-        // It tracks a reassigned `rootView` just as `sizeThatFits` does — measured.
+        //
+        // It goes stale in exactly the same way `sizeThatFits` does, and on the same terms —
+        // measured, both of them, on one reused host: after an observation-driven content
+        // change and a `rootView` reassignment, `fittingSize` answered the previous width and
+        // only the layout pass above moved it. Neither read may be hoisted above that call.
         let idealWidth = measuring.view.fittingSize.width
         // `height: 0` is not a measurement and is not meant to be one. `PanelSizer` reads a
         // non-positive height as «not measured yet» and hands back `minHeight`; this call

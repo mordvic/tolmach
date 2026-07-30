@@ -43,6 +43,39 @@ private final class ThrowingClient: LLMClient, @unchecked Sendable {
     }
 }
 
+/// Wait until the stream has produced the state a test is about to assert on, rather than
+/// waiting a fixed number of milliseconds and hoping it did.
+///
+/// The tests that use this cancel a run mid-flight and then assert that *some but not all* of
+/// the reply arrived. Both halves used to rest on one wall-clock sleep, and only the lower half
+/// was fragile: the upper half has seconds of margin, because these replies take two to three
+/// seconds to stream, while the lower half needed the main actor to be free enough to apply a
+/// token within the sleep. It usually was. **Measured after the panel-measuring tests were
+/// added: 7 full-suite runs in 20 failed**, all of them here, all with `translatedText` still
+/// empty at the moment of cancellation — the `@MainActor` tests share one actor, and roughly a
+/// third of a second of synchronous layout work in another test is enough to starve the token
+/// deliveries for the whole of a 150 ms sleep.
+///
+/// Waiting on the condition removes the assumption instead of widening it. A fixed sleep can
+/// only ever be «long enough on the machines we tried»; this is long enough by construction,
+/// and it also makes the tests faster, because they now stop as soon as they have what they
+/// need rather than always paying the full sleep.
+///
+/// The deadline is not a disguised sleep: reaching it records an issue, so a genuine hang
+/// fails the test loudly instead of passing quietly.
+@MainActor
+private func waitUntil(_ description: String, within timeout: Duration = .seconds(10),
+                       _ condition: () -> Bool) async {
+    let deadline = ContinuousClock.now.advanced(by: timeout)
+    while !condition() {
+        guard ContinuousClock.now < deadline else {
+            Issue.record("timed out after \(timeout) waiting until \(description)")
+            return
+        }
+        try? await Task.sleep(for: .milliseconds(2))
+    }
+}
+
 @MainActor
 private func makeModel(_ client: LLMClient) -> TranslationViewModel {
     // In-memory rather than a real `UserDefaults` suite: nothing here writes a
@@ -119,7 +152,11 @@ private func makeModel(_ client: LLMClient) -> TranslationViewModel {
     let model = makeModel(client)
     model.sourceText = String(repeating: "x ", count: 40)
     let run = Task { await model.translate() }
-    try? await Task.sleep(for: .milliseconds(150))
+    // Cancel once something has actually been rendered, which is the precondition the last
+    // assertion needs — not after a fixed 150 ms, which was only usually long enough. The
+    // reply is 400 tokens at 5 ms, so cancelling at the first one leaves seconds of margin
+    // before the run could finish on its own and the state stop being `.interrupted`.
+    await waitUntil("the first token has been rendered") { !model.translatedText.isEmpty }
     model.cancel()
     await run.value
     #expect(model.state == .interrupted)
@@ -168,7 +205,9 @@ private func makeModel(_ client: LLMClient) -> TranslationViewModel {
     let model = makeModel(client)
     model.sourceText = String(repeating: "x ", count: 40)
     let run = Task { await model.translate() }
-    try? await Task.sleep(for: .milliseconds(500))
+    // Cancel as soon as more than 30 characters are on screen, which is the floor the last
+    // assertion checks. This used to be a flat 500 ms wait.
+    await waitUntil("more than 30 characters have been rendered") { model.translatedText.count > 30 }
     model.cancel()
     await run.value
 
@@ -177,11 +216,15 @@ private func makeModel(_ client: LLMClient) -> TranslationViewModel {
     // not form a prefix of the reply, however many of them arrived.
     #expect(reply.hasPrefix(model.translatedText))
     #expect(model.translatedText.count < reply.count)   // genuinely interrupted mid-stream
-    // Above the 15-character buffered flush by enough that only incremental delivery can
-    // reach it: ~70 characters actually arrive in the 500 ms window (measured; the 5 ms
-    // sleeps settle at ~7 ms each), so the effective per-token cost would have to more
-    // than double before this floor is threatened, while a single buffered flush can
-    // never exceed 15 no matter how the timing drifts.
+    // Above the 15-character buffered flush, so only incremental delivery can reach it: a
+    // single buffered flush can never exceed 15 no matter how the timing drifts.
+    //
+    // This floor used to be argued from the clock — ~70 characters were measured arriving in
+    // the old 500 ms window, the 5 ms sleeps settling at ~7 ms each, leaving room for the
+    // per-token cost to more than double. That argument is retired rather than disproved: the
+    // wait above is now on the floor itself, so 31 characters is a precondition of reaching
+    // this line rather than a prediction about how fast the machine is. The timing measurement
+    // no longer applies because there is no longer a window for it to describe.
     #expect(model.translatedText.count > 30)
 }
 

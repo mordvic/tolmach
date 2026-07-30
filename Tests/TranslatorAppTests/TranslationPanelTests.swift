@@ -428,6 +428,59 @@ private func realPanelContent(_ model: TranslationViewModel) -> (PanelContentVar
     long.hide()
 }
 
+/// A second press must be sized for what it is showing, not for what the last one showed.
+///
+/// Every other measuring test builds a **fresh** `PanelController`, which is the one shape
+/// where this cannot fail: a host that has never measured anything has nothing stale to
+/// return. The app reuses one controller for the life of the process.
+///
+/// The content has to change the way the app's does, and that is the whole point of the test.
+/// `hidingThePanelForgetsTheSizeSoTheNextPressStartsFresh` above also reuses a controller, but
+/// its builder reads a captured `String`, so each rebuild produces a genuinely different view
+/// and SwiftUI re-evaluates it unasked. `PanelHost` instead reads `coordinator.selection` and
+/// the view model *inside* `body`: the rebuilt view's stored properties are identical — the
+/// same model reference — so nothing looks changed and the pending observation invalidation is
+/// not flushed until something forces layout. Measured on one reused host: after the text
+/// changed and `rootView` was reassigned, `fittingSize` still answered the previous 274 and
+/// `sizeThatFits(560)` still answered 94 tall; only `layoutSubtreeIfNeeded()` moved them to
+/// 6929 and 302. Through the controller, four alternating presses came out 300 × 120 four
+/// times without that call.
+///
+/// `show(at:)` is where it does the most damage, because it measures in the same turn of the
+/// main actor as the selection it is showing — nothing has yielded in between. A `.text` press
+/// would at least correct itself on its first token; an `.empty` or `.notPermitted` press runs
+/// no translation, so `contentDidChange` is never called and the panel keeps the wrong size for
+/// its whole life. Those are the two states a new user meets first.
+@MainActor
+@Test func aReusedControllerMeasuresThePressItIsShowingNotThePreviousOne() {
+    let model = panelModel(showing: "Готово.")
+    let controller = PanelController(content: realPanelContent(model))
+
+    controller.show(at: CGPoint(x: 300, y: 600))
+    let short = controller.panel.frame.size
+    controller.hide()
+
+    // Changed through observation, exactly as a run does — no value the builder captured.
+    model.translatedText = String(repeating: "Длинная строка перевода. ", count: 40)
+    controller.show(at: CGPoint(x: 300, y: 600))
+    let long = controller.panel.frame.size
+    controller.hide()
+
+    #expect(long.height > short.height)
+    #expect(long.width > short.width)
+    // Both named, because "the second is bigger" would also pass on a build that lagged one
+    // press behind in a way that happened to grow.
+    #expect(short == CGSize(width: PanelSizer.minWidth, height: PanelSizer.minHeight))
+    #expect(long.width == PanelSizer.maxWidth)
+
+    // And back down again: a lagging host is just as wrong when the content shrinks, and
+    // shrinking is the direction `PanelSizer`'s monotonic height makes easy to miss.
+    model.translatedText = "Да."
+    controller.show(at: CGPoint(x: 300, y: 600))
+    #expect(controller.panel.frame.size == short)
+    controller.hide()
+}
+
 /// The other half of the same defect, and the one the height check above cannot see: a panel
 /// whose content fits must not be handed the scrolling variant. Before the fix every
 /// measurement exceeded every ceiling, so `scrolls` was true for a one-word result — which is
