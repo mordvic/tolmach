@@ -21,6 +21,27 @@ enum OllamaStatus: Equatable {
         if case .running = self { return true }
         return false
     }
+
+    /// Exhaustive with no `default:` on purpose: a fourth case should fail to compile here
+    /// rather than silently keep the healthy glyph.
+    ///
+    /// **No polling timer drives this.** The status behind it refreshes at launch, when the
+    /// main window or the settings window opens, and after a translation attempt finishes
+    /// (hotkey panel or main window) — never on a clock. Between those moments this glyph can
+    /// lag the truth: Ollama can stop right after a refresh and the menu bar will keep saying
+    /// `character.bubble` until the next one of those moments. Deliberately absent from that
+    /// list is "when the menu opens" — `MenuBarExtra`'s content is not reliably re-instantiated
+    /// on every opening across macOS versions, so a `.task` there would refresh on some
+    /// systems and silently not on others. The lag this leaves is a chosen trade, not an
+    /// oversight — a timer ticking in an app that spends nearly all its life idle in the menu
+    /// bar was rejected (see spec §6 / §9), and this comment is where the trade is written
+    /// down rather than left implicit.
+    var menuBarSymbol: String {
+        switch self {
+        case .unknown, .running: "character.bubble"
+        case .notRunning: "exclamationmark.bubble"
+        }
+    }
 }
 
 protocol OllamaProbe: Sendable {

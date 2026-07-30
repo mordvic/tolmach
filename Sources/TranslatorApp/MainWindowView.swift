@@ -12,6 +12,12 @@ struct MainWindowView: View {
     /// owns the model and the refresh schedule.
     let status: OllamaStatus
     var onCopy: () -> Void = {}
+    /// Refreshes `OllamaStatusModel` after a run in *this* window settles — the window's
+    /// own half of the "after a translation attempt" trigger; `PanelHost` covers the hotkey
+    /// half. Defaults to a no-op so the existing tests that construct this view directly
+    /// (there is no scene to drive it in a test) do not all need updating for a hook they
+    /// are not exercising.
+    var onRunFinished: () async -> Void = {}
 
     var body: some View {
         VStack(spacing: 0) {
@@ -27,6 +33,13 @@ struct MainWindowView: View {
         }
         .frame(minWidth: 700, minHeight: 480)
         .toolbar { toolbar }
+        .onChange(of: model.state) { _, new in
+            // Same settle condition `PanelHost` uses for the hotkey path: a state that is
+            // no longer `.running` is the point this window has something new to say about
+            // whether Ollama answered.
+            guard new != .running else { return }
+            Task { @MainActor in await onRunFinished() }
+        }
     }
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {

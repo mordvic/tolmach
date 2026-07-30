@@ -49,3 +49,14 @@ struct StubProbe: OllamaProbe {
     await model.refresh(interactiveModel: "aya-expanse:8b")
     #expect(model.status == .running(modelResident: false))
 }
+
+@Test func theMenuBarGlyphSaysWhetherOllamaIsAnswering() {
+    // The icon is the only thing this app renders when nothing is open, and until now it
+    // said the same thing whether or not the app could translate at all.
+    #expect(OllamaStatus.running(modelResident: true).menuBarSymbol == "character.bubble")
+    #expect(OllamaStatus.running(modelResident: false).menuBarSymbol == "character.bubble")
+    #expect(OllamaStatus.notRunning.menuBarSymbol == "exclamationmark.bubble")
+    // Unknown is not a failure — it is the first second of the app's life, and a warning
+    // glyph there would cry wolf on every launch.
+    #expect(OllamaStatus.unknown.menuBarSymbol == "character.bubble")
+}

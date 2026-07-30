@@ -83,13 +83,18 @@ struct TranslatorApp: App {
         // (`Scene.defaultLaunchBehavior(.suppressed)`, the declarative fix, is macOS 15+
         // and the platform floor here is macOS 14.)
         MenuBarExtra {
-            MenuContent()
+            MenuContent(status: statusModel.status)
         } label: {
             // The `MenuBarExtra(_:systemImage:)` convenience initialiser this used to be
             // takes no view, and `warmUp()` needs one to hang a `.task` on — this label is
             // the only thing the app renders at launch. Its title argument was only ever an
             // accessibility label, so that is restored explicitly rather than dropped.
-            Image(systemName: "character.bubble")
+            //
+            // `statusModel.status` is read here, not hard-coded, so this glyph is the same
+            // "the app renders it at scene-body-evaluation time" pattern the `Window` and
+            // `Settings` scenes below already rely on for their own `status:` arguments —
+            // there is no second reactivity mechanism to keep in step with those.
+            Image(systemName: statusModel.status.menuBarSymbol)
                 .accessibilityLabel("Толмач")
                 .task { await launch() }
         }
@@ -101,7 +106,10 @@ struct TranslatorApp: App {
                            // itself is `TranslationViewModel.copyToPasteboard()`, which
                            // shares `GeneralPasteboard.write` with `HotkeyCoordinator`'s,
                            // so there is one write to test rather than two to keep in sync.
-                           onCopy: { Task { await translation.copyToPasteboard() } })
+                           onCopy: { Task { await translation.copyToPasteboard() } },
+                           onRunFinished: {
+                               await statusModel.refresh(interactiveModel: settings.interactiveModel)
+                           })
                 .task { await statusModel.refresh(interactiveModel: settings.interactiveModel) }
         }
 
@@ -180,6 +188,13 @@ struct TranslatorApp: App {
             PermissionsGate.requestTrust()
         }
         await warmUp()
+        // After `warmUp()`, not before: `refresh()`'s residency check (`OllamaProbe.ps()`)
+        // is only accurate once whatever `warmUp()` was going to load has had the chance to
+        // finish loading. Reading it first would report the model as not resident at launch
+        // even when `warmUpOnLaunch` is about to make that true moments later — a self-inflicted
+        // "not ready" flash the ordering avoids for free, since `warmUp()`'s failure is already
+        // swallowed and its own guard makes it a no-op when the setting is off.
+        await statusModel.refresh(interactiveModel: settings.interactiveModel)
     }
 
     /// Re-registers when the user changes the shortcut in settings.
@@ -239,7 +254,10 @@ struct TranslatorApp: App {
                     PermissionsGate.requestTrust()
                     PermissionsGate.openSettings()
                 },
-                onContentChange: { settling in panel.contentDidChange(settling: settling) }))
+                onContentChange: { settling in panel.contentDidChange(settling: settling) },
+                onRunFinished: {
+                    await statusModel.refresh(interactiveModel: settings.interactiveModel)
+                }))
         }
         panel.onEscape = {
             coordinator.panelModel.cancel()
@@ -350,6 +368,10 @@ private struct PanelHost: View {
     let onClose: () -> Void
     let onGrantPermission: () -> Void
     let onContentChange: (Bool) -> Void
+    /// Refreshes `OllamaStatusModel` after a hotkey run settles. Folded into the
+    /// `panelModel.state` hook below rather than a second `.onChange` on the same value —
+    /// two observers of one `@Observable` property race on ordering for no benefit here.
+    let onRunFinished: () async -> Void
 
     var body: some View {
         PanelView(model: coordinator.panelModel,
@@ -371,8 +393,12 @@ private struct PanelHost: View {
             }
             .onChange(of: coordinator.panelModel.state) { _, new in
                 // A state that is no longer `.running` is the settle: the last size this
-                // presentation will be asked for, and the only one animated.
-                Task { @MainActor in onContentChange(new != .running) }
+                // presentation will be asked for, and the only one animated — and also the
+                // point a hotkey run has something new to say about whether Ollama answered.
+                Task { @MainActor in
+                    onContentChange(new != .running)
+                    if new != .running { await onRunFinished() }
+                }
             }
     }
 }
@@ -381,8 +407,20 @@ private struct PanelHost: View {
 /// type to live on.
 private struct MenuContent: View {
     @Environment(\.openWindow) private var openWindow
+    /// Spec §6: "the menu gains a first row stating the same thing [as the glyph] in words."
+    /// A plain value, not a refresh hook — this view has no `.task` of its own. An earlier
+    /// draft of this task also threaded an `onRefresh: () async -> Void` through here to
+    /// trigger a refresh when the menu opens, but `MenuBarExtra`'s content is not guaranteed
+    /// to re-run `.task`/`.onAppear` on every opening (it is cached and reused on some macOS
+    /// versions and rebuilt on others), so that refresh would have been unreliable exactly
+    /// when a user opens the menu to check. That trigger is dropped rather than shipped
+    /// silently broken; see `OllamaStatus.menuBarSymbol`'s doc comment for what does drive
+    /// the refresh instead.
+    let status: OllamaStatus
 
     var body: some View {
+        Text(status.label)
+        Divider()
         Button("Открыть окно перевода") {
             openWindow(id: TranslatorApp.mainWindowID)
             // The app is an `LSUIElement`, so it is not activated by the menu click alone
