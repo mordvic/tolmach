@@ -58,7 +58,8 @@ struct SettingsModelsView: View {
                 // changes it, gets no effect and no explanation, and has no way to tell a
                 // broken app from an inert setting. It comes back with the feature.
                 ModelChoice(title: "Модель для перевода",
-                            selection: $settings.interactiveModel, models: models)
+                            selection: $settings.interactiveModel, models: models,
+                            onDownload: download)
             }
 
             Section("Установленные модели") {
@@ -84,22 +85,44 @@ struct SettingsModelsView: View {
             // be: this pane says «модель в памяти» and «модель не загружена» a few rows above,
             // so the bare noun reads as «loading into memory» as readily as «downloading»,
             // which is the one thing this section does not do. The verb phrase says which.
-            Section("Загрузить модель") {
-                LabeledContent("Загрузить модель") {
-                    HStack {
-                        TextField("aya-expanse:8b", text: $modelToPull)
-                        Button("Загрузить") {
-                            let target = pullTarget
-                            Task {
-                                await models.pull(target)
-                                // Clear only on success. Leaving the name after a failure lets
-                                // the user retry without retyping it; leaving it after a
-                                // success leaves a live button that would redownload it.
-                                if models.error == nil { modelToPull = "" }
-                            }
-                        }
-                        .disabled(pullTarget.isEmpty || models.isPulling)
+            // «Скачать», not «Загрузить», and the rename is the point of this section rather
+            // than tidying. «Загрузка» already means something else two sections down — the
+            // `keepAlive` caption says «Холодная загрузка стоит около двух секунд», where it
+            // is the model being lifted into memory. One word for two operations in one pane
+            // is the failure `CONTEXT.md` exists to prevent, seen from the other side: not one
+            // concept under two names, but two concepts under one. Downloading is «скачать»
+            // here and nowhere else; loading into memory keeps «загрузка».
+            Section("Скачать модель") {
+                // No `LabeledContent` label. The section header already says «Скачать модель»
+                // and the button says «Скачать»; a third repetition on the row said nothing
+                // and took horizontal space off the field, which is the control that needs it.
+                HStack {
+                    TextField("qwen2.5:3b", text: $modelToPull)
+                    Button("Скачать") {
+                        download(pullTarget)
                     }
+                    .disabled(pullTarget.isEmpty || models.isPulling)
+                }
+                // The format belongs here and not in the placeholder. A placeholder is the
+                // one piece of help that disappears at the moment it is needed — it clears on
+                // focus, i.e. exactly when the user has decided to type — and it cannot say
+                // where a name comes from. Ollama's own naming is the whole contract, so name
+                // it and point at the catalogue.
+                //
+                // Guillemets, not backticks: built with `+`, so this reaches `Text`'s
+                // plain-`String` initialiser, which never parses Markdown and would render a
+                // backtick as a grave accent.
+                Text("Имя такое же, как у команды «ollama pull» — «название:тег». "
+                     + "Каталог моделей: ollama.com/library")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                // Said before the request rather than after it. Ollama answers a pull for an
+                // installed model by re-fetching it, which is a legitimate way to update a
+                // tag and a surprising way to spend several gigabytes — so the distinction is
+                // worth drawing while the button is still unpressed.
+                if !pullTarget.isEmpty, models.installedNames.contains(pullTarget) {
+                    SettingsNote(text: "«\(pullTarget)» уже установлена — скачивание обновит её.",
+                                 icon: "arrow.triangle.2.circlepath", tint: .secondary)
                 }
                 if let progress = models.pullProgress {
                     ProgressView(value: progress)
@@ -154,6 +177,25 @@ struct SettingsModelsView: View {
         .task { await reload() }
     }
 
+    /// The one download path, reached from two places: the «Скачать» button beside the field,
+    /// and the one beside «не установлена» in the picker's note.
+    ///
+    /// The success case clears the field **only when the field is what asked for this
+    /// download**. The picker's button downloads a name the picker knows, which may be
+    /// nothing like whatever the user has half-typed below it; emptying the field there would
+    /// throw away their work for a download they started somewhere else.
+    ///
+    /// On failure the name stays either way, so a retry costs no retyping — and the failure
+    /// itself is on screen, because `pull` puts it in `models.error` and this section renders
+    /// it.
+    private func download(_ name: String) {
+        guard !name.isEmpty else { return }
+        Task {
+            await models.pull(name)
+            if models.error == nil, name == pullTarget { modelToPull = "" }
+        }
+    }
+
     /// Fetches the installed and resident lists this pane shows. Separate from `refresh()`
     /// below because appearing needs only what this pane displays, while the button also
     /// re-runs the health probe `TranslatorApp` owns.
@@ -176,6 +218,10 @@ private struct ModelChoice: View {
     let title: String
     @Binding var selection: String
     let models: ModelsViewModel
+    /// Starts a download of the named model, exactly as the «Скачать модель» section's own
+    /// button does. Passed in rather than calling `models.pull` here, so both entry points go
+    /// through the one method that also clears the field and reports failure.
+    let onDownload: (String) -> Void
 
     var body: some View {
         Picker(title, selection: $selection) {
@@ -187,9 +233,17 @@ private struct ModelChoice: View {
             }
         }
         if models.availability(of: selection) == .notInstalled {
-            SettingsNote(text: "«\(selection)» не установлена. Введите это имя в поле "
-                         + "«Загрузить модель» ниже, чтобы скачать её.",
-                         icon: "arrow.down.circle", tint: .orange)
+            // A button, not an instruction. This note used to read «Введите это имя в поле
+            // „Загрузить модель“ ниже» — the app asking the user to retype a string the app
+            // was already holding, and the commonest reason anyone types in that field at all.
+            // The name is known exactly here, so the download is one press.
+            HStack {
+                SettingsNote(text: "«\(selection)» не установлена.",
+                             icon: "arrow.down.circle", tint: .orange)
+                Button("Скачать") { onDownload(selection) }
+                    .font(.caption)
+                    .disabled(models.isPulling)
+            }
         }
         // Blacklisted models stay selectable: the reason is measured evidence, and the user
         // may have a reason to override it.
