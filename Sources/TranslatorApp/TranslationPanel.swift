@@ -20,18 +20,43 @@ final class TranslationPanel: NSPanel {
     /// first layout pass, and the measurement is taken from a detached hosting controller
     /// anyway.
     ///
-    /// `.titled` is deliberately **absent**. A titled panel cannot be given a corner radius
-    /// without the square window background showing through at the corners, and its
-    /// titlebar is 22pt of chrome over a readout with no title. Dropping it costs the
-    /// standard close button — `PanelView` draws its own ⨯ — and it invalidates the
-    /// measurement that used to sit on `canBecomeKey`, which is why
-    /// `theUntitledPanelStillTakesKeyStatusWithoutItsProcessBecomingActive` exists.
+    /// `.titled` is back, and `.resizable` only means anything because of it.
+    ///
+    /// It was dropped on the reasoning that a titled panel cannot be given a corner radius
+    /// without its square background showing through. That reasoning was never checked on a
+    /// screen, and the lines below — `isOpaque = false` and a clear `backgroundColor` — were
+    /// added afterwards and are the standard answer to exactly that problem.
+    ///
+    /// What the drop did cost was the whole hand-resize feature, silently. Reported by the
+    /// user: the panel does not drag. Measured here, on stock `NSPanel`s with no overrides:
+    ///
+    ///     no `.titled`, `.resizable`     isResizable true    frame view NSNextStepFrame
+    ///     `.titled` + `.resizable`       isResizable true    frame view NSThemeFrame
+    ///     `.titled`, no `.resizable`     isResizable false   frame view NSThemeFrame
+    ///
+    /// Edge and corner drag tracking lives in `NSThemeFrame`. A borderless window gets
+    /// `NSNextStepFrame`, which has none — so `isResizable` answered `true`, `setFrame` worked,
+    /// and nothing happened when the user pulled an edge. `.resizable` sat in this mask from
+    /// the day the panel started sizing itself and never did anything at all.
+    ///
+    /// The cost of taking `.titled` back is 22pt of titlebar over a readout with no title,
+    /// which `titlebarAppearsTransparent` and `.fullSizeContentView` between them make invisible
+    /// and let the content draw under, and three standard buttons that are hidden below.
     init() {
         super.init(contentRect: NSRect(x: 0, y: 0, width: 380, height: 260),
-                   styleMask: [.nonactivatingPanel, .resizable, .fullSizeContentView, .utilityWindow],
+                   styleMask: [.nonactivatingPanel, .titled, .resizable,
+                               .fullSizeContentView, .utilityWindow],
                    backing: .buffered, defer: false)
         isFloatingPanel = true
         level = .floating
+        // The titlebar comes back with `.titled` and must not be seen: this panel has no
+        // title, and `PanelView` draws its own ⨯ and its own header in that space.
+        // `.fullSizeContentView` in the mask is what lets the content extend under it.
+        titlebarAppearsTransparent = true
+        titleVisibility = .hidden
+        standardWindowButton(.closeButton)?.isHidden = true
+        standardWindowButton(.miniaturizeButton)?.isHidden = true
+        standardWindowButton(.zoomButton)?.isHidden = true
         // The app is never active when this appears, so a panel that hid on deactivation
         // would be dismissed by the very state it is shown in. Redundant *while* the mask
         // says `.nonactivatingPanel` — that alone flips the default from true to false —
@@ -54,20 +79,22 @@ final class TranslationPanel: NSPanel {
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
     }
 
-    /// Load-bearing since `.titled` left the style mask, and it was not before.
+    /// Belt and braces again, now that `.titled` is back — and worth stating rather than
+    /// deleting, because which of those two it is has flipped twice.
     ///
-    /// The measurement that used to sit here said a `.titled` `NSPanel` answers `true` with
-    /// or without the override, so the override changed nothing. That is no longer the
-    /// panel this is. Re-measured in this process against a stock `NSPanel` with no override
-    /// at all: with the old mask it answered `true`, with the mask above — the same one
-    /// minus `.titled` — it answered **`false`**, and `makeKeyAndOrderFront` then left
-    /// `isKeyWindow` false. So without this line the panel would come up looking correct and
-    /// silently never receive Esc or Enter, which are its only way to close and to copy.
-    /// `theUntitledPanelStillTakesKeyStatusWithoutItsProcessBecomingActive` is the test.
+    /// Measured in this process on stock `NSPanel`s with no override: `.titled` answers `true`
+    /// by itself, and the same mask minus `.titled` answers **`false`**, after which
+    /// `makeKeyAndOrderFront` leaves `isKeyWindow` false. So this line was decorative while the
+    /// panel was titled, became load-bearing when `.titled` was dropped, and is decorative
+    /// again now — but only for as long as `.titled` stays in the mask, which is what it
+    /// guards. `theUntitledPanelStillTakesKeyStatusWithoutItsProcessBecomingActive` still
+    /// covers it; its name now describes a mask the panel no longer has, and the test itself
+    /// is unchanged because what it asserts — key without active — is unchanged.
     ///
-    /// What it still does *not* do is make the panel key while the app is inactive; only
-    /// `.nonactivatingPanel` does that. `canBecomeKey` is permission, `.nonactivatingPanel`
-    /// is the grant, and both are now required.
+    /// What it does *not* do, under either mask, is make the panel key while the app is
+    /// inactive; only `.nonactivatingPanel` does that. `canBecomeKey` is permission,
+    /// `.nonactivatingPanel` is the grant, and confusing the two is how a panel ends up
+    /// looking correct and never receiving Esc.
     override var canBecomeKey: Bool { true }
     /// Deliberately false. Main status belongs to the document window; a panel taking it
     /// would make the app behave as though it had been activated.

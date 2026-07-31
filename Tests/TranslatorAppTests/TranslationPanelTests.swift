@@ -19,6 +19,35 @@ import Foundation
     #expect(panel.canBecomeKey)
 }
 
+/// `.resizable` alone is a flag with no implementation, and this is the test that did not
+/// exist while that was true.
+///
+/// The panel carried `.resizable` without `.titled` from the day it started sizing itself, and
+/// `isResizable` answered `true` the whole time — so nothing here noticed, and the defect was
+/// found by a person pulling at an edge and watching nothing happen.
+///
+/// Measured, on stock `NSPanel`s with no overrides, which is why the mask and not the flag is
+/// what this asserts:
+///
+///     no `.titled`, `.resizable`     isResizable true    frame view NSNextStepFrame
+///     `.titled` + `.resizable`       isResizable true    frame view NSThemeFrame
+///     `.titled`, no `.resizable`     isResizable false   frame view NSThemeFrame
+///
+/// Edge and corner drag tracking lives in `NSThemeFrame`; a borderless window gets
+/// `NSNextStepFrame`, which has none. So the two flags are only worth anything together, and
+/// `isResizable` cannot tell them apart. The frame view's class would, but it is private API by
+/// name; the mask is the stable statement of the same fact.
+///
+/// What this still cannot do is drag an edge. That stays in `docs/OPEN-ITEMS.md` §1.
+@MainActor
+@Test func thePanelCarriesBothFlagsThatHandResizingNeeds() {
+    let panel = TranslationPanel()
+    #expect(panel.styleMask.contains(.resizable))
+    #expect(panel.styleMask.contains(.titled),
+            "`.resizable` does nothing without `.titled` — a borderless window's frame view has no resize tracking")
+    #expect(panel.isResizable)
+}
+
 /// Spec 7.2's actual claim, in the only form this process can falsify.
 ///
 /// The brief asked for `NSWorkspace.shared.frontmostApplication` to be unchanged across the
