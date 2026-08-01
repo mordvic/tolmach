@@ -23,8 +23,12 @@ struct TranslatorApp: App {
     /// Owned here rather than created inside the settings pane so the installed list and a
     /// download in progress survive the settings window being closed and reopened.
     @State private var models: ModelsViewModel
-    /// The same client the `Translator` above translates through, kept so `warmUp()` can
-    /// reuse it instead of standing up a second `URLSession` for one request at launch.
+    /// The **only** `OllamaClient` this process builds, and therefore the only `URLSession`.
+    ///
+    /// It backs all five things that talk to Ollama: both view models' translations through
+    /// `Translator`, `warmUp()`, the health probe behind the menu-bar glyph, the installed and
+    /// resident lists in «Модели», and model downloads. Sharing it is what the doc comment here
+    /// always claimed — see `init`, which carries what was actually happening instead.
     @State private var client: OllamaClient
     /// The hotkey path, which owns a `TranslationViewModel` of its own — see the comment on
     /// `HotkeyCoordinator.panelModel`. It shares this app's `settings`, `glossary` and
@@ -49,8 +53,21 @@ struct TranslatorApp: App {
             glossary.lastProblem = "Не удалось прочитать глоссарий, перевод идёт без него. "
                 + "Файл на диске не изменён: \(error.localizedDescription)"
         }
-        let statusModel = OllamaStatusModel()
+        // One client for the whole process, and it has to be built before anything that talks
+        // to Ollama rather than after.
+        //
+        // The comment on `client` above has said since it was written that it is shared «so
+        // `warmUp()` can reuse it instead of standing up a second `URLSession` for one request
+        // at launch». That was true of `warmUp()` and false of the app: `OllamaStatusModel()`
+        // and `ModelsViewModel()` each defaulted to a `LiveOllamaProbe` that built an
+        // `OllamaClient` of its own, and `ModelsViewModel`'s default puller built **another one
+        // per download**. Three sessions at launch, and one more every time a model is pulled,
+        // under a comment explaining why there is one.
+        //
+        // The defaults stay where they are — they are what lets a test construct either model
+        // without an Ollama — but nothing in the app takes them now.
         let client = OllamaClient()
+        let statusModel = OllamaStatusModel(probe: LiveOllamaProbe(client: client))
         let translation = TranslationViewModel(
             translator: Translator(client: client),
             settings: settings,
@@ -64,7 +81,12 @@ struct TranslatorApp: App {
         _glossary = State(initialValue: glossary)
         _statusModel = State(initialValue: statusModel)
         _translation = State(initialValue: translation)
-        _models = State(initialValue: ModelsViewModel())
+        // Both halves of this take the shared client: the probe behind the installed and
+        // resident lists, and the puller behind «Скачать». `OllamaClient` is a `Sendable`
+        // struct — `LLMClient` requires it — so the closure may capture it.
+        _models = State(initialValue: ModelsViewModel(
+            probe: LiveOllamaProbe(client: client),
+            puller: { model in client.pull(model: model) }))
         _client = State(initialValue: client)
         _coordinator = State(initialValue: coordinator)
         // Content is a placeholder until `configurePanel()` runs at launch. Everything the
