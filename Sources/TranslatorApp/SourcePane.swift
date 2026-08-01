@@ -30,6 +30,31 @@ struct SourcePane: View {
             .overlay(alignment: .bottomTrailing) { SourceFooter(model: model).padding(6) }
         }
         .frame(minWidth: 280)
+        // A translator window that cannot take a dropped file is a translator window that
+        // makes the user open the file elsewhere, select all, copy, and paste. What may be
+        // dropped and what is read out of it is `DroppedDocument`; this closure only decides
+        // *when*.
+        //
+        // Refusing returns false, which is the whole error-reporting mechanism: the system
+        // springs the item back to where it was dragged from. Two things are refused here on
+        // top of whatever `DroppedDocument` refuses — a drop while a run is in flight, which
+        // would swap the source out from under a translation already streaming into the pane
+        // beside it, and a multiple selection, because taking «the first of five» silently is
+        // a guess about which one was meant.
+        .dropDestination(for: URL.self) { urls, _ in
+            guard model.state != .running, urls.count == 1,
+                  let text = DroppedDocument.text(of: urls[0])
+            else { return false }
+            model.sourceText = text
+            // Everything derived from the previous run goes with the text it described, the
+            // same pairing `translate()` and `swapLanguages()` maintain: an outcome that
+            // outlives its source renders the old run's markup diffs and glossary checks
+            // under a document that is no longer there.
+            model.translatedText = ""
+            model.outcome = nil
+            model.state = .idle
+            return true
+        }
     }
 }
 
