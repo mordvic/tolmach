@@ -102,6 +102,16 @@ Facts that will bite you if you "tidy" them:
 
 - `TranslatorApp` is `LSUIElement`. **Scene order is load-bearing**: `MenuBarExtra` must stay the
   first scene, or SwiftUI opens the main window at every login. `Settings` stays last.
+- **The main menu exists, is Russian, and owns every keyboard shortcut the window has.**
+  `LSUIElement` governs the Dock tile and whether the bar is *drawn*; it does not stop SwiftUI
+  installing `NSApp.mainMenu`, and key equivalents are dispatched through it either way — measured
+  by dumping the menu from a copy of these three scenes. So ⌘↩, ⌘., ⌃⌘S, ⇧⌘C and ⌘0 are declared
+  once, in `.commands`, and **not** on the toolbar buttons that mirror them. Two things follow that
+  are easy to undo by accident: `Info.plist`'s `CFBundleDevelopmentRegion = ru` plus
+  `Resources/ru.lproj` are what make the *standard* menus Russian (without them the bundle claims
+  `["en"]` and a fully Russian app carries an English menu bar), and `make-app-bundle.sh` must copy
+  that directory in **before** `codesign`, like the icon. `CommandGroup(replacing:)` empties a menu
+  but does not remove it, so `pruneEmptyMenus()` takes away whatever is left with no items.
 - Two `TranslationViewModel` instances, one for the window and one owned by `HotkeyCoordinator`
   for the panel, over one shared `OllamaClient`. They must not be merged: a hotkey translation
   must never overwrite the window, and the re-entrancy guard is per instance.

@@ -121,6 +121,21 @@ toolbar, two panes and a collapsible status bar. Nothing in it has been rendered
 | The ± buttons' disabled state and tooltips, and whether the language picker's 140 pt frame fits the longest Russian language name | Layout arithmetic no test can reach. The picker's hidden label and its new `.help` tooltip are in the same position: the strings are in the source, nothing has hovered them | `GlossaryList.swift` |
 | The empty-glossary message and «Ничего не найдено» being distinguishable | Two different empty states, one string each, never rendered | `SettingsGlossaryView.swift` |
 
+**Owed by the Mac-idioms wave — the menu bar, the Russian bundle, and two accessibility
+settings.** Every item here was established structurally (a menu dump, a bundle read, a
+compile check) and none of it has been *looked at*.
+
+| What to check | Why it needs eyes | Code |
+|---|---|---|
+| **⌘. while the panel is running and the window is idle** | The sharpest of these. «Перевод» → «Отмена» now declares ⌘., and so does the panel's own button. The menu item is disabled unless the *window* is running, and a disabled item declines its key equivalent so the key window's handler gets it — which is the whole argument that these do not collide. Nothing here can press a key to confirm the order. Look for: start a hotkey translation, press ⌘. while the panel has focus, and see the panel stop rather than nothing happening | `TranslatorApp.body`'s `.commands`, `PanelView.translation` |
+| ⌘↩ still translating from the window, now that the toolbar no longer declares it | The equivalent moved to the menu and the toolbar button lost it. The button still works by click; the shortcut is now the menu's | `MainWindowView.toolbar`, `.commands` |
+| The menu bar reading Russian at all | Measured on the assembled bundle only as far as `Bundle.main.preferredLocalizations == ["ru"]`, by swapping a probe binary into a copy of it. That the standard menus then *draw* «Правка / Скопировать / Вставить» was measured on a stand-in bundle, not on this one | `Info.plist`, `Resources/ru.lproj`, `Scripts/make-app-bundle.sh` |
+| «Вид» and «Справка» actually gone from the bar | `pruneEmptyMenus()` removes them from `NSApp.mainMenu` and the removal was measured to stick for 2.5 s in a probe. An `LSUIElement` app's bar is only drawn while it is active, and nobody has watched it | `pruneEmptyMenus()` |
+| **Whether an `LSUIElement` app draws a menu bar at all** | The open question underneath the two rows above. Everything here rests on the menu being *installed*, which is measured; whether the user ever sees it is not, and it decides how much of this wave is visible rather than merely correct | — |
+| The panel with «Уменьшение прозрачности» on | The material becomes an opaque `windowBackgroundColor` clipped to the same rounded rectangle. Whether the corner still reads correctly against a dark desktop, and whether the panel still looks like a panel rather than a plain box, is exactly what no test sees | `PanelView.background` |
+| The two new glyphs in the panel's status row | `exclamationmark.triangle.fill` for an interrupted run, `xmark.octagon.fill` for a failure, in the row's own colour. The table is unit-tested; the row has never been rendered | `PanelStatus.Kind.symbol`, `PanelView.statusLine` |
+| «Скопировать перевод» ⇧⌘C not shadowing ⌘C in the source editor | They are different equivalents, so this should be free — but the source pane is a `TextEditor` and ⌘C on a selection inside it is the one thing that must keep working | `.commands`, `SourcePane` |
+
 **Owed by the UI redesign, Task 13 — the menu bar glyph and status row.** The whole visible
 result of this task is unobserved: it is a menu-bar icon and a new first row of menu text, and
 nothing in this environment can see either.
