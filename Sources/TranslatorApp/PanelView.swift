@@ -320,7 +320,17 @@ struct PanelView: View {
     /// `target` stays optional so the caller can hand over both of the model's values
     /// as-is; it is nil only before the first run of the app's life, when `outcome` is nil
     /// too.
-    static func direction(outcome: TranslationOutcome?, target: Language?) -> String? {
+    ///
+    /// `nonisolated`, like `status(for:)` below, and for a reason the Swift 6 language mode
+    /// made visible rather than one of taste. `PanelView` is a `View`, so everything on it —
+    /// including a `static func` over two value parameters — is inferred `@MainActor`, and a
+    /// synchronous test calling it from a nonisolated context is «call to main actor-isolated
+    /// static method … in a synchronous nonisolated context»: the one warning left standing
+    /// after this target reached `-swift-version 6`. Both functions are pure over
+    /// `Sendable` values and touch no view state, so the isolation was never true of them;
+    /// declaring that is better than making the tests `@MainActor` to satisfy an inference
+    /// that describes nothing.
+    nonisolated static func direction(outcome: TranslationOutcome?, target: Language?) -> String? {
         guard let outcome, let target else { return nil }
         return RussianCopy.direction(from: outcome.detectedSource, to: target)
     }
@@ -328,7 +338,9 @@ struct PanelView: View {
     /// Exhaustive with no `default:` on purpose: a sixth `TranslationState` case should
     /// fail to compile here instead of leaving the panel silent about a state it has no
     /// words for.
-    static func status(for state: TranslationState) -> PanelStatus? {
+    ///
+    /// `nonisolated` for the reason given on `direction(outcome:target:)` above.
+    nonisolated static func status(for state: TranslationState) -> PanelStatus? {
         switch state {
         case .idle, .finished:
             // Nothing to add. The panel opens on a translation and closes on Esc; a caption
