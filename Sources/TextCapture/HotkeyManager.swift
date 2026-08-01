@@ -11,8 +11,29 @@ import Carbon.HIToolbox
 /// fresh install and explain that it needs Accessibility for the *capture*.
 @MainActor
 public final class HotkeyManager {
-    private var hotKeyRef: EventHotKeyRef?
-    private var handlerRef: EventHandlerRef?
+    /// `nonisolated(unsafe)` on both, and it is `deinit` below that needs it.
+    ///
+    /// A `deinit` on a `@MainActor` class is itself nonisolated, and these two are
+    /// `OpaquePointer`s, which are not `Sendable` — so touching them there is «cannot access
+    /// property … with a non-Sendable type … from nonisolated deinit», an error in the Swift
+    /// 6 language mode. Measured: two of the four errors that stopped a `-swift-version 6`
+    /// build of this target were these two lines.
+    ///
+    /// What the annotation asserts is true rather than convenient: `deinit` runs only once
+    /// the last reference is gone, so nothing else can hold these at that moment, and every
+    /// other access to either is on the main actor.
+    ///
+    /// `isolated deinit` would state that to the compiler instead of asserting it, and it is
+    /// **not** ruled out by the platform floor — measured, against an earlier draft of this
+    /// comment that claimed it was: `@MainActor final class C { var p: OpaquePointer?;
+    /// isolated deinit { _ = p } }` typechecks cleanly at `-swift-version 6 -target
+    /// arm64-apple-macosx14.0`. It is declined on behaviour instead. It moves teardown onto
+    /// the main actor, so a manager whose last release lands off it no longer unregisters
+    /// synchronously — and that is precisely the path `docs/OPEN-ITEMS.md` §3 already lists
+    /// as an unresolved narrow race. Changing it belongs in a change about that race, not in
+    /// one whose whole purpose is to reach Swift 6 without moving any behaviour.
+    nonisolated(unsafe) private var hotKeyRef: EventHotKeyRef?
+    nonisolated(unsafe) private var handlerRef: EventHandlerRef?
     private var onPress: (@MainActor () -> Void)?
     public private(set) var registered: HotkeyCombo?
 

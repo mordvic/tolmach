@@ -1,8 +1,11 @@
 import Testing
 import Foundation
 // `kAXTrustedCheckOptionPrompt` below is a C constant from HIServices. `@testable import`
-// does not re-export a module's own imports, so the test needs this in its own right.
-import ApplicationServices
+// does not re-export a module's own imports, so the test needs this in its own right —
+// and, for the same reason `PermissionsGate` itself carries it, with `@preconcurrency`:
+// the constant is imported as a mutable global, which the Swift 6 language mode refuses to
+// read. `@testable import` does not re-export that attribute either.
+@preconcurrency import ApplicationServices
 @testable import TextCapture
 
 @Test func theSettingsURLPointsAtTheAccessibilityPane() {
