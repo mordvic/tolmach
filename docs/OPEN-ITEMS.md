@@ -307,6 +307,12 @@ to be.
 - **Whether `MenuBarExtra` caches its content view.** `TranslatorApp.swift` states it as fact.
   The claim is inherited from general SwiftUI behaviour, not measured on this system, and it is
   part of why «when the menu opens» is not one of the glyph's refresh points.
+- **Whether the four new `Log` call sites actually emit on the assembled bundle.** `Log` is
+  wired into the refused hotkey registration, the failed warm-up, an unencodable hotkey and the
+  swallowed document-glossary failure. All four are compiled and none has been observed in
+  `log show` — the first two need a real launch, the third needs a corrupt value, and the
+  fourth needs a multi-chunk run whose term-list call fails. The predicate to watch is
+  `subsystem == "com.mordvic.localtranslator"`.
 
 ---
 

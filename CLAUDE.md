@@ -141,13 +141,31 @@ Facts that will bite you if you "tidy" them:
 
 ## Conventions
 
-- Swift 6 tools, `.swiftLanguageMode(.v5)` on **every** target, platform floor macOS 14. Any new
-  target repeats both.
+- Swift 6 tools, `.swiftLanguageMode(.v6)` on **every** target, platform floor macOS 14. Any new
+  target repeats both. **`.v6` is enforced, not aspirational** — the package built at `.v5` until
+  the observability wave, and moving it cost four compile errors in `TextCapture` plus one runtime
+  trap that no build could see. Three facts from that move are worth knowing before writing a new
+  target: an imported C global (`kAXTrustedCheckOptionPrompt`) needs `@preconcurrency import`, not
+  `nonisolated(unsafe)`; a `nonisolated deinit` on a `@MainActor` class may not touch a
+  non-`Sendable` stored property without `nonisolated(unsafe)` on it; and a closure written inside
+  a `View` inherits main-actor isolation that Swift 6 checks **at run time** with a trap. Each is
+  recorded at the site it bit — `PermissionsGate.swift`, `HotkeyManager.swift`,
+  `Tests/TranslatorAppTests/WarningsViewTests.swift`.
 - **No external dependencies.** Foundation, NaturalLanguage, SwiftUI, AppKit, Observation,
-  ApplicationServices, CoreGraphics, CoreText, ImageIO, Carbon, Swift Testing only. This list is a
-  closed whitelist, not an illustration: adding a framework to it is a deliberate edit, not a
+  ApplicationServices, CoreGraphics, CoreText, ImageIO, Carbon, os, Swift Testing only. This list is
+  a closed whitelist, not an illustration: adding a framework to it is a deliberate edit, not a
   formality. CoreText and ImageIO are here for `Scripts/make-icon.swift` alone — glyph layout and
-  PNG encoding for the icon — and nothing in the shipped targets uses them.
+  PNG encoding for the icon — and nothing in the shipped targets uses them. `os` was added
+  deliberately, for `Log` in `TranslatorApp` and nowhere else: it is what makes this app's four
+  deliberate swallowed failures diagnosable on a user's machine. `TranslationCore` does **not** get
+  it — the engine reports through `TranslationOutcome.documentGlossaryFailure` instead, so the
+  domain layer keeps its «Foundation and NaturalLanguage only» rule.
+- **Nothing derived from the user's text may be logged.** Not the selection, not the source, not
+  the translation, not a glossary term. `Log`'s doc comment carries the reasoning; the short
+  version is that a unified-log entry is readable by any admin on the machine and is collected by
+  sysdiagnose, so logging content would break «text never leaves the machine» in the one place
+  nobody would look. Error descriptions are logged `.public` on purpose, because `<private>` in
+  `log show` would make the entries useless for the diagnosis they exist for.
 - Tests use **Swift Testing** (`@Test`, `#expect`), not XCTest. Test names are sentences describing
   the behaviour being pinned. `UserDefaults`-backed tests use `InMemoryDefaults`, never a real suite
   (a written suite leaves a plist in `~/Library/Preferences` that nothing reliably removes).
