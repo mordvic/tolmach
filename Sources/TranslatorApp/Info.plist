@@ -5,6 +5,12 @@
     <key>CFBundleName</key><string>LocalTranslator</string>
     <key>CFBundleDisplayName</key><string>Толмач</string>
     <key>CFBundleIdentifier</key><string>com.mordvic.localtranslator</string>
+    <!-- Together with Resources/ru.lproj this is what makes macOS render the standard menus in
+         Russian. Without either, the bundle claims no localisation, the development region
+         defaults to English, and a program whose every string is Russian gets an English menu
+         bar even on a Russian system. Measured on one binary under three configurations —
+         see the comment in Resources/ru.lproj/Localizable.strings. -->
+    <key>CFBundleDevelopmentRegion</key><string>ru</string>
     <key>CFBundleExecutable</key><string>TranslatorApp</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>

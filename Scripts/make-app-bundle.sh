@@ -31,6 +31,12 @@ if [ ! -f "$ICNS" ] || [ "$ROOT/Scripts/make-icon.swift" -nt "$ICNS" ]; then
 fi
 mkdir -p "$APP/Contents/Resources"
 cp "$ICNS" "$APP/Contents/Resources/AppIcon.icns"
+# The .lproj directory is what makes `Bundle.main.localizations` non-empty, and that is what
+# makes macOS draw the standard menus — the application menu, Правка, Окно, Справка, Services —
+# in Russian instead of English. Copied here, before codesign, for exactly the reason the icon
+# is: the signature covers Contents/Resources, and a resource added after signing leaves a
+# broken seal, which costs the Accessibility grant this script's identity exists to preserve.
+cp -R "$ROOT/Sources/TranslatorApp/Resources/ru.lproj" "$APP/Contents/Resources/"
 IDENTITY="${CODESIGN_IDENTITY:-}"
 if [ -z "$IDENTITY" ]; then
   # The matched name is extracted rather than hardcoded. A substring test that then signs

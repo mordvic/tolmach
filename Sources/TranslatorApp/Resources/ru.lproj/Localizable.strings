@@ -1,0 +1,33 @@
+/*
+ Deliberately empty, and it is the *directory* that does the work rather than this file.
+
+ This app has no localisation to switch: every string in it is a Russian literal, and
+ `CLAUDE.md` records that as a decision rather than an omission. What it did have was a bundle
+ that claimed no localisations at all, which is a different thing and had two visible costs.
+
+ macOS renders the standard menus — the application menu, «Правка», «Окно», «Справка» and the
+ Services submenu — in the app's own effective localisation, not in the user's language. With
+ no `.lproj` and no `CFBundleDevelopmentRegion`, that resolved to English, so a program whose
+ every word is Russian carried an English menu bar even on a Russian system. Measured on the
+ same binary under three configurations: with `-AppleLanguages '(ru)'` and no localisation the
+ menu stayed «Edit / Copy / Paste / Quit»; with `CFBundleDevelopmentRegion = ru` and this
+ directory present it became «Правка / Скопировать / Вставить / Завершить».
+
+ The second cost is quieter. `Bundle.main.preferredLocalizations` answered `["en"]`, which is
+ what forced `RussianCopy.modelSize` and the temperature slider in `SettingsModelsView` to pin
+ `Locale(identifier: "ru_RU")` by hand so that a Russian sentence would not sit next to «4.8».
+ Those pins stay — they are correct regardless of the machine's language, which is the point
+ of pinning them — but the reason they were unavoidable is gone.
+
+ Why the file is empty and must stay that way: a `Text("Строка")` in SwiftUI goes through
+ `LocalizedStringKey`, so declaring a localisation makes every one of them a lookup into this
+ table. Measured, with this file empty: `NSLocalizedString` and `String(localized:)` return the
+ key unchanged, including a key containing a `%`. Adding an entry here would start overriding
+ the literals in the source, which is exactly the drift `CONTEXT.md` exists to prevent — the
+ same sentence in two places, disagreeing.
+
+ `Scripts/make-app-bundle.sh` copies this directory into `Contents/Resources` before `codesign`
+ runs, for the same reason it does that with the icon: the signature covers `Resources`, and a
+ resource added afterwards breaks the seal — which costs the Accessibility grant that the
+ script's signing identity exists to preserve.
+*/
