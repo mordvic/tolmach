@@ -136,6 +136,15 @@ compile check) and none of it has been *looked at*.
 | The two new glyphs in the panel's status row | `exclamationmark.triangle.fill` for an interrupted run, `xmark.octagon.fill` for a failure, in the row's own colour. The table is unit-tested; the row has never been rendered | `PanelStatus.Kind.symbol`, `PanelView.statusLine` |
 | «Скопировать перевод» ⇧⌘C not shadowing ⌘C in the source editor | They are different equivalents, so this should be free — but the source pane is a `TextEditor` and ⌘C on a selection inside it is the one thing that must keep working | `.commands`, `SourcePane` |
 
+**Owed by the settings/accessibility/CI wave.**
+
+| What to check | Why it needs eyes | Code |
+|---|---|---|
+| **VoiceOver on the panel, end to end** | The only way to know whether any of the new accessibility work reaches a user. Press the shortcut with VoiceOver running and listen for: the panel announcing itself, «Перевод готов» once the run settles, and the translation *not* being re-read on every token. The announcement's wording is unit-tested; that it is spoken at all is not, and cannot be from here — see §2 | `PanelView.announcement(for:)`, `configurePanel`'s `onRunFinished` |
+| Dropping a `.md` file on the source pane | The decision — which files, how large, what counts as text — is `DroppedDocument` and is tested against real temp files. What no test can do is drag something: whether the pane shows a drop target, whether the refusal springs back the way the platform draws it, and whether dropping onto the *translation* side does nothing | `SourcePane`, `DroppedDocument` |
+| **The CI workflow's first run** | Written but never executed. Two things could be wrong and neither is knowable from here: whether `macos-15` ships an Xcode new enough for `swift-tools-version: 6.0` and `.swiftLanguageMode(.v6)`, and whether `ls -d /Applications/Xcode*.app \| sort -V \| tail -1` picks the right one on that image. If it fails, the fix is a pinned `xcode-version`, not a change to the package | `.github/workflows/ci.yml` |
+| ⇧⌘C and the drop target not fighting the `TextEditor` | Both are new on a pane that already owns the keyboard | `SourcePane`, `.commands` |
+
 **Owed by the UI redesign, Task 13 — the menu bar glyph and status row.** The whole visible
 result of this task is unobserved: it is a menu-bar icon and a new first row of menu text, and
 nothing in this environment can see either.
@@ -246,9 +255,21 @@ Deliberate, with the reason. Do not "fix" these without reading the reason first
   user gets no shortcut and no message. Unreachable today: `AppSettings.hotkey` guarantees a
   valid combination, and the only other failure is `-9878` for a combination another component
   of this process already holds — nothing else in this process registers one.
-- **The panel exposes almost nothing to accessibility.** `entire contents` of the panel window
-  is empty through System Events; VoiceOver on it is unexamined. The hotkey recorder, by
-  contrast, does declare role, label and value.
+- **The panel's accessibility is now stated, and only half of it is checkable.** This entry
+  used to read «the panel exposes almost nothing to accessibility — `entire contents` of the
+  panel window is empty through System Events». The panel now declares a container label, marks
+  the translation `updatesFrequently` so an assistive technology is not made to follow ten
+  rewrites a second, and announces a settled run through
+  `AccessibilityNotification.Announcement`. What it says is `PanelView.announcement(for:)`, a
+  value, and it is unit-tested.
+  **The «empty through System Events» observation is retired rather than fixed, because it
+  never distinguished the two things it was read as distinguishing.** Measured now, walking the
+  real `PanelController`'s tree in the test process: `AXWindow → AXGroup`, no label, zero
+  children — **identically with the new modifiers and with them removed**, checked both ways.
+  SwiftUI does not materialise its accessibility tree until an assistive client attaches, and a
+  test process has none, so that probe reports «empty» whatever the view says. It was never
+  evidence about the panel. What is owed is VoiceOver on the assembled bundle, and nothing
+  short of that will do.
 - **The permission row lags a grant made without leaving the app.** It refreshes on appearance
   and on activation; TCC publishes no notification this app subscribes to, and polling a
   privileged call on a timer for a cosmetic gain was rejected.

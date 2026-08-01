@@ -28,6 +28,12 @@ swift run acceptance              # live-Ollama corpus run; MUST run from the pa
 the deliberately-not-in-CI harness that measures TTFT, markup integrity and term consistency
 against the thresholds in spec §10, and exits 1 on regression.
 
+**There is CI, and it is the offline half only** (`.github/workflows/ci.yml`): build with
+tests, a gate that fails on any warning, then `swift test`. `acceptance` stays out for the
+reason above — «no CI for that harness» was never «no CI». The warning gate is the point: zero
+warnings is a standing rule that until now nothing could enforce, and `docs/TESTING.md`'s tenth
+shape is why it runs against a fresh checkout rather than a cached build.
+
 The Accessibility grant is keyed to the code signature. `make-app-bundle.sh` prefers a
 self-signed "LocalTranslator Dev" identity precisely so the grant survives rebuilds; with
 ad-hoc signing macOS re-asks after every build. The script's header says how to create one.
@@ -133,6 +139,16 @@ Facts that will bite you if you "tidy" them:
   reassigning `rootView` is load-bearing, not tidy-up: without it the measuring host never sees
   content that changed through `@Observable`. All four facts are in `docs/PLATFORM-TRAPS.md`
   with their measurements.
+- **The settings panes already scroll — do not "fix" their fixed frame.** `settingsPane()`'s
+  `.frame(width: 560, height: 480)` is what stops the window resizing between tabs, and it does
+  **not** clip: `.formStyle(.grouped)` installs an `NSScrollView` of its own, measured, at any
+  content size, where a `VStack` and an unstyled `Form` install none. Replacing the frame with
+  `minWidth`/`minHeight` reintroduces the resizing for no gain.
+- `SourcePane` takes a dropped file. What it accepts is `DroppedDocument` — a closed extension
+  list, a 256 KB ceiling, UTF-8 or nothing — and a refusal is `false` out of `dropDestination`,
+  which makes the system spring the item back. That is the entire error channel and is
+  deliberate: there is no error surface in that window, and inventing one to say «this is not
+  text» would be worse than the feedback the platform already draws.
 - The main window is a toolbar plus `SourcePane` | `TranslationPane` over a collapsible
   `RunStatusBar`; the translation side is a read-only `Text`, deliberately, because the
   `TextEditor` it replaced took a caret and discarded typing. The settings are **three** tabs,
