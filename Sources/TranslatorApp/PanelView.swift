@@ -112,6 +112,13 @@ struct PanelView: View {
         // keeps that working. `windowBackgroundColor` rather than a literal, so light and dark
         // both come out right without this view knowing which it is in.
         .background(background, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        // `.contain` and not `.combine`: the panel holds a translation, a status line and up to
+        // three buttons, and combining them would flatten all of that into one unreadable
+        // label. `.contain` names the group and leaves every child reachable, which is what
+        // this window needs — it has no title bar to carry a name, because `TranslationPanel`
+        // hides it so the content can draw there.
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Толмач — перевод выделенного текста")
     }
 
     private var background: AnyShapeStyle {
@@ -249,6 +256,13 @@ struct PanelView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(model.translatedText)
                         .textSelection(.enabled)
+                        // Without this the text is a live region VoiceOver has no warning
+                        // about: it is rewritten on every streamed token, up to ten times a
+                        // second, and an assistive technology that re-reads a changed label
+                        // would talk over itself for the whole of a run. The trait is the
+                        // documented way to say «this changes often, do not follow it» — the
+                        // settle is announced once instead, by `announcement(for:)`.
+                        .accessibilityAddTraits(.updatesFrequently)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         // A `Text` given less width than it wants truncates rather than wrapping,
                         // and the panel's width is now measured from this view — so without this
@@ -398,6 +412,32 @@ struct PanelView: View {
     nonisolated static func direction(outcome: TranslationOutcome?, target: Language?) -> String? {
         guard let outcome, let target else { return nil }
         return RussianCopy.direction(from: outcome.detectedSource, to: target)
+    }
+
+    /// What VoiceOver is told when a run settles, or nil when there is nothing to say.
+    ///
+    /// The panel is the surface this matters most on and the one that had least of it. It is
+    /// summoned by a shortcut, it never takes the application into the foreground, and it
+    /// appears next to the pointer rather than where focus was — so a user who does not see it
+    /// gets no indication that anything happened at all. Everything else in this app is
+    /// reached by clicking something, which announces itself.
+    ///
+    /// A value rather than a call to `AccessibilityNotification` inline, for the same reason
+    /// `status(for:)` is a value: which states speak, and what they say, is a decision, and a
+    /// decision buried in a view modifier can only be read. `.running` is deliberately silent —
+    /// the run has only just started and the user pressed the key themselves — and so is
+    /// `.idle`, which is not a settle.
+    ///
+    /// Exhaustive with no `default:` for the same reason as everything else here.
+    nonisolated static func announcement(for state: TranslationState) -> String? {
+        switch state {
+        case .idle, .running: nil
+        case .finished: "Перевод готов"
+        case .interrupted: "Перевод прерван, показана пришедшая часть"
+        // The view model has already put this into Russian and it carries the only
+        // instruction the user gets — the same reasoning as `status(for:)`'s failure case.
+        case .failed(let message): message
+        }
     }
 
     /// Exhaustive with no `default:` on purpose: a sixth `TranslationState` case should

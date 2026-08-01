@@ -422,6 +422,17 @@ struct TranslatorApp: App {
                 // closure a no-op instead, so only one host ever calls it.
                 onRunFinished: {
                     guard case .installed = variant else { return }
+                    // Announced from here rather than from a modifier inside `PanelView`, and
+                    // the reason is the same one this closure is already gated for: the
+                    // controller builds two live hosts from this builder, and a `.onChange`
+                    // written in the view would fire on both — so a settle would be spoken
+                    // twice. This closure only exists on the installed variant.
+                    //
+                    // What to say is `PanelView.announcement(for:)`, which is a value and is
+                    // tested; posting it is all that happens here.
+                    if let said = PanelView.announcement(for: coordinator.panelModel.state) {
+                        AccessibilityNotification.Announcement(said).post()
+                    }
                     await statusModel.refresh(interactiveModel: settings.interactiveModel)
                 }))
         }
