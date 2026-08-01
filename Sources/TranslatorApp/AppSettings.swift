@@ -156,7 +156,21 @@ final class AppSettings {
         }
         set {
             withMutation(keyPath: \.hotkey) {
-                defaults.set(try? JSONEncoder().encode(newValue), forKey: "hotkey")
+                // Encoding two integers cannot realistically fail, and if it ever did the
+                // `try?` would store `nil` — which removes the key, so the getter above falls
+                // back to `.default` and the app keeps a working shortcut. That is the right
+                // behaviour and it stays. What it must not do is be silent: the user would
+                // have set a combination, watched it not take, and had nothing to look at.
+                guard let encoded = try? JSONEncoder().encode(newValue) else {
+                    Log.settings.error("""
+                        could not encode the hotkey combination; it was not stored and the \
+                        default remains in force \
+                        (combination: \(newValue.displayString, privacy: .public))
+                        """)
+                    defaults.removeObject(forKey: "hotkey")
+                    return
+                }
+                defaults.set(encoded, forKey: "hotkey")
             }
         }
     }

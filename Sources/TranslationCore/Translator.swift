@@ -36,6 +36,23 @@ public struct TranslationOutcome: Sendable {
     /// regardless, so no information is lost by making this optional.
     public let timeToFirstTokenMS: Double?
     public let totalMS: Double
+    /// Why the document-glossary call was abandoned, or nil if it was not — either because it
+    /// succeeded or because this run never needed one.
+    ///
+    /// The failure itself is still swallowed, and must be: the document glossary is an
+    /// enhancement to cross-chunk consistency, not the result, so losing a whole document
+    /// over one failed preparatory call would be the worse trade. What was wrong is that
+    /// swallowing it left **no trace at all** — a run that quietly translated a long document
+    /// without the terminology pass is indistinguishable, from outside, from one that did not
+    /// need it. Terminology drift was measured at 64–68% against 88% with the pass
+    /// (`docs/adr/0001-…`), so the difference is the whole reason the call exists.
+    ///
+    /// Carried on the outcome rather than logged from here, because `TranslationCore` depends
+    /// on nothing but Foundation and NaturalLanguage and that rule is worth more than the
+    /// convenience — see `CLAUDE.md`'s architecture note. The app logs it (`Log.engine`),
+    /// `translate-cli` prints it, and the acceptance harness can read it. Nothing renders it
+    /// to the user: it is a diagnostic about an enhancement, not a warning about the result.
+    public let documentGlossaryFailure: String?
 }
 
 // Every other public value type in this API is already Sendable; the entry point
@@ -204,6 +221,8 @@ public struct Translator: Sendable {
         // source language — parsing the source with the target's tagger yields garbage
         // terms that would then be forced into every chunk.
         var documentEntries: [GlossaryEntry] = []
+        /// Set only on the swallowed path below. See `TranslationOutcome.documentGlossaryFailure`.
+        var documentGlossaryFailure: String?
         if chunks.count > 1, let source = detected {
             let terms = TermExtractor.extract(from: text, language: source)
             if !terms.isEmpty {
@@ -228,7 +247,12 @@ public struct Translator: Sendable {
                     // translation is still useful without it. Leave `documentEntries`
                     // empty and let the per-chunk loop proceed, instead of losing the
                     // whole document over one failed preparatory call.
+                    //
+                    // Recorded on the way past, which is the only thing that changed here:
+                    // still swallowed, no longer invisible. See
+                    // `TranslationOutcome.documentGlossaryFailure`.
                     documentEntries = []
+                    documentGlossaryFailure = error.localizedDescription
                 }
             }
         }
@@ -302,6 +326,7 @@ public struct Translator: Sendable {
                                              translation: final),
             stats: stats,
             timeToFirstTokenMS: firstTokenAt.map { $0.timeIntervalSince(started) * 1000 },
-            totalMS: Date().timeIntervalSince(started) * 1000)
+            totalMS: Date().timeIntervalSince(started) * 1000,
+            documentGlossaryFailure: documentGlossaryFailure)
     }
 }

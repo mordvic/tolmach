@@ -53,7 +53,8 @@ private func quietOutcome(documentGlossary: [GlossaryEntry] = [],
                        markupDiffs: markupDiffs,
                        stats: [],
                        timeToFirstTokenMS: 12,
-                       totalMS: 34)
+                       totalMS: 34,
+                       documentGlossaryFailure: nil)
 }
 
 @MainActor @Test func anOutcomeWithNothingToWarnAboutDrawsNothing() {
