@@ -1,0 +1,68 @@
+# The offline half of this project's checks, and only the offline half.
+#
+# `swift build`, `swift test` and the warning gate need nothing but a toolchain: the suite runs
+# against `FakeLLMClient` and never opens a socket. `swift run acceptance` is deliberately absent
+# — it needs a live Ollama with a resident model, which is why `docs/OPEN-ITEMS.md` records it as
+# not in CI. That entry has always been read as «there is no CI», and it does not say that: it
+# says the *acceptance harness* cannot be in one.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: macos-15
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned to the runner image's newest Xcode rather than left to the default, which is not
+      # always the newest installed. The package is `swift-tools-version: 6.0` with
+      # `.swiftLanguageMode(.v6)` on every target, so a Swift 5 toolchain does not merely warn —
+      # it fails to parse the manifest.
+      - name: Select the newest installed Xcode
+        run: |
+          set -euo pipefail
+          latest="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          echo "using $latest"
+          sudo xcode-select -s "$latest"
+          swift --version
+
+      # Built into a log rather than straight to the terminal, because the warning gate below
+      # has to read it. `--build-tests` matters: the test targets are where two of the three
+      # Swift 6 problems this project has already hit actually surfaced.
+      - name: Build (including tests)
+        run: swift build --build-tests 2>&1 | tee build.log
+
+      # This project's standing rule is zero warnings, and until now it was kept by discipline
+      # alone — nothing could fail when it slipped. `docs/TESTING.md` names the trap this gate
+      # has to avoid: a cached build reports zero warnings because nothing recompiled. The step
+      # above is the first build in a fresh checkout, so there is no cache to hide behind.
+      - name: Fail on any warning
+        run: |
+          set -euo pipefail
+          if grep -E '^/.*warning:' build.log; then
+            echo "::error::the build produced warnings; this project's standing rule is zero"
+            exit 1
+          fi
+          echo "no warnings"
+
+      - name: Test
+        run: swift test
+
+      # Not a duplicate of the build above: the language mode is already `.v6`, but
+      # `-strict-concurrency=complete` reaches further than the mode does and is what the
+      # Swift 6 migration was measured against. Kept non-blocking so that a future compiler
+      # tightening surfaces as a note here rather than as a red PR nobody can land.
+      - name: Strict concurrency (informational)
+        continue-on-error: true
+        run: swift build --build-tests -Xswiftc -strict-concurrency=complete
