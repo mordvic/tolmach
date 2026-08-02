@@ -13,17 +13,36 @@ struct SettingsGlossaryView: View {
     /// writes settings.
     let settings: AppSettings
 
-    /// Which language's translation the rows show. `nil` means "follow the working
-    /// language", which is the useful default: that is the language the primary-language
-    /// text gets translated into. A `@State` initialised from `settings` instead would be
-    /// captured once, at the first render, and then silently stop following the setting.
+    /// The language the user picked in the header, or nil while they have not picked one.
     @State private var languageOverride: Language?
+
+    /// The language the *glossary* says it is written in, worked out by `GlossaryColumn` when
+    /// the pane appears and when the file is re-read.
+    ///
+    /// Held rather than recomputed, and that is a correctness requirement rather than a
+    /// performance one — see `GlossaryColumn`'s contract. `entryBinding` writes through
+    /// `translations[editingLanguage.rawValue]`, so a language that moved between two
+    /// keystrokes would put the rest of a word under a different key.
+    ///
+    /// Nil only before the first `onAppear`, which is why the expression below still ends in a
+    /// setting: for that one evaluation there is nothing derived to use yet.
+    @State private var derivedLanguage: Language?
 
     @State private var query = ""
     @State private var order: [Int] = []
     @State private var selection: Set<Int> = []
 
-    private var editingLanguage: Language { languageOverride ?? settings.workingLanguage }
+    /// The user's choice, else what the glossary is written in, else the language this app
+    /// translates into by default.
+    ///
+    /// `primaryLanguage` and no longer `workingLanguage` at the end of that chain.
+    /// `AppSettings.targetLanguage(forDetected:)` sends everything that is not already in the
+    /// user's own language *into* it, so the primary language is where translations land in the
+    /// common direction — and the old default named the other one. `GlossaryColumn` carries
+    /// what that cost: a pane whose every «перевод» field was blank on a default install.
+    private var editingLanguage: Language {
+        languageOverride ?? derivedLanguage ?? settings.primaryLanguage
+    }
 
     /// Not observable — `FileManager` has nothing to notify SwiftUI with. It does not need
     /// to be: the only thing that creates this file is a save from this app, and every save
@@ -137,12 +156,28 @@ struct SettingsGlossaryView: View {
             }
         }
         .settingsPane()
-        .onAppear { reorder() }
+        .onAppear { deriveColumn(); reorder() }
         .onChange(of: query) { _, _ in reorder() }
     }
 
     private var languageBinding: Binding<Language> {
         Binding(get: { editingLanguage }, set: { languageOverride = $0 })
+    }
+
+    /// Recomputed at exactly two moments, and the omissions are the point.
+    ///
+    /// Appearing and re-reading the file are the two occasions on which the whole set of
+    /// entries can be something this pane has not seen. Adding, removing, searching and typing
+    /// are deliberately **not** among them: those happen while the user is working in the
+    /// rows, and `GlossaryColumn`'s contract is that the column must not move under an
+    /// editing caret — `entryBinding` writes through the language, so a move mid-word splits
+    /// one translation across two keys.
+    ///
+    /// It does not touch `languageOverride`. A user who picked a language keeps it for the
+    /// life of the pane, including across a re-read.
+    private func deriveColumn() {
+        derivedLanguage = GlossaryColumn.language(for: glossary.file.entries,
+                                                  fallback: settings.primaryLanguage)
     }
 
     /// Recomputed here and nowhere else. See `GlossaryOrder`'s doc comment: recomputing on
@@ -261,6 +296,11 @@ struct SettingsGlossaryView: View {
             glossary.lastProblem = "Не удалось прочитать файл глоссария, в приложении осталась "
                 + "прежняя версия. Файл на диске не изменён: \(error.localizedDescription)"
         }
+        // The file that was just read can be written in a different language from the one this
+        // session started with — that is the whole point of «Перечитать файл», and a glossary
+        // edited by hand or pulled from git is exactly where it happens. Recomputed before the
+        // rows are, so the column and the order describe the same file.
+        deriveColumn()
         // A file re-read at the same or a greater row count leaves every selected index in
         // range, but now naming whatever term is at that position in the new file — not the
         // row the user actually selected. Only a shrink past the selected index would be

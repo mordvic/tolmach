@@ -144,6 +144,15 @@ Facts that will bite you if you "tidy" them:
   **not** clip: `.formStyle(.grouped)` installs an `NSScrollView` of its own, measured, at any
   content size, where a `VStack` and an unstyled `Form` install none. Replacing the frame with
   `minWidth`/`minHeight` reintroduces the resizing for no gain.
+- **The glossary pane's language column is derived from the glossary, not from a setting.**
+  `GlossaryColumn.language(for:fallback:)` picks the language most entries are actually written
+  into; the fallback is `primaryLanguage`, because `targetLanguage(forDetected:)` sends
+  everything that is not already in the user's own language *into* it. It used to default to
+  `workingLanguage`, which named the other direction — so on a default install every «перевод»
+  field rendered blank. **It must not be recomputed while the user types**: `entryBinding`
+  writes through `translations[editingLanguage.rawValue]`, so a column that moved mid-word would
+  split one translation across two keys. `SettingsGlossaryView` computes it on appear and on
+  re-read only, and holds it in `@State`.
 - `SourcePane` takes a dropped file. What it accepts is `DroppedDocument` — a closed extension
   list, a 256 KB ceiling, UTF-8 or nothing — and a refusal is `false` out of `dropDestination`,
   which makes the system spring the item back. That is the entire error channel and is
