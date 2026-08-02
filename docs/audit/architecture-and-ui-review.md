@@ -1,285 +1,327 @@
-# Архитектурный и UI-аудит
+# Architecture and UI review
 
-> **Статус: волна 1 выполнена** на ветке `wave1/observability-and-swift6` (не слита).
-> Закрыты **A1, A2, A3, A4, A6, A7/M1, M2, M5** — плюс два дефекта, найденных уже в ходе работ
-> и в отчёт не входивших (см. «Что нашлось при исправлении» ниже). Остальные находки
-> не тронуты. Проверено: холодная `swift build --build-tests` — 0 ошибок, 0 предупреждений;
-> `swift test` — 352 теста зелены в 3 прогонах из 3; `-strict-concurrency=complete` поверх
-> `.v6` — 0 предупреждений; сквозной прогон `translate-cli` против живой Ollama.
+> **Status: all three waves are done.** `wave1/observability-and-swift6` (PR #9),
+> `wave2/mac-idioms` (PR #10), `wave3/settings-a11y-and-ci` (PR #11) and
+> `fix/glossary-language-default` (PR #12) — a stack, none of them merged.
 >
-> **Что нашлось при исправлении** (обоих в отчёте не было — их выявил сам переход на `.v6`):
+> Closed: **A1, A2, A3, A4, A5, A6, A7/M1, M2, M5, M11** and **U1/M3, U2, U3/M4, U4, U5/M6,
+> U8**, plus the drag & drop half of U7. **U6 is refuted** (below); Services from U7 are
+> deferred, with a reason. Verified: cold `swift build --build-tests` — 0 errors, 0 warnings;
+> `swift test` — 374 tests green on 3 runs out of 3; `-strict-concurrency=complete` — 0
+> warnings; `translate-cli` end to end against a live Ollama; the localisation checked on the
+> **assembled bundle**; the code signature intact.
 >
-> 1. **Рантайм-ловушка в `WarningsView`.** Замыкание внутри computed property на `View`
->    наследует `@MainActor`; Swift 5 это не проверяет, Swift 6 проверяет **во время
->    выполнения** и падает с `signal code 5`. Сборка при этом чистая. Детерминированно 3/3
->    против 0/3 на `main`. Умирали ровно те два теста, что передают непустой `checks` —
->    пустая коллекция прячет дефект полностью, потому что замыкание не запускается.
->    Разбор — в шапке [WarningsViewTests.swift](../../Tests/TranslatorAppTests/WarningsViewTests.swift).
-> 2. **Утверждение аудита про `qwen3:30b` и таймаут — снято измерением.** Я записал в
->    `OPEN-ITEMS` вопрос «стримится ли reasoning», а затем измерил его против живой Ollama:
->    258 кадров, первый `thinking` на 2.12 с, первый `content` на 7.12 с, **максимальный
->    разрыв между кадрами 62 мс**. Тишины нет — рассуждающая модель таймаут не задевает.
->    Долг из `OPEN-ITEMS` удалён, цифры перенесены в комментарий к
+> ### Three places where this report was wrong, and measurement is what showed it
+>
+> 1. **U6 is refuted outright.** It claimed the fixed `.frame(width:height:)` in the settings
+>    clips content, and recommended replacing it with `minWidth/minHeight` plus a `ScrollView`.
+>    Control experiment: `.formStyle(.grouped)` **installs an `NSScrollView` of its own** — at
+>    any content size — where a `VStack` and an unstyled `Form` install none. The settings
+>    already scroll. The recommended change would have brought back the window resizing between
+>    tabs that the frame exists to prevent, in exchange for nothing. `SettingsPane` is untouched.
+> 2. **U3 is partly wrong.** `CommandGroup(replacing: .sidebar) { }` does not remove the empty
+>    «Вид» menu — the group is emptied but the title stays, which is worse than before.
+>    `pruneEmptyMenus()` in AppKit was needed instead.
+> 3. **U4 cannot be verified with the tool the project itself used.** `OPEN-ITEMS` §2 cited
+>    «`entire contents` of the panel window is empty through System Events». Checked: walking
+>    the tree gives `AXWindow → AXGroup`, no label, no children — **identically with the new
+>    modifiers and with them removed**. SwiftUI does not materialise the tree until an assistive
+>    client attaches. That observation was never evidence about the panel; the `OPEN-ITEMS`
+>    entry is corrected.
+>
+> ### A finding that was not in the report at all
+>
+> **The glossary defaulted to the wrong column — U12.** Found by rendering rather than by
+> reading: the settings pane, captured with four populated entries, showed a blank «перевод»
+> field on every one. The cause is that `editingLanguage` took `settings.workingLanguage`
+> (English), while `targetLanguage(forDetected:)` sends everything that is not in the user's own
+> language **into** it — that is, into Russian. On a default install the glossary fills with
+> `translations["ru"]` while the pane showed the `en` column. Nothing explained it: the language
+> picker is `.labelsHidden()` and carries only a tooltip.
+>
+> Fixed by `GlossaryColumn` — the language is derived from the glossary's content rather than
+> from a setting, so both directions of translation work. Branch
+> `fix/glossary-language-default`.
+>
+> **Deferred with a reason:** Services from U7. Not technical debt but a new product surface,
+> and it turns on a decision I cannot make: what «Перевести Толмачом» does with the result —
+> returns a replacement for the selected text in someone else's document, or shows the panel.
+> The first modifies a document this app does not own; the second duplicates the shortcut. There
+> is also no way to verify it from here.
+>
+> **What turned up while fixing** (neither was in the report — the move to `.v6` surfaced both):
+>
+> 1. **A run-time trap in `WarningsView`.** A closure inside a computed property on a `View`
+>    inherits `@MainActor`; Swift 5 does not check that, Swift 6 checks it **at run time** and
+>    dies with `signal code 5`. The build stays clean. Deterministic at 3/3 against 0/3 on
+>    `main`. Exactly the two tests that pass a non-empty `checks` died — an empty collection
+>    hides the defect completely, because the closure never runs. Written up at the top of
+>    [WarningsViewTests.swift](../../Tests/TranslatorAppTests/WarningsViewTests.swift).
+> 2. **This report's own claim about `qwen3:30b` and the timeout, retracted by measurement.** I
+>    recorded «does reasoning stream?» as a question in `OPEN-ITEMS`, then measured it against a
+>    live Ollama: 258 frames, first `thinking` at 2.12 s, first `content` at 7.12 s, **largest
+>    gap between frames 62 ms**. There is no silence — a reasoning model cannot trip the
+>    timeout. The debt was removed from `OPEN-ITEMS` and the numbers moved into the comment on
 >    [`OllamaClient.Timeout`](../../Sources/OllamaKit/OllamaClient.swift).
 >
-> Ниже — исходный отчёт в том виде, в каком он был написан до правок.
+> Below is the original report as it was written, before any of the fixes.
 
 ---
 
-Внешний read-only аудит «Толмача». Ни один файл исходников не изменён.
+An external, read-only audit of «Толмач». No source file was modified.
 
-Документ написан по-русски, в отличие от остальных `docs/` — он адресован владельцу
-проекта, а не является частью кодовой документации. Идентификаторы, имена API и пути
-оставлены как есть.
+Identifiers, API names and paths are left as they are. Russian strings are quoted verbatim
+where the string itself is the thing being discussed.
 
-**Окружение, в котором взяты все измерения** (`sw_vers`, `xcodebuild -version`, `swift --version`):
+**The environment every measurement was taken in** (`sw_vers`, `xcodebuild -version`,
+`swift --version`):
 
 | | |
 |---|---|
 | macOS | 26.6 (25G72) |
 | Xcode | 26.6 (17F113) |
 | Swift toolchain | 6.3.3, target `arm64-apple-macosx26.0` |
-| Планка проекта | macOS 14.0, `swift-tools-version: 6.0`, `.swiftLanguageMode(.v5)` ×11 |
-| Код | 50 файлов / 6881 строк в `Sources`, 38 / 5847 в `Tests`, 347 `@Test` |
-| Дата | 2026-08-01, `main` @ `c25328f` |
+| Project floor | macOS 14.0, `swift-tools-version: 6.0`, `.swiftLanguageMode(.v5)` ×11 |
+| Code | 50 files / 6881 lines in `Sources`, 38 / 5847 in `Tests`, 347 `@Test` |
+| Date | 2026-08-01, `main` @ `c25328f` |
 
-**Что было запущено** (с разрешения владельца, обе сборки — в изолированные
-`--scratch-path`, рабочий `.build` не тронут):
+**What was run** (with the owner's permission; both builds into isolated `--scratch-path`
+directories, the working `.build` untouched):
 
-| Прогон | Результат |
+| Run | Result |
 |---|---|
-| `swift build --build-tests`, холодная | **0 warnings**, 9.32 s — правило «zero warnings» держится |
-| `swift build --build-tests -Xswiftc -strict-concurrency=complete`, холодная | 8 предупреждений (6 в `Sources`, 2 в `Tests`), 0 ошибок, сборка проходит |
+| `swift build --build-tests`, cold | **0 warnings**, 9.32 s — the «zero warnings» rule holds |
+| `swift build --build-tests -Xswiftc -strict-concurrency=complete`, cold | 8 warnings (6 in `Sources`, 2 in `Tests`), 0 errors, the build succeeds |
 
-Кроме этого написаны **четыре пробника вне репозитория** (в scratchpad), чтобы превратить
-догадки в измерения: меню SwiftUI для этой конфигурации сцен, локализация меню под тремя
-конфигурациями бандла, наличие рекомендуемых accessibility-API на планке macOS 14, и
-безопасность добавления `ru.lproj`. Их результаты помечены как «измерение» в колонке
-«источник».
+Beyond that, **four probes were written outside the repository** (in a scratchpad) to turn
+guesses into measurements: the SwiftUI menu for this scene configuration, menu localisation
+under three bundle configurations, the availability of the recommended accessibility APIs at the
+macOS 14 floor, and the safety of adding `ru.lproj`. Their results are marked «measurement» in
+the source column.
 
 ---
 
 ## 1. Executive summary
 
-- **Слоевая граница реальна, а не декларативна.** `TranslationCore` не импортирует ничего,
-  кроме Foundation и NaturalLanguage; `TextCapture` не зависит даже от `TranslationCore`;
-  инверсия через `LLMClient`. Views нигде не ходят напрямую в сеть или на диск. Это
-  подтверждено манифестом и построчным чтением, а не заявлено.
-- **Проект уже почти готов к Swift 6.** Строгая конкурентность даёт **шесть** мест в
-  `Sources` — все в двух файлах `TextCapture` и в двух вызовах вокруг `NSPasteboard`. Это
-  один рабочий день, а не миграция.
-- **Единственная критическая дыра в эксплуатации — полное отсутствие логирования.** Ноль
-  `os.Logger` во всём `Sources`, при четырёх намеренно проглатываемых отказах. У
-  menu-bar-приложения, живущего сутками, нет ни одного способа рассказать, что у
-  пользователя пошло не так.
-- **Меню приложения существует и оно английское.** Измерено: SwiftUI ставит полное главное
-  меню (`Правка` с ⌘C/⌘V/⌘Z, `Настройки… ⌘,`), но бандл не объявляет ни одной локализации,
-  поэтому даже на русской системе меню остаётся английским. Починка — два ключа в
-  `Info.plist`, проверено экспериментально.
-- **Комментарий в `TranslatorApp.swift:466` опровергнут измерением**: «нет меню приложения,
-  поэтому стандартного ⌘, не существует» — меню есть, ⌘, в нём есть. По правилам самого
-  `CLAUDE.md` это не мелочь: «measured» здесь контракт.
-- **Ни одной `.commands` во всём приложении.** Ни «Перевести», ни «Открыть окно», ни
-  «Показать панель» не попадают в меню; меню `View` установлено и **пусто**.
-- **Accessibility — самое слабое место UI.** Четыре явные метки на 4421 строку интерфейса.
-  Reduce Motion учтён, **Reduce Transparency — нет**, хотя API доступен на планке macOS 14
-  (проверено компиляцией).
-- **Ollama-клиент множится**: комментарий в `TranslatorApp.swift:27` обосновывает шаринг
-  клиента тем, чтобы не поднимать вторую `URLSession`, а приложение поднимает **три** при
-  старте и ещё по одной на каждую загрузку модели.
-- **Безопасность чистая по всем осям, которые здесь применимы**: секретов нет, keychain не
-  используется (нечего хранить), единственный сетевой адрес — `127.0.0.1:11434`, ATS не
-  мешает эмпирически. Entitlements нет вовсе — и для приложения, которое постит `CGEvent` и
-  читает Accessibility, это правильно, но нигде не записано как решение.
-- **Качество комментариев и тестов выше отраслевой нормы настолько, что это меняет характер
-  аудита.** `docs/OPEN-ITEMS.md` уже содержит бо́льшую часть того, что обычный ревью назвал
-  бы находками. Ниже я явно отделяю новое от уже известного — повторять известное было бы
-  шумом.
+- **The layer boundary is real rather than declared.** `TranslationCore` imports nothing but
+  Foundation and NaturalLanguage; `TextCapture` does not even depend on `TranslationCore`; the
+  inversion goes through `LLMClient`. No view reaches directly into the network or the disk.
+  Confirmed from the manifest and by reading, not taken on trust.
+- **The project is already close to Swift 6.** Strict concurrency produces **six** sites in
+  `Sources` — all in two `TextCapture` files and two calls around `NSPasteboard`. That is a
+  day's work, not a migration.
+- **The one critical hole in operability is the complete absence of logging.** Zero `os.Logger`
+  anywhere in `Sources`, against four deliberately swallowed failures. A menu-bar app that stays
+  resident for days has no way at all to report what went wrong on a user's machine.
+- **The application menu exists and it is English.** Measured: SwiftUI installs a full main menu
+  (`Правка` with ⌘C/⌘V/⌘Z, `Настройки… ⌘,`), but the bundle declares no localisation, so the
+  menu stays English even on a Russian system. The fix is two keys in `Info.plist`, checked
+  experimentally.
+- **The comment at `TranslatorApp.swift:466` is refuted by measurement**: «there is no
+  application menu, so the standard ⌘, does not exist» — the menu is there, and so is ⌘,. By
+  `CLAUDE.md`'s own rules this is not a triviality: «measured» is a contract here.
+- **Not a single `.commands` in the whole app.** Neither «Перевести», nor «Открыть окно», nor
+  «Показать панель» reaches a menu; the `View` menu is installed and **empty**.
+- **Accessibility is the weakest part of the UI.** Four explicit labels across 4421 lines of
+  interface. Reduce Motion is honoured, **Reduce Transparency is not**, although the API is
+  available at the macOS 14 floor (checked by compiling).
+- **The Ollama client multiplies**: the comment at `TranslatorApp.swift:27` justifies sharing
+  the client so as not to stand up a second `URLSession`, while the app stands up **three** at
+  launch and one more per model download.
+- **Security is clean on every axis that applies here**: no secrets, no keychain use (nothing to
+  store), a single network address of `127.0.0.1:11434`, and ATS is empirically not in the way.
+  There are no entitlements at all — which is right for an app that posts `CGEvent`s and reads
+  system Accessibility, but is nowhere recorded as a decision.
+- **The quality of the comments and tests is far enough above the norm to change the character
+  of this audit.** `docs/OPEN-ITEMS.md` already contains most of what an ordinary review would
+  call findings. Below I separate what is new from what is already known — repeating the known
+  would be noise.
 
 ---
 
-## 2. Таблица находок
+## 2. Findings
 
-Severity: **Critical** — ломает пользователя или данные; **High** — реальный дефект или
-блокирующий риск; **Medium** — заметный, но обходимый; **Low** — мелочь или корректность
-документации. Пункты, помеченные **[стиль]**, — предпочтения, а не дефекты; они отделены в
-§3 и в таблицу не входят.
+Severity: **Critical** — breaks the user or their data; **High** — a real defect or a blocking
+risk; **Medium** — noticeable but workable; **Low** — a triviality or documentation
+correctness. Items marked **[style]** are preferences rather than defects; they are separated
+into §3 and are not in the table.
 
-### 2.1 Архитектура
+### 2.1 Architecture
 
-| ID | Область | Severity | Место | Проблема | Рекомендация | Источник |
+| ID | Area | Severity | Location | Problem | Recommendation | Source |
 |---|---|---|---|---|---|---|
-| A1 | Concurrency | High | [GeneralPasteboard.swift:63](../../Sources/TextCapture/GeneralPasteboard.swift#L63), [TranslationViewModel.swift:74](../../Sources/TranslatorApp/TranslationViewModel.swift#L74), [HotkeyCoordinator.swift:220](../../Sources/TranslatorApp/HotkeyCoordinator.swift#L220) | `NSPasteboard` не `Sendable`, а `write(_:to:)` передаёт его в `Task.detached`. Три предупреждения `#SendingRisksDataRace` / `#SendingClosureRisksDataRace`, в Swift 6 — ошибки | Обернуть доску в `struct UncheckedBoard: @unchecked Sendable { let board: NSPasteboard }` внутри `GeneralPasteboard` — сериализация уже обеспечена `NSLock`, так что `@unchecked` здесь честен и обоснование уже написано в докстринге типа | измерение (strict-concurrency сборка) |
-| A2 | Concurrency | High | [HotkeyManager.swift:39-40](../../Sources/TextCapture/HotkeyManager.swift#L39) | `deinit` — nonisolated, а `EventHotKeyRef?`/`EventHandlerRef?` (`OpaquePointer`) не `Sendable`. В Swift 6 — ошибка | Объявить оба поля `nonisolated(unsafe) private var`. Комментарий в самом `deinit` («Carbon-вызовы thread-agnostic») уже является требуемым обоснованием | измерение |
-| A3 | Concurrency | High | [PermissionsGate.swift:17](../../Sources/TextCapture/PermissionsGate.swift#L17) | `kAXTrustedCheckOptionPrompt` импортируется как глобальный `var` → «not concurrency-safe» | Снять значение один раз в `nonisolated(unsafe) private static let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String` | измерение |
-| A4 | Наблюдаемость | High | весь `Sources` | **Ноль** `os.Logger`/`OSLog`. `print` есть только в `acceptance`. При этом четыре пути глушат ошибку намеренно: отказ `coordinator.start` ([TranslatorApp.swift:169](../../Sources/TranslatorApp/TranslatorApp.swift#L169)), отказ `warmUp()` ([:368](../../Sources/TranslatorApp/TranslatorApp.swift#L368)), отказ документного глоссария ([Translator.swift:225](../../Sources/TranslationCore/Translator.swift#L225)), `try? JSONEncoder` ([AppSettings.swift:159](../../Sources/TranslatorApp/AppSettings.swift#L159)). Каждый оправдан по отдельности; вместе они дают приложение, о сбоях которого нельзя узнать ничего | Ввести `Logger(subsystem: "com.mordvic.localtranslator", category: …)` и логировать именно эти четыре точки на уровне `.error`/`.notice`. Пользовательское поведение не меняется — меняется возможность диагностики по `log show --predicate 'subsystem == …'` | измерение (grep по `Sources`) |
-| A5 | Сеть/IO | Medium | [OllamaStatusModel.swift:59](../../Sources/TranslatorApp/OllamaStatusModel.swift#L59), [ModelsViewModel.swift:50](../../Sources/TranslatorApp/ModelsViewModel.swift#L50), против [TranslatorApp.swift:27](../../Sources/TranslatorApp/TranslatorApp.swift#L27) | Комментарий обосновывает шаринг `OllamaClient` тем, что он «держит `URLSession`» и второй поднимать не надо. Фактически при старте создаются **три** (`TranslatorApp`, дефолтный `LiveOllamaProbe` в `OllamaStatusModel`, ещё один в `ModelsViewModel`), и `puller` по умолчанию конструирует `OllamaClient()` **на каждую** загрузку модели | Прокинуть один `OllamaClient` через дефолты `TranslatorApp.init` в оба view-model'а, как уже сделано для `Translator`. Либо снять обоснование из комментария — сейчас оно описывает не то, что происходит | чтение кода + grep |
-| A6 | Сеть/IO | Medium | [OllamaClient.swift:33](../../Sources/OllamaKit/OllamaClient.swift#L33) | `timeoutIntervalForRequest = 120` на всех вызовах, включая интерактивный перевод по хоткею, чья заявленная цель — TTFT < 1 с. Собственные комментарии проекта ([TranslatorApp.swift:157](../../Sources/TranslatorApp/TranslatorApp.swift#L157), [:205](../../Sources/TranslatorApp/TranslatorApp.swift#L205)) трактуют эти 120 с как опасность — но только для порядка запуска, не для пользовательского пути | Разделить конфигурации: короткий таймаут для `chat` интерактивной роли, длинный — для `pull`. Сейчас зависшая Ollama держит панель две минуты, и единственный выход — «Отмена» | чтение кода |
-| A7 | Build | Medium | [Package.swift:8-24](../../Package.swift#L8) | `.swiftLanguageMode(.v5)` на всех 11 таргетах при тулчейне 6.3.3. [Translator.swift:41-46](../../Sources/TranslationCore/Translator.swift#L41) уже документирует потребителя, который без этого не собрался бы | После A1–A3 переключить на `.v6`. Проверено: с `-strict-concurrency=complete` сборка проходит с 8 предупреждениями и **нулём ошибок**, то есть путь до `.v6` короткий | измерение |
-| A8 | Security | Medium | нет файла `*.entitlements`; [make-app-bundle.sh](../../Scripts/make-app-bundle.sh) | Ни App Sandbox, ни Hardened Runtime, ни `--options runtime`. Для приложения, которое постит `CGEvent` через `.cghidEventTap` и читает системный AX, это **правильно** — песочница их запретит, — но нигде не записано как решение с причиной | Добавить ADR (в `docs/adr/` уже семь) «почему нет sandbox и hardened runtime». Иначе следующий человек попробует «привести к best practice» и сломает захват | чтение |
-| A9 | Тестируемость | Low | [ModelsViewModel.swift:50](../../Sources/TranslatorApp/ModelsViewModel.swift#L50) | `puller` по умолчанию конструирует клиента внутри замыкания — единственная зависимость в приложении, которая создаётся не в `init` и потому не подменяется одним аргументом | Свести к `probe`-подобной инъекции. Тесты уже подменяют её, так что это косметика DI, не дыра | чтение |
-| A10 | Security | — | весь репозиторий | **Находок нет.** Ни секретов (grep по `git ls-files`), ни keychain (нечего хранить), единственный сетевой хост — `http://127.0.0.1:11434` ([OllamaClient.swift:25](../../Sources/OllamaKit/OllamaClient.swift#L25)). ATS исключения не нужны и не заявлены — loopback работает эмпирически (проект гоняет `acceptance` против живой Ollama) | — | измерение (grep) |
+| A1 | Concurrency | High | [GeneralPasteboard.swift:63](../../Sources/TextCapture/GeneralPasteboard.swift#L63), [TranslationViewModel.swift:74](../../Sources/TranslatorApp/TranslationViewModel.swift#L74), [HotkeyCoordinator.swift:220](../../Sources/TranslatorApp/HotkeyCoordinator.swift#L220) | `NSPasteboard` is not `Sendable`, and `write(_:to:)` hands it to `Task.detached`. Three warnings, `#SendingRisksDataRace` / `#SendingClosureRisksDataRace`, which are errors in Swift 6 | Box the board in a `struct UncheckedBoard: @unchecked Sendable { let board: NSPasteboard }` inside `GeneralPasteboard` — the serialisation is already provided by `NSLock`, so `@unchecked` is honest here and the justification is already written in the type's doc comment | measurement (strict-concurrency build) |
+| A2 | Concurrency | High | [HotkeyManager.swift:39-40](../../Sources/TextCapture/HotkeyManager.swift#L39) | `deinit` is nonisolated, and `EventHotKeyRef?`/`EventHandlerRef?` (`OpaquePointer`) are not `Sendable`. An error in Swift 6 | Declare both fields `nonisolated(unsafe) private var`. The comment already inside `deinit` («the Carbon calls are thread-agnostic») is the required justification | measurement |
+| A3 | Concurrency | High | [PermissionsGate.swift:17](../../Sources/TextCapture/PermissionsGate.swift#L17) | `kAXTrustedCheckOptionPrompt` is imported as a mutable global → «not concurrency-safe» | Read the value once into `nonisolated(unsafe) private static let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String` | measurement |
+| A4 | Observability | High | all of `Sources` | **Zero** `os.Logger`/`OSLog`. `print` exists only in `acceptance`. Meanwhile four paths swallow a failure deliberately: a refused `coordinator.start` ([TranslatorApp.swift:169](../../Sources/TranslatorApp/TranslatorApp.swift#L169)), a failed `warmUp()` ([:368](../../Sources/TranslatorApp/TranslatorApp.swift#L368)), a failed document glossary ([Translator.swift:225](../../Sources/TranslationCore/Translator.swift#L225)), and `try? JSONEncoder` ([AppSettings.swift:159](../../Sources/TranslatorApp/AppSettings.swift#L159)). Each is individually justified; together they make an app whose failures cannot be learned about at all | Introduce `Logger(subsystem: "com.mordvic.localtranslator", category: …)` and log exactly those four sites at `.error`/`.notice`. User-visible behaviour does not change — what changes is that `log show --predicate 'subsystem == …'` becomes possible | measurement (grep over `Sources`) |
+| A5 | Network/IO | Medium | [OllamaStatusModel.swift:59](../../Sources/TranslatorApp/OllamaStatusModel.swift#L59), [ModelsViewModel.swift:50](../../Sources/TranslatorApp/ModelsViewModel.swift#L50), against [TranslatorApp.swift:27](../../Sources/TranslatorApp/TranslatorApp.swift#L27) | The comment justifies sharing `OllamaClient` on the grounds that it «holds the `URLSession`» and a second one need not be raised. In fact **three** are created at launch (`TranslatorApp`, the default `LiveOllamaProbe` in `OllamaStatusModel`, another in `ModelsViewModel`), and the default `puller` constructs an `OllamaClient()` **per** model download | Thread one `OllamaClient` from `TranslatorApp.init` into both view models, as is already done for `Translator`. Or drop the justification from the comment — as it stands it describes something that is not happening | reading + grep |
+| A6 | Network/IO | Medium | [OllamaClient.swift:33](../../Sources/OllamaKit/OllamaClient.swift#L33) | `timeoutIntervalForRequest = 120` on every call, including the interactive hotkey translation whose stated target is TTFT < 1 s. The project's own comments ([TranslatorApp.swift:157](../../Sources/TranslatorApp/TranslatorApp.swift#L157), [:205](../../Sources/TranslatorApp/TranslatorApp.swift#L205)) treat those 120 s as a hazard — but only for launch ordering, not for the user-facing path | Split the configurations: a short timeout for the interactive `chat`, a long one for `pull`. As it stands a hung Ollama holds the panel for two minutes and the only way out is «Отмена» | reading |
+| A7 | Build | Medium | [Package.swift:8-24](../../Package.swift#L8) | `.swiftLanguageMode(.v5)` on all 11 targets against a 6.3.3 toolchain. [Translator.swift:41-46](../../Sources/TranslationCore/Translator.swift#L41) already documents a consumer that would not compile without it | Switch to `.v6` after A1–A3. Measured: with `-strict-concurrency=complete` the build succeeds with 8 warnings and **zero errors**, so the path to `.v6` is short | measurement |
+| A8 | Security | Medium | no `*.entitlements` file; [make-app-bundle.sh](../../Scripts/make-app-bundle.sh) | No App Sandbox, no Hardened Runtime, no `--options runtime`. For an app that posts `CGEvent`s through `.cghidEventTap` and reads system AX this is **right** — a sandbox would forbid both — but it is nowhere recorded as a decision with a reason | Add an ADR (`docs/adr/` already holds seven): «why there is no sandbox and no hardened runtime». Otherwise the next person will try to «bring it up to best practice» and break the capture | reading |
+| A9 | Testability | Low | [ModelsViewModel.swift:50](../../Sources/TranslatorApp/ModelsViewModel.swift#L50) | The default `puller` constructs a client inside a closure — the one dependency in the app that is not created in `init` and so cannot be substituted with a single argument | Reduce it to `probe`-shaped injection. The tests already substitute it, so this is DI cosmetics rather than a hole | reading |
+| A10 | Security | — | the whole repository | **No findings.** No secrets (grep over `git ls-files`), no keychain (nothing to store), a single network host of `http://127.0.0.1:11434` ([OllamaClient.swift:25](../../Sources/OllamaKit/OllamaClient.swift#L25)). No ATS exception is needed or declared — loopback works empirically (the project runs `acceptance` against a live Ollama) | — | measurement (grep) |
 
 ### 2.2 UI / UX
 
-| ID | Область | Severity | Место | Проблема | Рекомендация | Источник |
+| ID | Area | Severity | Location | Problem | Recommendation | Source |
 |---|---|---|---|---|---|---|
-| U1 | Локализация | High | [Info.plist](../../Sources/TranslatorApp/Info.plist) | Бандл не объявляет ни одной локализации, поэтому `Bundle.main.preferredLocalizations == ["en"]`. Главное меню, которое SwiftUI ставит, остаётся английским **даже на русской системе** — измерено принудительным `-AppleLanguages '(ru)'`: `Edit / Copy / Paste / Quit`. Это же — причина, по которой [SettingsModelsView.swift:192](../../Sources/TranslatorApp/SettingsModelsView.swift#L192) и [RussianCopy.swift:189](../../Sources/TranslatorApp/RussianCopy.swift#L189) вынуждены прибивать `Locale(identifier: "ru_RU")` руками | Добавить в `Info.plist` `CFBundleDevelopmentRegion` = `ru` и положить пустой `Contents/Resources/ru.lproj/`. **Проверено на том же бинарнике**: меню становится «Правка / Скопировать / Вставить / Завершить», а `preferredLocalizations` — `["ru"]`. `make-app-bundle.sh` должен класть `ru.lproj` **до** `codesign` — по той же причине, что и иконку (комментарий про печать подписи в скрипте) | измерение (пробник, 3 конфигурации) |
-| U2 | Корректность документации | Medium | [TranslatorApp.swift:466-467](../../Sources/TranslatorApp/TranslatorApp.swift#L466) | Комментарий: «There is no application menu in an `LSUIElement` app, so the standard ⌘, does not exist». Измерено на копии этой же конфигурации сцен: меню приложения **есть** в `NSApp.mainMenu` и несёт `Settings…` с ⌘,. Вывод (использовать `SettingsLink`) остаётся верным, посылка — нет | Переписать обоснование. По `CLAUDE.md` («„measured“ — контракт, а не выразительное средство») ложная посылка в комментарии дороже отсутствующего комментария | измерение |
-| U3 | Mac-идиомы | Medium | весь `Sources` (grep: ноль `commands`/`CommandGroup`/`CommandMenu`) | Ни одной команды меню. «Перевести» ⌘↩ и «Отмена» ⌘. живут только как `.keyboardShortcut` на кнопках тулбара — работают, но недоступны для обнаружения и не существуют, когда окно закрыто. Меню `View` установлено системой и **пусто** | Добавить `.commands { }` к сцене `Window`: `CommandMenu("Перевод")` с «Перевести» / «Отмена» / «Поменять языки местами» / «Скопировать перевод», `CommandGroup(replacing: .help)` с чем-то осмысленным, и `CommandGroup(replacing: .sidebar) { }` чтобы убрать пустой `View`. Ключевые эквиваленты и так диспатчатся через `NSApp.mainMenu`, так что это чистое приобретение | context7 `/websites/developer_apple_swiftui` → `building-and-customizing-the-menu-bar-with-swiftui`; наличие пустого `View` — измерение |
-| U4 | Accessibility | High | 4 метки на 4421 строку: [TranslatorApp.swift:98](../../Sources/TranslatorApp/TranslatorApp.swift#L98), [PanelView.swift:135](../../Sources/TranslatorApp/PanelView.swift#L135), [RunStatusBar.swift:35](../../Sources/TranslatorApp/RunStatusBar.swift#L35), [HotkeyRecorder.swift:90-93](../../Sources/TranslatorApp/HotkeyRecorder.swift#L90) | Панель не сообщает VoiceOver ни направления перевода, ни того, что перевод завершился. Уже зафиксировано в `docs/OPEN-ITEMS.md` §2 как «известно и принято» | **Перевести из «принято» в «запланировано».** Минимум: `accessibilityLabel` на `Text(model.translatedText)`, `accessibilityAddTraits(.updatesFrequently)` на неё же во время стрима, и объявление результата на `settling`. Это не большая работа, а панель — главная поверхность продукта | чтение + `OPEN-ITEMS.md` §2 |
-| U5 | Accessibility | Medium | [PanelView.swift:64](../../Sources/TranslatorApp/PanelView.swift#L64), [SourcePane.swift:89](../../Sources/TranslatorApp/SourcePane.swift#L89), [RunStatusBar.swift:69](../../Sources/TranslatorApp/RunStatusBar.swift#L69) | Reduce Motion учтён ([TranslationPanel.swift:420](../../Sources/TranslatorApp/TranslationPanel.swift#L420)), **Reduce Transparency — нет**. `.regularMaterial` и `.quaternary.opacity(0.25)` рисуются одинаково при включённом «Уменьшение прозрачности» | Проверено компиляцией на планке macOS 14, что доступны и `NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency`, и `@Environment(\.accessibilityReduceTransparency)`. Подменять `.regularMaterial` на непрозрачный `Color(nsColor: .windowBackgroundColor)` при включённом флаге. Симметрично уже сделанному для Reduce Motion | измерение (компиляционный пробник) |
-| U6 | Layout | Medium | [SettingsPane.swift:18](../../Sources/TranslatorApp/SettingsPane.swift#L18) | `.frame(width: 560, height: 480)` — жёсткая рамка без `ScrollView`. Содержимое, которое не влезло, обрезается, а не прокручивается. `OPEN-ITEMS.md` §1 фиксирует, что две панели набрали секции **после** того, как высота была зафиксирована, и что это никто не смотрел | `.frame(minWidth: 560, idealHeight: 480)` + `ScrollView` внутри модификатора. Но: рамка существует ровно затем, чтобы окно не прыгало при переключении вкладок ([SettingsPane.swift:6-8](../../Sources/TranslatorApp/SettingsPane.swift#L6)) — минимальная ширина/высота этот инвариант сохраняет, обрезку убирает | чтение + `OPEN-ITEMS.md` §1 |
-| U7 | Mac-идиомы | Medium | весь `Sources` (grep: ноль `onDrop`/`dropDestination`/`draggable`/`contextMenu`) | Окно переводчика не принимает перетащенный `.txt`/`.md`; в панели исходника нет контекстного меню; приложение не предоставляет ни одной **Service** — хотя это хрестоматийный кандидат («Перевести Толмачом» в меню «Службы» любого приложения), а подменю `Services` в `NSApp.mainMenu` уже стоит (измерено) | Порядок по отдаче: (1) `.dropDestination(for: URL.self)` на `SourcePane`; (2) `NSServices` в `Info.plist` + `NSPerformService`-провайдер — это буквально второй способ входа в продукт, дешевле, чем кажется; (3) `.contextMenu` на обеих панелях | измерение (grep + пробник меню) |
-| U8 | Accessibility | Low | [PanelView.swift:299-304](../../Sources/TranslatorApp/PanelView.swift#L299) | Статус в панели («прерван» / «ошибка») различается **только цветом** — `.orange` против `.red`, без глифа. В остальных местах цвет всегда дублируется SF Symbol'ом ([SettingsGeneralView.swift:42/45](../../Sources/TranslatorApp/SettingsGeneralView.swift#L42), [SettingsModelsView.swift:34](../../Sources/TranslatorApp/SettingsModelsView.swift#L34)), так что это единственное исключение | Добавить иконку в `statusLine`, как в `SettingsNote`. Заодно закрывает Differentiate Without Color | чтение |
-| U9 | State restoration | Low | нет `defaultSize`/`windowResizability`/`defaultPosition`/`restorationBehavior` | `Window` — синглтонная сцена, размер и позицию AppKit сохраняет сам; содержимое (`sourceText`) не восстанавливается | Для переводчика невосстановление текста скорее правильно. Отмечено ради полноты; действий не требует | grep |
-| U10 | Localization/RTL | — | — | **Не находка.** RTL неприменим: `Language` перечисляет ru/en/de/fr/es/pt/it/zh/ja — ни одного RTL-языка. Отсутствие `.xcstrings` — зафиксированное решение `CLAUDE.md`, а не упущение | — | чтение |
-| U11 | Layout | — | [PanelView.swift:168](../../Sources/TranslatorApp/PanelView.swift#L168), [:200](../../Sources/TranslatorApp/PanelView.swift#L200), [:268](../../Sources/TranslatorApp/PanelView.swift#L268), [:290](../../Sources/TranslatorApp/PanelView.swift#L290), [SettingsGeneralView.swift:57](../../Sources/TranslatorApp/SettingsGeneralView.swift#L57), [RunStatusBar.swift:101](../../Sources/TranslatorApp/RunStatusBar.swift#L101) | **Положительная находка.** Устойчивость к длинному тексту проработана лучше нормы: каждый `fixedSize(horizontal: false, vertical: true)` снабжён измеренным примером обрезки, которую он предотвращает | Не трогать | чтение |
+| U1 | Localisation | High | [Info.plist](../../Sources/TranslatorApp/Info.plist) | The bundle declares no localisation, so `Bundle.main.preferredLocalizations == ["en"]`. The main menu SwiftUI installs stays English **even on a Russian system** — measured by forcing `-AppleLanguages '(ru)'`: `Edit / Copy / Paste / Quit`. This is also why [SettingsModelsView.swift:192](../../Sources/TranslatorApp/SettingsModelsView.swift#L192) and [RussianCopy.swift:189](../../Sources/TranslatorApp/RussianCopy.swift#L189) are forced to pin `Locale(identifier: "ru_RU")` by hand | Add `CFBundleDevelopmentRegion` = `ru` to `Info.plist` and place an empty `Contents/Resources/ru.lproj/`. **Checked on the same binary**: the menu becomes «Правка / Скопировать / Вставить / Завершить» and `preferredLocalizations` becomes `["ru"]`. `make-app-bundle.sh` must copy `ru.lproj` in **before** `codesign`, for the same reason it does that with the icon (see the script's comment about the seal) | measurement (probe, 3 configurations) |
+| U2 | Documentation correctness | Medium | [TranslatorApp.swift:466-467](../../Sources/TranslatorApp/TranslatorApp.swift#L466) | The comment says «There is no application menu in an `LSUIElement` app, so the standard ⌘, does not exist». Measured on a copy of this same scene configuration: the application menu **is** in `NSApp.mainMenu` and carries `Settings…` with ⌘,. The conclusion (use `SettingsLink`) still holds; the premise does not | Rewrite the justification. By `CLAUDE.md` («„measured" is a contract, not emphasis») a false premise in a comment costs more than a missing comment | measurement |
+| U3 | Mac idioms | Medium | all of `Sources` (grep: zero `commands`/`CommandGroup`/`CommandMenu`) | Not one menu command. «Перевести» ⌘↩ and «Отмена» ⌘. live only as `.keyboardShortcut` on toolbar buttons — they work, but they are undiscoverable and do not exist while the window is closed. The `View` menu is installed by the system and **empty** | Add `.commands { }` to the `Window` scene: a `CommandMenu("Перевод")` with «Перевести» / «Отмена» / «Поменять языки местами» / «Скопировать перевод», a `CommandGroup(replacing: .help)` with something meaningful, and `CommandGroup(replacing: .sidebar) { }` to remove the empty `View`. Key equivalents are dispatched through `NSApp.mainMenu` anyway, so this is a clean gain | context7 `/websites/developer_apple_swiftui` → `building-and-customizing-the-menu-bar-with-swiftui`; the empty `View` is a measurement |
+| U4 | Accessibility | High | 4 labels across 4421 lines: [TranslatorApp.swift:98](../../Sources/TranslatorApp/TranslatorApp.swift#L98), [PanelView.swift:135](../../Sources/TranslatorApp/PanelView.swift#L135), [RunStatusBar.swift:35](../../Sources/TranslatorApp/RunStatusBar.swift#L35), [HotkeyRecorder.swift:90-93](../../Sources/TranslatorApp/HotkeyRecorder.swift#L90) | The panel tells VoiceOver neither the direction of the translation nor that it has finished. Already recorded in `docs/OPEN-ITEMS.md` §2 as «known and accepted» | **Move it from «accepted» to «planned».** At minimum: an `accessibilityLabel` on `Text(model.translatedText)`, `accessibilityAddTraits(.updatesFrequently)` on the same while streaming, and an announcement of the result on settling. It is not much work, and the panel is the product's main surface | reading + `OPEN-ITEMS.md` §2 |
+| U5 | Accessibility | Medium | [PanelView.swift:64](../../Sources/TranslatorApp/PanelView.swift#L64), [SourcePane.swift:89](../../Sources/TranslatorApp/SourcePane.swift#L89), [RunStatusBar.swift:69](../../Sources/TranslatorApp/RunStatusBar.swift#L69) | Reduce Motion is honoured ([TranslationPanel.swift:420](../../Sources/TranslatorApp/TranslationPanel.swift#L420)), **Reduce Transparency is not**. `.regularMaterial` and `.quaternary.opacity(0.25)` draw identically with «Reduce transparency» switched on | Checked by compiling at the macOS 14 floor that both `NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency` and `@Environment(\.accessibilityReduceTransparency)` are available. Swap `.regularMaterial` for an opaque `Color(nsColor: .windowBackgroundColor)` when the flag is on. Symmetrical with what is already done for Reduce Motion | measurement (compile probe) |
+| U6 | Layout | Medium | [SettingsPane.swift:18](../../Sources/TranslatorApp/SettingsPane.swift#L18) | `.frame(width: 560, height: 480)` — a fixed frame with no `ScrollView`. Content that does not fit is clipped rather than scrolled. `OPEN-ITEMS.md` §1 records that two panes grew sections **after** the height was fixed, and that nobody has looked at it | `.frame(minWidth: 560, idealHeight: 480)` plus a `ScrollView` inside the modifier. But: the frame exists precisely so the window does not jump between tabs ([SettingsPane.swift:6-8](../../Sources/TranslatorApp/SettingsPane.swift#L6)) — minimum width and height preserve that invariant while removing the clipping | reading + `OPEN-ITEMS.md` §1 |
+| U7 | Mac idioms | Medium | all of `Sources` (grep: zero `onDrop`/`dropDestination`/`draggable`/`contextMenu`) | The translator window does not accept a dropped `.txt`/`.md`; the source pane has no context menu; the app provides no **Service** at all — although it is a textbook candidate («Перевести Толмачом» in any app's Services menu), and the `Services` submenu is already present in `NSApp.mainMenu` (measured) | In order of payoff: (1) `.dropDestination(for: URL.self)` on `SourcePane`; (2) `NSServices` in `Info.plist` plus a service provider — literally a second way into the product, cheaper than it looks; (3) `.contextMenu` on both panes | measurement (grep + menu probe) |
+| U8 | Accessibility | Low | [PanelView.swift:299-304](../../Sources/TranslatorApp/PanelView.swift#L299) | The panel's status («interrupted» / «failed») is distinguished by **colour alone** — `.orange` against `.red`, with no glyph. Everywhere else colour is always paired with an SF Symbol ([SettingsGeneralView.swift:42/45](../../Sources/TranslatorApp/SettingsGeneralView.swift#L42), [SettingsModelsView.swift:34](../../Sources/TranslatorApp/SettingsModelsView.swift#L34)), so this is the single exception | Add an icon to `statusLine`, as `SettingsNote` does. It also closes Differentiate Without Color | reading |
+| U9 | State restoration | Low | no `defaultSize`/`windowResizability`/`defaultPosition`/`restorationBehavior` | `Window` is a singleton scene and AppKit saves its size and position itself; the content (`sourceText`) is not restored | For a translator, not restoring the text is arguably right. Noted for completeness; no action needed | grep |
+| U10 | Localisation/RTL | — | — | **Not a finding.** RTL does not apply: `Language` lists ru/en/de/fr/es/pt/it/zh/ja — no RTL language among them. The absence of `.xcstrings` is a decision recorded in `CLAUDE.md`, not an omission | — | reading |
+| U11 | Layout | — | [PanelView.swift:168](../../Sources/TranslatorApp/PanelView.swift#L168), [:200](../../Sources/TranslatorApp/PanelView.swift#L200), [:268](../../Sources/TranslatorApp/PanelView.swift#L268), [:290](../../Sources/TranslatorApp/PanelView.swift#L290), [SettingsGeneralView.swift:57](../../Sources/TranslatorApp/SettingsGeneralView.swift#L57), [RunStatusBar.swift:101](../../Sources/TranslatorApp/RunStatusBar.swift#L101) | **A positive finding.** Robustness against long text is worked out better than the norm: every `fixedSize(horizontal: false, vertical: true)` carries a measured example of the truncation it prevents | Leave alone | reading |
 
-### 2.3 Что аудит проверил и **не** нашёл дефекта
+### 2.3 What the audit checked and found **no** defect in
 
-Записано отдельно, потому что ошибочная «модернизация» этих мест обошлась бы дороже, чем
-их отсутствие в отчёте.
+Recorded separately, because mistakenly «modernising» these would cost more than leaving them
+out of the report.
 
-| Что | Вердикт | Источник |
+| What | Verdict | Source |
 |---|---|---|
-| `HSplitView` вместо `NavigationSplitView` ([MainWindowView.swift:30](../../Sources/TranslatorApp/MainWindowView.swift#L30)) | **Корректно.** `HSplitView` — macOS 10.15+, не deprecated. `NavigationSplitView` предназначен для колоночной *навигации* (sidebar → detail); это окно — двухпанельный редактор, а не навигация | context7 `/websites/developer_apple_swiftui` → `hsplitview`, `bringing-robust-navigation-structure-to-your-swiftui-app` |
-| ⌘C/⌘V/⌘Z/⌘A в `TextEditor` панели исходника | **Работают.** SwiftUI ставит полное меню `Edit` с `undo:`/`cut:`/`copy:`/`paste:`/`selectAll:` для этой конфигурации сцен, и ключевые эквиваленты диспатчатся через `NSApp.mainMenu` независимо от видимости меню-бара | измерение (пробник меню) |
-| `@Observable` + ручные `access`/`withMutation` в `AppSettings` | **Корректно и необходимо.** Свойства вычисляемые над `UserDefaults`, синтез `@Observable` к ним не применяется. Альтернатива `@ObservationIgnored @AppStorage` потеряла бы главное свойство — подхват значения, изменённого `defaults write` | чтение + context7 `/avdlee/swiftui-agent-skill` → `state-management.md` |
-| Два `TranslationViewModel` | **Корректно**, ADR 0004 + [HotkeyCoordinator.swift:38-43](../../Sources/TranslatorApp/HotkeyCoordinator.swift#L38) | чтение |
-| Отсутствие retry/backoff | **Корректно** для локального сервера: «Повторить» на панели и в статус-баре — это и есть retry, инициированный пользователем | чтение |
-| Секреты, keychain, ATS | Чисто (см. A10) | измерение |
-| Файлы > 400 строк | Только два: [TranslatorApp.swift](../../Sources/TranslatorApp/TranslatorApp.swift) (515) и [TranslationPanel.swift](../../Sources/TranslatorApp/TranslationPanel.swift) (522). Оба когезивны — сцена целиком и панель целиком; God-object'ов нет | измерение |
-| Дублирование логики | Не найдено. Пути копирования сведены в `GeneralPasteboard.write`; счёт предупреждений — в единственном `WarningsView.warningCount`, который читает и `RunStatusBar.summary` | чтение |
+| `HSplitView` rather than `NavigationSplitView` ([MainWindowView.swift:30](../../Sources/TranslatorApp/MainWindowView.swift#L30)) | **Correct.** `HSplitView` is macOS 10.15+ and not deprecated. `NavigationSplitView` is for column *navigation* (sidebar → detail); this window is a two-pane editor, not navigation | context7 `/websites/developer_apple_swiftui` → `hsplitview`, `bringing-robust-navigation-structure-to-your-swiftui-app` |
+| ⌘C/⌘V/⌘Z/⌘A in the source pane's `TextEditor` | **They work.** SwiftUI installs a full `Edit` menu with `undo:`/`cut:`/`copy:`/`paste:`/`selectAll:` for this scene configuration, and key equivalents are dispatched through `NSApp.mainMenu` regardless of whether the menu bar is drawn | measurement (menu probe) |
+| `@Observable` plus hand-written `access`/`withMutation` in `AppSettings` | **Correct and necessary.** The properties are computed over `UserDefaults`, so `@Observable`'s synthesis does not apply to them. The `@ObservationIgnored @AppStorage` alternative would lose the main property — picking up a value changed by `defaults write` | reading + context7 `/avdlee/swiftui-agent-skill` → `state-management.md` |
+| Two `TranslationViewModel`s | **Correct**, ADR 0004 plus [HotkeyCoordinator.swift:38-43](../../Sources/TranslatorApp/HotkeyCoordinator.swift#L38) | reading |
+| No retry/backoff | **Correct** for a local server: «Повторить» on the panel and in the status bar is the retry, initiated by the user | reading |
+| Secrets, keychain, ATS | Clean (see A10) | measurement |
+| Files over 400 lines | Only two: [TranslatorApp.swift](../../Sources/TranslatorApp/TranslatorApp.swift) (515) and [TranslationPanel.swift](../../Sources/TranslatorApp/TranslationPanel.swift) (522). Both are cohesive — a whole scene and a whole panel; there are no God objects | measurement |
+| Duplicated logic | None found. The copy paths are unified in `GeneralPasteboard.write`; the warning count lives in the single `WarningsView.warningCount`, which `RunStatusBar.summary` also reads | reading |
 
 ---
 
-## 3. Стилевые предпочтения (не дефекты)
+## 3. Style preferences (not defects)
 
-Отделено по просьбе заказчика. Ничего из этого я не рекомендую менять без отдельного решения.
+Separated at the owner's request. I recommend changing none of these without a separate
+decision.
 
-- **Liquid Glass не принят.** Все API (`glassEffect`, `GlassEffectContainer`) требуют
-  платформы 26+, планка — 14. Руководство, на которое ссылается context7, прямо говорит не
-  переводить существующий UI на Liquid Glass без явного запроса. Панель уже использует
-  `.regularMaterial`, что и есть документированный fallback. Источник: context7
+- **Liquid Glass is not adopted.** Every API (`glassEffect`, `GlassEffectContainer`) requires
+  platform 26+, and the floor is 14. The guidance context7 returns says outright not to convert
+  existing UI to Liquid Glass without an explicit request. The panel already uses
+  `.regularMaterial`, which is the documented fallback. Source: context7
   `/avdlee/swiftui-agent-skill` → `references/liquid-glass.md`.
-- **Плотность комментариев.** Отношение комментариев к коду в `TranslatorApp` заметно выше
-  обычного. Это осознанная политика `CLAUDE.md`, и она окупается: половина находок этого
-  аудита найдена *потому что* комментарий называл измерение, которое можно перепроверить.
-- **`AnyView` в `PanelController`** ([TranslationPanel.swift:237](../../Sources/TranslatorApp/TranslationPanel.swift#L237)) —
-  стирание типа стоит производительности, но здесь нужно два разных билда одного контента;
-  дженерик-параметр протащить через `NSHostingController` в две переменные не выйдет без
-  большего усложнения.
-- **Отсутствие CI.** Зафиксировано в `OPEN-ITEMS.md` §2 с причиной (`acceptance` требует
-  живой Ollama). Замечу лишь, что `swift test` и `swift build --build-tests` *полностью
-  офлайновы* — 0 warnings, 9 секунд, — и их одних хватило бы на GitHub Actions, не трогая
+- **Comment density.** The comment-to-code ratio in `TranslatorApp` is noticeably above normal.
+  That is a deliberate `CLAUDE.md` policy and it pays off: half the findings in this audit were
+  found *because* a comment named a measurement that could be re-checked.
+- **`AnyView` in `PanelController`** ([TranslationPanel.swift:237](../../Sources/TranslatorApp/TranslationPanel.swift#L237)) —
+  type erasure costs performance, but two different builds of one content are needed here, and
+  threading a generic parameter through `NSHostingController` into two properties does not work
+  without more complexity than it saves.
+- **No CI.** Recorded in `OPEN-ITEMS.md` §2 with a reason (`acceptance` needs a live Ollama). I
+  only note that `swift test` and `swift build --build-tests` are *entirely offline* — 0
+  warnings, 9 seconds — and would be enough for GitHub Actions on their own, without touching
   `acceptance`.
-- **`prototype-translation-engine/`** содержит только `.build/` и `.swiftpm/` — исходники
-  удалены, остался игнорируемый мусор, из-за чего `git status` выглядит чистым. Косметика.
+- **`prototype-translation-engine/`** contains only `.build/` and `.swiftpm/` — the sources are
+  deleted and ignored leftovers remain, which is why `git status` looks clean. Cosmetic.
 
 ---
 
-## 4. Модернизация: старый паттерн → текущий
+## 4. Modernisation: old pattern → current
 
-| # | Из | В | Effort | Blast radius | Блокеры |
+| # | From | To | Effort | Blast radius | Blockers |
 |---|---|---|---|---|---|
-| M1 | `.swiftLanguageMode(.v5)` ×11 | `.v6` | **M** | Все 11 таргетов `Package.swift`; поведение не меняется | Сначала A1–A3. Измерено: 8 предупреждений, 0 ошибок — то есть после трёх правок остаются 2 в тестах |
-| M2 | `NSPasteboard` в `Task.detached` | `@unchecked Sendable`-обёртка внутри `GeneralPasteboard` | **S** | `TextCapture/GeneralPasteboard.swift` + 2 вызова; `PasteboardSnapshot` не трогается | нет |
-| M3 | нет локализации бандла | `CFBundleDevelopmentRegion=ru` + `ru.lproj/` | **S** | `Info.plist`, `Scripts/make-app-bundle.sh` (класть до `codesign`). **Проверено измерением: пустой `ru.lproj/Localizable.strings` не ломает русские литералы** — `NSLocalizedString`/`String(localized:)` возвращают ключ как есть, включая строку с `%` | нет |
-| M4 | нет `.commands` | `CommandMenu("Перевод")` + `CommandGroup(replacing: .sidebar) { }` | **S** | `TranslatorApp.swift`, сцена `Window`. Риск: `CommandGroup(replacing:)` может задеть порядок меню — проверяется тем же пробником | нет |
-| M5 | нет логирования | `os.Logger` на 4 глушащих пути | **M** | Сквозное, но чисто аддитивное — ни одна ветка поведения не меняется | нет |
-| M6 | нет Reduce Transparency | `@Environment(\.accessibilityReduceTransparency)` | **S** | `PanelView`, `SourcePane`, `RunStatusBar`. API проверен компиляцией на планке 14 | нет |
-| M7 | `.frame(width:height:)` в настройках | `.frame(minWidth:idealHeight:)` + `ScrollView` | **S** | `SettingsPane.swift` + 3 панели. **Риск регрессии**: рамка существует, чтобы окно не прыгало между вкладками — нужен ручной прогон всех трёх вкладок | нет |
-| M8 | `withObservationTracking` с саморевзводом ([TranslatorApp.swift:233](../../Sources/TranslatorApp/TranslatorApp.swift#L233)) | `Observations` (AsyncSequence) | **S** | Одна функция | **Заблокировано**: `Observations` — macOS 26, планка 14. Комментарий в коде это уже знает и называет верно |
-| M9 | порядок сцен как load-bearing инвариант | `Scene.defaultLaunchBehavior(.suppressed)` на `Window` | **S** | Снимает самое хрупкое ограничение всего app-слоя | **Заблокировано**: macOS 15+. Комментарий в коде это уже знает |
-| M10 | нет Services / drag & drop | `NSServices` + `.dropDestination` | **L** | Новая поверхность входа: `Info.plist`, провайдер сервиса, `SourcePane`. Требует своего дизайна и ручной проверки | нет, но это фича, а не миграция |
-| M11 | нет CI | GitHub Actions на `swift build --build-tests` + `swift test` | **S** | Новый файл, кода не касается. `acceptance` остаётся вне CI, как и записано | нет |
+| M1 | `.swiftLanguageMode(.v5)` ×11 | `.v6` | **M** | All 11 targets in `Package.swift`; behaviour does not change | A1–A3 first. Measured: 8 warnings, 0 errors — so after three fixes, 2 remain in the tests |
+| M2 | `NSPasteboard` in `Task.detached` | An `@unchecked Sendable` box inside `GeneralPasteboard` | **S** | `TextCapture/GeneralPasteboard.swift` plus 2 call sites; `PasteboardSnapshot` untouched | none |
+| M3 | no bundle localisation | `CFBundleDevelopmentRegion=ru` + `ru.lproj/` | **S** | `Info.plist`, `Scripts/make-app-bundle.sh` (copy before `codesign`). **Verified by measurement: an empty `ru.lproj/Localizable.strings` does not break the Russian literals** — `NSLocalizedString`/`String(localized:)` return the key unchanged, including a key containing a `%` | none |
+| M4 | no `.commands` | `CommandMenu("Перевод")` + `CommandGroup(replacing: .sidebar) { }` | **S** | `TranslatorApp.swift`, the `Window` scene. Risk: `CommandGroup(replacing:)` may disturb menu order — checkable with the same probe | none |
+| M5 | no logging | `os.Logger` on the 4 swallowing paths | **M** | Cross-cutting but purely additive — no branch of behaviour changes | none |
+| M6 | no Reduce Transparency | `@Environment(\.accessibilityReduceTransparency)` | **S** | `PanelView`, `SourcePane`, `RunStatusBar`. API checked by compiling at the 14 floor | none |
+| M7 | `.frame(width:height:)` in the settings | `.frame(minWidth:idealHeight:)` + `ScrollView` | **S** | `SettingsPane.swift` plus 3 panes. **Regression risk**: the frame exists so the window does not jump between tabs — all three tabs need a manual pass | none |
+| M8 | `withObservationTracking` re-arming itself ([TranslatorApp.swift:233](../../Sources/TranslatorApp/TranslatorApp.swift#L233)) | `Observations` (AsyncSequence) | **S** | One function | **Blocked**: `Observations` is macOS 26 and the floor is 14. The comment in the code already knows this and names it correctly |
+| M9 | scene order as a load-bearing invariant | `Scene.defaultLaunchBehavior(.suppressed)` on `Window` | **S** | Removes the most fragile constraint in the whole app layer | **Blocked**: macOS 15+. The comment in the code already knows this |
+| M10 | no Services / drag & drop | `NSServices` + `.dropDestination` | **L** | A new entry surface: `Info.plist`, a service provider, `SourcePane`. Needs its own design and a manual pass | none, but this is a feature rather than a migration |
+| M11 | no CI | GitHub Actions on `swift build --build-tests` + `swift test` | **S** | A new file, touches no code. `acceptance` stays out of CI, as recorded | none |
 
-Оценки: **S** — до половины дня, **M** — 1–2 дня, **L** — неделя и своё проектирование.
-
----
-
-## 5. Приоритетная дорожная карта
-
-### Волна 1 — «сделать сбои видимыми» (≈ 2–3 дня)
-
-Всё, что стоит между вами и способностью узнать, что у пользователя не работает.
-
-1. **A4 / M5 — `os.Logger` на четыре глушащих пути.** Первым, потому что все остальные
-   находки диагностируются легче, когда это есть. Сейчас отказ регистрации хоткея — то
-   есть полная потеря единственного входа в продукт — не оставляет ни единого следа.
-2. **A1–A3 / M1–M2 — шесть мест strict concurrency, затем `.v6`.** Ровно шесть, все
-   локальные, компилятор их уже перечислил. Чем дольше это откладывается, тем дороже: любой
-   новый код пишется под `.v5` и накапливает долг.
-3. **A6 — таймаут интерактивного пути.** Дешёвая правка с прямым пользовательским эффектом:
-   зависшая Ollama сейчас держит панель две минуты.
-
-### Волна 2 — «сделать приложение маковским» (≈ 3–4 дня)
-
-Здесь лежит наибольшая отдача на единицу усилий во всём отчёте.
-
-4. **U1 / M3 — локализация бандла.** Два ключа, проверенный эффект: меню перестаёт быть
-   английским островом в русском приложении. Побочно снимает необходимость прибивать
-   `ru_RU` руками в двух местах.
-5. **U3 / M4 — `.commands`.** Пустое меню `View` уходит, «Перевести» и «Отмена» становятся
-   обнаружимыми и продолжают работать при закрытом окне.
-6. **U2 — исправить опровергнутый комментарий.** Пять минут, но по правилам самого проекта
-   это обязательный долг: измерение опровергло посылку.
-7. **U5 / M6 + U8 — Reduce Transparency и иконка в статусе панели.** Симметрично уже
-   сделанному для Reduce Motion.
-
-### Волна 3 — «поднять потолок» (по решению)
-
-8. **U4 — accessibility панели.** Крупнейший оставшийся разрыв. Требует ручной проверки
-   VoiceOver, которую всё равно должен делать человек, — поэтому в третьей волне, а не
-   раньше.
-9. **U6 / M7 — прокрутка в настройках.** Требует ручного прогона трёх вкладок; связан с
-   пунктом `OPEN-ITEMS.md` §1, который и так ждёт человека.
-10. **A5 — свести `URLSession` к одной.** Либо снять обоснование из комментария.
-11. **M11 — офлайновый CI.** Дёшево и защищает правило «zero warnings», которое сейчас
-    держится только на дисциплине.
-12. **U7 / M10 — Services и drag & drop.** Продуктовое решение, не техдолг.
-
-**Явно не рекомендуется:** переход на Liquid Glass, замена `HSplitView`, поднятие планки до
-macOS 15/26 ради M8–M9. Планка macOS 14 — осознанное ограничение; M8 и M9 стоит держать как
-записанный выигрыш на день, когда планка поднимется по другой причине.
+Estimates: **S** — half a day or less, **M** — 1–2 days, **L** — a week plus its own design.
 
 ---
 
-## 6. Не проверено / требует обсуждения
+## 5. Prioritised roadmap
 
-Помечено честно: ни одно из этого не является установленным дефектом и ни одно не
-установлено как безопасное.
+### Wave 1 — «make failures visible» (≈ 2–3 days)
 
-1. **Показывает ли `LSUIElement`-приложение свой меню-бар вообще.** Измерено, что меню
-   *установлено* в `NSApp.mainMenu` и что его ключевые эквиваленты работают. **Не** измерено,
-   рисуется ли оно на экране при активации — этого окружение увидеть не может. От ответа
-   зависит severity U1 и U3: если меню никогда не видно, U1 — это про `preferredLocalizations`
-   и форматирование чисел (реально, но мельче), а U3 — про обнаружимость (тоже мельче).
-   **Это первый вопрос, который стоит закрыть человеку у экрана.**
-2. **Пробник меню воспроизводит конфигурацию сцен, а не сам бандл.** `MenuBarExtra` →
-   `Window` → `Settings`, `LSUIElement`-эквивалентная `.accessory`-политика. Совпадение с
-   реальным `LocalTranslator.app` вероятно, но не проверено.
-3. **context7 отдаёт документацию Liquid Glass в формулировках iOS 26.** macOS-специфика
-   (панели, toolbar, `NSGlassEffectView`) не выгружалась. Для рекомендации «не принимать» это
-   несущественно, для обратного решения — понадобится.
-4. **Рантайм-семантика `@Environment(\.accessibilityReduceTransparency)` на macOS.**
-   Компилируется на планке 14 (измерено); что она следует именно системному тумблеру
-   «Уменьшение прозрачности», а не чему-то ещё, — не перекрёстно проверено с
-   `NSWorkspace.accessibilityDisplayShouldReduceTransparency`. Оба флага на этой машине
-   вернули `false`, то есть различить их сейчас нельзя.
-5. **Весь `docs/OPEN-ITEMS.md` §1** — тридцать с лишним пунктов, ждущих человека у экрана.
-   Аудит их не дублирует и не закрывает. Отмечу лишь, что пункт про **возможный цикл
-   `.task { await launch() }`** (`OPEN-ITEMS.md` §1, Task 13) — единственный в списке, чья
-   реализация была бы не косметической: повторный `launch()` перерегистрирует хоткей и
-   заново ждёт `warmUp()`. Он проверяется одной строкой лога (A4/M5) — ещё один довод
-   ставить логирование первым.
-6. **Порог `maxHeightFraction = 0.6`** ([PanelSizer.swift:25](../../Sources/TranslatorApp/PanelSizer.swift#L25))
-   и ширины 300–560 pt — выведены из измерений на конкретных дисплеях. На внешнем 4K или
-   вертикальном мониторе поведение не измерялось никем.
-7. **Открытый вопрос из `OPEN-ITEMS.md` §3 про `NSMouseInRect`** для выбора экрана
-   ([TranslationPanel.swift:324](../../Sources/TranslatorApp/TranslationPanel.swift#L324)) —
-   подтверждаю как реальный, подтвердить сам не могу: нужна многомониторная конфигурация.
-8. **Стоит ли вообще принимать U7 (Services).** Это расширение продукта, а не устранение
-   долга. Решение владельца; техническая цена низкая, а вторая точка входа для переводчика —
-   аргумент сильный.
+Everything standing between you and the ability to learn that something does not work for a
+user.
+
+1. **A4 / M5 — `os.Logger` on the four swallowing paths.** First, because every other finding
+   is easier to diagnose once it exists. Today a refused hotkey registration — the complete loss
+   of the only entry point into the product — leaves no trace at all.
+2. **A1–A3 / M1–M2 — the six strict-concurrency sites, then `.v6`.** Exactly six, all local, and
+   the compiler has already listed them. The longer this waits the more it costs: every new line
+   is written against `.v5` and accumulates debt.
+3. **A6 — the interactive path's timeout.** A cheap change with a direct user-visible effect: a
+   hung Ollama currently holds the panel for two minutes.
+
+### Wave 2 — «make the app feel like a Mac app» (≈ 3–4 days)
+
+The best return per unit of effort in this report.
+
+4. **U1 / M3 — bundle localisation.** Two keys, with a verified effect: the menu stops being an
+   English island in a Russian app. As a side effect it removes the need to pin `ru_RU` by hand
+   in two places.
+5. **U3 / M4 — `.commands`.** The empty `View` menu goes, and «Перевести» and «Отмена» become
+   discoverable and keep working while the window is closed.
+6. **U2 — fix the refuted comment.** Five minutes, but by the project's own rules it is an
+   obligation: a measurement refuted the premise.
+7. **U5 / M6 + U8 — Reduce Transparency and an icon in the panel's status row.** Symmetrical
+   with what is already done for Reduce Motion.
+
+### Wave 3 — «raise the ceiling» (as decided)
+
+8. **U4 — panel accessibility.** The largest remaining gap. It needs a manual VoiceOver pass
+   that a human has to do anyway, which is why it sits in the third wave rather than earlier.
+9. **U6 / M7 — scrolling in the settings.** Needs a manual pass over all three tabs; connected
+   to an `OPEN-ITEMS.md` §1 item that is already waiting for a human.
+10. **A5 — reduce to one `URLSession`.** Or drop the justification from the comment.
+11. **M11 — offline CI.** Cheap, and it protects the «zero warnings» rule that currently rests
+    on discipline alone.
+12. **U7 / M10 — Services and drag & drop.** A product decision, not technical debt.
+
+**Explicitly not recommended:** moving to Liquid Glass, replacing `HSplitView`, or raising the
+floor to macOS 15/26 for the sake of M8–M9. The macOS 14 floor is a deliberate constraint; M8
+and M9 are worth keeping as recorded wins for the day the floor rises for another reason.
+
+---
+
+## 6. Unverified / needs discussion
+
+Labelled honestly: none of this is an established defect, and none of it is established as safe.
+
+1. **Whether an `LSUIElement` app draws a menu bar at all.** It is measured that the menu is
+   *installed* in `NSApp.mainMenu` and that its key equivalents work. It is **not** measured
+   whether it is drawn on screen when the app activates — this environment cannot see that. The
+   answer decides the severity of U1 and U3: if the menu is never visible, U1 is about
+   `preferredLocalizations` and number formatting (real, but smaller) and U3 is about
+   discoverability (also smaller). **This is the first question worth closing by a human at a
+   screen.**
+2. **The menu probe reproduces the scene configuration, not the bundle itself.** `MenuBarExtra`
+   → `Window` → `Settings`, with the `LSUIElement`-equivalent `.accessory` policy. Agreement
+   with the real `LocalTranslator.app` is likely but unchecked.
+3. **context7 returns the Liquid Glass documentation in iOS 26 wording.** macOS specifics
+   (panels, toolbars, `NSGlassEffectView`) were not fetched. Immaterial for the «do not adopt»
+   recommendation; needed for the opposite decision.
+4. **The run-time semantics of `@Environment(\.accessibilityReduceTransparency)` on macOS.** It
+   compiles at the 14 floor (measured); that it follows the system «Reduce transparency» toggle
+   specifically, rather than something else, was not cross-checked against
+   `NSWorkspace.accessibilityDisplayShouldReduceTransparency`. Both flags returned `false` on
+   this machine, so the two cannot be told apart right now.
+5. **The whole of `docs/OPEN-ITEMS.md` §1** — thirty-odd items waiting for a human at a screen.
+   This audit neither duplicates nor closes them. I note only that the item about a **possible
+   `.task { await launch() }` loop** (`OPEN-ITEMS.md` §1, Task 13) is the one on the list whose
+   realisation would not be cosmetic: a re-triggered `launch()` re-registers the hotkey and
+   re-awaits `warmUp()`. It is checkable with a single log line (A4/M5) — one more argument for
+   putting logging first.
+6. **The `maxHeightFraction = 0.6` threshold** ([PanelSizer.swift:25](../../Sources/TranslatorApp/PanelSizer.swift#L25))
+   and the 300–560 pt widths are derived from measurements on particular displays. Nobody has
+   measured the behaviour on an external 4K or a vertical monitor.
+7. **The open question in `OPEN-ITEMS.md` §3 about `NSMouseInRect`** for screen selection
+   ([TranslationPanel.swift:324](../../Sources/TranslatorApp/TranslationPanel.swift#L324)) — I
+   confirm it as real, and cannot confirm it myself: it needs a multi-monitor setup.
+8. **Whether U7 (Services) should be adopted at all.** That is a product extension rather than
+   debt repayment. The owner's decision; the technical cost is low, and a second entry point for
+   a translator is a strong argument.

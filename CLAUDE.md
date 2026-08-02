@@ -28,6 +28,12 @@ swift run acceptance              # live-Ollama corpus run; MUST run from the pa
 the deliberately-not-in-CI harness that measures TTFT, markup integrity and term consistency
 against the thresholds in spec §10, and exits 1 on regression.
 
+**There is CI, and it is the offline half only** (`.github/workflows/ci.yml`): build with
+tests, a gate that fails on any warning, then `swift test`. `acceptance` stays out for the
+reason above — «no CI for that harness» was never «no CI». The warning gate is the point: zero
+warnings is a standing rule that until now nothing could enforce, and `docs/TESTING.md`'s tenth
+shape is why it runs against a fresh checkout rather than a cached build.
+
 The Accessibility grant is keyed to the code signature. `make-app-bundle.sh` prefers a
 self-signed "LocalTranslator Dev" identity precisely so the grant survives rebuilds; with
 ad-hoc signing macOS re-asks after every build. The script's header says how to create one.
@@ -102,6 +108,16 @@ Facts that will bite you if you "tidy" them:
 
 - `TranslatorApp` is `LSUIElement`. **Scene order is load-bearing**: `MenuBarExtra` must stay the
   first scene, or SwiftUI opens the main window at every login. `Settings` stays last.
+- **The main menu exists, is Russian, and owns every keyboard shortcut the window has.**
+  `LSUIElement` governs the Dock tile and whether the bar is *drawn*; it does not stop SwiftUI
+  installing `NSApp.mainMenu`, and key equivalents are dispatched through it either way — measured
+  by dumping the menu from a copy of these three scenes. So ⌘↩, ⌘., ⌃⌘S, ⇧⌘C and ⌘0 are declared
+  once, in `.commands`, and **not** on the toolbar buttons that mirror them. Two things follow that
+  are easy to undo by accident: `Info.plist`'s `CFBundleDevelopmentRegion = ru` plus
+  `Resources/ru.lproj` are what make the *standard* menus Russian (without them the bundle claims
+  `["en"]` and a fully Russian app carries an English menu bar), and `make-app-bundle.sh` must copy
+  that directory in **before** `codesign`, like the icon. `CommandGroup(replacing:)` empties a menu
+  but does not remove it, so `pruneEmptyMenus()` takes away whatever is left with no items.
 - Two `TranslationViewModel` instances, one for the window and one owned by `HotkeyCoordinator`
   for the panel, over one shared `OllamaClient`. They must not be merged: a hotkey translation
   must never overwrite the window, and the re-entrancy guard is per instance.
@@ -123,6 +139,25 @@ Facts that will bite you if you "tidy" them:
   reassigning `rootView` is load-bearing, not tidy-up: without it the measuring host never sees
   content that changed through `@Observable`. All four facts are in `docs/PLATFORM-TRAPS.md`
   with their measurements.
+- **The settings panes already scroll — do not "fix" their fixed frame.** `settingsPane()`'s
+  `.frame(width: 560, height: 480)` is what stops the window resizing between tabs, and it does
+  **not** clip: `.formStyle(.grouped)` installs an `NSScrollView` of its own, measured, at any
+  content size, where a `VStack` and an unstyled `Form` install none. Replacing the frame with
+  `minWidth`/`minHeight` reintroduces the resizing for no gain.
+- **The glossary pane's language column is derived from the glossary, not from a setting.**
+  `GlossaryColumn.language(for:fallback:)` picks the language most entries are actually written
+  into; the fallback is `primaryLanguage`, because `targetLanguage(forDetected:)` sends
+  everything that is not already in the user's own language *into* it. It used to default to
+  `workingLanguage`, which named the other direction — so on a default install every «перевод»
+  field rendered blank. **It must not be recomputed while the user types**: `entryBinding`
+  writes through `translations[editingLanguage.rawValue]`, so a column that moved mid-word would
+  split one translation across two keys. `SettingsGlossaryView` computes it on appear and on
+  re-read only, and holds it in `@State`.
+- `SourcePane` takes a dropped file. What it accepts is `DroppedDocument` — a closed extension
+  list, a 256 KB ceiling, UTF-8 or nothing — and a refusal is `false` out of `dropDestination`,
+  which makes the system spring the item back. That is the entire error channel and is
+  deliberate: there is no error surface in that window, and inventing one to say «this is not
+  text» would be worse than the feedback the platform already draws.
 - The main window is a toolbar plus `SourcePane` | `TranslationPane` over a collapsible
   `RunStatusBar`; the translation side is a read-only `Text`, deliberately, because the
   `TextEditor` it replaced took a caret and discarded typing. The settings are **three** tabs,

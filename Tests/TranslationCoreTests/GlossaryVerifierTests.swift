@@ -2,6 +2,28 @@
 import Testing
 @testable import TranslationCore
 
+/// Whether this machine can lemmatise `language` at all.
+///
+/// A property of the OS's NaturalLanguage data rather than of this code, and the two tests
+/// below cannot hold without it. Measured on a `macos-15` CI runner: Russian produced no lemma
+/// for any word, while the same call on macOS 26 lemmatises 4 words out of 4.
+///
+/// Where there is no lemma data, `LemmaMatcher.decide` returns `nil` and a check becomes
+/// `.unverifiable` — deliberately, because a surface comparison cannot tell an absent term from
+/// an inflected one, and answering `.missing` there is the false alarm spec §4.6 forbids. That
+/// trade is recorded in `docs/OPEN-ITEMS.md` §2.
+///
+/// **Gated rather than relaxed.** Rewriting these two as `!= .satisfied` would let
+/// `.unverifiable` satisfy them everywhere, and then nothing would notice if the checker went
+/// quiet on a machine that *can* lemmatise — `docs/TESTING.md`'s first lesson. The rule itself
+/// is pinned machine-independently by `aLemmatisedMissIsStillAbsence` in `LemmaMatcherTests`;
+/// these two are the end-to-end confirmation, and they run wherever the data exists.
+private func lemmatises(_ language: Language, sample: String) -> Bool {
+    LemmaMatcher.tagged(sample, language: language).lemmatised
+}
+
+private let russianIsLemmatised = lemmatises(.ru, sample: "Публикация руководства по реализации.")
+
 @Test func satisfiedWhenExpectedFormPresentAcrossInflection() {
     let entries = [GlossaryEntry(term: "implementation guide", translations: ["ru": "руководство по реализации"])]
     let checks = GlossaryVerifier.check(translation: "Публикация руководства по реализации.",
@@ -66,7 +88,8 @@ import Testing
     #expect(checks[0].status != .missing)
 }
 
-@Test func aGenuinelyAbsentTermIsStillReportedMissing() {
+@Test(.enabled(if: russianIsLemmatised, "no Russian lemma data on this machine"))
+func aGenuinelyAbsentTermIsStillReportedMissing() {
     // The suppression must not swallow real violations.
     let entries = [GlossaryEntry(term: "profile server", translations: ["ru": "сервер профилей"])]
     let checks = GlossaryVerifier.check(translation: "База данных перезапустилась ночью.",
@@ -81,7 +104,8 @@ import Testing
     #expect(checks[0].status != .missing)
 }
 
-@Test func aCoincidentalSubstringDoesNotForgiveARealViolation() {
+@Test(.enabled(if: russianIsLemmatised, "no Russian lemma data on this machine"))
+func aCoincidentalSubstringDoesNotForgiveARealViolation() {
     // "id" appears inside "valid", but the required "ID" was never rendered.
     let entries = [GlossaryEntry(term: "ID", doNotTranslate: true)]
     let checks = GlossaryVerifier.check(translation: "Это утверждение является valid для всех случаев.",

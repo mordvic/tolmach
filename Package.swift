@@ -13,8 +13,14 @@ let package = Package(
         .executableTarget(name: "acceptance", dependencies: ["TranslationCore", "OllamaKit"], swiftSettings: [.swiftLanguageMode(.v6)]),
         .target(name: "TextCapture", swiftSettings: [.swiftLanguageMode(.v6)]),
         .testTarget(name: "TextCaptureTests", dependencies: ["TextCapture"], swiftSettings: [.swiftLanguageMode(.v6)]),
+        // `Resources` is excluded rather than declared with `resources:` because this target is
+        // never consumed as a SwiftPM bundle: `Scripts/make-app-bundle.sh` assembles the .app
+        // by hand and copies `Resources/ru.lproj` in itself. Declared as a SwiftPM resource it
+        // would land in a `LocalTranslator_TranslatorApp.bundle` that the assembled app does
+        // not look inside, and `Bundle.main.localizations` — the whole reason the directory
+        // exists — would still answer empty.
         .executableTarget(name: "TranslatorApp", dependencies: ["TranslationCore", "OllamaKit", "TextCapture"],
-                          exclude: ["Info.plist"], swiftSettings: [.swiftLanguageMode(.v6)]),
+                          exclude: ["Info.plist", "Resources"], swiftSettings: [.swiftLanguageMode(.v6)]),
         .testTarget(name: "TranslatorAppTests", dependencies: ["TranslatorApp", "TranslationCore", "OllamaKit", "TextCapture"],
                     swiftSettings: [.swiftLanguageMode(.v6)]),
         // Depends on no product: it reads Package.swift and the documents as text, and exists

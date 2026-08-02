@@ -121,6 +121,30 @@ toolbar, two panes and a collapsible status bar. Nothing in it has been rendered
 | The ± buttons' disabled state and tooltips, and whether the language picker's 140 pt frame fits the longest Russian language name | Layout arithmetic no test can reach. The picker's hidden label and its new `.help` tooltip are in the same position: the strings are in the source, nothing has hovered them | `GlossaryList.swift` |
 | The empty-glossary message and «Ничего не найдено» being distinguishable | Two different empty states, one string each, never rendered | `SettingsGlossaryView.swift` |
 
+**Owed by the Mac-idioms wave — the menu bar, the Russian bundle, and two accessibility
+settings.** Every item here was established structurally (a menu dump, a bundle read, a
+compile check) and none of it has been *looked at*.
+
+| What to check | Why it needs eyes | Code |
+|---|---|---|
+| **⌘. while the panel is running and the window is idle** | The sharpest of these. «Перевод» → «Отмена» now declares ⌘., and so does the panel's own button. The menu item is disabled unless the *window* is running, and a disabled item declines its key equivalent so the key window's handler gets it — which is the whole argument that these do not collide. Nothing here can press a key to confirm the order. Look for: start a hotkey translation, press ⌘. while the panel has focus, and see the panel stop rather than nothing happening | `TranslatorApp.body`'s `.commands`, `PanelView.translation` |
+| ⌘↩ still translating from the window, now that the toolbar no longer declares it | The equivalent moved to the menu and the toolbar button lost it. The button still works by click; the shortcut is now the menu's | `MainWindowView.toolbar`, `.commands` |
+| The menu bar reading Russian at all | Measured on the assembled bundle only as far as `Bundle.main.preferredLocalizations == ["ru"]`, by swapping a probe binary into a copy of it. That the standard menus then *draw* «Правка / Скопировать / Вставить» was measured on a stand-in bundle, not on this one | `Info.plist`, `Resources/ru.lproj`, `Scripts/make-app-bundle.sh` |
+| «Вид» and «Справка» actually gone from the bar | `pruneEmptyMenus()` removes them from `NSApp.mainMenu` and the removal was measured to stick for 2.5 s in a probe. An `LSUIElement` app's bar is only drawn while it is active, and nobody has watched it | `pruneEmptyMenus()` |
+| **Whether an `LSUIElement` app draws a menu bar at all** | The open question underneath the two rows above. Everything here rests on the menu being *installed*, which is measured; whether the user ever sees it is not, and it decides how much of this wave is visible rather than merely correct | — |
+| The panel with «Уменьшение прозрачности» on | The material becomes an opaque `windowBackgroundColor` clipped to the same rounded rectangle. Whether the corner still reads correctly against a dark desktop, and whether the panel still looks like a panel rather than a plain box, is exactly what no test sees | `PanelView.background` |
+| The two new glyphs in the panel's status row | `exclamationmark.triangle.fill` for an interrupted run, `xmark.octagon.fill` for a failure, in the row's own colour. The table is unit-tested; the row has never been rendered | `PanelStatus.Kind.symbol`, `PanelView.statusLine` |
+| «Скопировать перевод» ⇧⌘C not shadowing ⌘C in the source editor | They are different equivalents, so this should be free — but the source pane is a `TextEditor` and ⌘C on a selection inside it is the one thing that must keep working | `.commands`, `SourcePane` |
+
+**Owed by the settings/accessibility/CI wave.**
+
+| What to check | Why it needs eyes | Code |
+|---|---|---|
+| **VoiceOver on the panel, end to end** | The only way to know whether any of the new accessibility work reaches a user. Press the shortcut with VoiceOver running and listen for: the panel announcing itself, «Перевод готов» once the run settles, and the translation *not* being re-read on every token. The announcement's wording is unit-tested; that it is spoken at all is not, and cannot be from here — see §2 | `PanelView.announcement(for:)`, `configurePanel`'s `onRunFinished` |
+| Dropping a `.md` file on the source pane | The decision — which files, how large, what counts as text — is `DroppedDocument` and is tested against real temp files. What no test can do is drag something: whether the pane shows a drop target, whether the refusal springs back the way the platform draws it, and whether dropping onto the *translation* side does nothing | `SourcePane`, `DroppedDocument` |
+| **The CI workflow's first run** | Written but never executed. Two things could be wrong and neither is knowable from here: whether `macos-15` ships an Xcode new enough for `swift-tools-version: 6.0` and `.swiftLanguageMode(.v6)`, and whether `ls -d /Applications/Xcode*.app \| sort -V \| tail -1` picks the right one on that image. If it fails, the fix is a pinned `xcode-version`, not a change to the package | `.github/workflows/ci.yml` |
+| ⇧⌘C and the drop target not fighting the `TextEditor` | Both are new on a pane that already owns the keyboard | `SourcePane`, `.commands` |
+
 **Owed by the UI redesign, Task 13 — the menu bar glyph and status row.** The whole visible
 result of this task is unobserved: it is a menu-bar icon and a new first row of menu text, and
 nothing in this environment can see either.
@@ -231,9 +255,21 @@ Deliberate, with the reason. Do not "fix" these without reading the reason first
   user gets no shortcut and no message. Unreachable today: `AppSettings.hotkey` guarantees a
   valid combination, and the only other failure is `-9878` for a combination another component
   of this process already holds — nothing else in this process registers one.
-- **The panel exposes almost nothing to accessibility.** `entire contents` of the panel window
-  is empty through System Events; VoiceOver on it is unexamined. The hotkey recorder, by
-  contrast, does declare role, label and value.
+- **The panel's accessibility is now stated, and only half of it is checkable.** This entry
+  used to read «the panel exposes almost nothing to accessibility — `entire contents` of the
+  panel window is empty through System Events». The panel now declares a container label, marks
+  the translation `updatesFrequently` so an assistive technology is not made to follow ten
+  rewrites a second, and announces a settled run through
+  `AccessibilityNotification.Announcement`. What it says is `PanelView.announcement(for:)`, a
+  value, and it is unit-tested.
+  **The «empty through System Events» observation is retired rather than fixed, because it
+  never distinguished the two things it was read as distinguishing.** Measured now, walking the
+  real `PanelController`'s tree in the test process: `AXWindow → AXGroup`, no label, zero
+  children — **identically with the new modifiers and with them removed**, checked both ways.
+  SwiftUI does not materialise its accessibility tree until an assistive client attaches, and a
+  test process has none, so that probe reports «empty» whatever the view says. It was never
+  evidence about the panel. What is owed is VoiceOver on the assembled bundle, and nothing
+  short of that will do.
 - **The permission row lags a grant made without leaving the app.** It refreshes on appearance
   and on activation; TCC publishes no notification this app subscribes to, and polling a
   privileged call on a timer for a cosmetic gain was rejected.
@@ -244,8 +280,19 @@ Deliberate, with the reason. Do not "fix" these without reading the reason first
   `ModelPolicy.defaultModel(for: .background)` are kept: the two-path policy is §5 of the spec
   and the background path is batch translation in v2. Any value a user already stored stays in
   `UserDefaults`, unread. Found while correcting §5 against the code.
+- **Glossary verification is weaker on a machine without lemma data for the target language,
+  and now says so instead of crying wolf.** `NLTagger` returns no lemma at all for some
+  language/OS combinations — measured on a `macos-15` CI runner, where Russian produced none.
+  `LemmaMatcher.lemmas` falls back to the surface form in that case, which used to make
+  `matches` answer `false` («absent») where it meant «could not normalise», and
+  `GlossaryVerifier` then reported `.missing` on a correct translation. It now answers `nil`
+  when **neither** the term nor the translation produced a single lemma, so the check degrades
+  to `.unverifiable`. The consequence to accept: on such a machine an inflected term is never
+  confirmed *or* reported — the checker goes quiet rather than wrong, which is the trade spec
+  §4.6 asks for. Which macOS versions lack which language's data was not enumerated.
 - **`swift run acceptance` is not in CI, deliberately.** It needs a live Ollama and a resident
-  model. There is no CI at all for that reason.
+  model. The rest of the checks *are* — see `.github/workflows/ci.yml`; «no CI for that
+  harness» was never «no CI».
 - **Cosmetics on the Модели tab** — the `aya-expanse:8b` value wraps to three lines. The other
   half of this entry, «the settings window changes size between tabs», is retired: all three
   panes now take one 560 × 480 frame from `settingsPane()`. Whether the resizing has actually

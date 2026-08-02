@@ -9,7 +9,31 @@ import TextCapture
 /// model's own Russian survives the trip to the screen are decisions, and spec 8 pins both.
 /// A `@ViewBuilder` switch can only be read; this can be checked.
 struct PanelStatus: Equatable {
-    enum Kind: Equatable { case progress, interrupted, failure }
+    enum Kind: Equatable {
+        case progress, interrupted, failure
+
+        /// The glyph that says what `colour(of:)` says, for everyone who does not see colour.
+        ///
+        /// This row was the one place in the app where state was carried by hue alone —
+        /// `.orange` for an interrupted run against `.red` for a failed one, with nothing else
+        /// to tell them apart. Every other status in the program already pairs its colour with
+        /// a symbol: «Основные» draws `checkmark.circle` beside «предоставлен» and
+        /// `exclamationmark.triangle.fill` beside «нет доступа», and `SettingsNote` does the
+        /// same for its warnings and errors. The two symbols here are deliberately the ones
+        /// those panes already use, so a user meets one vocabulary rather than two.
+        ///
+        /// Nil for `.progress` on purpose: that row already carries a `ProgressView`, and a
+        /// spinner beside a glyph beside a word is three ways of saying «идёт перевод».
+        ///
+        /// Both are SF Symbols 1 (macOS 11), so they need no `#available` at this floor.
+        var symbol: String? {
+            switch self {
+            case .progress: nil
+            case .interrupted: "exclamationmark.triangle.fill"
+            case .failure: "xmark.octagon.fill"
+            }
+        }
+    }
     let kind: Kind
     let message: String
     let offersRetry: Bool
@@ -50,6 +74,27 @@ struct PanelView: View {
     /// token, so the panel would never resize at all.
     var fillsPanel = true
 
+    /// «Уменьшение прозрачности» in «Универсальный доступ» → «Дисплей».
+    ///
+    /// The panel is the one surface in this app that genuinely samples what is behind it: it
+    /// floats over the document the user is reading, and `.regularMaterial` blurs that document
+    /// under their translation. That is precisely the effect the setting exists to switch off,
+    /// and until now the panel ignored it — while `applyFit` has honoured «Уменьшение движения»
+    /// since it started animating, so the app was already asking the system about one of these
+    /// two and not the other.
+    ///
+    /// Read from the environment rather than from
+    /// `NSWorkspace.accessibilityDisplayShouldReduceTransparency`, so SwiftUI re-renders when
+    /// the user changes it; the AppKit property publishes a notification nothing here observes.
+    /// Both spellings were checked to exist at this project's macOS 14 floor by typechecking
+    /// them at `-target arm64-apple-macosx14.0`.
+    ///
+    /// It cannot disturb the sizing, which is the one thing about this view that is delicate:
+    /// a background changes no proposal and no ideal size, and `PanelController` measures a
+    /// detached copy that reads the same environment. If that copy ever read `false` while the
+    /// installed one read `true`, the two would still measure identically.
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
     var body: some View {
         content
         .padding(14)
@@ -61,7 +106,25 @@ struct PanelView: View {
         .frame(maxWidth: fillsPanel ? .infinity : nil,
                maxHeight: fillsPanel ? .infinity : nil,
                alignment: .topLeading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        // The shape stays whatever the transparency setting is: `TranslationPanel` turns the
+        // window's own background off (`isOpaque = false`, `backgroundColor = .clear`) so that
+        // this clip is what draws the corner, and an opaque fill clipped to the same rectangle
+        // keeps that working. `windowBackgroundColor` rather than a literal, so light and dark
+        // both come out right without this view knowing which it is in.
+        .background(background, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        // `.contain` and not `.combine`: the panel holds a translation, a status line and up to
+        // three buttons, and combining them would flatten all of that into one unreadable
+        // label. `.contain` names the group and leaves every child reachable, which is what
+        // this window needs — it has no title bar to carry a name, because `TranslationPanel`
+        // hides it so the content can draw there.
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Толмач — перевод выделенного текста")
+    }
+
+    private var background: AnyShapeStyle {
+        reduceTransparency
+            ? AnyShapeStyle(Color(nsColor: .windowBackgroundColor))
+            : AnyShapeStyle(.regularMaterial)
     }
 
     /// The panel's content at its natural size.
@@ -193,6 +256,13 @@ struct PanelView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(model.translatedText)
                         .textSelection(.enabled)
+                        // Without this the text is a live region VoiceOver has no warning
+                        // about: it is rewritten on every streamed token, up to ten times a
+                        // second, and an assistive technology that re-reads a changed label
+                        // would talk over itself for the whole of a run. The trait is the
+                        // documented way to say «this changes often, do not follow it» — the
+                        // settle is announced once instead, by `announcement(for:)`.
+                        .accessibilityAddTraits(.updatesFrequently)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         // A `Text` given less width than it wants truncates rather than wrapping,
                         // and the panel's width is now measured from this view — so without this
@@ -286,6 +356,15 @@ struct PanelView: View {
         if let status = Self.status(for: model.state) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 if status.kind == .progress { ProgressView().controlSize(.small) }
+                if let symbol = status.kind.symbol {
+                    Image(systemName: symbol)
+                        .font(.caption)
+                        .foregroundStyle(colour(of: status.kind))
+                        // The word beside it already says what happened; a screen reader
+                        // hearing the symbol's English name as well would be told twice, in
+                        // two languages.
+                        .accessibilityHidden(true)
+                }
                 Text(status.message).font(.caption).foregroundStyle(colour(of: status.kind))
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
@@ -333,6 +412,32 @@ struct PanelView: View {
     nonisolated static func direction(outcome: TranslationOutcome?, target: Language?) -> String? {
         guard let outcome, let target else { return nil }
         return RussianCopy.direction(from: outcome.detectedSource, to: target)
+    }
+
+    /// What VoiceOver is told when a run settles, or nil when there is nothing to say.
+    ///
+    /// The panel is the surface this matters most on and the one that had least of it. It is
+    /// summoned by a shortcut, it never takes the application into the foreground, and it
+    /// appears next to the pointer rather than where focus was — so a user who does not see it
+    /// gets no indication that anything happened at all. Everything else in this app is
+    /// reached by clicking something, which announces itself.
+    ///
+    /// A value rather than a call to `AccessibilityNotification` inline, for the same reason
+    /// `status(for:)` is a value: which states speak, and what they say, is a decision, and a
+    /// decision buried in a view modifier can only be read. `.running` is deliberately silent —
+    /// the run has only just started and the user pressed the key themselves — and so is
+    /// `.idle`, which is not a settle.
+    ///
+    /// Exhaustive with no `default:` for the same reason as everything else here.
+    nonisolated static func announcement(for state: TranslationState) -> String? {
+        switch state {
+        case .idle, .running: nil
+        case .finished: "Перевод готов"
+        case .interrupted: "Перевод прерван, показана пришедшая часть"
+        // The view model has already put this into Russian and it carries the only
+        // instruction the user gets — the same reasoning as `status(for:)`'s failure case.
+        case .failed(let message): message
+        }
     }
 
     /// Exhaustive with no `default:` on purpose: a sixth `TranslationState` case should

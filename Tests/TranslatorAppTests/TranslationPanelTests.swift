@@ -118,7 +118,7 @@ import Foundation
     // measured to, and the panel's own frame is the only place that number exists.
     let size = controller.panel.frame.size
     let expected = PanelPlacement.frame(cursor: cursor, size: size, screen: screen.visibleFrame)
-    #expect(controller.panel.frame == expected)
+    #expect(isNear(controller.panel.frame, expected))
     #expect(screen.visibleFrame.contains(controller.panel.frame))
 }
 
@@ -157,8 +157,11 @@ import Foundation
     defer { controller.hide() }
     let frame = controller.panel.frame
 
-    #expect(frame.height <= visible.height * PanelSizer.maxHeightFraction)
-    #expect(frame == PanelPlacement.frame(cursor: cursor, size: frame.size, screen: visible))
+    // `.rounded(.up)` rather than a bare comparison: AppKit hands back a whole number of
+    // points, so a ceiling of 408.6 is honoured by a panel 409 tall. Measured on CI, where
+    // exactly that 0.4 pt made this red.
+    #expect(frame.height <= (visible.height * PanelSizer.maxHeightFraction).rounded(.up))
+    #expect(isNear(frame, PanelPlacement.frame(cursor: cursor, size: frame.size, screen: visible)))
     #expect(frame.maxY <= visible.maxY)
     #expect(frame.maxY < screen.frame.maxY)
 }
@@ -206,8 +209,31 @@ import Foundation
     // Size read after the show: the panel is sized from its content now, so there is no
     // size to know beforehand.
     let size = controller.panel.frame.size
-    #expect(controller.panel.frame
-            == PanelPlacement.frame(cursor: cursor, size: size, screen: screen.visibleFrame))
+    #expect(isNear(controller.panel.frame,
+                   PanelPlacement.frame(cursor: cursor, size: size, screen: screen.visibleFrame)))
+}
+
+/// Two frames compared with a one-point tolerance.
+///
+/// `NSWindow` rounds a frame onto its backing store, while `PanelPlacement` computes in
+/// unrounded points — so on a display whose `visibleFrame` has a fractional midpoint the two
+/// legitimately differ by half a point. Measured by CI on its first run, on a `macos-15`
+/// runner: the panel came back at y = 268.0 where `PanelPlacement` said 268.5, and two tests
+/// that had never failed on a developer's Mac went red.
+///
+/// **The tolerance does not weaken what these tests pin.** Each of them exists to catch AppKit
+/// relocating the panel, and the two observations behind them are a 202 pt sideways shove from
+/// the Stage Manager strip and a pull down by the height of the menu-bar band — three orders of
+/// magnitude away from one point. `docs/TESTING.md` shape 3 is the hazard to avoid here, and it
+/// is about bounds that only catch movement in one direction; this stays an equality in both.
+/// Verified by mutation: restoring `constrainFrameRect` to `super`'s behaviour still kills all
+/// three tests.
+private func isNear(_ frame: CGRect, _ expected: CGRect,
+                    within tolerance: CGFloat = 1) -> Bool {
+    abs(frame.minX - expected.minX) <= tolerance
+        && abs(frame.minY - expected.minY) <= tolerance
+        && abs(frame.width - expected.width) <= tolerance
+        && abs(frame.height - expected.height) <= tolerance
 }
 
 // MARK: - Esc and Enter

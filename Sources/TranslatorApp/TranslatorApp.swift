@@ -23,8 +23,12 @@ struct TranslatorApp: App {
     /// Owned here rather than created inside the settings pane so the installed list and a
     /// download in progress survive the settings window being closed and reopened.
     @State private var models: ModelsViewModel
-    /// The same client the `Translator` above translates through, kept so `warmUp()` can
-    /// reuse it instead of standing up a second `URLSession` for one request at launch.
+    /// The **only** `OllamaClient` this process builds, and therefore the only `URLSession`.
+    ///
+    /// It backs all five things that talk to Ollama: both view models' translations through
+    /// `Translator`, `warmUp()`, the health probe behind the menu-bar glyph, the installed and
+    /// resident lists in «Модели», and model downloads. Sharing it is what the doc comment here
+    /// always claimed — see `init`, which carries what was actually happening instead.
     @State private var client: OllamaClient
     /// The hotkey path, which owns a `TranslationViewModel` of its own — see the comment on
     /// `HotkeyCoordinator.panelModel`. It shares this app's `settings`, `glossary` and
@@ -49,8 +53,21 @@ struct TranslatorApp: App {
             glossary.lastProblem = "Не удалось прочитать глоссарий, перевод идёт без него. "
                 + "Файл на диске не изменён: \(error.localizedDescription)"
         }
-        let statusModel = OllamaStatusModel()
+        // One client for the whole process, and it has to be built before anything that talks
+        // to Ollama rather than after.
+        //
+        // The comment on `client` above has said since it was written that it is shared «so
+        // `warmUp()` can reuse it instead of standing up a second `URLSession` for one request
+        // at launch». That was true of `warmUp()` and false of the app: `OllamaStatusModel()`
+        // and `ModelsViewModel()` each defaulted to a `LiveOllamaProbe` that built an
+        // `OllamaClient` of its own, and `ModelsViewModel`'s default puller built **another one
+        // per download**. Three sessions at launch, and one more every time a model is pulled,
+        // under a comment explaining why there is one.
+        //
+        // The defaults stay where they are — they are what lets a test construct either model
+        // without an Ollama — but nothing in the app takes them now.
         let client = OllamaClient()
+        let statusModel = OllamaStatusModel(probe: LiveOllamaProbe(client: client))
         let translation = TranslationViewModel(
             translator: Translator(client: client),
             settings: settings,
@@ -64,7 +81,12 @@ struct TranslatorApp: App {
         _glossary = State(initialValue: glossary)
         _statusModel = State(initialValue: statusModel)
         _translation = State(initialValue: translation)
-        _models = State(initialValue: ModelsViewModel())
+        // Both halves of this take the shared client: the probe behind the installed and
+        // resident lists, and the puller behind «Скачать». `OllamaClient` is a `Sendable`
+        // struct — `LLMClient` requires it — so the closure may capture it.
+        _models = State(initialValue: ModelsViewModel(
+            probe: LiveOllamaProbe(client: client),
+            puller: { model in client.pull(model: model) }))
         _client = State(initialValue: client)
         _coordinator = State(initialValue: coordinator)
         // Content is a placeholder until `configurePanel()` runs at launch. Everything the
@@ -111,6 +133,70 @@ struct TranslatorApp: App {
                                await statusModel.refresh(interactiveModel: settings.interactiveModel)
                            })
                 .task { await statusModel.refresh(interactiveModel: settings.interactiveModel) }
+        }
+        // The app had no commands at all, and SwiftUI's defaults for this scene combination
+        // are not a menu bar anyone would design. Measured on a copy of these three scenes at
+        // `.accessory` activation policy, dumping `NSApp.mainMenu`: «Вид» is installed and
+        // **empty**, «Справка» carries a help-book item this app has no help book for, and the
+        // three actions a user actually performs — перевести, отменить, скопировать — appear
+        // nowhere, so they exist only as buttons inside a window that is usually closed.
+        //
+        // Every equivalent below is declared here and **only** here. The window's toolbar used
+        // to carry ⌘↩ and ⌘. itself; it no longer does.
+        .commands {
+            // Both of these remove rather than add. `.sidebar` is what puts the empty «Вид»
+            // there — this window is an `HSplitView`, which has no sidebar to toggle — and
+            // `.help` opens a help book that does not exist, so the menu it heads is a menu
+            // whose every item does nothing.
+            CommandGroup(replacing: .sidebar) { }
+            CommandGroup(replacing: .help) { }
+
+            CommandMenu("Перевод") {
+                // Disabled while a run is in flight, which is also what keeps this from
+                // fighting the panel. `TranslationPanel` has its own ⌘. on its «Отмена», and
+                // a *disabled* menu item does not consume its equivalent — it declines, and
+                // the key window's own handler gets it. So a hotkey run being cancelled while
+                // this window sits idle reaches the panel, not this. That the fall-through
+                // happens in that order is the one part of this block a physical key press
+                // still has to confirm; `docs/OPEN-ITEMS.md` §1 carries it.
+                Button("Перевести") { Task { await translation.translate() } }
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .disabled(translation.state == .running || !statusModel.status.isHealthy)
+                Button("Отмена") { translation.cancel() }
+                    .keyboardShortcut(".", modifiers: .command)
+                    .disabled(translation.state != .running)
+
+                Divider()
+
+                // ⌃⌘S rather than anything with ⌥: the toolbar's ⇄ is the discoverable half
+                // and this is the shortcut for it, and ⌥-combinations are where the system's
+                // own reserved space is thickest.
+                Button("Поменять языки местами") { translation.swapLanguages() }
+                    .keyboardShortcut("s", modifiers: [.command, .control])
+                    .disabled(!translation.canSwapLanguages)
+
+                Divider()
+
+                // ⇧⌘C, not ⌘C: plain ⌘C belongs to «Правка» → «Скопировать» and must keep
+                // working on a selection inside the source editor. This copies the whole
+                // translation, which is a different action and deserves a different key.
+                Button("Скопировать перевод") { Task { await translation.copyToPasteboard() } }
+                    .keyboardShortcut("c", modifiers: [.command, .shift])
+                    .disabled(translation.translatedText.isEmpty)
+                Button("Очистить исходник") { translation.sourceText = "" }
+                    .disabled(translation.sourceText.isEmpty || translation.state == .running)
+            }
+
+            // In «Окно», beside the window list, because that is what it does. It duplicates
+            // the menu-bar item deliberately: the menu bar is the only route in today, and it
+            // is the one surface that disappears if the user ever hides the status item.
+            CommandGroup(after: .windowList) {
+                Button("Открыть окно перевода") {
+                    openWindow(id: TranslatorApp.mainWindowID)
+                    activateThisApp()
+                }
+                .keyboardShortcut("0", modifiers: .command)
+            }
         }
 
         // Declared last for the same reason `Window` is not first: whatever SwiftUI counts
@@ -161,6 +247,7 @@ struct TranslatorApp: App {
     /// is synchronous and takes no I/O, so there is nothing to gain by deferring it.
     private func launch() async {
         configurePanel()
+        pruneEmptyMenus()
         // The refusal still raises nothing on screen, and that part is unchanged: a
         // user-visible message needs UI that does not exist yet. What it no longer does is
         // vanish. This is the most expensive of the app's four deliberate swallows — a refused
@@ -226,6 +313,38 @@ struct TranslatorApp: App {
         // `menuBarSymbol`'s doc comment accepts.
         await statusModel.refresh(interactiveModel: settings.interactiveModel)
         await warmUp()
+    }
+
+    /// Removes the top-level menus SwiftUI installs with nothing inside them.
+    ///
+    /// `CommandGroup(replacing:)` empties a group; it does **not** take away the menu that
+    /// held it. Measured on a copy of this app's three scenes carrying the same `.commands`
+    /// block: «Вид» and «Справка» both survive as titles with zero items — «Вид» was already
+    /// empty before any of this, since an `HSplitView` has no sidebar to toggle, and «Справка»
+    /// becomes empty once the help-book item this app has no help book for is replaced. Two
+    /// headings that open onto nothing are worse than the one dead item they replace.
+    ///
+    /// Done in AppKit because SwiftUI offers no way to say it. Three things were measured
+    /// before settling on this shape, all on that same probe:
+    ///
+    /// - the menu is **fully built by the time this `.task` first runs** — `NSApp.mainMenu`
+    ///   already holds all six items at t=0 — so this needs no sleep in front of it, and does
+    ///   not have one;
+    /// - the removal **sticks**: no empty menu had come back 2.5 s later;
+    /// - it removes exactly «Справка» and «Вид», and nothing else — every other top-level menu
+    ///   here has items.
+    ///
+    /// Written as «remove whatever is empty» rather than «remove these two by title», because
+    /// a title is the one thing about a system menu that is localised: this app now declares
+    /// `ru`, so those two are «Вид» and «Справка» here and would be «View» and «Help» in a
+    /// process that did not.
+    @MainActor
+    private func pruneEmptyMenus() {
+        guard let main = NSApp.mainMenu else { return }
+        // Reversed, so removing by index cannot shift an item this loop has not reached yet.
+        for item in main.items.reversed() where item.submenu?.items.isEmpty == true {
+            main.removeItem(item)
+        }
     }
 
     /// Re-registers when the user changes the shortcut in settings.
@@ -303,6 +422,17 @@ struct TranslatorApp: App {
                 // closure a no-op instead, so only one host ever calls it.
                 onRunFinished: {
                     guard case .installed = variant else { return }
+                    // Announced from here rather than from a modifier inside `PanelView`, and
+                    // the reason is the same one this closure is already gated for: the
+                    // controller builds two live hosts from this builder, and a `.onChange`
+                    // written in the view would fire on both — so a settle would be spoken
+                    // twice. This closure only exists on the installed variant.
+                    //
+                    // What to say is `PanelView.announcement(for:)`, which is a value and is
+                    // tested; posting it is all that happens here.
+                    if let said = PanelView.announcement(for: coordinator.panelModel.state) {
+                        AccessibilityNotification.Announcement(said).post()
+                    }
                     await statusModel.refresh(interactiveModel: settings.interactiveModel)
                 }))
         }
@@ -482,12 +612,22 @@ private struct MenuContent: View {
             // and a freshly opened window would come up behind whatever the user was in.
             activateThisApp()
         }
-        // There is no application menu in an `LSUIElement` app, so the standard ⌘,
-        // does not exist and this is the only way into the `Settings` scene.
-        // `SettingsLink` is macOS 14+, i.e. available at the floor, and is preferable to
-        // sending `showSettingsWindow:` by selector — a private-ish action whose name has
-        // already changed once across releases. The label is supplied because the
-        // no-argument initialiser renders the system's English «Settings».
+        // This used to say «there is no application menu in an `LSUIElement` app, so the
+        // standard ⌘, does not exist and this is the only way into the `Settings` scene».
+        // **Both halves of that were wrong, and it is measured now rather than reasoned.**
+        // Dumping `NSApp.mainMenu` from a copy of these three scenes at `.accessory`
+        // activation policy: the application menu is there, and it carries «Настройки…» with
+        // ⌘, — the `Settings` scene installs it, exactly as Apple's own documentation for the
+        // menu bar says it does. `LSUIElement` governs the Dock tile and whether the bar is
+        // *drawn*; it does not stop the menu being installed, and key equivalents are
+        // dispatched through it either way.
+        //
+        // So this is not the only way in, and the conclusion survives anyway: it is the only
+        // *discoverable* way in for a user who never sees a menu bar, which is every user of
+        // this app until they open a window. `SettingsLink` is macOS 14+, i.e. available at
+        // the floor, and is preferable to sending `showSettingsWindow:` by selector — a
+        // private-ish action whose name has already changed once across releases. The label is
+        // supplied because the no-argument initialiser renders the system's English «Settings».
         //
         // The button above works around this app not being activated by a menu click;
         // `SettingsLink` exposes no action to hang that on. Measured on the real bundle:

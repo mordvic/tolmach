@@ -169,3 +169,58 @@ private func model() -> TranslationViewModel {
     view.onClose()
     #expect(closed)
 }
+
+// MARK: - Colour is not the only channel
+
+/// Spec-independent, and an accessibility rule rather than a style one: the panel's status row
+/// distinguished «прервано» from «ошибка» by hue alone — `.orange` against `.red` — which is
+/// nothing at all to a user who does not separate those two, and nothing at all with
+/// «Дифференциация без цвета» switched on. Every other status in this app already pairs its
+/// colour with a glyph.
+///
+/// Written as a count over every kind rather than as two literal lookups, so it fails in both
+/// directions: a kind that loses its symbol, and a kind that grows one it should not have.
+@MainActor @Test func everyStatusThatIsNotProgressCarriesAGlyphAsWellAsAColour() {
+    let kinds: [PanelStatus.Kind] = [.progress, .interrupted, .failure]
+    #expect(kinds.filter { $0.symbol != nil }.count == 2)
+    // `.progress` is the deliberate exception: that row already draws a `ProgressView`, so a
+    // glyph beside the spinner beside the word would be three ways of saying one thing.
+    #expect(PanelStatus.Kind.progress.symbol == nil)
+}
+
+/// The two glyphs must be the ones the settings panes already use, or the app teaches two
+/// vocabularies for one idea — a warning that looks like one thing in «Основные» and another
+/// in the panel. `SettingsNote` draws `xmark.octagon.fill` for an error and
+/// `exclamationmark.triangle.fill` for a warning; `SettingsGeneralView` uses the latter for a
+/// missing permission.
+@MainActor @Test func thePanelBorrowsTheGlyphsTheSettingsPanesAlreadyUse() {
+    #expect(PanelStatus.Kind.interrupted.symbol == "exclamationmark.triangle.fill")
+    #expect(PanelStatus.Kind.failure.symbol == "xmark.octagon.fill")
+}
+
+// MARK: - What VoiceOver is told
+
+/// The panel is summoned by a shortcut, never takes the app to the foreground, and appears
+/// next to the pointer rather than where focus was — so a user who does not see it gets no
+/// indication that anything happened. Which states speak, and which stay quiet, is therefore a
+/// decision worth pinning rather than a modifier worth reading.
+///
+/// Written as a count over every state so it fails both ways: a settle that goes silent, and a
+/// non-settle that starts talking.
+@MainActor @Test func exactlyTheThreeSettledStatesAnnounceThemselves() {
+    let states: [TranslationState] = [.idle, .running, .finished, .interrupted,
+                                      .failed("Ollama не запущена.")]
+    #expect(states.filter { PanelView.announcement(for: $0) != nil }.count == 3)
+    // `.running` in particular: the user pressed the key themselves a moment ago, and the
+    // panel is already on screen saying «Перевожу…».
+    #expect(PanelView.announcement(for: .running) == nil)
+    #expect(PanelView.announcement(for: .idle) == nil)
+}
+
+/// A failure announces the view model's own sentence rather than a generic «ошибка», for the
+/// same reason the status row does: that sentence is the only instruction the user gets, and
+/// «Запустите её командой «ollama serve»» is the half that turns a dead end into a next step.
+@MainActor @Test func aFailureIsAnnouncedWithTheSentenceThatSaysWhatToDo() {
+    let message = "Ollama не запущена. Запустите её командой «ollama serve»."
+    #expect(PanelView.announcement(for: .failed(message)) == message)
+}

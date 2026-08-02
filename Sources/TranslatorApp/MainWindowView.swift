@@ -74,16 +74,16 @@ struct MainWindowView: View {
                 ForEach(Tone.allCases, id: \.self) { Text($0.russianName).tag(Tone?.some($0)) }
             }
         }
+        // Neither button declares a keyboard shortcut any more, and that is the point of the
+        // change rather than a side effect. ⌘↩ and ⌘. now live once, in the «Перевод» menu
+        // `TranslatorApp` installs — which is where a Mac user looks for them, and which keeps
+        // working when this window is not the one in front. Declaring the same equivalent in
+        // two places leaves two things to keep in step and no statement about which wins.
         ToolbarItem(placement: .primaryAction) {
             if model.state == .running {
-                // ⌘. is the macOS convention for cancelling an operation in progress.
-                // Without it a run is unstoppable from the keyboard: ⌘↩ belongs to
-                // «Перевести», which is not on screen while the run is going.
                 Button("Отмена") { model.cancel() }
-                    .keyboardShortcut(".", modifiers: .command)
             } else {
                 Button("Перевести") { Task { await model.translate() } }
-                    .keyboardShortcut(.return, modifiers: .command)
                     .buttonStyle(.borderedProminent)
                     .disabled(!status.isHealthy)
             }
