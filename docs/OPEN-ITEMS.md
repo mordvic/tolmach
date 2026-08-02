@@ -280,8 +280,19 @@ Deliberate, with the reason. Do not "fix" these without reading the reason first
   `ModelPolicy.defaultModel(for: .background)` are kept: the two-path policy is §5 of the spec
   and the background path is batch translation in v2. Any value a user already stored stays in
   `UserDefaults`, unread. Found while correcting §5 against the code.
+- **Glossary verification is weaker on a machine without lemma data for the target language,
+  and now says so instead of crying wolf.** `NLTagger` returns no lemma at all for some
+  language/OS combinations — measured on a `macos-15` CI runner, where Russian produced none.
+  `LemmaMatcher.lemmas` falls back to the surface form in that case, which used to make
+  `matches` answer `false` («absent») where it meant «could not normalise», and
+  `GlossaryVerifier` then reported `.missing` on a correct translation. It now answers `nil`
+  when **neither** the term nor the translation produced a single lemma, so the check degrades
+  to `.unverifiable`. The consequence to accept: on such a machine an inflected term is never
+  confirmed *or* reported — the checker goes quiet rather than wrong, which is the trade spec
+  §4.6 asks for. Which macOS versions lack which language's data was not enumerated.
 - **`swift run acceptance` is not in CI, deliberately.** It needs a live Ollama and a resident
-  model. There is no CI at all for that reason.
+  model. The rest of the checks *are* — see `.github/workflows/ci.yml`; «no CI for that
+  harness» was never «no CI».
 - **Cosmetics on the Модели tab** — the `aya-expanse:8b` value wraps to three lines. The other
   half of this entry, «the settings window changes size between tabs», is retired: all three
   panes now take one 560 × 480 frame from `settingsPane()`. Whether the resizing has actually
