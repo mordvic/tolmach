@@ -26,6 +26,24 @@ import AppKit
 public enum GeneralPasteboard {
     private static let lock = NSLock()
 
+    /// An `NSPasteboard` on its way across an isolation boundary.
+    ///
+    /// `NSPasteboard` is an AppKit class and is not `Sendable`, so the `Task.detached` in
+    /// `write` cannot capture one: «passing closure as a 'sending' parameter risks causing
+    /// data races», an error in the Swift 6 language mode and one of the four that stopped a
+    /// `-swift-version 6` build of this target.
+    ///
+    /// `@unchecked` is sound *here* for the same reason this whole type exists, and only
+    /// here: the single place the wrapped board is ever touched is inside
+    /// `withExclusiveAccess`, so the access this annotation stops the compiler checking is
+    /// the one the lock already serialises. A wrapper that reached a board outside that lock
+    /// would be exactly the unsound `@unchecked` the annotation is usually accused of being —
+    /// which is why this is `private` and lives next to the lock rather than being offered to
+    /// callers.
+    private struct LockedBoard: @unchecked Sendable {
+        let board: NSPasteboard
+    }
+
     /// Run `body` with exclusive access to the general pasteboard.
     ///
     /// Not reentrant — `NSLock` is not. Nothing inside a `withExclusiveAccess` block may call
@@ -58,12 +76,32 @@ public enum GeneralPasteboard {
     /// held for the whole of `SelectionReader.clipboardText()`'s poll — up to half a second
     /// whenever the target application ignores the synthetic ⌘C — and blocking the main
     /// thread for that long stops drawing and event delivery outright.
+    ///
+    /// `@MainActor` on the *entry point only*, and it does not undo the sentence above: the
+    /// lock is still taken inside the detached task, so the main actor is suspended here and
+    /// never blocked. What it buys is the second half of the Swift 6 problem this method had.
+    /// Boxing the board fixes the closure capture; it does not fix the two call sites, which
+    /// hand a non-`Sendable` `NSPasteboard` held by a `@MainActor` class to what was a
+    /// `nonisolated` function — «sending 'self.pasteboard' risks causing data races», one
+    /// warning each under `-strict-concurrency=complete`. Sharing the callers' isolation
+    /// removes the crossing rather than asserting it away.
+    ///
+    /// The cost is that a future caller must be on the main actor. Both of today's are
+    /// (`HotkeyCoordinator.copyResult()`, `TranslationViewModel.copyToPasteboard()`), and so
+    /// are all three this type's own doc comment anticipates — a menu item, a second
+    /// shortcut, a URL handler. A caller that genuinely is not can still reach the board
+    /// through `withExclusiveAccess`, which stays `nonisolated` precisely because
+    /// `SelectionReader.clipboardText()` must not be dragged onto the main actor.
+    @MainActor
     public static func write(_ text: String, to board: NSPasteboard = .general) async {
         guard !text.isEmpty else { return }
+        // Boxed on this actor and unwrapped on the detached one. The box carries no
+        // guarantee of its own — see `LockedBoard`; the lock below is the guarantee.
+        let boxed = LockedBoard(board: board)
         await Task.detached(priority: .userInitiated) {
             withExclusiveAccess {
-                board.clearContents()
-                board.setString(text, forType: .string)
+                boxed.board.clearContents()
+                boxed.board.setString(text, forType: .string)
             }
         }.value
     }

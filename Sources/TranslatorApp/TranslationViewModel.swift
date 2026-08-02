@@ -296,6 +296,19 @@ final class TranslationViewModel {
             outcome = result
             translatedText = result.final
             state = .finished
+            // The one place the engine's swallowed document-glossary failure is recorded. The
+            // user is deliberately not told — it is a diagnostic about an enhancement, not a
+            // warning about their translation — but «this long document was translated without
+            // the terminology pass» is exactly the invisible difference that shows up later as
+            // inconsistent terminology and cannot otherwise be traced. See
+            // `TranslationOutcome.documentGlossaryFailure`.
+            if let failure = result.documentGlossaryFailure {
+                Log.engine.error("""
+                    document glossary abandoned; this run translated \
+                    \(result.chunks.count, privacy: .public) chunks without the terminology \
+                    pass: \(failure, privacy: .public)
+                    """)
+            }
         } catch is CancellationError {
             continuation.finish()
             await consumer.value

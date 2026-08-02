@@ -161,12 +161,18 @@ struct TranslatorApp: App {
     /// is synchronous and takes no I/O, so there is nothing to gain by deferring it.
     private func launch() async {
         configurePanel()
-        // The refusal is swallowed here, and it is worth being honest that nothing surfaces
-        // it: `AppSettings.hotkey` already guarantees a valid combination, and the only other
-        // way `register` fails is -9878 for a combination another component of this process
-        // already holds — nothing else in this process registers one. A user-visible message
-        // needs UI that does not exist yet; see the task report.
-        coordinator.start {
+        // The refusal still raises nothing on screen, and that part is unchanged: a
+        // user-visible message needs UI that does not exist yet. What it no longer does is
+        // vanish. This is the most expensive of the app's four deliberate swallows — a refused
+        // registration leaves the user with no shortcut, and the shortcut is the only door to
+        // the panel — so «nothing happened and there is no way to find out why» was the wrong
+        // half of the trade to keep. `.fault` rather than `.error`: the app is still running
+        // and still looks healthy, which is precisely what makes it hard to diagnose.
+        //
+        // Still expected to be unreachable: `AppSettings.hotkey` guarantees a valid
+        // combination, and the only other failure is -9878 for a combination another component
+        // of this process already holds — nothing else in this process registers one.
+        if !coordinator.start(onPress: {
             // The pointer is sampled *here*, at the press, and used after the capture. The
             // read can take up to three quarters of a second and the user's hand is still on
             // the mouse; the panel belongs where they were looking when they pressed.
@@ -179,6 +185,11 @@ struct TranslatorApp: App {
                 await coordinator.handlePress(willCapture: { panel.hide() },
                                               afterCapture: { panel.show(at: cursor) })
             }
+        }) {
+            Log.hotkey.fault("""
+                hotkey registration refused; the app has no shortcut and no way into the panel \
+                (combination: \(settings.hotkey.displayString, privacy: .public))
+                """)
         }
         observeHotkeyChanges()
         // Spec 6.1's onboarding, in the only shape an `LSUIElement` app can offer it: there is
@@ -366,11 +377,19 @@ struct TranslatorApp: App {
             for try await _ in client.chat(messages: [ChatMessage(role: "user", content: "ok")],
                                            options: options) {}
         } catch {
-            // Swallowed on purpose, and this is the one place in the app where that is
-            // right. A warm-up is by definition something the user did not ask for, so its
-            // failure must cost them nothing; Ollama being unreachable is already the
-            // window's status line's job to say, and saying it twice — once about a request
-            // nobody made — would be worse than silence.
+            // Still swallowed as far as the user is concerned, and that part is right: a
+            // warm-up is by definition something they did not ask for, so its failure must
+            // cost them nothing, and Ollama being unreachable is already the window's status
+            // line's job to say. Saying it twice — once about a request nobody made — would be
+            // worse than silence.
+            //
+            // `.debug` and not `.error`, because at launch this failing is *ordinary*: Ollama
+            // is simply not up yet on a good proportion of logins. It is here so that «the
+            // first translation is always slow» has somewhere to be answered from.
+            Log.engine.debug("""
+                warm-up failed, first translation will pay the cold-load cost: \
+                \(error.localizedDescription, privacy: .public)
+                """)
         }
     }
 

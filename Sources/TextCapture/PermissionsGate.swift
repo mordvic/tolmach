@@ -1,5 +1,25 @@
 import Foundation
-import ApplicationServices
+// `@preconcurrency` because HIServices predates concurrency annotation and imports
+// `kAXTrustedCheckOptionPrompt` as a mutable global (`var`). Reading a mutable global from a
+// `nonisolated` function is «reference to var … is not concurrency-safe», an error in the
+// Swift 6 language mode — measured as one of the four that stopped a `-swift-version 6`
+// build of this target.
+//
+// This spelling rather than a hand-rolled escape, and the alternatives were measured rather
+// than dismissed. `nonisolated(unsafe)` on a `static let` holding the value does **not**
+// work: the annotation covers the storage, while the diagnostic is about the *read* in the
+// initialiser, so the error simply moves there — and the compiler then also warns that the
+// annotation is pointless on a `Sendable` `String`. The same is true of a
+// `nonisolated(unsafe)` local inside the initialiser and of an `@concurrent` accessor: all
+// three still fail, checked by typechecking each at `-swift-version 6 -target
+// arm64-apple-macosx14.0`. What is left is either this or hardcoding
+// `"AXTrustedCheckOptionPrompt"`, and a literal would drop the only compiler-checked link to
+// the framework's own symbol.
+//
+// It is narrower than it looks: `@preconcurrency` downgrades `Sendable`-related diagnostics
+// from this one module and nothing else. `AXIsProcessTrustedWithOptions` and the `kAX…`
+// attribute constants keep working unchanged.
+@preconcurrency import ApplicationServices
 import AppKit
 
 /// Whether this process may read other applications' UI and post synthetic events.

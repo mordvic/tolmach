@@ -111,6 +111,13 @@ do {
     let missing = outcome.checks.filter { $0.status == .missing }
     if !missing.isEmpty { footer += " · glossary misses: \(missing.map(\.term).joined(separator: ", "))" }
     if !outcome.markupDiffs.isEmpty { footer += " · \(outcome.markupDiffs.count) markup diff(s)" }
+    // The engine swallows a failed document-glossary call on purpose — it is an enhancement,
+    // not the result — so without this line a multi-chunk run that lost its terminology pass
+    // looks exactly like one that never needed it. The app records the same value through
+    // `Log.engine`; this is the developer-facing half.
+    if let failure = outcome.documentGlossaryFailure {
+        footer += " · document glossary failed: \(failure)"
+    }
     FileHandle.standardError.write(Data((footer + "\n").utf8))
 } catch {
     FileHandle.standardError.write(Data("error: \(error.localizedDescription)\n".utf8)); exit(1)

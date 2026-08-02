@@ -27,19 +27,89 @@ public struct OllamaClient: LLMClient {
     let baseURL: URL
     let session: URLSession
 
+    /// How long a call may go without receiving anything before it is abandoned, per kind of
+    /// call. `URLSessionConfiguration.timeoutIntervalForRequest` is a *gap* between arriving
+    /// data, not a total, so each of these is «how long silence is allowed to last».
+    ///
+    /// One session with a per-request override rather than three sessions: `URLRequest`'s own
+    /// `timeoutInterval` supersedes the configuration's, and a second `URLSession` costs a
+    /// second connection pool for no gain.
+    public enum Timeout {
+        /// A download of several gigabytes. The session's own value, left where it was.
+        public static let pull: TimeInterval = 120
+        /// A translation the user is watching.
+        ///
+        /// 120 s was the value every call shared, and it is wrong for this one: the panel's
+        /// whole design target is a first token inside a second, and an Ollama that accepts
+        /// the connection and then never answers held the panel — spinner, no text, «Отмена»
+        /// the only way out — for two minutes.
+        ///
+        /// 30 s is chosen against this project's own measurements rather than picked. The
+        /// pinned interactive model is `aya-expanse:8b` at a measured TTFT under 1 s
+        /// (spec §5), so this is roughly thirty times the supported case. The slowest figure
+        /// anywhere in this repository is `ModelPolicy`'s note on `qwen3:30b` — «78 seconds of
+        /// reasoning before the first character of translation» — and that model is
+        /// blacklisted for exactly that reason, i.e. it is already declared unsuitable for the
+        /// path this timeout governs.
+        ///
+        /// **A reasoning model cannot trip this, and that is measured rather than assumed.**
+        /// The obvious objection to any interactive timeout is `ModelPolicy`'s 78 seconds —
+        /// but this timer counts *silence*, not elapsed time, and reasoning is not silent.
+        /// Probed against the live server with `qwen3:8b`, `keep_alive: 0`, one translation
+        /// request, recording the arrival time of every frame:
+        ///
+        ///     frames                       258
+        ///     first frame                  2.12 s   (cold model load — the only long gap)
+        ///     first `message.thinking`     2.12 s
+        ///     first `message.content`      7.12 s
+        ///     largest gap between frames   0.062 s
+        ///
+        /// So the five seconds of reasoning before the first character of translation carried
+        /// 250-odd frames, and the wire never went quiet for more than 62 ms.
+        /// `OllamaStreamParser` reads `message.thinking` and discards it, but a discarded frame
+        /// is still bytes arriving, and arriving bytes reset this timer. The measurement is of
+        /// Ollama's streaming protocol rather than of one model, so it carries to `qwen3:30b`
+        /// — which was deliberately *not* loaded to take it, an 18 GB model being a poor thing
+        /// to page in to answer a question an 8 B model answers identically.
+        ///
+        /// What this value does still catch is the case it was written for: a server that
+        /// accepts the connection and then sends nothing at all.
+        public static let interactive: TimeInterval = 30
+        /// `/api/tags` and `/api/ps`, which answer from memory and back the health indicator.
+        /// They ran on the 120 s value too, so a hung server left `OllamaStatusModel.refresh`
+        /// — which awaits both in turn — reporting nothing for up to four minutes about the
+        /// one thing it exists to report.
+        public static let probe: TimeInterval = 10
+    }
+
     public init(baseURL: URL = OllamaClient.defaultBaseURL) {
         self.baseURL = baseURL
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 120
+        config.timeoutIntervalForRequest = Timeout.pull
         config.timeoutIntervalForResource = 900
         self.session = URLSession(configuration: config)
+    }
+
+    /// Every request this client makes is built here, so that «which timeout applies to which
+    /// call» is one table rather than four call sites.
+    ///
+    /// A function rather than four inline constructions because it is the only part of the
+    /// timeout decision a test can look at: a `URLSession` that never times out in a test
+    /// process cannot show which interval was requested, and one that does would make the
+    /// suite wait for it. Same shape, and the same reasoning, as
+    /// `PermissionsGate.trustOptions(prompting:)`.
+    func request(_ path: String, timeout: TimeInterval, method: String = "GET") -> URLRequest {
+        var request = URLRequest(url: baseURL.appendingPathComponent(path))
+        request.httpMethod = method
+        request.timeoutInterval = timeout
+        return request
     }
 
     public func models() async throws -> [OllamaModel] {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(from: baseURL.appendingPathComponent("api/tags"))
+            (data, response) = try await session.data(for: request("api/tags", timeout: Timeout.probe))
         } catch {
             throw Self.mapTransportError(error)
         }
@@ -71,8 +141,8 @@ public struct OllamaClient: LLMClient {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    var request = URLRequest(url: baseURL.appendingPathComponent("api/chat"))
-                    request.httpMethod = "POST"
+                    var request = request("api/chat", timeout: Timeout.interactive,
+                                         method: "POST")
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                     request.httpBody = try JSONSerialization.data(withJSONObject: [
                         "model": options.model, "stream": true, "keep_alive": options.keepAlive,
@@ -124,7 +194,7 @@ extension OllamaClient {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(from: baseURL.appendingPathComponent("api/ps"))
+            (data, response) = try await session.data(for: request("api/ps", timeout: Timeout.probe))
         } catch { throw Self.mapTransportError(error) }
         guard let http = response as? HTTPURLResponse else { throw OllamaError.notRunning }
         guard http.statusCode == 200 else {
@@ -141,8 +211,7 @@ extension OllamaClient {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    var request = URLRequest(url: baseURL.appendingPathComponent("api/pull"))
-                    request.httpMethod = "POST"
+                    var request = request("api/pull", timeout: Timeout.pull, method: "POST")
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                     request.httpBody = try JSONSerialization.data(
                         withJSONObject: ["model": model, "stream": true])
