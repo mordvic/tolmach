@@ -42,6 +42,11 @@ final class FileQueueModel {
     private(set) var pausedAfterWarnings = false
     /// The text streaming into the right pane right now, for the задание being run.
     private(set) var streamingText = ""
+    /// The «Термины документа» sheet this queue is waiting on, or nil.
+    private(set) var pendingTermsRequest: DocumentTermsRequest?
+    /// Set when a sheet came back with «Больше не спрашивать в этом прогоне» ticked. A
+    /// statement about this sitting and not a preference, so `run()` clears it.
+    private var suppressTermsForThisRun = false
 
     init(translator: Translator, settings: AppSettings, glossary: GlossaryStore,
          save: @escaping (FileJob, String) -> SaveOutcome) {
@@ -148,6 +153,7 @@ final class FileQueueModel {
         guard !isRunning else { return }
         isRunning = true
         pausedAfterWarnings = false
+        suppressTermsForThisRun = false
         defer { isRunning = false }
 
         // **The work list is decided once, here.** `.interrupted` and `.failed` are in it
@@ -168,7 +174,28 @@ final class FileQueueModel {
         }
     }
 
-    func cancel() { current?.cancel() }
+    /// Stops the running задание, whether it is waiting on the network or on a human.
+    ///
+    /// The request is cancelled **first**, for `TranslationViewModel.cancel()`'s reason: a
+    /// run suspended inside the review hook has no network call to interrupt, so cancelling
+    /// only the task would leave it on a continuation nobody resumes.
+    func cancel() {
+        pendingTermsRequest?.cancel()
+        current?.cancel()
+    }
+
+    /// Raise the sheet and wait, unless this run has already been told not to ask again.
+    private func askAboutTerms(_ draft: DocumentTermsDraft) async throws -> [GlossaryEntry] {
+        guard !suppressTermsForThisRun else { return draft.documentEntries }
+        let request = DocumentTermsRequest(draft: draft)
+        pendingTermsRequest = request
+        defer { pendingTermsRequest = nil }
+        let answer = try await request.answer()
+        // Read after the answer, not before: the tick and the button are one decision, and
+        // reading it earlier would take a value the user had not finished making.
+        suppressTermsForThisRun = request.suppressForRun
+        return answer
+    }
 
     /// - Returns: whether the queue should stop here.
     private func translate(at index: Int) async -> Bool {
@@ -205,6 +232,17 @@ final class FileQueueModel {
             }
         }
 
+        var review: (@Sendable (DocumentTermsDraft) async throws -> [GlossaryEntry])?
+        if settings.reviewDocumentTerms {
+            // An `if` and not a ternary: a ternary infers a non-`@Sendable` closure, and the
+            // conversion is refused with a «failed to produce diagnostic» rather than a
+            // useful message.
+            review = { [weak self] draft in
+                guard let self else { throw CancellationError() }
+                return try await self.askAboutTerms(draft)
+            }
+        }
+
         let run = Task { [translator, glossary, settings] in
             try await translator.translate(
                 text: job.text, target: target, tone: settings.defaultTone,
@@ -212,7 +250,8 @@ final class FileQueueModel {
                 maxChunkCharacters: settings.chunkSize,
                 ignoredTerms: glossary.mutedSet,
                 onToken: { continuation.yield($0) },
-                onProgress: { progressContinuation.yield($0) })
+                onProgress: { progressContinuation.yield($0) },
+                reviewDocumentTerms: review)
         }
         current = run
 
@@ -249,6 +288,8 @@ final class FileQueueModel {
                     jobs[index].saveProblem = problem
                 }
             }
+            jobs[index].documentTermsUnavailable = settings.reviewDocumentTerms
+                && outcome.documentGlossaryFailure != nil
             jobs[index].result = result
             jobs[index].state = .finished
             if settings.stopOnWarnings, result.hasWarnings {

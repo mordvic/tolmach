@@ -148,7 +148,7 @@ struct TranslatorApp: App {
 
         Window("Толмач", id: TranslatorApp.mainWindowID) {
             MainWindowView(model: translation,
-                           glossary: glossary, status: statusModel.status,
+                           glossary: glossary, settings: settings, status: statusModel.status,
                            // Same shape as the panel's own `onCopy` below: the write
                            // itself is `TranslationViewModel.copyToPasteboard()`, which
                            // shares `GeneralPasteboard.write` with `HotkeyCoordinator`'s,
@@ -157,8 +157,20 @@ struct TranslatorApp: App {
                            onRunFinished: {
                                await statusModel.refresh(interactiveModel: settings.interactiveModel)
                            },
-                           queue: queue, mode: $mode)
+                           queue: queue, panelModel: coordinator.panelModel, mode: $mode)
                 .task { await statusModel.refresh(interactiveModel: settings.interactiveModel) }
+                // The ⌥⌘T path escalates here rather than editing text fields inside a
+                // `.nonactivatingPanel`, whose focus, focus ring, ⌘V-through-the-menu and
+                // Cyrillic input behaviour are unverified — and that path is the rarest of
+                // the three, because the toggle ships off. A window that comes forward to
+                // ask a question is a Mac idiom; a half-working editable table beside the
+                // cursor is not. The panel stays on screen behind it holding whatever it
+                // had: it is not the thing being answered.
+                .onChange(of: coordinator.panelModel.pendingTermsRequest == nil) { _, isNil in
+                    guard !isNil else { return }
+                    openWindow(id: TranslatorApp.mainWindowID)
+                    activateThisApp()
+                }
         }
         // The app had no commands at all, and SwiftUI's defaults for this scene combination
         // are not a menu bar anyone would design. Measured on a copy of these three scenes at

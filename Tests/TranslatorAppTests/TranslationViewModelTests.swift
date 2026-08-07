@@ -13,13 +13,22 @@ final class ScriptedClient: LLMClient, @unchecked Sendable {
     /// distinguishes "refused before the call" from "called and given nothing".
     private(set) var callCount = 0
     let delayPerToken: Duration
-    init(responses: [String], delayPerToken: Duration = .zero) {
+    /// Which call, by zero-based index, should fail instead of answering. Same shape as
+    /// `FakeLLMClient.errors` rather than a third mechanism — the term-list call is call 0,
+    /// which is what the document-terms tests need to break.
+    private let failCallAtIndex: Int?
+    init(responses: [String], delayPerToken: Duration = .zero, failCallAtIndex: Int? = nil) {
         self.responses = responses; self.delayPerToken = delayPerToken
+        self.failCallAtIndex = failCallAtIndex
     }
     func chat(messages: [ChatMessage], options: ChatOptions) -> AsyncThrowingStream<ChatEvent, Error> {
+        let index = callCount
         callCount += 1
         let reply = responses.isEmpty ? "" : responses.removeFirst()
         let delay = delayPerToken
+        if index == failCallAtIndex {
+            return AsyncThrowingStream { $0.finish(throwing: ScriptedFailure()) }
+        }
         return AsyncThrowingStream { continuation in
             Task {
                 for piece in reply.map(String.init) {
@@ -34,6 +43,8 @@ final class ScriptedClient: LLMClient, @unchecked Sendable {
         }
     }
 }
+
+struct ScriptedFailure: Error {}
 
 private final class ThrowingClient: LLMClient, @unchecked Sendable {
     private let error: any Error
@@ -517,4 +528,112 @@ private func makeModel(_ client: LLMClient, pasteboard: NSPasteboard? = nil) -> 
     model.translatedText = "Привет."
     await model.copyToPasteboard()
     #expect(board.string(forType: .string) == "Привет.")
+}
+
+// MARK: - The document-terms gate
+
+/// Long enough for `Chunker` to split at the default size, so a документный глоссарий is
+/// actually built and there is something to review.
+private let longEnoughForTwoParts = String(
+    repeating: "The resource is published by the server and the resource is validated. ", count: 20)
+
+@MainActor private func gateModel(_ client: LLMClient, _ prefix: String,
+                                  review: Bool) -> TranslationViewModel {
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: prefix))
+    settings.reviewDocumentTerms = review
+    return TranslationViewModel(
+        translator: Translator(client: client), settings: settings,
+        glossary: GlossaryStore(url: FileManager.default.temporaryDirectory
+            .appendingPathComponent("glossary-\(UUID().uuidString).json")),
+        pasteboard: NSPasteboard(name: .init("gate-\(prefix)")))
+}
+
+@MainActor @Test func theTermsGateIsSkippedEntirelyWhenTheSettingIsOff() async {
+    let model = gateModel(ScriptedClient(responses: ["resource => ресурс", "перевод", "перевод"]),
+                          "gate-off", review: false)
+    model.sourceText = longEnoughForTwoParts
+
+    await model.translate()
+
+    #expect(model.pendingTermsRequest == nil)
+    #expect(model.state == .finished)
+    #expect(!model.documentTermsUnavailable)
+}
+
+@MainActor @Test func theGateOpensWhenAskedForAndItsEditsSurvive() async {
+    let model = gateModel(ScriptedClient(responses: ["resource => ресурс", "перевод", "перевод"]),
+                          "gate-on", review: true)
+    model.sourceText = longEnoughForTwoParts
+
+    let run = Task { await model.translate() }
+    while model.pendingTermsRequest == nil { await Task.yield() }
+    model.pendingTermsRequest?.entries = [GlossaryEntry(term: "resource", translations: ["ru": "объект"])]
+    model.pendingTermsRequest?.proceed()
+    await run.value
+
+    #expect(model.state == .finished)
+    #expect(model.outcome?.documentGlossary.first?.translations["ru"] == "объект")
+    // The sheet goes away with the run that raised it.
+    #expect(model.pendingTermsRequest == nil)
+}
+
+@MainActor @Test func cancellingTheSheetLeavesTheRunInterruptedAndNotWedged() async {
+    let model = gateModel(ScriptedClient(responses: ["resource => ресурс", "перевод", "перевод"]),
+                          "gate-cancel", review: true)
+    model.sourceText = longEnoughForTwoParts
+
+    let run = Task { await model.translate() }
+    while model.pendingTermsRequest == nil { await Task.yield() }
+    model.pendingTermsRequest?.cancel()
+    await run.value
+
+    #expect(model.state == .interrupted)
+    // The sheet must go away with the run that raised it, or the window keeps a modal over
+    // a translation that is already over.
+    #expect(model.pendingTermsRequest == nil)
+}
+
+@MainActor @Test func cancelReachesARunThatIsWaitingOnAHumanAndNotOnTheNetwork() async {
+    // ⌘. while the sheet is open. Without `cancel()` reaching the request, the run would
+    // sit on a continuation nobody resumes — forever, and invisibly.
+    let model = gateModel(ScriptedClient(responses: ["resource => ресурс", "перевод", "перевод"]),
+                          "gate-cmd-period", review: true)
+    model.sourceText = longEnoughForTwoParts
+
+    let run = Task { await model.translate() }
+    while model.pendingTermsRequest == nil { await Task.yield() }
+    model.cancel()
+    await run.value
+
+    #expect(model.state == .interrupted)
+}
+
+@MainActor @Test func aFailedTermListStopsBeingSilentOnceTheUserAskedForTheGate() async {
+    let model = gateModel(ScriptedClient(responses: ["", "перевод", "перевод"], failCallAtIndex: 0),
+                          "gate-term-failure", review: true)
+    model.sourceText = longEnoughForTwoParts
+
+    await model.translate()
+
+    // The user waited for a gate that never opened; staying quiet about it would let the
+    // run's terminology differ from what they were promised, invisibly.
+    #expect(model.documentTermsUnavailable)
+    #expect(model.state == .finished)
+}
+
+@MainActor @Test func theUnavailableNoticeIsResetByTheNextRun() async {
+    let model = gateModel(ScriptedClient(responses: ["", "перевод", "перевод",
+                                                     "resource => ресурс", "перевод", "перевод"],
+                                         failCallAtIndex: 0),
+                          "gate-notice-reset", review: true)
+    model.sourceText = longEnoughForTwoParts
+    await model.translate()
+    #expect(model.documentTermsUnavailable)
+
+    let run = Task { await model.translate() }
+    while model.pendingTermsRequest == nil { await Task.yield() }
+    model.pendingTermsRequest?.proceed()
+    await run.value
+
+    #expect(!model.documentTermsUnavailable)
 }

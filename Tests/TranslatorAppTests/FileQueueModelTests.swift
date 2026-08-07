@@ -16,12 +16,19 @@ final class QueueClient: LLMClient, @unchecked Sendable {
     /// nothing about cancellation at all.
     private let paced: Bool
 
-    init(replies: [String], paced: Bool = false) { self.replies = replies; self.paced = paced }
+    /// Which call, by zero-based index, fails instead of answering. The term-list call is
+    /// call 0 for a multi-часть file, which is what the gate's failure test needs to break.
+    private let failCallAtIndex: Int?
+
+    init(replies: [String], paced: Bool = false, failCallAtIndex: Int? = nil) {
+        self.replies = replies; self.paced = paced; self.failCallAtIndex = failCallAtIndex
+    }
 
     var callCount: Int { lock.lock(); defer { lock.unlock() }; return _callCount }
 
     func chat(messages: [ChatMessage], options: ChatOptions) -> AsyncThrowingStream<ChatEvent, Error> {
         lock.lock()
+        let index = _callCount
         _callCount += 1
         // Deliberately does **not** run out: a queue that re-scanned its work list would
         // loop forever here, and a fixture that exhausted itself would turn that hang
@@ -29,6 +36,9 @@ final class QueueClient: LLMClient, @unchecked Sendable {
         let reply = replies.isEmpty ? "перевод" : replies.removeFirst()
         lock.unlock()
         let paced = self.paced
+        if index == failCallAtIndex {
+            return AsyncThrowingStream { $0.finish(throwing: ScriptedFailure()) }
+        }
         return AsyncThrowingStream { continuation in
             let producer = Task {
                 if paced { try? await Task.sleep(for: .milliseconds(20)) }
@@ -426,4 +436,102 @@ private func makeTextModel(_ prefix: String) -> TranslationViewModel {
     await model.run()
 
     #expect(model.statusLine == "Очередь остановлена на предупреждениях — нажмите «Перевести», чтобы продолжить")
+}
+
+// MARK: - The document-terms gate
+
+/// Long enough for `Chunker` to split at the default size, so a документный глоссарий is
+/// actually built and there is something to review.
+private let longEnoughForTwoParts = String(
+    repeating: "The resource is published by the server and the resource is validated. ", count: 20)
+
+/// Waits for the sheet, with a ceiling.
+///
+/// An unbounded `while model.pendingTermsRequest == nil { await Task.yield() }` turns «the
+/// sheet never appeared» into a hung suite instead of a failed test — which is exactly what
+/// happened when this file's fixtures were first written, and is the same rule
+/// `aFileThatFailsIsNotRetriedWithinTheSameRun` exists to keep.
+@MainActor
+private func waitForSheet(_ model: FileQueueModel,
+                          _ comment: Comment = "the terms sheet never appeared") async -> DocumentTermsRequest? {
+    for _ in 0..<400 {
+        if let request = model.pendingTermsRequest { return request }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
+    Issue.record(comment)
+    return nil
+}
+
+@MainActor @Test func aQueueAsksOnceWhenTheUserSaysNotToAskAgain() async {
+    // Thirteen files would otherwise mean thirteen sheets, in exactly the scenario the gate
+    // was designed for.
+    // Each file is one term-list call plus its части, so the second file's term list is
+    // call 3. It is a parseable list too — with the default reply the gate would have
+    // nothing to open on and the wait below would fail rather than the assertion.
+    let client = QueueClient(replies: ["resource => ресурс", "первый", "первый-2",
+                                       "resource => ресурс", "второй", "второй-2"])
+    let model = makeQueueModel(client, prefix: "queue-gate-once") { $0.reviewDocumentTerms = true }
+    model.add([queueJob("a.md", longEnoughForTwoParts), queueJob("b.md", longEnoughForTwoParts)])
+
+    let run = Task { await model.run() }
+    let sheet = await waitForSheet(model)
+    sheet?.suppressForRun = true
+    sheet?.proceed()
+    await run.value
+
+    #expect(model.jobs.allSatisfy { $0.state == .finished })
+    #expect(model.pendingTermsRequest == nil)
+}
+
+@MainActor @Test func theSuppressionIsForgottenWhenTheNextRunStarts() async {
+    // A statement about this sitting, not a preference.
+    let client = QueueClient(replies: ["resource => ресурс", "первый", "первый-2",
+                                       "resource => ресурс", "второй", "второй-2"])
+    let model = makeQueueModel(client, prefix: "queue-gate-forget") { $0.reviewDocumentTerms = true }
+    model.add([queueJob("a.md", longEnoughForTwoParts)])
+
+    let first = Task { await model.run() }
+    let sheet = await waitForSheet(model)
+    sheet?.suppressForRun = true
+    sheet?.proceed()
+    await first.value
+
+    model.add([queueJob("b.md", longEnoughForTwoParts)])
+    let second = Task { await model.run() }
+    // It asks again: the suppression was about that sitting, not a preference.
+    let again = await waitForSheet(model, "the gate did not come back for the next run")
+    again?.proceed()
+    await second.value
+
+    #expect(model.jobs.allSatisfy { $0.state == .finished })
+}
+
+@MainActor @Test func cancellingTheQueueReachesASheetItIsWaitingOn() async {
+    let client = QueueClient(replies: ["resource => ресурс", "первый", "первый-2"])
+    let model = makeQueueModel(client, prefix: "queue-gate-cancel") { $0.reviewDocumentTerms = true }
+    model.add([queueJob("a.md", longEnoughForTwoParts)])
+
+    let run = Task { await model.run() }
+    _ = await waitForSheet(model)
+    model.cancel()
+    await run.value
+
+    #expect(model.jobs[0].state == .interrupted)
+    #expect(model.pendingTermsRequest == nil)
+}
+
+@MainActor @Test func theQueueSaysWhenTheTermsItPromisedCouldNotBePrepared() async {
+    // §6.6, the queue's half. The flag is per задание and not per queue: thirteen files can
+    // hit the failure on three of them, and one flag on the model would report the last
+    // file's luck for all of them.
+    let client = QueueClient(replies: ["", "перевод"], failCallAtIndex: 0)
+    let model = makeQueueModel(client, prefix: "queue-gate-unavailable") {
+        $0.reviewDocumentTerms = true
+    }
+    model.add([queueJob("a.md", longEnoughForTwoParts)])
+
+    await model.run()
+
+    #expect(model.jobs[0].state == .finished)
+    #expect(model.jobs[0].documentTermsUnavailable)
 }

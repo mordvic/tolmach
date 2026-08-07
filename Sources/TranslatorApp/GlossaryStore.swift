@@ -131,4 +131,15 @@ final class GlossaryStore {
 
     var glossary: Glossary { Glossary(entries: file.entries) }
     var mutedSet: Set<String> { Set(file.mutedTerms) }
+
+    /// Replace the whole entry list.
+    ///
+    /// Whole rather than «append these», because the decision about what survives a
+    /// collision belongs to `GlossaryPromotion` — it is the same precedence
+    /// `GlossaryMerge` applies during a run — and a second merge rule living here would be
+    /// a second answer to one question. This store's job is the file, not the policy.
+    ///
+    /// Does not save. `save()` is gated on a successful `load()` and on the file stamp, and
+    /// the caller is what has something to tell the user when it refuses.
+    func replaceEntries(_ entries: [GlossaryEntry]) { file.entries = entries }
 }

@@ -50,6 +50,10 @@ struct MainWindowView: View {
     /// Plain `let`, not `@Bindable`: nothing here binds to the store, it is only read
     /// (`lastProblem`) and messaged (`mute`/`save`). Observation still tracks the reads.
     let glossary: GlossaryStore
+    /// Read for the terms sheet's target language and for nothing else. The window's own
+    /// run resolves its target inside `TranslationViewModel`; the sheet opens mid-run, when
+    /// `resolvedTarget` is still nil.
+    let settings: AppSettings
     /// The value, not the `OllamaStatusModel`. The window only reads the status; the app
     /// owns the model and the refresh schedule.
     let status: OllamaStatus
@@ -69,6 +73,9 @@ struct MainWindowView: View {
     let onRunFinished: () async -> Void
     /// The third model, owned by `TranslatorApp` beside the window's and the panel's.
     let queue: FileQueueModel
+    /// The ⌥⌘T panel's model. Read for one thing only: its terms sheet, which is presented
+    /// here rather than in the panel — see `TranslatorApp`'s escalation.
+    var panelModel: TranslationViewModel?
 
     /// Which half the left pane is showing.
     ///
@@ -132,6 +139,17 @@ struct MainWindowView: View {
         }
         .frame(minWidth: 700, minHeight: 480)
         .toolbar { toolbar }
+        // One sheet, three raisers: the window's own run, the queue's, and — through
+        // `TranslatorApp` — the ⌥⌘T panel, which escalates here rather than editing text
+        // fields inside a `.nonactivatingPanel`. Whichever model is asking, the surface is
+        // this one; a second sheet is how two paths come to ask the same question
+        // differently.
+        .sheet(item: Binding(get: { termsRequest }, set: { if $0 == nil { termsRequest?.cancel() } })) { request in
+            DocumentTermsView(request: request,
+                              target: termsTarget,
+                              showsSuppress: queue.pendingTermsRequest === request,
+                              onAddToGlossary: { promoteToGlossary(request) })
+        }
         .onChange(of: model.state) { _, new in
             // Same condition `PanelHost` uses for the hotkey path: a state that is no longer
             // `.running` is the point this window may have something new to say about whether
@@ -187,7 +205,23 @@ struct MainWindowView: View {
         }
     }
 
-    /// «Добавить…» — the other way into the queue.
+    /// Whichever model is currently asking. The window's own run wins a tie only because
+    /// one cannot be started while the other is going — the mode switch is locked during a
+    /// queue run, and `PrimaryAction` drives one model at a time.
+    private var termsRequest: DocumentTermsRequest? {
+        model.pendingTermsRequest ?? queue.pendingTermsRequest ?? panelModel?.pendingTermsRequest
+    }
+
+    /// The language the sheet's «перевод» column is keyed by.
+    ///
+    /// `resolvedTarget` is nil until a run finishes, and the sheet opens mid-run, so it
+    /// cannot be used. The rule is the one the run itself applied: the override if there is
+    /// one, the settings rule otherwise.
+    private var termsTarget: Language {
+        model.targetOverride ?? settings.targetLanguage(forDetected: model.outcome?.detectedSource)
+    }
+
+    /// «Добавить в пользовательский глоссарий».
     ///
     /// The panel's result goes through `QueueDrop.accept` exactly as a drop does, so the
     /// two doors into the queue cannot come to accept different things: one rule, one
@@ -203,6 +237,30 @@ struct MainWindowView: View {
         panel.message = "Выберите текстовые файлы для перевода"
         guard panel.runModal() == .OK, let items = QueueDrop.accept(panel.urls) else { return }
         Task { await queue.add(dropped: items) }
+    }
+
+    /// «Добавить в пользовательский глоссарий» — promote the reviewed terms.
+    ///
+    /// Saving fails in the same three ways `mute(_:)` handles, and reuses its sentences
+    /// verbatim rather than writing new ones: two spellings of one failure is how they
+    /// drift. Only the subject of the first clause differs.
+    private func promoteToGlossary(_ request: DocumentTermsRequest) {
+        glossary.replaceEntries(GlossaryPromotion.entries(adding: request.entries,
+                                                          to: glossary.glossary))
+        do {
+            try glossary.save()
+            glossary.lastProblem = nil
+        } catch GlossaryStoreError.saveBeforeLoad {
+            glossary.lastProblem = "Глоссарий не был прочитан, поэтому новые термины не сохранены. "
+                + "Они действуют только до перезапуска."
+        } catch GlossaryStoreError.fileChangedOnDisk {
+            glossary.lastProblem = "Файл глоссария изменился на диске после запуска приложения, "
+                + "поэтому новые термины не сохранены — иначе ваши правки были бы затёрты. "
+                + "Они действуют только до перезапуска; перезапустите приложение, чтобы прочитать новую версию."
+        } catch {
+            glossary.lastProblem = "Не удалось сохранить глоссарий, новые термины действуют только "
+                + "до перезапуска: \(error.localizedDescription)"
+        }
     }
 
     /// Muting is two steps and only the first is guaranteed. `mute` updates the in-memory

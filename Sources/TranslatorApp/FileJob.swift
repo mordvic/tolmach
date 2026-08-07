@@ -26,6 +26,12 @@ struct FileJob: Identifiable {
     /// the задание finished, and saying it failed would be a lie about the translation,
     /// which is in memory and copyable.
     var saveProblem: String?
+    /// The user asked for the terms gate and it could not be prepared for this file.
+    ///
+    /// Per задание and **not** per queue: thirteen files can hit the failure on three of
+    /// them, and one flag on `FileQueueModel` would report the last file's luck for all of
+    /// them.
+    var documentTermsUnavailable = false
 
     enum State: Equatable {
         case queued

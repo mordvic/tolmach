@@ -55,6 +55,18 @@ final class TranslationViewModel {
     var sourceOverride: Language?
     var targetOverride: Language?
     var toneOverride: Tone?
+    /// The «Термины документа» sheet this run is waiting on, or nil.
+    ///
+    /// Cleared in the same `defer` that ends the wait, so a cancelled or failed run cannot
+    /// leave a modal over a window that has already finished.
+    private(set) var pendingTermsRequest: DocumentTermsRequest?
+    /// The user asked for the gate and it could not be prepared.
+    ///
+    /// The engine keeps swallowing a failed term-list call — that is right when nobody
+    /// asked — but it is wrong to stay quiet when the user is waiting for a gate that will
+    /// never open: the run's terminology then differs from what they were promised with
+    /// nothing on screen to say so.
+    private(set) var documentTermsUnavailable = false
 
     init(translator: Translator, settings: AppSettings, glossary: GlossaryStore,
          pasteboard: NSPasteboard = .general) {
@@ -200,6 +212,9 @@ final class TranslationViewModel {
                                   keepAlive: settings.keepAlive)
 
         state = .running
+        // Reset beside the other per-run state: a notice that outlived its run would say
+        // this translation went without its terms when the previous one did.
+        documentTermsUnavailable = false
 
         // Reset before the consumer exists, not after. Today the ordering could not
         // actually be observed the other way round — `translate()` is @MainActor and
@@ -264,13 +279,28 @@ final class TranslationViewModel {
         // Hold the translating task itself, not a wrapper around it. Cancelling a wrapper
         // would leave the inner unstructured task running — `Task {}` does not inherit
         // cancellation from the task that created it.
+        // Only when asked for. A nil hook is byte-for-byte the behaviour that shipped,
+        // which is what the engine's pinning test guarantees.
+        //
+        // Built with an `if` and not a ternary: a ternary infers a non-`@Sendable` closure,
+        // and converting one to this parameter's `@Sendable` type is refused — with a
+        // «failed to produce diagnostic» from the compiler rather than a useful message.
+        var review: (@Sendable (DocumentTermsDraft) async throws -> [GlossaryEntry])?
+        if settings.reviewDocumentTerms {
+            review = { [weak self] draft in
+                guard let self else { throw CancellationError() }
+                return try await self.askAboutTerms(draft)
+            }
+        }
+
         let run = Task { [translator, glossary, settings] in
             try await translator.translate(
                 text: text, target: target, tone: tone,
                 userGlossary: glossary.glossary, options: options,
                 maxChunkCharacters: settings.chunkSize,
                 ignoredTerms: glossary.mutedSet,
-                onToken: { continuation.yield($0) })
+                onToken: { continuation.yield($0) },
+                reviewDocumentTerms: review)
         }
         task = run
 
@@ -293,6 +323,11 @@ final class TranslationViewModel {
             // observably wrong today, only because no `await` sits between there and
             // `state = .running`; that is a fact about this function's body, not an
             // invariant. Assigned together, the pair cannot come apart.
+            // The gate was asked for and could not be prepared. Recorded here rather than
+            // logged, unlike the swallowed failure itself: the user is waiting for
+            // something that will never appear.
+            documentTermsUnavailable = settings.reviewDocumentTerms
+                && result.documentGlossaryFailure != nil
             resolvedTarget = target
             outcome = result
             translatedText = result.final
@@ -327,7 +362,28 @@ final class TranslationViewModel {
         }
     }
 
-    func cancel() { task?.cancel() }
+    /// Stops the run, whether it is waiting on the network or on a human.
+    ///
+    /// The request is cancelled **first**. A run suspended inside the review hook has no
+    /// network call to interrupt, so `task?.cancel()` alone would leave it sitting on a
+    /// continuation nobody resumes — forever, and invisibly, which is the whole reason
+    /// `DocumentTermsRequest` exists.
+    func cancel() {
+        pendingTermsRequest?.cancel()
+        task?.cancel()
+    }
+
+    /// Raise the sheet and wait for an answer.
+    ///
+    /// The `defer` is about the *sheet*, not the continuation: `DocumentTermsRequest`
+    /// guarantees exactly one resume whichever way this ends, and clearing the property
+    /// here is what stops a cancelled run leaving a modal on screen.
+    private func askAboutTerms(_ draft: DocumentTermsDraft) async throws -> [GlossaryEntry] {
+        let request = DocumentTermsRequest(draft: draft)
+        pendingTermsRequest = request
+        defer { pendingTermsRequest = nil }
+        return try await request.answer()
+    }
 
     static func message(for error: Error) -> String {
         if let ollama = error as? OllamaErrorBridge { return ollama.russianMessage }

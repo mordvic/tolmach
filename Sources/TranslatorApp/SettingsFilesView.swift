@@ -48,12 +48,14 @@ struct SettingsFilesView: View {
 
             Section("Термины документа") {
                 Toggle("Показывать перед переводом", isOn: $settings.reviewDocumentTerms)
-                    // Disabled until the review gate lands. A switch that does nothing is
-                    // worse than one that says it is not ready yet: the first is a bug the
-                    // user reports, the second is a promise.
-                    .disabled(true)
-                Text("Список терминов из файла можно будет поправить до перевода. "
-                     + "Пока не работает — появится вместе с окном «Термины документа».")
+                Text("Список терминов можно поправить до перевода — они переводятся один раз "
+                     + "и остаются одинаковыми во всех частях.")
+                    .font(.caption).foregroundStyle(.secondary)
+                // Not decoration: this is the only warning a user gets that ⌥⌘T may raise a
+                // window, which is exactly the surprise the toggle ships off to avoid.
+                Text("Работает везде, где перевод длиннее одной части, — и в окне, и по "
+                     + "сочетанию клавиш. Для выделения по клавише главное окно выйдет "
+                     + "на передний план.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
