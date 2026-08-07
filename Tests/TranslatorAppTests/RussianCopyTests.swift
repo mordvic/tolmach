@@ -250,3 +250,54 @@ func pullStatusesAreShownInRussian(raw: String, expected: String) {
     #expect(RussianCopy.modelSize(5_100_273_664) == "4,8 ГБ")
     #expect(RussianCopy.modelSize(0) == "0,0 ГБ")
 }
+
+@Test func theRunningRowNamesThePartInProgressAndNotTheOnesDone() {
+    // «часть 4 из 7» while the fourth is being translated, so the row and the bar agree
+    // about which part the user is waiting for. partsDone is 3 at that moment.
+    #expect(RussianCopy.partProgress(done: 3, total: 7) == "Перевожу часть 4 из 7")
+    #expect(RussianCopy.partProgress(done: 0, total: 7) == "Перевожу часть 1 из 7")
+}
+
+@Test func thereIsNoPartLineOnceEveryPartIsDone() {
+    // The engine's last report arrives with partsDone == partsTotal, a moment before the
+    // задание becomes .finished. Clamping it to «часть 7 из 7» would put a sentence about
+    // work in progress under a file that has none left; nil lets the row show nothing.
+    #expect(RussianCopy.partProgress(done: 7, total: 7) == nil)
+    #expect(RussianCopy.partProgress(done: 1, total: 1) == nil)
+}
+
+@Test func theDocumentTermCountTakesTheRightRussianPlural() {
+    #expect(RussianCopy.documentTermCount(1) == "1 термин документа")
+    #expect(RussianCopy.documentTermCount(2) == "2 термина документа")
+    #expect(RussianCopy.documentTermCount(12) == "12 терминов документа")
+    #expect(RussianCopy.documentTermCount(21) == "21 термин документа")
+}
+
+@Test func aQueuedFileSaysHowManyPartsItWillTake() {
+    #expect(RussianCopy.queuedFile(parts: 4) == "в очереди · 4 части")
+    #expect(RussianCopy.queuedFile(parts: 1) == "в очереди · 1 часть")
+}
+
+@Test func aFinishedFileGroupsItsMillisecondsTheRussianWay() {
+    // Same ru_RU formatting modelSize is pinned to, so the two do not disagree about what
+    // a number looks like in this app. ru_RU groups with U+00A0, not a plain space.
+    #expect(RussianCopy.finishedIn(milliseconds: 3140) == "готово за 3\u{00A0}140 мс")
+    #expect(RussianCopy.finishedIn(milliseconds: 812) == "готово за 812 мс")
+}
+
+@Test func theStatusLineCountsFilesAndPartsTogether() {
+    #expect(RussianCopy.queuePosition(fileIndex: 1, fileTotal: 3, partsDone: 9, partsTotal: 13)
+            == "Перевожу 2-й файл из 3 — 9 частей из 13")
+}
+
+@Test func ordinalsAreMasculineToAgreeWithFile() {
+    #expect(RussianCopy.ordinal(1) == "1-й")
+    #expect(RussianCopy.ordinal(2) == "2-й")
+    #expect(RussianCopy.ordinal(11) == "11-й")
+}
+
+@Test func theWarningCountTakesTheRightRussianPlural() {
+    #expect(RussianCopy.warningCount(1) == "1 предупреждение")
+    #expect(RussianCopy.warningCount(2) == "2 предупреждения")
+    #expect(RussianCopy.warningCount(5) == "5 предупреждений")
+}

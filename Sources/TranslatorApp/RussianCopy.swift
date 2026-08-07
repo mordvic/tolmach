@@ -103,6 +103,68 @@ enum RussianCopy {
         "\(count) " + plural(count, "символ", "символа", "символов")
     }
 
+    /// "Перевожу часть 4 из 7" — the running queue row — or nil when there is no next
+    /// часть to name.
+    ///
+    /// Takes `done` and names `done + 1`, because the row is about the часть the user is
+    /// *waiting for*, not the ones behind it, and the progress bar beside it is filled
+    /// from the same `done`.
+    ///
+    /// Optional rather than clamped. The engine's final report arrives with
+    /// `done == total`, a moment before the задание becomes `.finished`; clamping it
+    /// would render «часть 7 из 7» — a sentence claiming work in progress under a file
+    /// that has none left. Nil lets the row simply stop saying anything.
+    static func partProgress(done: Int, total: Int) -> String? {
+        guard done < total else { return nil }
+        return "Перевожу часть \(done + 1) из \(total)"
+    }
+
+    /// "12 терминов документа" — what a run is holding constant across its части.
+    static func documentTermCount(_ count: Int) -> String {
+        "\(count) \(plural(count, "термин", "термина", "терминов")) документа"
+    }
+
+    /// "в очереди · 4 части" — a задание that has not started.
+    static func queuedFile(parts: Int) -> String {
+        "в очереди · \(chunkCount(parts))"
+    }
+
+    /// "готово за 3 140 мс".
+    ///
+    /// Formatted the way `modelSize` does it — `.formatted(.number.locale(…))` against a
+    /// pinned `ru_RU` — and deliberately not through a `NumberFormatter` of its own. Two
+    /// mechanisms for one convention is how two numbers side by side in this app come to
+    /// be spelled two ways, which is the whole reason these functions share a file. The
+    /// locale is pinned rather than taken from the system for `modelSize`'s reason: the
+    /// app is Russian whatever the machine is set to.
+    static func finishedIn(milliseconds: Int) -> String {
+        "готово за \(milliseconds.formatted(.number.locale(Locale(identifier: "ru_RU")))) мс"
+    }
+
+    /// "Перевожу 2-й файл из 3 — 9 частей из 13" — the status bar in «Файлы».
+    ///
+    /// `fileIndex` is zero-based, matching the array it comes from; the sentence is
+    /// one-based, which is why the conversion happens here rather than at the call site
+    /// where it would be repeated and eventually be off by one in one of them.
+    static func queuePosition(fileIndex: Int, fileTotal: Int,
+                              partsDone: Int, partsTotal: Int) -> String {
+        "Перевожу \(ordinal(fileIndex + 1)) файл из \(fileTotal) — "
+            + "\(partsDone) \(plural(partsDone, "часть", "части", "частей")) из \(partsTotal)"
+    }
+
+    /// "2-й" — masculine, to agree with «файл».
+    ///
+    /// Russian ordinals take one of two written endings after the hyphen depending on the
+    /// last letter of the spelled-out form; for the masculine nominative every one of them
+    /// is «-й» («первый», «второй», «одиннадцатый»), so this is a suffix and not a table.
+    /// Feminine or neuter would need one, and would need its own function.
+    static func ordinal(_ number: Int) -> String { "\(number)-й" }
+
+    /// "4 предупреждения" — the count on a finished задание.
+    static func warningCount(_ count: Int) -> String {
+        "\(count) \(plural(count, "предупреждение", "предупреждения", "предупреждений"))"
+    }
+
     /// Keyed by the same model-name prefixes as `ModelPolicy.blacklist`, because the engine
     /// matches by prefix so that every tag of a bad model is covered.
     ///
