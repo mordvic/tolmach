@@ -80,9 +80,10 @@ private let hostileDocuments: [String] = [
     // One paragraph far over any budget: split by sentences, reassembled exactly.
     String(repeating: "The server validates the resource before publishing it to every client. ",
            count: 12),
-    // U+2028 LINE SEPARATOR: in-line whitespace to `Chunker.scanLines`, a sentence
-    // boundary to NLTokenizer. A run of them between two sentences made the sentence
-    // splitter emit a whitespace-only group, which tripped the packing precondition.
+    // U+2028 LINE SEPARATOR: a line terminator to `LineScanner.scanLines` now, but
+    // when it was still in-line whitespace a run of them between two sentences made
+    // the sentence splitter emit a whitespace-only group, which tripped the packing
+    // precondition. Kept so the invariant stays pinned under either reading.
     "One sentence here. \u{2028}\u{2028}\u{2028} Two sentence here.",
     // The same class with one separator: a cut lands at the sentence range's own
     // lowerBound, so the piece used to BEGIN with the space after the U+2028 —

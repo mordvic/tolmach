@@ -247,7 +247,7 @@ import Testing
     // became two line breaks with an empty line between them — a paragraph break
     // the document does not contain. A perfectly faithful LF translation of a CRLF
     // source was then reported as having lost one. The skeleton now scans lines
-    // through `Chunker.scanLines`, the same discipline the chunker itself uses.
+    // through `LineScanner.scanLines`, the same discipline the chunker itself uses.
     let source = "First paragraph.\r\n\r\nSecond paragraph."
     let translation = "Первый абзац.\n\nВторой абзац."
     #expect(MarkupSkeleton.diff(source: source, translation: translation).isEmpty)
