@@ -27,6 +27,10 @@ final class FileQueueModel {
     /// have pointed at a file that does not exist. Only the writer knows where the bytes
     /// went.
     private let save: (FileJob, String) -> SaveOutcome
+    /// Writing to a destination the user chose. Separate from `save` because the two differ
+    /// on collisions: that one must never overwrite, this one must — the save panel has
+    /// already asked.
+    private let saveAs: (String, URL) -> SaveOutcome
 
     private var current: Task<TranslationOutcome, Error>?
 
@@ -49,11 +53,63 @@ final class FileQueueModel {
     private var suppressTermsForThisRun = false
 
     init(translator: Translator, settings: AppSettings, glossary: GlossaryStore,
-         save: @escaping (FileJob, String) -> SaveOutcome) {
+         save: @escaping (FileJob, String) -> SaveOutcome,
+         saveAs: @escaping (String, URL) -> SaveOutcome) {
         self.translator = translator
         self.settings = settings
         self.glossary = glossary
         self.save = save
+        self.saveAs = saveAs
+    }
+
+    /// Whether this задание still has a translation that is not on disk anywhere.
+    ///
+    /// True after a run with «Рядом с исходником» off — nothing was written — and after a
+    /// write that was refused, because a refusal is precisely what «Сохранить как…» exists
+    /// to get past, and retrying beside the source is legitimate once access is granted.
+    ///
+    /// A rule on the model rather than a condition restated in the row, for
+    /// `canSwapLanguages`' reason: the buttons have to answer before they are pressed.
+    func needsSaving(_ job: FileJob) -> Bool {
+        job.state == .finished && job.result != nil && job.result?.savedTo == nil
+    }
+
+    /// The name the automatic save would have used, for the save panel's default.
+    func suggestedName(for id: FileJob.ID) -> String {
+        guard let job = jobs.first(where: { $0.id == id }) else { return "" }
+        return OutputNaming.destination(for: job.url, target: target(for: job),
+                                        exists: { _ in false }).lastPathComponent
+    }
+
+    /// «Сохранить рядом с исходником» on a finished row.
+    func saveBesideSource(_ id: FileJob.ID) {
+        guard let index = jobs.firstIndex(where: { $0.id == id }),
+              let text = jobs[index].result?.final else { return }
+        apply(save(jobs[index], text), to: index)
+    }
+
+    /// «Сохранить как…», once the user has picked a destination.
+    func save(_ id: FileJob.ID, to url: URL) {
+        guard let index = jobs.firstIndex(where: { $0.id == id }),
+              let text = jobs[index].result?.final else { return }
+        apply(saveAs(text, url), to: index)
+    }
+
+    private func apply(_ outcome: SaveOutcome, to index: Int) {
+        switch outcome {
+        case .saved(let url):
+            jobs[index].result?.savedTo = url
+            // The problem goes with the failure it described: the file is saved now, and a
+            // stale sentence under a saved row is worse than none.
+            jobs[index].saveProblem = nil
+        case .refused(let problem):
+            jobs[index].saveProblem = problem
+        }
+    }
+
+    /// The language a задание is translated into, by the same rule the run applies.
+    private func target(for job: FileJob) -> Language {
+        settings.targetLanguage(forDetected: LanguageDetector.detect(job.text))
     }
 
     func add(_ new: [FileJob]) {
@@ -208,8 +264,7 @@ final class FileQueueModel {
                                                          partsTotal: job.partsTotal,
                                                          documentTermCount: 0))
 
-        let detected = LanguageDetector.detect(job.text)
-        let target = settings.targetLanguage(forDetected: detected)
+        let target = target(for: job)
         let options = ChatOptions(model: settings.resolvedBatchModel,
                                   temperature: settings.temperature,
                                   keepAlive: settings.keepAlive)

@@ -73,7 +73,8 @@ func makeQueueModel(_ client: LLMClient,
                           glossary: scratchGlossary(),
                           // Saving is TranslatedFileWriter's; here it always succeeds and
                           // reports where, so these tests never touch a filesystem.
-                          save: { job, _ in .saved(job.url.appendingPathExtension("ru")) })
+                          save: { job, _ in .saved(job.url.appendingPathExtension("ru")) },
+                          saveAs: { _, url in .saved(url) })
 }
 
 func queueJob(_ name: String, _ text: String) -> FileJob {
@@ -227,7 +228,8 @@ private func waitUntilRunning(_ model: FileQueueModel, _ index: Int,
     let settings = AppSettings(defaults: InMemoryDefaults(prefix: "queue-save-problem"))
     let model = FileQueueModel(translator: Translator(client: QueueClient(replies: ["перевод"])),
                                settings: settings, glossary: scratchGlossary(),
-                               save: { _, _ in .refused("Не удалось сохранить перевод.") })
+                               save: { _, _ in .refused("Не удалось сохранить перевод.") },
+                               saveAs: { _, url in .saved(url) })
     model.add([queueJob("a.md", "first")])
 
     await model.run()
@@ -555,4 +557,93 @@ private func waitForSheet(_ model: FileQueueModel,
 
     #expect(model.jobs[0].state == .finished)
     #expect(model.jobs[0].documentTermsUnavailable)
+}
+
+// MARK: - Saving on demand
+
+@MainActor
+private func savingModel(_ prefix: String,
+                         besideSource: @escaping (FileJob, String) -> SaveOutcome,
+                         configure: (AppSettings) -> Void = { _ in }) -> FileQueueModel {
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: prefix))
+    configure(settings)
+    return FileQueueModel(translator: Translator(client: QueueClient(replies: ["перевод"])),
+                          settings: settings, glossary: scratchGlossary(),
+                          save: besideSource,
+                          saveAs: { _, url in .saved(url) })
+}
+
+@MainActor @Test func aFinishedFileThatWasNotSavedIsOfferedForSaving() async {
+    // With «Рядом с исходником» off, nothing is written automatically — so every finished
+    // задание has to offer it, or the queue produces translations that can only be copied.
+    let model = savingModel("save-on-demand", besideSource: { job, _ in
+        .saved(job.url.appendingPathExtension("ru"))
+    }) { $0.saveNextToSource = false }
+    model.add([queueJob("a.md", "first")])
+    await model.run()
+
+    #expect(model.jobs[0].result?.savedTo == nil)
+    #expect(model.needsSaving(model.jobs[0]))
+
+    model.saveBesideSource(model.jobs[0].id)
+
+    #expect(model.jobs[0].result?.savedTo?.lastPathComponent == "a.md.ru")
+    #expect(!model.needsSaving(model.jobs[0]))
+    #expect(model.jobs[0].saveProblem == nil)
+}
+
+@MainActor @Test func aSavedFileIsNotOfferedForSavingAgain() async {
+    let model = savingModel("save-already", besideSource: { job, _ in
+        .saved(job.url.appendingPathExtension("ru"))
+    })
+    model.add([queueJob("a.md", "first")])
+    await model.run()
+
+    #expect(model.jobs[0].result?.savedTo != nil)
+    #expect(!model.needsSaving(model.jobs[0]))
+}
+
+@MainActor @Test func aRefusedWriteLeavesTheFileOfferedForSavingWithItsProblemShown() async {
+    let model = savingModel("save-refused", besideSource: { _, _ in .refused("Нет доступа.") })
+    model.add([queueJob("a.md", "first")])
+    await model.run()
+
+    #expect(model.jobs[0].state == .finished)
+    #expect(model.jobs[0].saveProblem == "Нет доступа.")
+    // Still offered: the refusal is what «Сохранить как…» exists to get past, and a retry
+    // beside the source is legitimate once the user has granted access.
+    #expect(model.needsSaving(model.jobs[0]))
+}
+
+@MainActor @Test func savingSomewhereElseRecordsWhereItActuallyWent() async {
+    let model = savingModel("save-as", besideSource: { _, _ in .refused("Нет доступа.") })
+    model.add([queueJob("a.md", "first")])
+    await model.run()
+
+    let chosen = URL(fileURLWithPath: "/tmp/куда-нибудь/a.ru.md")
+    model.save(model.jobs[0].id, to: chosen)
+
+    #expect(model.jobs[0].result?.savedTo == chosen)
+    // The problem goes with the failure it described: the file is saved now.
+    #expect(model.jobs[0].saveProblem == nil)
+    #expect(!model.needsSaving(model.jobs[0]))
+}
+
+@MainActor @Test func theSuggestedNameIsTheOneTheAutomaticSaveWouldHaveUsed() async {
+    let model = savingModel("save-suggested", besideSource: { _, _ in .refused("Нет доступа.") })
+    model.add([queueJob("a.md", "first")])
+    await model.run()
+
+    // «а.md» is English text translated into Russian by the default rule, so «.ru».
+    #expect(model.suggestedName(for: model.jobs[0].id) == "a.ru.md")
+}
+
+@MainActor @Test func nothingUnfinishedIsOfferedForSaving() {
+    let model = savingModel("save-unfinished", besideSource: { _, _ in .refused("x") })
+    var refused = queueJob("broken.pdf", "")
+    refused.state = .unreadable
+    model.add([queueJob("a.md", "first"), refused])
+
+    #expect(!model.needsSaving(model.jobs[0]))   // queued
+    #expect(!model.needsSaving(model.jobs[1]))   // unreadable
 }

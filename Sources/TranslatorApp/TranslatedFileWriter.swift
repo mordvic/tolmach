@@ -44,4 +44,22 @@ enum TranslatedFileWriter {
                 + "Воспользуйтесь кнопкой «Сохранить как…» — это заодно выдаст приложению право на запись.")
         }
     }
+
+    /// Write to a destination the user chose in an `NSSavePanel`.
+    ///
+    /// **Overwrites, unlike the function above, and that difference is the point.** There
+    /// the name was picked by `OutputNaming` and an existing file is somebody else's
+    /// document; here the panel has already shown the name, already asked about a
+    /// collision, and already got an answer. Refusing at this stage would override a
+    /// decision the user has just made — and the panel's own grant is what makes the write
+    /// possible in the first place.
+    static func write(_ text: String, to destination: URL) -> SaveOutcome {
+        do {
+            try Data(text.utf8).write(to: destination, options: .atomic)
+            return .saved(destination)
+        } catch {
+            Log.files.error("could not write a translation to a chosen destination: \(error.localizedDescription, privacy: .public)")
+            return .refused("Не удалось сохранить перевод в выбранное место.")
+        }
+    }
 }

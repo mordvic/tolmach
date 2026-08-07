@@ -102,6 +102,13 @@ struct MainWindowView: View {
                         .fixedSize()
                         .disabled(!queue.canChangeMode)
                         .help("Что переводить: набранный текст или очередь файлов")
+                        // The drawing's «Файлы · 3». Only in that mode and only when there
+                        // is something to count: «Файлы · 0» beside an empty pane says
+                        // nothing the pane is not already saying louder.
+                        if mode == .files, !queue.jobs.isEmpty {
+                            Text("· \(queue.jobs.count)")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                         Spacer()
                         if mode == .text {
                             Button("Очистить") { model.sourceText = "" }

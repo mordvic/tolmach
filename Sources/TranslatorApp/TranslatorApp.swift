@@ -100,7 +100,8 @@ struct TranslatorApp: App {
                 TranslatedFileWriter.write(
                     text, beside: job.url,
                     target: settings.targetLanguage(forDetected: LanguageDetector.detect(job.text)))
-            })
+            },
+            saveAs: { text, url in TranslatedFileWriter.write(text, to: url) })
         _settings = State(initialValue: settings)
         _glossary = State(initialValue: glossary)
         _statusModel = State(initialValue: statusModel)
