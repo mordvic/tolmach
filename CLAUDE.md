@@ -95,10 +95,11 @@ Facts that will bite you if you "tidy" them:
   all. Accepting the CRLF spelling is not a relaxation: the model may normalise an interior
   `"\r\n"` to `"\n"`, but `MarkupSkeleton` shares `Chunker.scanLines`, which reads either as one
   line break, so the diff cannot cry wolf — and gating on the LF spelling alone cost a CRLF
-  document *every* merge (30 paragraphs → 31 model calls where an LF copy needed 3). **Indentation
-  is not a code signal anywhere in the pipeline**: fenced and inline code are the only protected
-  forms, indented text is prose and is translated, and its indentation survives because
-  `Block.range` moves edge whitespace into the separators. See
+  document *every* merge (measured: 30 short paragraphs at a 900-character budget gave 30 chunks,
+  31 model calls, against the 2 chunks and 3 calls of an LF copy of the same document).
+  **Indentation is not a code signal anywhere in the pipeline**: fenced and inline code are the
+  only protected forms, indented text is prose and is translated, and its indentation survives
+  because `Block.range` moves edge whitespace into the separators. See
   `docs/superpowers/specs/2026-08-07-lossless-chunking-design.md` and its correction note.
 - `timeToFirstTokenMS` is `nil` when nothing was ever emitted — that nil *is* the empty-reply
   signal. Do not substitute a sentinel; it makes an absent response read as a slow one.

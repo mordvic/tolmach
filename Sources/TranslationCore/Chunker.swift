@@ -88,8 +88,10 @@ public enum Chunker {
         // may well normalise an interior "\r\n" to "\n" in its reply, but
         // `MarkupSkeleton` scans lines through `Chunker.scanLines`, which reads either
         // as one line break — so the diff cannot cry wolf over the difference. Gating
-        // on the LF spelling alone was measured to cost a CRLF document *every* merge:
-        // 30 paragraphs became 31 model calls where an LF copy needed 3.
+        // on the LF spelling alone cost a CRLF document *every* merge: measured on 30
+        // short paragraphs at a 900-character budget, 30 chunks (31 model calls, with
+        // the term-list call) against the 2 chunks — 3 calls — an LF copy of the very
+        // same document produced. Both conventions now yield 2.
         var chunks: [Chunk] = []
         var current = ""
         var currentSeparator = ""
