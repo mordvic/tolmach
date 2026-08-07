@@ -1,9 +1,16 @@
 # Batch file translation and the document-terms review — design
 
 Date: 2026-08-07
-Status: awaiting approval
+Status: implemented
 
 ## Status of this document
+
+**Implemented on 2026-08-07, in the two phases §13 describes.** Where this document and the
+code disagree, the code is right; this document is the authority on *why*. Three of its
+statements were corrected by the implementation and are marked where they occur: `SaveOutcome`
+replaced a `Result<URL, String>` that does not compile, `WarningsView` was refactored onto the
+three values it reads because `TranslationOutcome` has no public initialiser, and `onProgress`
+moved from Phase 2 to Phase 1.
 
 This is the pre-implementation design for v2's third surface: a queue of files translated one
 after another from the main window, a review of the документный глоссарий before the translation

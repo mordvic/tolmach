@@ -67,8 +67,9 @@ TranslationCore  (pure domain; depends on nothing but Foundation/NaturalLanguage
 ### The translation pipeline (`Translator.translate`)
 
 Detect language → chunk → (if >1 chunk and the source language is *recognised*) one preparatory
-call that translates an extracted term list into a **document glossary** → per-chunk translation
-calls → clean → verify glossary + diff markup skeleton.
+call that translates an extracted term list into a **document glossary** → *(optional)* a review
+of that glossary by a human → per-chunk translation calls → clean → verify glossary + diff markup
+skeleton.
 
 Facts that will bite you if you "tidy" them:
 
@@ -76,6 +77,12 @@ Facts that will bite you if you "tidy" them:
   filtered by occurrence; the document glossary is injected whole into every chunk. See
   `docs/adr/0001-two-glossaries-opposite-injection-rules.md` — unifying them reintroduces
   terminology drift (measured: 64–68% → 88%).
+- **The review point is the one place `translate` may suspend on a human, and it sits outside
+  the `catch` that swallows a failed term-list call.** At that instant the term-list stream has
+  finished and no per-chunk request has been issued, so nothing is in flight. Inside that
+  `catch`, a throw from the hook would become an empty glossary and the run would carry on as
+  though the user had approved it. `reviewDocumentTerms` defaults to `nil`, and a test pins that
+  a hook returning its draft untouched produces the same run as no hook at all.
 - **Cancellation must be checked explicitly.** `AsyncThrowingStream` *finishes* on cancellation
   instead of throwing, so without `Task.checkCancellation()` before and after every network call
   a cancelled run returns a truncated document as a success. Cancellation must surface as
@@ -300,3 +307,6 @@ to the code. `docs/PLATFORM-TRAPS.md` has the same list with the facts attached.
 - `UserDefaults` in tests → `Tests/TranslatorAppTests/InMemoryDefaults.swift`
 - Writing a file, naming an output, accepting a drop → `TranslatorApp/TranslatedFileWriter.swift`,
   `OutputNaming.swift`, `QueueDrop.swift`
+- Suspending an engine run on a human → `TranslatorApp/DocumentTermsRequest.swift`
+- A static function on a `View` called from a test → make the test `@MainActor`;
+  `Tests/TranslatorAppTests/WarningsViewTests.swift` and `DocumentTermsViewTests.swift`

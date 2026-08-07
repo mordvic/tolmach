@@ -155,6 +155,19 @@ at it.
 | All of the above in dark mode | Every new surface | — |
 | VoiceOver on the queue | A row should announce its file, its state and its progress, and not re-read on every token. `.accessibilityElement(children: .combine)` is the intent; nothing has listened | `FileQueueRow` |
 
+**Owed by the document-terms review.** Same story: built with tests green, nothing rendered.
+The toggle ships **off**, so none of this is on a default install's path.
+
+| What to check | Why it needs eyes | Code |
+|---|---|---|
+| The sheet at a dozen terms | Three columns, an editable «перевод» cell that actually takes typing, and the table scrolling at its 260 pt cap without the buttons going with it — the same failure the panel's `ScrollView` once had | `DocumentTermsView` |
+| **Esc cancelling the run from the sheet** | The whole escape. `onExitCommand` is the intent and no test here can press a key; if it does not fire, the sheet is a trap with one button | `DocumentTermsView`, `DocumentTermsRequest.cancel` |
+| **The ⌥⌘T escalation** | Press the shortcut on a >900-character selection in another app with the toggle on. The main window should come forward — opening if closed — and show the sheet, with the panel still behind it. `activateThisApp()` is cooperative activation that no one has watched work, and this is a second caller for it | `TranslatorApp.body`'s `.onChange`, `activateThisApp()` |
+| ⌘. while the sheet is open | Should interrupt the run rather than doing nothing. The ordering is unit-tested through `cancel()`; the key press is not | `TranslationViewModel.cancel`, `FileQueueModel.cancel` |
+| «Больше не спрашивать в этом прогоне» appearing only in a queue run | `showsSuppress` is passed from the window; nothing has rendered either state | `MainWindowView`'s `.sheet`, `DocumentTermsView` |
+| «Добавить в пользовательский глоссарий» and then the «Глоссарий» tab | The promotion rule is tested; that the terms actually appear in the pane, and that the file on disk gains them, is not | `GlossaryPromotion`, `GlossaryStore.replaceEntries` |
+| The «термины не удалось подготовить» notice | Only reachable with the toggle on and a term-list call that fails, which needs a live Ollama misbehaving | `TranslationViewModel.documentTermsUnavailable`, `FileJob.documentTermsUnavailable` |
+
 **Owed by the settings/accessibility/CI wave.**
 
 | What to check | Why it needs eyes | Code |
