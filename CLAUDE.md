@@ -87,7 +87,18 @@ Facts that will bite you if you "tidy" them:
   `separatorBefore` — the source document's own bytes, restored verbatim — in both `final` and the
   stream, plus the source's trailing whitespace at the end; `ChunkPlan`'s invariant is that this
   reassembly is byte-for-byte lossless. There is a test pinning this invariant.
-- **The packing rule is the structure guarantee.** Blocks merge into one chunk only across an exactly-`"\n\n"` separator, so the model always sees canonical spacing and every other separator never reaches it at all. Indented code (≥ 4 spaces after a blank line) is code: never sentence-split, protected by the prompt, tokenised by `MarkupSkeleton`. See `docs/superpowers/specs/2026-08-07-lossless-chunking-design.md`.
+- **The packing rule is the structure guarantee.** Blocks merge into one chunk only across an
+  exactly-`"\n\n"` separator, so the model always sees canonical spacing and every other separator
+  never reaches it at all. Indented code (≥ 4 spaces or a tab, after a blank line) is code, and
+  goes further: such a block never merges in either direction, so it is always a solo chunk
+  (`Chunk.isIndentedCode`), and **`Translator` reproduces it itself instead of calling the model**.
+  The prompt's «lines indented by four or more spaces» rule could never protect the block's first
+  line — a chunk never begins with whitespace, so that indentation lives in `separatorBefore` and
+  the model saw the line dedented — and byte-for-byte reproduction of code the engine already holds
+  must not depend on model discipline. No LLM call means no `stats` entry for that chunk, but
+  `timeToFirstTokenMS` is still stamped: it is content a consumer can see. `MarkupSkeleton`
+  tokenises the block the same way, and shares `Chunker.scanLines` so the two layers read the same
+  lines. See `docs/superpowers/specs/2026-08-07-lossless-chunking-design.md`.
 - `timeToFirstTokenMS` is `nil` when nothing was ever emitted — that nil *is* the empty-reply
   signal. Do not substitute a sentinel; it makes an absent response read as a slow one.
 - `stats` covers the per-chunk translation calls only, never the term-list call.
