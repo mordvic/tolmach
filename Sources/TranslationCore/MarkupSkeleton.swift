@@ -43,11 +43,13 @@ public enum MarkupSkeleton {
                     tokens.append(.codeBlock(hash: fenceBuffer.joined(separator: "\n").hashValue, lang: fenceLang))
                     fenceBuffer = []; fenceLang = ""; insideFence = false
                 } else { fenceBuffer.append(line) }
+                previousWasBlank = false
                 continue
             }
             if trimmed.hasPrefix("```") {
                 insideFence = true
                 fenceLang = String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespaces)
+                previousWasBlank = false
                 continue
             }
             if trimmed.isEmpty {

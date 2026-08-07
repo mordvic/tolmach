@@ -196,3 +196,13 @@ import Testing
         return false
     })
 }
+
+@Test func anIndentedLineDirectlyAfterAClosedFenceStaysProse() {
+    // No blank line between the closing fence and the indented line — the Chunker
+    // reads it as prose (indented code cannot interrupt the flow without a blank
+    // line), and the skeleton must agree or the diff reports structure the
+    // chunker never saw.
+    let tokens = MarkupSkeleton.tokens(of: "```\ncode\n```\n    indented right after fence")
+    let codeBlocks = tokens.filter { if case .codeBlock = $0 { true } else { false } }
+    #expect(codeBlocks.count == 1)
+}
