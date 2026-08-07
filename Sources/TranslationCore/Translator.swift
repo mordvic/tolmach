@@ -24,10 +24,10 @@ public struct TranslationOutcome: Sendable {
     /// raw token off the wire: a chunk whose whole-answer shape is undecided
     /// (see `Translator.streamChunkTranslation`) is buffered until its first
     /// line settles or its stream ends, so timing the wire instead would
-    /// measure an event nobody watching `onToken` can ever observe. The "\n\n"
-    /// chunk separator and the internal term-list call never count either: the
-    /// separator carries no content, and the term-list call never reaches
-    /// `onToken` at all.
+    /// measure an event nobody watching `onToken` can ever observe. The chunk
+    /// separator (the source's own bytes, restored verbatim) and the internal
+    /// term-list call never count either: the separator carries no content, and
+    /// the term-list call never reaches `onToken` at all.
     /// Nil when no translation token was ever emitted (an empty model reply, or
     /// every chunk's cleaned output was empty). Treating the absence as a
     /// sentinel — e.g. measuring elapsed time up to `Date()` instead — made TTFT
@@ -76,7 +76,8 @@ public struct Translator: Sendable {
         var stats: [ChatStats] = []
 
         let detected = LanguageDetector.detect(text)
-        let chunks = Chunker.chunk(text, maxCharacters: maxChunkCharacters)
+        let plan = Chunker.plan(text, maxCharacters: maxChunkCharacters)
+        let chunks = plan.chunks
 
         // The term-list call is internal scaffolding: its output must never reach
         // the consumer, so this never touches `onToken`, `firstTokenAt`, or `stats`
@@ -266,10 +267,12 @@ public struct Translator: Sendable {
             // synchronous work between chunks (or before the very first request) is
             // caught too, instead of issuing one more request it will just throw away.
             try Task.checkCancellation()
-            // Chunks are joined with a blank line in `final`; the stream must carry the
-            // same separator, or a consumer rendering tokens live reconstructs a
-            // different document from the one `final` describes.
-            if !translatedChunks.isEmpty { onToken("\n\n") }
+            // The separator is the source document's own bytes, restored verbatim — it
+            // carries no model content, so it goes straight to `onToken` (never through
+            // `emit`, which would stamp `timeToFirstTokenMS`) exactly as the old
+            // hard-coded "\n\n" did. The consumer contract is unchanged: whitespace-only
+            // pieces are not "output" (TranslationViewModel holds them in `pending`).
+            if !chunk.separatorBefore.isEmpty { onToken(chunk.separatorBefore) }
             // Filter over code-stripped text, not the raw chunk. `Glossary.relevantEntries`
             // is a plain occurrence check, so a term that only ever appears inside a fenced
             // or inline code span still matched — and the system prompt would then carry
@@ -298,7 +301,16 @@ public struct Translator: Sendable {
             try Task.checkCancellation()
             translatedChunks.append(cleaned)
         }
-        let final = translatedChunks.joined(separator: "\n\n")
+        var final = zip(chunks, translatedChunks).map { $0.separatorBefore + $1 }.joined()
+        if !chunks.isEmpty, !plan.trailingSeparator.isEmpty {
+            // The document's trailing whitespace is part of the byte-for-byte contract
+            // (`ChunkPlan`), and the stream must carry it too or a consumer rendering
+            // tokens live reconstructs a different document from the one `final`
+            // describes. Emitted only when the run produced chunks at all: a
+            // whitespace-only input yields no chunks and no output.
+            onToken(plan.trailingSeparator)
+            final += plan.trailingSeparator
+        }
 
         // Same code-stripping as the per-chunk filter above, for the same reason: without
         // it, a user term appearing only inside code reaches GlossaryVerifier too, and a
@@ -314,16 +326,14 @@ public struct Translator: Sendable {
             detectedSource: detected,
             checks: GlossaryVerifier.check(translation: final, entries: allEntries,
                                            target: target, ignored: ignoredTerms),
-            // Diff against what the model actually saw, not the raw source. `Chunker`
-            // normalises whitespace when it assembles chunks — blocks are joined with
-            // exactly "\n\n" and a block's trailing whitespace is trimmed — so the
-            // model's input already differs from `text` before translation even starts.
-            // Diffing against `text` compared the translation to a document nobody was
-            // asked to reproduce, producing phantom paragraph/hard-line-break diffs on
-            // decorated whitespace that a perfect translation could never match. This is
-            // the "cry wolf" failure the whole diff feature exists to avoid.
-            markupDiffs: MarkupSkeleton.diff(source: chunks.map(\.text).joined(separator: "\n\n"),
-                                             translation: final),
+            // Diff against the raw source. This used to diff against the chunk-joined
+            // text instead, because the old Chunker normalised whitespace (blocks
+            // rejoined with exactly "\n\n", trailing whitespace trimmed) and a perfect
+            // translation could never match the raw source — the "cry wolf" failure.
+            // Lossless chunking removed the normalisation: `ChunkPlan`'s invariant is
+            // that separators reassemble byte for byte, so the source the model saw
+            // and the source on disk are the same document again.
+            markupDiffs: MarkupSkeleton.diff(source: text, translation: final),
             stats: stats,
             timeToFirstTokenMS: firstTokenAt.map { $0.timeIntervalSince(started) * 1000 },
             totalMS: Date().timeIntervalSince(started) * 1000,

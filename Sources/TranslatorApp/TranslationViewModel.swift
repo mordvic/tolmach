@@ -235,11 +235,12 @@ final class TranslationViewModel {
                 if !self.clearedPrevious {
                     // Spec 8: a failed run must not clobber the previous result, so the
                     // old text stays until new output actually arrives — and a bare chunk
-                    // separator is not output. `Translator` writes the "\n\n" between
-                    // chunks straight to `onToken` instead of through its `emit`, so that
-                    // piece never stamps the first-token time; counting it as output would
-                    // clear the pane for a multi-chunk run that then reports an empty
-                    // reply, which is precisely the case spec 8 says must be survivable.
+                    // separator is not output. `Translator` writes the inter-chunk
+                    // separator (the source's own whitespace, restored verbatim) straight
+                    // to `onToken` instead of through its `emit`, so that piece never
+                    // stamps the first-token time; counting it as output would clear the
+                    // pane for a multi-chunk run that then reports an empty reply, which
+                    // is precisely the case spec 8 says must be survivable.
                     if piece.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         pending += piece
                         continue
