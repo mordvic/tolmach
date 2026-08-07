@@ -10,19 +10,6 @@ public struct Chunk: Sendable, Equatable {
     /// leading whitespace.
     public let separatorBefore: String
     public let containsCodeFence: Bool
-    /// True when this chunk is one indented code block and nothing else — the packing
-    /// rule keeps such a chunk solo precisely so this can be true of the whole of it.
-    ///
-    /// `Translator` does not send these chunks to the model at all; it copies the text
-    /// into the result itself. The prompt's protection for indented code ("lines
-    /// indented by four or more spaces") cannot apply to the block's *first* line,
-    /// because that line's indentation lives in `separatorBefore` — a chunk never
-    /// begins with whitespace (see `Block.range`) — so the model saw the first line
-    /// dedented and translated it, and assembly then restored the indentation in front
-    /// of translated prose. Rather than paper over that with a restored prefix, the
-    /// engine reproduces the block itself: byte-for-byte reproduction of code must not
-    /// depend on model discipline when the engine already holds the exact bytes.
-    public let isIndentedCode: Bool
 }
 
 /// What `Chunker.plan` promises: `chunks.map { $0.separatorBefore + $0.text }.joined()
@@ -38,7 +25,13 @@ public struct ChunkPlan: Sendable, Equatable {
 
 public enum Chunker {
     struct Block {
-        enum Kind { case prose, fencedCode, indentedCode }
+        /// Fenced code is the only block form the engine protects. Indented text is
+        /// prose: it is translated, and its indentation survives regardless — the
+        /// first line's in `separatorBefore`, every continuation line's inside the
+        /// block. Reading an indented run as code cost silent untranslation of
+        /// tab-indented plain text and of Markdown loose-list continuations, because
+        /// nothing in a selection carries format context.
+        enum Kind { case prose, fencedCode }
         let kind: Kind
         /// Content range in the source: first non-whitespace character of the block's
         /// first line through last non-whitespace character of its last line. Edge
@@ -101,15 +94,12 @@ public enum Chunker {
         var current = ""
         var currentSeparator = ""
         var currentHasFence = false
-        var currentIsIndentedCode = false
         func flush() {
             guard !current.isEmpty else { return }
             chunks.append(Chunk(index: chunks.count, text: current,
                                 separatorBefore: currentSeparator,
-                                containsCodeFence: currentHasFence,
-                                isIndentedCode: currentIsIndentedCode))
+                                containsCodeFence: currentHasFence))
             current = ""; currentSeparator = ""; currentHasFence = false
-            currentIsIndentedCode = false
         }
         for piece in pieces {
             // Structural, and stated rather than assumed because it once was not:
@@ -123,18 +113,12 @@ public enum Chunker {
             // dropping the separator of whatever came before it, which is the one way
             // the byte-for-byte contract could break without a test noticing.
             precondition(!piece.text.isEmpty, "Chunker: a piece must carry content")
-            // An indented-code piece is never merged, in either direction, so
-            // `isIndentedCode` describes the whole of the chunk it lands in. Merging
-            // *into* one is already impossible — its separator carries the block's own
-            // indentation and so is never exactly "\n\n" — but merging prose *onto* it
-            // was not, and that put the code and untranslated prose in one chunk.
             // "\r\n" is a single Swift `Character`, so both spellings of one blank
             // line have `count == 2` and the budget check below reads the actual
             // separator rather than a literal.
             let isOneBlankLine = piece.separatorBefore == "\n\n"
                 || piece.separatorBefore == "\r\n\r\n"
             if !current.isEmpty, isOneBlankLine,
-               !currentIsIndentedCode, piece.kind != .indentedCode,
                current.count + piece.separatorBefore.count + piece.text.count <= maxCharacters {
                 current += piece.separatorBefore + piece.text
                 currentHasFence = currentHasFence || piece.kind == .fencedCode
@@ -143,7 +127,6 @@ public enum Chunker {
                 currentSeparator = piece.separatorBefore
                 current = piece.text
                 currentHasFence = piece.kind == .fencedCode
-                currentIsIndentedCode = piece.kind == .indentedCode
             }
         }
         flush()
@@ -193,10 +176,6 @@ public enum Chunker {
         func isFenceMarker(_ line: Line) -> Bool {
             text[line.content].trimmingCharacters(in: .whitespaces).hasPrefix("```")
         }
-        func isIndented(_ line: Line) -> Bool {
-            let content = text[line.content]
-            return content.hasPrefix("    ") || content.first == "\t"
-        }
         /// Content range trimmed of whitespace at both edges — see `Block.range`.
         func blockRange(first: Line, last: Line) -> Range<String.Index> {
             var start = first.content.lowerBound
@@ -210,9 +189,8 @@ public enum Chunker {
             return start..<end
         }
 
-        var previousWasBlank = true // document start behaves like after a blank line
         while index < lines.count {
-            if isBlank(lines[index]) { previousWasBlank = true; index += 1; continue }
+            if isBlank(lines[index]) { index += 1; continue }
 
             if isFenceMarker(lines[index]) {
                 var last = index
@@ -228,28 +206,11 @@ public enum Chunker {
                 blocks.append(Block(kind: .fencedCode,
                                     range: blockRange(first: lines[index], last: lines[last])))
                 index = last + 1
-                previousWasBlank = false
-                continue
-            }
-
-            // CommonMark: indented code starts only at the document start or after a
-            // blank line — it cannot interrupt a paragraph. A blank line ends it;
-            // an indented run after the next blank line simply starts a new block,
-            // and the separator between them is restored verbatim like any other.
-            if previousWasBlank, isIndented(lines[index]) {
-                var last = index
-                while last + 1 < lines.count, !isBlank(lines[last + 1]),
-                      isIndented(lines[last + 1]) {
-                    last += 1
-                }
-                blocks.append(Block(kind: .indentedCode,
-                                    range: blockRange(first: lines[index], last: lines[last])))
-                index = last + 1
-                previousWasBlank = false
                 continue
             }
 
             // Prose: a maximal run of non-blank lines that does not open a fence.
+            // Indentation plays no part — an indented run is prose, and is translated.
             var last = index
             while last + 1 < lines.count, !isBlank(lines[last + 1]),
                   !isFenceMarker(lines[last + 1]) {
@@ -258,7 +219,6 @@ public enum Chunker {
             blocks.append(Block(kind: .prose,
                                 range: blockRange(first: lines[index], last: lines[last])))
             index = last + 1
-            previousWasBlank = false
         }
         return blocks
     }

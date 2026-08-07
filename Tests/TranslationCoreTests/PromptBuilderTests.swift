@@ -46,10 +46,16 @@ import Testing
     #expect(!user.contains("1."))
 }
 
-@Test func theSystemPromptProtectsIndentedCodeBlocksLikeFencedOnes() {
+@Test func theSystemPromptProtectsFencedAndInlineCodeAndNothingElse() {
     let request = TranslationRequest(text: "    let a = 1", source: .en, target: .ru,
                                      tone: .neutral)
     let prompt = PromptBuilder.systemPrompt(for: request)
-    #expect(prompt.contains("indented code blocks"))
+    #expect(prompt.contains("fenced code blocks"))
+    #expect(prompt.contains("inline code"))
     #expect(prompt.contains("byte for byte"))
+    // Indentation must NOT be a do-not-translate signal. A rule covering "lines
+    // indented by four or more spaces" left indented prose inside a prose chunk —
+    // a nested list item, a quoted email — untranslated, and this translator sees
+    // selections with no format context at all.
+    #expect(!prompt.lowercased().contains("indented"))
 }

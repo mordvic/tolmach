@@ -687,47 +687,53 @@ func aPerfectEchoReproducesTheSourceByteForByte(_ text: String) async throws {
     #expect(outcome.final.contains("\n\n\n"))
 }
 
-// MARK: - Indented code is reproduced by the engine, never sent to the model.
+// MARK: - Indented text is translated like any other prose.
 
-@Test func anIndentedCodeChunkIsReproducedVerbatimWithNoModelCall() async throws {
-    let text = "Intro.\n\n    let a = 1\n    let b = 2\n\nAfter."
-    let fake = FakeLLMClient(responses: ["", "Введение.", "После."])
+@Test func everyChunkOfADocumentWithIndentedTextIsSentToTheModel() async throws {
+    // An indented line was briefly reproduced by the engine with no model call. In a
+    // selection translator that has no format context, that returned tab-indented
+    // plain text and Markdown loose-list continuations untranslated, with a success
+    // state. Every chunk goes to the model again; the indentation survives through
+    // the verbatim separators, not by withholding the text.
+    let text = "Intro.\n\n    let a = compute(1)\n\nAfter."
+    // Two chunks — the indented block merges with the prose after it across the
+    // blank line — and no term-list call, so the queue is exactly one reply per chunk.
+    let fake = FakeLLMClient(responses: ["Введение.", "После."])
     let translator = Translator(client: fake)
     let collector = TokenCollector()
     let outcome = try await translator.translate(
         text: text, target: .ru, tone: .neutral, userGlossary: nil,
         options: ChatOptions(model: "test"), maxChunkCharacters: 900,
         onToken: collector.onToken)
-    #expect(outcome.chunks.count == 3)
-    #expect(outcome.chunks.map(\.isIndentedCode) == [false, true, false])
-    // Only the two prose chunks were translated. The `<text>` markers appear in the
-    // per-chunk translation prompt and nowhere else — the term-list prompt has none.
+    #expect(outcome.chunks.count == 2)
+    #expect(fake.receivedMessages.count == outcome.chunks.count) // no term-list call
+    // The `<text>` markers appear in the per-chunk translation prompt and nowhere
+    // else — the term-list prompt has none.
     let chunkPrompts = fake.receivedMessages.filter { $0.last?.content.contains("<text>") == true }
-    #expect(chunkPrompts.count == 2)
-    #expect(!fake.receivedMessages.contains { $0.contains { $0.content.contains("let a = 1") } })
-    // The code bytes reach `final` exactly as the source wrote them — indentation of
-    // the first line included, which lives in the chunk's separator.
-    #expect(outcome.final.contains("\n\n    let a = 1\n    let b = 2\n\n"))
-    #expect(outcome.translatedChunks[1] == outcome.chunks[1].text)
+    #expect(chunkPrompts.count == outcome.chunks.count)
+    for chunk in outcome.chunks {
+        #expect(chunkPrompts.contains { $0.last?.content.contains(chunk.text) == true })
+    }
+    #expect(fake.receivedMessages.contains { $0.contains { $0.content.contains("let a = compute(1)") } })
+    #expect(outcome.stats.count == outcome.chunks.count) // one entry per translation call
     #expect(collector.text == outcome.final) // stream and final still agree
-    #expect(outcome.stats.count == 2) // one entry per translation call, and the code chunk made none
+    // The source's indentation is still restored byte for byte around the translation:
+    // the indented line's own four spaces live in the second chunk's separator.
+    #expect(outcome.final == "Введение.\n\n    После.")
 }
 
-@Test func aDocumentThatIsOnlyIndentedCodeNeedsNoModelCallAtAll() async throws {
+@Test func aDocumentOfOnlyIndentedTextIsStillTranslated() async throws {
     let text = "    let a = 1\n    let b = 2\n"
-    let fake = FakeLLMClient(responses: [])
+    let fake = FakeLLMClient(responses: ["Перевод."])
     let translator = Translator(client: fake)
     let collector = TokenCollector()
     let outcome = try await translator.translate(
         text: text, target: .ru, tone: .neutral, userGlossary: nil,
         options: ChatOptions(model: "test"), maxChunkCharacters: 900,
         onToken: collector.onToken)
-    #expect(fake.receivedMessages.isEmpty)
-    #expect(outcome.final == text)
-    #expect(collector.text == text)
-    #expect(outcome.stats.isEmpty)
-    // The engine's own output is still content a consumer could see, so the
-    // first-token stamp must be set — nil means "an empty reply", which is wrong here.
+    #expect(fake.receivedMessages.count == 1) // one chunk, so no term-list call
+    #expect(outcome.final == "    Перевод.\n")
+    #expect(collector.text == outcome.final)
+    #expect(outcome.stats.count == 1)
     #expect(outcome.timeToFirstTokenMS != nil)
-    #expect(outcome.markupDiffs.isEmpty)
 }

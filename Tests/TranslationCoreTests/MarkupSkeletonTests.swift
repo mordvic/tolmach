@@ -171,40 +171,15 @@ import Testing
     #expect(!MarkupSkeleton.diff(source: source, translation: translation).isEmpty)
 }
 
-@Test func anIndentedCodeBlockTokenisesAsACodeBlock() {
+@Test func anIndentedRunAfterABlankLineIsProseNotACodeBlock() {
+    // Indentation is not a code signal in either layer: the chunker translates
+    // indented text, so the skeleton must not report a code block the chunker never
+    // saw. Fenced code is the only block form. The backticks inside are an ordinary
+    // inline-code span, exactly as they would be in unindented prose.
     let text = "Intro paragraph.\n\n    let a = `1`\n    let b = 2\n\nAfter."
     let tokens = MarkupSkeleton.tokens(of: text)
-    #expect(tokens.contains { if case .codeBlock(_, let lang) = $0 { lang.isEmpty } else { false } })
-    // The backticks inside the code are code bytes, not an inline-code span.
-    #expect(!tokens.contains { if case .inlineCode = $0 { true } else { false } })
-}
-
-@Test func indentedLinesMidParagraphDoNotTokeniseAsACodeBlock() {
-    // No blank line above: a prose continuation, exactly as the Chunker treats it.
-    // The two layers must agree, or the diff reports structure the chunker never saw.
-    let text = "A paragraph line.\n    An indented continuation line."
-    let tokens = MarkupSkeleton.tokens(of: text)
     #expect(!tokens.contains { if case .codeBlock = $0 { true } else { false } })
-}
-
-@Test func aDroppedIndentedCodeBlockSurfacesInTheDiff() {
-    let source = "Intro.\n\n    let a = 1\n\nAfter."
-    let translation = "Введение.\n\nПосле."
-    let diffs = MarkupSkeleton.diff(source: source, translation: translation)
-    #expect(diffs.contains { diff in
-        if case .codeBlock = diff.expected ?? .paragraphBreak { return diff.actual == nil }
-        return false
-    })
-}
-
-@Test func anIndentedLineDirectlyAfterAClosedFenceStaysProse() {
-    // No blank line between the closing fence and the indented line — the Chunker
-    // reads it as prose (indented code cannot interrupt the flow without a blank
-    // line), and the skeleton must agree or the diff reports structure the
-    // chunker never saw.
-    let tokens = MarkupSkeleton.tokens(of: "```\ncode\n```\n    indented right after fence")
-    let codeBlocks = tokens.filter { if case .codeBlock = $0 { true } else { false } }
-    #expect(codeBlocks.count == 1)
+    #expect(tokens.contains(.inlineCode("1")))
 }
 
 @Test func tableRowsTokeniseAndADroppedRowSurfacesInTheDiff() {
@@ -235,7 +210,7 @@ import Testing
     #expect(!tokens.contains { if case .heading = $0 { true } else { false } })
 }
 
-// MARK: - Line discipline and indented runs must match the chunker's, exactly.
+// MARK: - Line discipline must match the chunker's, exactly.
 
 @Test func aCRLFSourceDiffedAgainstAnLFTranslationReportsNothing() {
     // `components(separatedBy: .newlines)` splits on unicode scalars, so "\r\n"
@@ -248,17 +223,14 @@ import Testing
     #expect(MarkupSkeleton.diff(source: source, translation: translation).isEmpty)
 }
 
-@Test func aFenceMarkerInsideAnIndentedBlockOpensNoFence() {
-    // The chunker's indented run continues on every indented non-blank line and
-    // never looks for fence markers, so a ``` inside an indented block is code
-    // bytes. The skeleton used to test for a fence first: the marker opened a
-    // never-closed fence that swallowed the rest of the document, and the two
-    // layers then disagreed about a block the diff reports on.
-    let text = "Intro.\n\n    let a = 1\n        ```\n    let b = 2\n\nAfter `cmd` runs."
+@Test func anIndentedFenceMarkerOpensAFenceInBothLayers() {
+    // An indented ``` is still a fence marker — the chunker's `isFenceMarker` trims
+    // the line before testing it, so the two layers must agree here or the diff
+    // reports a block one of them never saw. Both read one fenced block.
+    let text = "Intro.\n\n    ```\n    let a = 1\n    ```\n\nAfter `cmd` runs."
     let tokens = MarkupSkeleton.tokens(of: text)
     #expect(tokens.filter { if case .codeBlock = $0 { true } else { false } }.count == 1)
-    // Prose after the block still tokenises — it was not swallowed.
+    // Prose after the block still tokenises — the fence closed.
     #expect(tokens.contains(.inlineCode("cmd")))
-    // And the chunker reads exactly one indented-code block from the same document.
-    #expect(Chunker.blocks(in: text).filter { $0.kind == .indentedCode }.count == 1)
+    #expect(Chunker.blocks(in: text).filter { $0.kind == .fencedCode }.count == 1)
 }

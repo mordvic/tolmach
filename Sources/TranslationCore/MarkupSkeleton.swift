@@ -25,19 +25,13 @@ public enum MarkupSkeleton {
         var fenceBuffer: [String] = []
         var fenceLang = ""
         var insideFence = false
-        var previousWasBlank = true // document start counts as after-a-blank
         var previousLineHadText = false
-        var indentedBuffer: [String] = []
-        func flushIndented() {
-            guard !indentedBuffer.isEmpty else { return }
-            // Same shape as a fenced block with no info string: the reader of a diff
-            // is told "a code block was dropped/added" either way, and folding the two
-            // spellings together is exactly how CommonMark treats them.
-            tokens.append(.codeBlock(hash: indentedBuffer.joined(separator: "\n").hashValue,
-                                     lang: ""))
-            indentedBuffer = []
-        }
 
+        // An indented run is NOT tokenised as a code block here, and must not be: the
+        // chunker reads indented text as prose and translates it, and the two layers
+        // must see the same document or the diff reports structure the chunker never
+        // saw. Fenced code is the only block form either layer protects.
+        //
         // Lines are scanned the way `Chunker` scans them, not with
         // `components(separatedBy: .newlines)`. That character set splits on unicode
         // scalars, so "\r\n" came out as two breaks with an empty line between them
@@ -53,57 +47,20 @@ public enum MarkupSkeleton {
                     tokens.append(.codeBlock(hash: fenceBuffer.joined(separator: "\n").hashValue, lang: fenceLang))
                     fenceBuffer = []; fenceLang = ""; insideFence = false
                 } else { fenceBuffer.append(line) }
-                previousWasBlank = false
-                previousLineHadText = false
-                continue
-            }
-            let isIndented = line.hasPrefix("    ") || line.hasPrefix("\t")
-            // An indented run, once started, CONTINUES on every indented non-blank
-            // line — fence markers included. Checked ahead of the fence-open rule
-            // below because `Chunker`'s indented continuation looks only at
-            // blankness and indentation: a ``` inside an indented block is code
-            // bytes to it. With the fence check first, such a line opened a
-            // never-closed fence that swallowed the rest of the document into a code
-            // block the chunker never saw. The run's START keeps the opposite order
-            // (the fence check below still wins after a blank line), because that is
-            // also the order `Chunker.blocks` uses.
-            if !indentedBuffer.isEmpty, isIndented, !trimmed.isEmpty {
-                indentedBuffer.append(line)
-                previousWasBlank = false
                 previousLineHadText = false
                 continue
             }
             if trimmed.hasPrefix("```") {
-                // Reaching here with a pending run means this line is neither
-                // indented nor blank, so the run ended on the line before — and the
-                // chunker emits that indented block *before* the fenced one. Without
-                // this flush the pending block came out last, after the fence.
-                flushIndented()
                 insideFence = true
                 fenceLang = String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespaces)
-                previousWasBlank = false
                 previousLineHadText = false
                 continue
             }
             if trimmed.isEmpty {
-                flushIndented()
                 tokens.append(.paragraphBreak)
-                previousWasBlank = true
                 previousLineHadText = false
                 continue
             }
-            if !indentedBuffer.isEmpty {
-                // Non-indented, non-blank: the run ends here (an indented
-                // continuation already `continue`d above, a blank line already
-                // flushed).
-                flushIndented()
-            } else if previousWasBlank, isIndented {
-                indentedBuffer.append(line)
-                previousWasBlank = false
-                previousLineHadText = false
-                continue
-            }
-            previousWasBlank = false
             // Setext underline: a line of only "=" (any count) or only "-" (two or
             // more — a lone "-" is closer to a stray bullet than to an underline)
             // directly under a non-blank line. CommonMark reads "---" after a
@@ -133,7 +90,6 @@ public enum MarkupSkeleton {
             previousLineHadText = !isUnderlineShape
         }
         if insideFence { tokens.append(.codeBlock(hash: fenceBuffer.joined(separator: "\n").hashValue, lang: fenceLang)) }
-        flushIndented()
         return tokens
     }
 

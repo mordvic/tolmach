@@ -171,75 +171,27 @@ private func reassembled(_ text: String, maxCharacters: Int) -> String {
     #expect(plan.trailingSeparator == "   \n\n  \t ")
 }
 
-// MARK: - Indented code blocks (4+ spaces after a blank line) are code.
+// MARK: - Indented text is prose, and its indentation survives anyway.
 
-@Test func anIndentedCodeBlockIsNeverSentenceSplitAndReassemblesExactly() {
-    // The code lines are sentence-shaped prose; if the block were treated as text,
-    // a 60-character budget would split it. CommonMark: a run of lines indented by
-    // four or more spaces after a blank line is a code block.
-    let text = """
-    Intro paragraph before the code.
-
-        This looks like a sentence. And another sentence here. And one more now.
-        let a = compute(1)
-
-    Prose after the code block.
-    """
-    let plan = Chunker.plan(text, maxCharacters: 60)
-    #expect(plan.chunks.map { $0.separatorBefore + $0.text }.joined()
-            + plan.trailingSeparator == text)
-    let codeChunk = plan.chunks.first { $0.text.contains("let a = compute(1)") }
-    #expect(codeChunk != nil)
-    #expect(codeChunk?.text.contains("This looks like a sentence. And another sentence here. And one more now.") == true)
-}
-
-@Test func indentationInsideAnIndentedCodeBlockSurvivesInTheChunkText() {
-    // The block's FIRST line's indentation lives in the separator (chunk text never
-    // starts with whitespace — see Block.range), but every continuation line keeps
-    // its own indentation inside the chunk text.
-    let text = "Intro.\n\n    first line\n    second line"
+@Test func aTabIndentedParagraphAfterABlankLineIsProse() {
+    // Indentation is not a code signal here, deliberately: a hotkey selection out of
+    // an email or a PDF is routinely indented wholesale, and a Markdown loose list's
+    // continuation paragraphs are indented by rule — reading either as code returned
+    // it untranslated, with a success state. Only fenced and inline code are
+    // protected. The indentation survives regardless: the first line's lives in the
+    // separator, every continuation line's inside the chunk text.
+    let text = "Intro.\n\n\tThis looks like a sentence. And another sentence here."
+        + " And one more now.\n\tAnd a fourth one closes the block.\n\nAfter."
     let plan = Chunker.plan(text, maxCharacters: 900)
-    let code = plan.chunks.first { $0.text.contains("first line") }
-    #expect(code?.text.contains("\n    second line") == true)
-    #expect(code?.separatorBefore.hasSuffix("    ") == true)
-}
+    #expect(plan.chunks.contains { $0.text.contains("This looks like a sentence.") })
+    #expect(plan.chunks.contains { $0.text.contains("\n\tAnd a fourth one closes the block.") })
+    #expect(reassembled(text, maxCharacters: 900) == text)
 
-@Test func anIndentedCodeBlockNeverMergesWithTheProseAfterIt() {
-    // "\n\n" separates the block from the prose after it — the one separator packing
-    // is allowed to merge across. It must not merge here: a chunk carrying indented
-    // code is reproduced by the engine rather than translated, so mixing prose into
-    // it would either send the code to the model or leave the prose untranslated.
-    let text = "Intro.\n\n    let a = 1\n\nAfter."
-    let plan = Chunker.plan(text, maxCharacters: 900)
-    #expect(plan.chunks.count == 3)
-    #expect(plan.chunks.map(\.isIndentedCode) == [false, true, false])
-    #expect(plan.chunks.map { $0.separatorBefore + $0.text }.joined()
-            + plan.trailingSeparator == text)
-}
-
-@Test func aTabIndentedBlockIsCodeInBothTheChunkerAndTheSkeleton() {
-    // CommonMark counts one tab as four columns, so a tab-indented run after a blank
-    // line is a code block too. The chunker and the skeleton must agree about that
-    // or the markup diff reports a block one of them never saw.
-    let text = "Intro.\n\n\tlet a = 1\n\tlet b = 2\n\nAfter."
-    let plan = Chunker.plan(text, maxCharacters: 900)
-    #expect(plan.chunks.count == 3)
-    #expect(plan.chunks[1].isIndentedCode) // solo, and never sent to the model
-    #expect(plan.chunks[1].text == "let a = 1\n\tlet b = 2")
-    #expect(plan.chunks.map { $0.separatorBefore + $0.text }.joined()
-            + plan.trailingSeparator == text)
-    let codeBlocks = MarkupSkeleton.tokens(of: text)
-        .filter { if case .codeBlock = $0 { true } else { false } }
-    #expect(codeBlocks.count == 1)
-}
-
-@Test func indentedLinesMidParagraphStayProse() {
-    // CommonMark: indented code cannot interrupt a paragraph. No blank line above,
-    // so these lines are a prose continuation, not code — the block stays one prose
-    // block and an oversized one would still split by sentences.
-    let text = "A paragraph line.\n    An indented continuation of the same paragraph."
-    let plan = Chunker.plan(text, maxCharacters: 900)
-    #expect(plan.chunks.count == 1)
-    #expect(plan.chunks.map { $0.separatorBefore + $0.text }.joined()
-            + plan.trailingSeparator == text)
+    // Oversized, it sentence-splits like any other prose — the pre-wave behaviour.
+    let split = Chunker.plan(text, maxCharacters: 45)
+    #expect(split.chunks.count > plan.chunks.count)
+    #expect(!split.chunks.contains {
+        $0.text.contains("This looks like a sentence.") && $0.text.contains("fourth one")
+    })
+    #expect(reassembled(text, maxCharacters: 45) == text)
 }

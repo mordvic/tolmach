@@ -26,7 +26,12 @@ public enum PromptBuilder {
             "Rules:",
             "- Output ONLY the translation. No preamble, no notes, no explanation, no quotes around it.",
             "- Preserve the original structure exactly: line breaks, blank lines, list markers, blockquote markers (>), heading levels.",
-            "- Never translate the contents of fenced code blocks (```), indented code blocks (lines indented by four or more spaces), or inline code (`like this`). Reproduce them byte for byte, including any human-readable text inside them — a commit message, a string literal or a comment inside a code block must be left in the source language.",
+            // Fenced and inline code only. A clause covering "lines indented by four
+            // or more spaces" was added and removed the same day: inside a prose
+            // chunk it left indented prose — a nested list item, a quoted email —
+            // untranslated, and this translator sees selections with no format
+            // context to tell code from an indented paragraph.
+            "- Never translate the contents of fenced code blocks (```) or inline code (`like this`). Reproduce them byte for byte, including any human-readable text inside them — a commit message, a string literal or a comment inside a code block must be left in the source language.",
             "- Never translate URLs, email addresses, file paths, CLI flags, or identifiers such as function and variable names.",
             "- Keep numbers, units, and dates in their original values.",
             "- \(request.tone.instruction)",

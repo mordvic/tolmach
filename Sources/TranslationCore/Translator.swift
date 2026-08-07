@@ -273,24 +273,15 @@ public struct Translator: Sendable {
             // hard-coded "\n\n" did. The consumer contract is unchanged: whitespace-only
             // pieces are not "output" (TranslationViewModel holds them in `pending`).
             if !chunk.separatorBefore.isEmpty { onToken(chunk.separatorBefore) }
-            // A chunk that is one indented code block is reproduced here, not
-            // translated — see `Chunk.isIndentedCode` for why the model cannot be
-            // trusted with it. Unlike the separator above, this IS content a consumer
-            // can see, so it goes out the way `streamChunkTranslation`'s `emit` sends
-            // content: stamping `timeToFirstTokenMS` if nothing has been shown yet.
-            // No `stats` entry, because `stats` is "one entry per translation call"
-            // and no call is made. The stream/final invariant holds by construction —
-            // what is emitted here is exactly what `final` carries for this chunk.
-            if chunk.isIndentedCode {
-                if firstTokenAt == nil { firstTokenAt = Date() }
-                onToken(chunk.text)
-                translatedChunks.append(chunk.text)
-                // Kept even on the no-call path: the loop must still stop on a
-                // cancellation that landed in the synchronous work around it, rather
-                // than run to the end and report a cancelled run as a success.
-                try Task.checkCancellation()
-                continue
-            }
+            // Every chunk goes to the model. An indented chunk was briefly reproduced
+            // here instead, with no call at all — which returned tab-indented plain
+            // text and Markdown loose-list continuations untranslated (nothing in a
+            // selection carries format context), and stamped `firstTokenAt` without a
+            // single token of model content, defeating the "nil TTFT == empty reply"
+            // contract this outcome documents. Indentation is preserved by the
+            // verbatim separators instead; fenced and inline code stay the only forms
+            // the prompt protects.
+            //
             // Filter over code-stripped text, not the raw chunk. `Glossary.relevantEntries`
             // is a plain occurrence check, so a term that only ever appears inside a fenced
             // or inline code span still matched — and the system prompt would then carry
