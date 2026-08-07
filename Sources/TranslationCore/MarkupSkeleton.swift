@@ -55,9 +55,9 @@ public enum MarkupSkeleton {
         // not `components(separatedBy: .newlines)`: that character set splits on unicode
         // scalars, so "\r\n" came out as two breaks with an empty line between them and
         // fabricated a `.paragraphBreak` — a CRLF source diffed against its LF
-        // translation reported «потеряно: граница абзаца» on a perfect translation. The
-        // two layers must read the same document or the diff reports structure the
-        // chunker never saw; sharing the scanner makes that structural.
+        // translation reported «потеряно: граница абзаца» on a perfect translation.
+        // Sharing the scanner is what makes the parity above structural rather than a
+        // promise two files keep in parallel.
         for scanned in LineScanner.scanLines(text) {
             let line = String(text[scanned.content])
             let trimmed = line.trimmingCharacters(in: .whitespaces)

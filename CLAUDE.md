@@ -55,7 +55,7 @@ TranslationCore  (pure domain; depends on nothing but Foundation/NaturalLanguage
 ```
 
 - `TranslationCore` — declares the `LLMClient` protocol (`chat` → `AsyncThrowingStream<ChatEvent>`)
-  and everything downstream of it: `LanguageDetector`, `Chunker`, `TermExtractor`,
+  and everything downstream of it: `LanguageDetector`, `Chunker`, `LineScanner`, `TermExtractor`,
   `DocumentGlossary`, `Glossary`, `LemmaMatcher`, `GlossaryVerifier`, `PromptBuilder`,
   `ResponseCleaner`, `MarkupSkeleton`, `ModelPolicy`, and `Translator` orchestrating them.
   Fully testable with `FakeLLMClient`; no Ollama needed.
@@ -86,17 +86,23 @@ Facts that will bite you if you "tidy" them:
   buffers until the shape is settled, then goes incremental. Chunks are joined by each chunk's
   `separatorBefore` — the source document's own bytes, restored verbatim — in both `final` and the
   stream, plus the source's trailing whitespace at the end; `ChunkPlan`'s invariant is that this
-  reassembly is byte-for-byte lossless. There is a test pinning this invariant.
+  reassembly is byte-for-byte lossless. `ChunkPlan.assembled(from:)` is that formula and the only
+  place it is written — `Translator` and the pinning test both call it, because a test that
+  restates the formula pins its own copy. Separators are always whitespace-only, which is what
+  lets `TranslationViewModel` tell them from model content; it is asserted in `plan` and pinned.
 - **The packing rule is the structure guarantee.** Blocks merge into one chunk only across a
-  separator that is exactly one blank line — in either line-ending convention, `"\n\n"` or
-  `"\r\n\r\n"` — and the join uses the document's own separator bytes, so a merged chunk's text is
-  byte-identical to its source span. Every other separator (three blank lines, a lone `"\n"` before
-  a fence, a blank line carrying spaces) forces a chunk boundary and never reaches the model at
-  all. Accepting the CRLF spelling is not a relaxation: the model may normalise an interior
-  `"\r\n"` to `"\n"`, but `MarkupSkeleton` shares `Chunker.scanLines`, which reads either as one
-  line break, so the diff cannot cry wolf — and gating on the LF spelling alone cost a CRLF
-  document *every* merge (measured: 30 short paragraphs at a 900-character budget gave 30 chunks,
-  31 model calls, against the 2 chunks and 3 calls of an LF copy of the same document).
+  separator that is **exactly one blank line in the document's own line-ending convention** —
+  `LineScanner.isExactlyOneBlankLine`, i.e. two bare line terminators of any recognised spelling —
+  and the join uses the document's own separator bytes, so a merged chunk's text is byte-identical
+  to its source span. Every other separator (three blank lines, a lone `"\n"` before a fence, a
+  blank line carrying spaces) forces a chunk boundary and never reaches the model at all.
+  Accepting every convention is not a relaxation: the model may normalise an interior `"\r\n"` to
+  `"\n"`, but `MarkupSkeleton` shares `LineScanner`, which reads either as one line break, so the
+  diff cannot cry wolf. **Do not re-spell this rule as a list of literals** — that list was the
+  defect twice over: `"\n\n"` alone cost a CRLF document *every* merge (measured: 30 short
+  paragraphs at a 900-character budget gave 30 chunks, 31 model calls, against the 2 chunks and 3
+  calls of an LF copy of the same document), and adding `"\r\n\r\n"` to it left CR-only and
+  mixed-EOL documents in the same hole (measured: 2 chunks against the LF twin's 1).
   **Indentation is not a code signal anywhere in the pipeline**: fenced and inline code are the
   only protected forms, indented text is prose and is translated, and its indentation survives
   because `Block.range` moves edge whitespace into the separators. See

@@ -163,10 +163,11 @@ private func reassembled(_ text: String, maxCharacters: Int) -> String {
 }
 
 @Test func aSplitParagraphFabricatesNoParagraphBreaks() {
-    // One long paragraph, no blank lines anywhere. Today every sentence-split
-    // piece is joined back with "\n\n" — fabricated paragraph breaks the markup
-    // diff can never see. After the fix, no chunk boundary inside this paragraph
-    // may carry a blank line.
+    // One long paragraph, no blank lines anywhere: no chunk boundary inside it may
+    // carry one either. The defect this guards against is the old design's, which
+    // joined every sentence-split piece back with "\n\n" — paragraph breaks the
+    // document never had, invisible to the markup diff because the diff was taken
+    // against the same fabricated text.
     let paragraph = String(
         repeating: "The server validates the resource before publishing it to every client. ",
         count: 12)
