@@ -13,6 +13,10 @@ import TranslationCore
 struct RunStatusBar: View {
     let model: TranslationViewModel
     let status: OllamaStatus
+    /// Non-nil when the window is showing «Файлы». The bar then reports the queue rather
+    /// than the text model — one row, two sources, chosen here so neither pane has to grow
+    /// a status bar of its own.
+    var queue: FileQueueModel?
     var glossaryProblem: String?
     var onMute: (String) -> Void = { _ in }
     var onRetry: () -> Void = {}
@@ -25,7 +29,7 @@ struct RunStatusBar: View {
                 // Not `if let summary`: the label never reads the string, only whether
                 // there is one, and binding a name for a value nobody uses is what the
                 // compiler's `#no-usage` warning is for.
-                if summary != nil, model.state == .finished {
+                if summary != nil, canDisclose {
                     Button {
                         expanded.toggle()
                     } label: {
@@ -44,9 +48,7 @@ struct RunStatusBar: View {
             // `WarningsView` plus this stack's own spacing underneath. That is the exact
             // failure `summary`'s own doc comment exists to prevent, reached through
             // stale `@State` rather than through a disagreeing count.
-            if expanded, summary != nil, let outcome = model.outcome, model.state == .finished {
-                let warnings = WarningsView(outcome: outcome, target: model.resolvedTarget,
-                                            problem: glossaryProblem, onMute: onMute)
+            if expanded, summary != nil, canDisclose, let warnings = warningsView {
                 // `ViewThatFits` and not a bare `ScrollView`, because a `ScrollView` is
                 // greedy in its scroll axis: it would sit at the full 200 under a two-line
                 // warning and leave the rest blank. This takes the plain stack's own height
@@ -70,10 +72,55 @@ struct RunStatusBar: View {
     }
 
     private var summary: String? {
-        Self.summary(outcome: model.outcome, problem: glossaryProblem)
+        if let queue {
+            guard let result = queue.selectedResult, result.hasWarnings else { return nil }
+            return RussianCopy.warningCount(result.warningCount)
+        }
+        return Self.summary(outcome: model.outcome, problem: glossaryProblem)
+    }
+
+    /// Whether the disclosure is offered at all. In «Текст» that is a finished run; in
+    /// «Файлы» it is a selected задание that finished, whatever the queue is doing now —
+    /// the warnings belong to the file the user is looking at, not to the run in flight.
+    private var canDisclose: Bool {
+        queue == nil ? model.state == .finished : queue?.selectedResult != nil
+    }
+
+    /// The warnings for whatever this bar is currently describing, or nil if there are none
+    /// to describe. Built once here rather than twice in the body, so the disclosure and its
+    /// contents cannot disagree about which run they belong to.
+    private var warningsView: WarningsView? {
+        if let queue {
+            guard let result = queue.selectedResult else { return nil }
+            return WarningsView(checks: result.checks, markupDiffs: result.markupDiffs,
+                                documentGlossary: result.documentGlossary,
+                                target: nil, problem: nil, onMute: onMute)
+        }
+        guard let outcome = model.outcome, model.state == .finished else { return nil }
+        return WarningsView(outcome: outcome, target: model.resolvedTarget,
+                            problem: glossaryProblem, onMute: onMute)
     }
 
     @ViewBuilder private var line: some View {
+        // «Файлы» reports the queue: one row, and the text model behind it is not what the
+        // user is looking at.
+        if let queue {
+            if let status = queue.statusLine {
+                HStack(spacing: 6) {
+                    if queue.isRunning { ProgressView().controlSize(.small) }
+                    Text(status).font(.caption)
+                        .foregroundStyle(queue.pausedAfterWarnings ? AnyShapeStyle(.orange)
+                                                                   : AnyShapeStyle(.secondary))
+                }
+            } else {
+                Text(self.status.label).font(.caption).foregroundStyle(.secondary)
+            }
+        } else {
+            textModeLine
+        }
+    }
+
+    @ViewBuilder private var textModeLine: some View {
         switch model.state {
         case .idle:
             Text(status.label).font(.caption).foregroundStyle(.secondary)

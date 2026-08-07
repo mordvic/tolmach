@@ -95,6 +95,47 @@ final class FileQueueModel {
     /// «Перевести» start a text translation behind a running queue.
     var canChangeMode: Bool { !isRunning }
 
+    private var selectedJob: FileJob? { jobs.first { $0.id == selection } }
+
+    /// The result whose warnings the status bar's disclosure opens.
+    var selectedResult: JobResult? { selectedJob?.result }
+
+    /// «Перевод · techdoc-en.md», or the plain header with nothing selected.
+    var selectedTitle: String {
+        selectedJob.map { "Перевод · \($0.url.lastPathComponent)" } ?? "Перевод"
+    }
+
+    /// What the right pane shows: the live stream when the selected задание is the one
+    /// running, its stored result otherwise.
+    ///
+    /// Selection-driven and not stream-driven, deliberately. Wiring the pane to
+    /// `streamingText` alone shows the running file's text under the selected file's name
+    /// the moment a user clicks a finished задание while the queue carries on — which is
+    /// exactly when they are most likely to click one.
+    var selectedText: String {
+        guard let job = selectedJob else { return "" }
+        if case .running = job.state { return streamingText }
+        return job.result?.final ?? ""
+    }
+
+    /// The one line the status bar shows in «Файлы», or nil when there is nothing to say.
+    /// Nil rather than «0 из 2», which would imply work is under way.
+    var statusLine: String? {
+        if pausedAfterWarnings {
+            return "Очередь остановлена на предупреждениях — нажмите «Перевести», чтобы продолжить"
+        }
+        guard let index = jobs.firstIndex(where: { if case .running = $0.state { true } else { false } }),
+              case let .running(progress) = jobs[index].state
+        else { return nil }
+        // Parts are counted across the whole queue, not within the current file: the
+        // sentence is about how much of the *queue* is left, and a per-file count next to a
+        // per-queue file count would be two scales in one line.
+        let done = jobs.prefix(index).reduce(0) { $0 + $1.partsTotal } + progress.partsDone
+        let total = jobs.reduce(0) { $0 + $1.partsTotal }
+        return RussianCopy.queuePosition(fileIndex: index, fileTotal: jobs.count,
+                                         partsDone: done, partsTotal: total)
+    }
+
     /// Translate every задание that is not already finished, one at a time.
     ///
     /// Sequential and not concurrent: Ollama holds one model in memory and `keep_alive` is
@@ -193,6 +234,7 @@ final class FileQueueModel {
             }
             var result = JobResult(final: outcome.final, checks: outcome.checks,
                                    markupDiffs: outcome.markupDiffs,
+                                   documentGlossary: outcome.documentGlossary,
                                    elapsedMS: Int(Date().timeIntervalSince(started) * 1000))
             if settings.saveNextToSource {
                 // The writer says where it wrote. Recomputing the destination here would
@@ -218,6 +260,7 @@ final class FileQueueModel {
             await drain()
             jobs[index].state = .interrupted
             jobs[index].result = JobResult(final: streamingText, checks: [], markupDiffs: [],
+                                           documentGlossary: [],
                                            elapsedMS: Int(Date().timeIntervalSince(started) * 1000))
             return true
         } catch {

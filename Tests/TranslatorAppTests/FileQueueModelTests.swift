@@ -378,3 +378,52 @@ private func makeTextModel(_ prefix: String) -> TranslationViewModel {
     #expect(!PrimaryAction.forMode(.text, text: text, queue: queue).isRunning)
     await run.value
 }
+
+@MainActor @Test func theRightPaneShowsTheSelectedFileAndNotWhicheverIsStreaming() async {
+    // Wiring the pane straight to the running file's stream means selecting a finished
+    // задание shows somebody else's document under its name — visible the moment it is
+    // wrong, and invisible in any test that only ever selects the running file.
+    let client = QueueClient(replies: ["первый перевод", "второй перевод"])
+    let model = makeQueueModel(client, prefix: "queue-right-pane")
+    model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
+    await model.run()
+
+    model.selection = model.jobs[0].id
+    #expect(model.selectedText == "первый перевод")
+    #expect(model.selectedTitle == "Перевод · a.md")
+
+    model.selection = model.jobs[1].id
+    #expect(model.selectedText == "второй перевод")
+    #expect(model.selectedTitle == "Перевод · b.md")
+}
+
+@MainActor @Test func theRightPaneFallsBackToTheHeaderWithNothingSelected() {
+    let model = makeQueueModel(QueueClient(replies: []), prefix: "queue-right-pane-empty")
+    #expect(model.selectedText.isEmpty)
+    #expect(model.selectedTitle == "Перевод")
+}
+
+@MainActor @Test func theStatusLineCountsFilesAndPartsAcrossTheWholeQueue() async {
+    let client = QueueClient(replies: ["один", "два"], paced: true)
+    let model = makeQueueModel(client, prefix: "queue-status")
+    model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
+    // Nothing has run: there is nothing to say, and an empty row is better than a «0 из 2»
+    // that implies work is under way.
+    #expect(model.statusLine == nil)
+
+    let run = Task { await model.run() }
+    try? await Task.sleep(for: .milliseconds(10))
+    let line = model.statusLine
+    await run.value
+
+    #expect(line?.contains("Перевожу 1-й файл из 2") == true)
+}
+
+@MainActor @Test func thePauseSaysWhyTheQueueStopped() async {
+    let client = QueueClient(replies: [replyWithoutTheLink, "второй"])
+    let model = makeQueueModel(client, prefix: "queue-status-paused") { $0.stopOnWarnings = true }
+    model.add([queueJob("a.md", sourceWithALink), queueJob("b.md", "second")])
+    await model.run()
+
+    #expect(model.statusLine == "Очередь остановлена на предупреждениях — нажмите «Перевести», чтобы продолжить")
+}

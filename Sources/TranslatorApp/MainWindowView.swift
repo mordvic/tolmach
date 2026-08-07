@@ -112,16 +112,23 @@ struct MainWindowView: View {
                         FileQueuePane(queue: queue)
                     }
                 }
-                TranslationPane(title: "Перевод",
-                                text: model.translatedText,
-                                isRunning: model.state == .running,
+                // Dispatches on mode like the primary action does. Wiring this to the text
+                // model in «Файлы» — or to the queue's live stream rather than its selection
+                // — puts one document's text under another document's name.
+                TranslationPane(title: mode == .text ? "Перевод" : queue.selectedTitle,
+                                text: mode == .text ? model.translatedText : queue.selectedText,
+                                isRunning: PrimaryAction.forMode(mode, text: model, queue: queue).isRunning,
                                 onCopy: onCopy)
             }
             Divider()
             RunStatusBar(model: model, status: status,
+                         queue: mode == .files ? queue : nil,
                          glossaryProblem: glossary.lastProblem,
                          onMute: mute,
-                         onRetry: { Task { await model.translate() } })
+                         onRetry: {
+                             let action = PrimaryAction.forMode(mode, text: model, queue: queue)
+                             Task { await action.start() }
+                         })
         }
         .frame(minWidth: 700, minHeight: 480)
         .toolbar { toolbar }

@@ -76,6 +76,10 @@ struct JobResult {
     let final: String
     let checks: [GlossaryCheck]
     let markupDiffs: [MarkupDiff]
+    /// Kept, unlike `chunks` and `translatedChunks`: this is a list of terms — twelve
+    /// entries, not three copies of the document — and `WarningsView` shows it under its
+    /// own disclosure.
+    let documentGlossary: [GlossaryEntry]
     let elapsedMS: Int
     var savedTo: URL?
 

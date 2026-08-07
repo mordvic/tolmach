@@ -3,7 +3,14 @@ import SwiftUI
 import TranslationCore
 
 struct WarningsView: View {
-    let outcome: TranslationOutcome
+    // The three things this view actually reads, rather than the whole outcome it used to
+    // take. The file queue keeps a reduced `JobResult` — an outcome carries `chunks` and
+    // `translatedChunks` too, roughly three copies of the document — and `TranslationOutcome`
+    // has no public initialiser, so it could not be reassembled even if that were wanted.
+    // A second copy of this view is how two surfaces come to describe one run differently.
+    let checks: [GlossaryCheck]
+    let markupDiffs: [MarkupDiff]
+    let documentGlossary: [GlossaryEntry]
     /// The target `TranslationViewModel` actually resolved for this run. Needed because
     /// `GlossaryEntry.translations` is keyed by language and `TranslationOutcome` does not
     /// carry the target — see `TranslationViewModel.resolvedTarget`.
@@ -14,8 +21,28 @@ struct WarningsView: View {
     var problem: String?
     var onMute: (String) -> Void = { _ in }
 
+    init(checks: [GlossaryCheck], markupDiffs: [MarkupDiff], documentGlossary: [GlossaryEntry],
+         target: Language? = nil, problem: String? = nil,
+         onMute: @escaping (String) -> Void = { _ in }) {
+        self.checks = checks
+        self.markupDiffs = markupDiffs
+        self.documentGlossary = documentGlossary
+        self.target = target
+        self.problem = problem
+        self.onMute = onMute
+    }
+
+    /// The window's and the panel's entry point, forwarding to the one above so that the
+    /// two callers cannot end up rendering warnings differently.
+    init(outcome: TranslationOutcome, target: Language? = nil, problem: String? = nil,
+         onMute: @escaping (String) -> Void = { _ in }) {
+        self.init(checks: outcome.checks, markupDiffs: outcome.markupDiffs,
+                  documentGlossary: outcome.documentGlossary,
+                  target: target, problem: problem, onMute: onMute)
+    }
+
     private var glossaryWarnings: [(check: GlossaryCheck, text: String)] {
-        outcome.checks.compactMap { check in
+        checks.compactMap { check in
             DiffPresentation.describe(check).map { (check, $0) }
         }
     }
@@ -31,9 +58,9 @@ struct WarningsView: View {
     /// the program that says how many warnings exist, and both the disclosure's visibility
     /// and its label read that one value.
     var warningCount: Int {
-        outcome.markupDiffs.count
+        markupDiffs.count
             + glossaryWarnings.count
-            + (outcome.documentGlossary.isEmpty ? 0 : 1)
+            + (documentGlossary.isEmpty ? 0 : 1)
             + (problem != nil ? 1 : 0)
     }
 
@@ -67,9 +94,9 @@ struct WarningsView: View {
             if let problem {
                 Text(problem).font(.caption).foregroundStyle(.red)
             }
-            if !outcome.markupDiffs.isEmpty {
+            if !markupDiffs.isEmpty {
                 section("Разметка изменилась") {
-                    ForEach(Array(outcome.markupDiffs.enumerated()), id: \.offset) { _, diff in
+                    ForEach(Array(markupDiffs.enumerated()), id: \.offset) { _, diff in
                         Text("• " + DiffPresentation.describe(diff)).font(.caption)
                     }
                 }
@@ -92,9 +119,9 @@ struct WarningsView: View {
                     }
                 }
             }
-            if !outcome.documentGlossary.isEmpty {
-                DisclosureGroup("Термины документа (\(outcome.documentGlossary.count))") {
-                    ForEach(Array(outcome.documentGlossary.enumerated()), id: \.offset) { _, entry in
+            if !documentGlossary.isEmpty {
+                DisclosureGroup("Термины документа (\(documentGlossary.count))") {
+                    ForEach(Array(documentGlossary.enumerated()), id: \.offset) { _, entry in
                         Text("\(entry.term) → \(rendered(entry))")
                             .font(.caption).foregroundStyle(.secondary)
                     }
