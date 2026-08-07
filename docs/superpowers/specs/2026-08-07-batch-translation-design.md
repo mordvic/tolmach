@@ -570,10 +570,15 @@ For `docs/OPEN-ITEMS.md` §1. Every one of these is unobservable from this envir
 One spec, two phases, with a checkpoint between them. They are independent: neither compiles
 against the other's types.
 
-**Phase 1 — the queue.** §4, §5, §7, §8, and the parts of §10 that cover them. Delivers `2a` and
-`2c` with `reviewDocumentTerms` present in settings but not yet consulted.
+**Phase 1 — the queue.** §3.5 (progress — the queue row cannot say «Перевожу часть 4 из 7»
+without it), §4, §5, §7, §8, and the parts of §10 that cover them. Delivers `2a` and `2c` with
+`reviewDocumentTerms` present in settings but not yet consulted.
 
-**Phase 2 — the gate.** §3, §6, and their tests. Delivers `2b` and wires the toggle.
+**Phase 2 — the gate.** §3.1–3.4, §3.6, §6, and their tests. Delivers `2b` and wires the toggle.
+
+The engine split between the phases is deliberate: `onProgress` is a callback that cannot
+suspend and cannot fail, so it carries none of §3.4's continuation risk and does not need the
+gate's machinery to land.
 
 Phase 1 alone is shippable. Phase 2 alone is not, because §6.4 needs a queue to suppress within.
 
