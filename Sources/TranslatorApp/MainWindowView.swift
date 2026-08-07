@@ -28,7 +28,14 @@ struct MainWindowView: View {
     var body: some View {
         VStack(spacing: 0) {
             HSplitView {
-                SourcePane(model: model, onClear: { model.sourceText = "" })
+                VStack(alignment: .leading, spacing: 0) {
+                    PaneHeader(title: "Исходник") {
+                        Button("Очистить") { model.sourceText = "" }
+                            .buttonStyle(.link)
+                            .disabled(model.sourceText.isEmpty)
+                    }
+                    SourceEditor(model: model)
+                }
                 TranslationPane(title: "Перевод",
                                 text: model.translatedText,
                                 isRunning: model.state == .running,
