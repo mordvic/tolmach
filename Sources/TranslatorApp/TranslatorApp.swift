@@ -265,6 +265,8 @@ struct TranslatorApp: App {
                     .tabItem { Label("Модели", systemImage: "shippingbox") }
                 SettingsGlossaryView(glossary: glossary, settings: settings)
                     .tabItem { Label("Глоссарий", systemImage: "book.closed") }
+                SettingsFilesView(settings: settings, models: models)
+                    .tabItem { Label("Файлы", systemImage: "doc.on.doc") }
             }
             // «Модели» now shows Ollama's health line, which this scene's own `Window` also
             // shows independently — so the pane needs its own initial check rather than
