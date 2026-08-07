@@ -83,8 +83,11 @@ Facts that will bite you if you "tidy" them:
   (it is an enhancement, not the result) — but a cancellation inside it still propagates.
 - **`final` and the `onToken` stream must agree exactly.** Cleaning (preamble stripping, whole-answer
   fence unwrap) can only be decided on the whole first line / whole reply, so `streamChunkTranslation`
-  buffers until the shape is settled, then goes incremental. Chunks are joined with `"\n\n"` in both
-  `final` and the stream. There is a test pinning this invariant.
+  buffers until the shape is settled, then goes incremental. Chunks are joined by each chunk's
+  `separatorBefore` — the source document's own bytes, restored verbatim — in both `final` and the
+  stream, plus the source's trailing whitespace at the end; `ChunkPlan`'s invariant is that this
+  reassembly is byte-for-byte lossless. There is a test pinning this invariant.
+- **The packing rule is the structure guarantee.** Blocks merge into one chunk only across an exactly-`"\n\n"` separator, so the model always sees canonical spacing and every other separator never reaches it at all. Indented code (≥ 4 spaces after a blank line) is code: never sentence-split, protected by the prompt, tokenised by `MarkupSkeleton`. See `docs/superpowers/specs/2026-08-07-lossless-chunking-design.md`.
 - `timeToFirstTokenMS` is `nil` when nothing was ever emitted — that nil *is* the empty-reply
   signal. Do not substitute a sentinel; it makes an absent response read as a slow one.
 - `stats` covers the per-chunk translation calls only, never the term-list call.

@@ -293,6 +293,10 @@ Deliberate, with the reason. Do not "fix" these without reading the reason first
 - **`swift run acceptance` is not in CI, deliberately.** It needs a live Ollama and a resident
   model. The rest of the checks *are* — see `.github/workflows/ci.yml`; «no CI for that
   harness» was never «no CI».
+- **`swift run acceptance` owed after the lossless-chunking wave.** The markup-integrity
+  measurement now diffs against the raw source (it previously diffed against the chunker-normalised
+  text), so the baseline may shift. Run against a live Ollama from the package root and record the
+  result per `docs/BASELINE.md`.
 - **Cosmetics on the Модели tab** — the `aya-expanse:8b` value wraps to three lines. The other
   half of this entry, «the settings window changes size between tabs», is retired: all three
   panes now take one 560 × 480 frame from `settingsPane()`. Whether the resizing has actually
