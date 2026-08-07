@@ -643,7 +643,7 @@ The `body` renders, in order:
 Run: `swift test --filter DocumentTermsViewTests`
 Expected: PASS, 4 tests.
 
-`RussianCopy.plural` is `private` today if the tests do not already reach it — if `explanation` cannot call it, make it `static` and non-private rather than spelling «частях» inline, and add a test for the 1/2/5 forms.
+`RussianCopy.plural` is already `static` and internal (`RussianCopy.swift:64`), so `explanation` can call it directly — checked, not assumed.
 
 - [ ] **Step 5: Commit**
 
@@ -685,12 +685,21 @@ one. Esc is the escape and it cancels the run."
 Append to `Tests/TranslatorAppTests/TranslationViewModelTests.swift`:
 
 ```swift
+/// Never `GlossaryStore()`: its default is `GlossaryStore.defaultURL`, the developer's
+/// real ~/Library/Application Support/LocalTranslator/glossary.json. A suite that reads
+/// a person's own file is the failure `InMemoryDefaults` exists to prevent, one
+/// directory over.
+private func scratchGlossary() -> GlossaryStore {
+    GlossaryStore(url: FileManager.default.temporaryDirectory
+        .appendingPathComponent("glossary-\(UUID().uuidString).json"))
+}
+
 @MainActor @Test func theTermsGateIsSkippedEntirelyWhenTheSettingIsOff() async {
     let client = ScriptedClient(replies: ["resource => ресурс", "перевод"])
     let settings = AppSettings(defaults: InMemoryDefaults(prefix: "gate-off"))
     #expect(!settings.reviewDocumentTerms)
     let model = TranslationViewModel(translator: Translator(client: client),
-                                     settings: settings, glossary: GlossaryStore(),
+                                     settings: settings, glossary: scratchGlossary(),
                                      pasteboard: NSPasteboard(name: .init("gate-off")))
     model.sourceText = String(repeating: "The resource is published. ", count: 60)
 
@@ -705,7 +714,7 @@ Append to `Tests/TranslatorAppTests/TranslationViewModelTests.swift`:
     let settings = AppSettings(defaults: InMemoryDefaults(prefix: "gate-cancel"))
     settings.reviewDocumentTerms = true
     let model = TranslationViewModel(translator: Translator(client: client),
-                                     settings: settings, glossary: GlossaryStore(),
+                                     settings: settings, glossary: scratchGlossary(),
                                      pasteboard: NSPasteboard(name: .init("gate-cancel")))
     model.sourceText = String(repeating: "The resource is published. ", count: 60)
 
@@ -725,7 +734,7 @@ Append to `Tests/TranslatorAppTests/TranslationViewModelTests.swift`:
     let settings = AppSettings(defaults: InMemoryDefaults(prefix: "gate-term-failure"))
     settings.reviewDocumentTerms = true
     let model = TranslationViewModel(translator: Translator(client: client),
-                                     settings: settings, glossary: GlossaryStore(),
+                                     settings: settings, glossary: scratchGlossary(),
                                      pasteboard: NSPasteboard(name: .init("gate-term-failure")))
     model.sourceText = String(repeating: "The resource is published. ", count: 60)
 
@@ -928,6 +937,8 @@ in a nonactivating panel — as the reason the ⌥⌘T path escalates instead."
 
 **Placeholder scan.** No "TBD" and no "handle errors appropriately". Three steps deliberately describe rather than show code — Task 3's `body`, Task 4 Step 5's sheet presentation and Task 5 Step 2–4 — because each is a SwiftUI layout whose correctness cannot be established from here anyway, and pinning a layout in a plan that a human must then look at would be false precision. Every decision *inside* them is a tested static function.
 
-**Two things this plan asks the implementer to check rather than assume.** `ScriptedClient` may need a failure mechanism (Task 4 Step 1) and `RussianCopy.plural` may be private (Task 3 Step 4). Both say what to do in either case.
+**One thing this plan asks the implementer to check rather than assume:** `ScriptedClient` may need a failure mechanism (Task 4 Step 1), and the step says what to do. `RussianCopy.plural`'s visibility was a second such caveat and has been resolved by reading the file — it is `static` and internal (`RussianCopy.swift:64`).
+
+**Known and deliberately left for a later pass:** `documentTermsUnavailable` (§6.6) is wired for `TranslationViewModel` only. The queue path can hit the same case — the user turned the gate on, the term-list call failed, no sheet appears — and says nothing about it. It is one property and one row on `FileQueueModel`, and it is called out here rather than folded in silently so that skipping it stays a choice.
 
 **Risk to watch.** Task 1 Step 4's restructuring is the sharpest edit in either phase: the review must sit *outside* the `catch` that swallows a failed term-list call, or a hook that throws would be silently converted into an empty glossary and the run would continue. `anErrorFromTheReviewFailsTheRunRatherThanBeingSwallowed` is the test that catches it, and it should be run before and after the restructure rather than only after.

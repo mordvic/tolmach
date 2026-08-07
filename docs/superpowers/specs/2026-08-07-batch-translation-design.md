@@ -167,11 +167,26 @@ same test runs again with a hook that returns its draft untouched.
 checkable, and a rule written inside a view modifier can only be read.
 
 Same extension list as `DroppedDocument.readableExtensions` (`txt`, `text`, `md`, `markdown`),
-same UTF-8-or-nothing, same refusal-by-`false` so the system springs the item back.
+same UTF-8-or-nothing.
 
-**A mixed drop is refused whole.** Ten `.md` files and one `.pdf` is a refusal, not ten
-translations — the identical reasoning `SourcePane` already applies to a multiple selection:
-taking the acceptable ones is a guess about which of them was meant.
+**A mixed drop is accepted, and what could not be read is shown rather than swallowed.** Ten
+`.md` files and one `.pdf` yields eleven rows: ten queued, one in an `.unreadable` state that
+says so and can be removed. The drop is refused — `false`, the system springs everything back —
+only when **nothing** in it is readable.
+
+This corrects an earlier version of this section, and the correction is worth keeping because
+the reasoning it replaced was plausible. That version refused a mixed drop whole, on
+`SourcePane`'s rule that «taking the acceptable ones is a guess about which of them was meant».
+That rule is about **one slot and many candidates**: the text pane has a single source, so
+choosing among five dragged files really is a guess. A queue has as many slots as there are
+files and no ambiguity at all — the user means all of them. Carrying the rule across kept its
+words and lost its subject.
+
+What it cost is the part that decided it. `dropDestination`'s `Bool` is the whole error channel
+here — deliberately, per `DroppedDocument` — and a spring-back is legible feedback for *one*
+file and a riddle for ten: everything returns, nothing says which one was the problem, and the
+user's only recourse is to bisect their own selection by hand. A visible refused row is the same
+refusal with the answer attached.
 
 **The per-file ceiling is 2 MB here, not 256 KB.** `DroppedDocument.maximumBytes` is justified by
 a sentence about what a person waits for **at a window** — «about 290 requests to the model, far
@@ -203,6 +218,10 @@ struct FileJob: Identifiable {
         case finished
         case interrupted           // cancelled mid-run; partial text kept
         case failed(String)
+        /// Dropped but not readable. Carried as a row rather than dropped on the
+        /// floor, so a mixed drop can say *which* file it could not take (§4.1).
+        /// Never entered by a run: the queue skips these, it does not retry them.
+        case unreadable
     }
 }
 ```
@@ -213,6 +232,15 @@ because the queued row promises «4 части» before anything runs — but `C
 split plus a `String.count` per block plus sentence enumeration over oversized blocks, and twenty
 2 MB files is not main-actor work. Reading and planning happen off the main actor; the задание
 arrives in the model complete.
+
+Two things follow that are easy to get wrong. **The plan must use `settings.chunkSize`,** not the
+900 that happens to be its default: a user who set 500 would otherwise be promised «4 части» and
+served seven. And **the drop-time count is an estimate that the run supersedes** — `chunkSize` can
+change between the drop and the turn, so the running row draws from `TranslationProgress.partsTotal`,
+which the engine computed for the run actually happening, and only the queued row uses the stored
+one. Planning therefore belongs to `FileQueueModel`, which has the settings; a view that computed
+it would have to be handed a chunk size, and a view that knows about chunking is a view that will
+one day disagree with the engine about it.
 
 `JobResult` holds `final`, `checks`, `markupDiffs`, `elapsedMS` and `savedTo: URL?` — **not the
 whole `TranslationOutcome`**. An outcome carries `chunks` and `translatedChunks` as well, i.e.
@@ -235,9 +263,13 @@ would multiply requests against one server without multiplying throughput.
 - **Start** is «Перевести», never the drop. A drop that immediately started minutes of work would
   make a mis-aimed drag expensive, and the drawing does not say the queue self-starts (§12.3).
 - **«Отмена»** cancels the running задание only. It becomes `.interrupted`, keeping whatever text
-  arrived; every `.queued` задание stays queued. «Перевести» resumes from the first задание that
-  is not `.finished` — which deliberately includes `.interrupted` and `.failed` ones, so resuming
-  retries what did not work rather than skipping past it.
+  arrived; every `.queued` задание stays queued.
+- **«Перевести» again** retries everything that is neither `.finished` nor `.unreadable` —
+  `.interrupted` and `.failed` included, so resuming retries what did not work rather than
+  stepping past it. **The set is fixed when the run starts, not re-scanned as it goes.** A run
+  that re-asked «what is not finished yet?» after each задание would find a задание it had just
+  marked `.failed` and translate it again, forever; the loop is over a snapshot for that reason
+  and no other.
 - **`stopOnWarnings`** on: after a задание finishes with markup diffs or missing terms, nothing
   else starts. **The pause is a property of the queue, not of the задание** — the file itself is
   `.finished` and is still written, because it finished; the pause is for a human to look, not a
@@ -301,15 +333,27 @@ Rows are the задания, in drop order, selectable. Per the drawing:
 - running: name, «7 частей», a progress bar, «Перевожу часть 4 из 7 · 12 терминов документа»
 - queued: name, «в очереди · 4 части»
 - finished: name, «✓ готово за 3 140 мс», «2 предупреждения» and the save link
+- unreadable: name, «не удалось прочитать», and nothing else — the row exists to name the file
+  the drop could not take (§4.1) and to be removed
 - a dashed drop target at the bottom: «Перетащите .md, .txt или .markdown»
 
 Empty state: the same drop target, filling the pane, plus the sentence that says «Перевести»
 starts the queue.
 
+**The queue selects the first задание and then leaves the selection alone.** It does not follow
+the running file: a user reading a finished translation while the next file starts would have it
+pulled out from under them, and the status bar already says which file is running. The selection
+moves on a click and on nothing else.
+
 ### 5.3 The right pane
 
-Shows the **selected** задание's translation, streaming if that задание is the running one.
-Header: «Перевод · techdoc-en.md». With nothing selected it keeps the existing empty state.
+Shows the **selected** задание's translation — its stored result when that задание has finished,
+the live stream when it is the one running. Header: «Перевод · techdoc-en.md». With nothing
+selected it keeps the existing empty state.
+
+Selection-driven and not stream-driven, and the difference is visible the moment it is wrong:
+wiring the pane straight to the running file's stream means selecting a finished задание shows
+somebody else's document under its name.
 
 `TranslationPane` therefore stops taking `TranslationViewModel` and takes `title`, `text`,
 `isRunning` and `onCopy`. A view that renders four values does not need a class reference to get
@@ -321,10 +365,28 @@ In «Файлы», `RunStatusBar`'s line reads «Перевожу 2-й файл 
 and the disclosure opens the **selected** задание's warnings through the existing `WarningsView`,
 which takes checks and diffs and so needs no change.
 
-### 5.5 The toolbar
+### 5.5 The toolbar and the menu — same controls, different wiring
 
-Unchanged: the same two language pickers, ⇄, the tone picker, and «Перевести»/«Отмена». ⌘↩ and
-⌘. stay in the «Перевод» menu, declared once, exactly as CLAUDE.md requires.
+The toolbar's **controls** are unchanged: the same two language pickers, ⇄, the tone picker, and
+one primary «Перевести»/«Отмена». ⌘↩ and ⌘. stay in the «Перевод» menu, declared once, exactly as
+CLAUDE.md requires — declaring them on the buttons as well leaves two things to keep in step and
+no statement about which wins.
+
+Its **wiring** is not unchanged, and saying «the toolbar is unchanged» without that distinction is
+how this came to have no owner. Today the button reads `model.state` and the menu items call
+`translation.translate()` / `.cancel()` — both the *text* view model. In «Файлы» that button would
+run an empty text model and return, no «Отмена» would ever appear, and ⌘↩ and ⌘. would be inert:
+a queue that cannot be started or stopped.
+
+So one rule, in one place: **the primary action follows the visible mode.** `MainWindowView`
+exposes whether the mode's model is running and what to do about it; the toolbar button and both
+menu items read that, so the three cannot disagree. The menu items stay enabled exactly when the
+visible mode has something to do, which keeps the measured argument for ⌘. intact — a disabled
+menu item declines its key equivalent, so the panel's own ⌘. still reaches it.
+
+`FileQueueModel` is constructed where `TranslationViewModel` is, in `TranslatorApp`, and passed
+into the window. It is a third model beside the window's and the panel's, and it is owned in the
+same place for the same reason: the app owns the models, the scenes read them.
 
 ---
 
@@ -497,13 +559,21 @@ reconsidered, this probe comes first.
 
 **Pure, in `TranslatorAppTests`.** `OutputNaming` — the code inserted before the extension, no
 extension, an occupied name taking a number, a name occupied twice, case. `QueueDrop` — a mixed
-drop refused whole, the 2 MB ceiling refusing without reading the bytes, a blank-lines-only file
-refused, the extension list.
+drop keeps the readable files and marks the rest, a drop of nothing readable is refused whole,
+the 2 MB ceiling refuses without reading the bytes, a blank-lines-only file is not readable, the
+extension list.
 
-**`FileQueueModel` against `FakeLLMClient`.** Order; cancel mid-file leaves that задание
-`.interrupted` and the rest `.queued`; resume starts from the first unfinished; `stopOnWarnings`
-halts after a задание with warnings and not after a clean one; a write failure sets `saveProblem`
-and does not fail the задание.
+**`FileQueueModel` against a scripted client.** Order; cancel mid-file leaves that задание
+`.interrupted` and the rest `.queued`; a second run retries the interrupted one; **a задание that
+fails does not stall the queue and is not retried within the same run** — the test that catches
+the re-scanning loop, and it must fail rather than hang, so it runs against a client that always
+answers; `.unreadable` заданиям are skipped, never translated; `stopOnWarnings` halts after a
+задание with warnings and not after a clean one; a write failure sets `saveProblem` and does not
+fail the задание; the selection does not move when the running file changes.
+
+Every one of these constructs its `GlossaryStore` with a scratch URL. `GlossaryStore()`'s default
+is the real `~/Library/Application Support/LocalTranslator/glossary.json`, and a suite that reads
+the developer's own file is the failure `InMemoryDefaults` exists to prevent, one directory over.
 
 **`DocumentTermsRequest`.** Resumed exactly once under all four orders — proceed, cancel, cancel
 after proceed, proceed after cancel — and a cancelled request's `translate` throws
@@ -529,7 +599,15 @@ For `docs/OPEN-ITEMS.md` §1. Every one of these is unobservable from this envir
 - The mode switch in the pane header, and whether both pane headers still read as one row.
 - A queue of three files end to end: rows updating, the bar moving, the right pane streaming the
   selected file, the status bar counting files and части.
+- **The toolbar button and the two menu items following the mode** (§5.5): «Перевести» starting
+  the queue in «Файлы» and the text run in «Текст», ⌘↩ and ⌘. doing the same from the keyboard,
+  and ⌘. still reaching the panel while the window is idle — the measured argument for that last
+  one is about a *disabled* menu item declining its key equivalent, and this change alters when
+  the item is disabled.
+- A mixed drop: the readable files queued, the refused one visible by name, and removable.
 - «Отмена» mid-file, then «Перевести» resuming at the right file.
+- Selecting a finished file while another streams, and reading that file rather than the running
+  one.
 - A translation actually appearing beside its source in Finder, under the right name, and the
   numbered name when one is taken.
 - The `NSSavePanel` fallback after a refused write.

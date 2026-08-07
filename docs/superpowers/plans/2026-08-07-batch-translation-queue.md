@@ -330,7 +330,7 @@ be undone, so the rule has to be provable rather than trusted."
 
 ### Task 3: `QueueDrop`
 
-What the queue accepts (§4.1). The interesting decisions are the whole-drop refusal and the 2 MB ceiling that deliberately differs from `DroppedDocument`'s 256 KB.
+What the queue accepts (§4.1). The interesting decisions are that a mixed drop is *kept* with its refusals named, and the 2 MB ceiling that deliberately differs from `DroppedDocument`'s 256 KB.
 
 **Files:**
 - Create: `Sources/TranslatorApp/QueueDrop.swift`
@@ -338,7 +338,7 @@ What the queue accepts (§4.1). The interesting decisions are the whole-drop ref
 
 **Interfaces:**
 - Consumes: `DroppedDocument.readableExtensions`.
-- Produces: `enum QueueDrop` with `static let maximumBytes: Int`, and `static func accept(_ urls: [URL]) -> [(url: URL, text: String)]?` — `nil` means the whole drop is refused.
+- Produces: `enum QueueDrop` with `static let maximumBytes: Int`, `struct QueueDrop.Item { let url: URL; let text: String? }`, and `static func accept(_ urls: [URL]) -> [Item]?` — an item's `nil` text means that file could not be read; a `nil` return means nothing in the drop was readable and the whole drop is refused.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -382,19 +382,33 @@ private final class Scratch {
     #expect(accepted.map(\.text) == ["first", "second"])
 }
 
-@Test func oneUnreadableFileRefusesTheWholeDrop() throws {
-    // Taking the acceptable nine of ten is a guess about which the user meant — the
-    // identical judgement SourcePane already makes about a multiple selection.
+@Test func aMixedDropKeepsWhatItCanReadAndNamesWhatItCannot() throws {
+    // The queue has a slot per file and no ambiguity about intent — the user means all
+    // of them — so there is nothing to guess. A spring-back is legible feedback for one
+    // file and a riddle for ten: everything returns and nothing says which was refused.
     let scratch = Scratch()
     let good = scratch.file("a.md", "text")
     let bad = scratch.file("b.pdf", "text")
-    #expect(QueueDrop.accept([good, bad]) == nil)
+    let accepted = try #require(QueueDrop.accept([good, bad]))
+
+    #expect(accepted.map(\.url) == [good, bad])
+    #expect(accepted[0].text == "text")
+    #expect(accepted[1].text == nil)   // becomes a visible .unreadable row
+}
+
+@Test func aDropWithNothingReadableInItIsRefusedWhole() throws {
+    // Only here does the spring-back stay the right answer: there is no row worth
+    // making, and eleven refused rows would be a mess rather than an explanation.
+    let scratch = Scratch()
+    #expect(QueueDrop.accept([scratch.file("a.pdf", "x"), scratch.file("b.key", "y")]) == nil)
 }
 
 @Test func aFileOverTheCeilingIsRefusedWithoutBeingRead() throws {
     let scratch = Scratch()
     let huge = scratch.file("huge.md", bytes: QueueDrop.maximumBytes + 1)
-    #expect(QueueDrop.accept([huge]) == nil)
+    let readable = scratch.file("ok.md", "text")
+    let accepted = try #require(QueueDrop.accept([huge, readable]))
+    #expect(accepted[0].text == nil)
 }
 
 @Test func theCeilingHereIsHigherThanTheTextPanesOnPurpose() {
@@ -405,20 +419,25 @@ private final class Scratch {
     #expect(QueueDrop.maximumBytes == 2 * 1024 * 1024)
 }
 
-@Test func aFileOfBlankLinesIsRefusedLikeAnEmptyOne() throws {
+@Test func aFileOfBlankLinesIsNotReadableEitherAndSaysSo() throws {
     let scratch = Scratch()
-    #expect(QueueDrop.accept([scratch.file("blank.md", "\n\n   \n")]) == nil)
+    let blank = scratch.file("blank.md", "\n\n   \n")
+    let readable = scratch.file("ok.md", "text")
+    let accepted = try #require(QueueDrop.accept([blank, readable]))
+    #expect(accepted[0].text == nil)
 }
 
 @Test func anEmptyDropIsRefusedRatherThanAcceptedAsAnEmptyQueue() {
     #expect(QueueDrop.accept([]) == nil)
 }
 
-@Test func aFileThatIsNotUTF8IsRefused() throws {
+@Test func aFileThatIsNotUTF8IsNotReadable() throws {
     let scratch = Scratch()
     let url = scratch.directory.appendingPathComponent("latin1.md")
     try Data([0xFF, 0xFE, 0xFD]).write(to: url)
-    #expect(QueueDrop.accept([url]) == nil)
+    let readable = scratch.file("ok.md", "text")
+    let accepted = try #require(QueueDrop.accept([url, readable]))
+    #expect(accepted[0].text == nil)
 }
 ```
 
@@ -457,23 +476,32 @@ enum QueueDrop {
     /// as the translation is the worse failure.
     static let maximumBytes = 2 * 1024 * 1024
 
-    /// The files this drop contributes to the queue, or `nil` if the drop is refused.
+    /// One dropped file. A `nil` `text` means it could not be read, and the queue shows
+    /// it as an `.unreadable` row rather than discarding it.
+    struct Item: Equatable {
+        let url: URL
+        let text: String?
+    }
+
+    /// Everything this drop contributes to the queue, or `nil` if none of it is readable
+    /// and the drop should be refused outright.
     ///
-    /// **A mixed drop is refused whole.** Ten `.md` files and one `.pdf` yields nothing,
-    /// not ten translations: taking the acceptable ones is a guess about which of them
-    /// was meant, which is the identical judgement `SourcePane` already makes about a
-    /// multiple selection. `nil` reaches `dropDestination` as `false`, and the system
-    /// springs every item back — the whole error channel, deliberately, exactly as
-    /// `DroppedDocument` documents.
-    static func accept(_ urls: [URL]) -> [(url: URL, text: String)]? {
+    /// **A mixed drop is accepted and its refusals are named.** Ten `.md` files and one
+    /// `.pdf` yields eleven items, one of them textless. An earlier version refused the
+    /// whole drop on `SourcePane`'s rule that «taking the acceptable ones is a guess
+    /// about which was meant» — but that rule is about *one slot and many candidates*,
+    /// and a queue has a slot per file and no ambiguity at all. What the transplant cost
+    /// is the part that decided it: `dropDestination`'s `Bool` is the entire error
+    /// channel here, and a spring-back is legible feedback for one file and a riddle for
+    /// ten — everything returns and nothing says which one was the problem.
+    ///
+    /// `nil` is still `false` at the call site, and still the whole channel, for the one
+    /// case where a row would explain nothing: a drop with nothing readable in it.
+    static func accept(_ urls: [URL]) -> [Item]? {
         guard !urls.isEmpty else { return nil }
-        var out: [(url: URL, text: String)] = []
-        out.reserveCapacity(urls.count)
-        for url in urls {
-            guard let text = readable(url) else { return nil }
-            out.append((url, text))
-        }
-        return out
+        let items = urls.map { Item(url: $0, text: readable($0)) }
+        guard items.contains(where: { $0.text != nil }) else { return nil }
+        return items
     }
 
     /// Same extension list, same UTF-8-or-nothing and same blank-file rule as
@@ -506,9 +534,13 @@ Expected: PASS, 7 tests.
 git add Sources/TranslatorApp/QueueDrop.swift Tests/TranslatorAppTests/QueueDropTests.swift
 git commit -m "feat(app): QueueDrop — what the file queue accepts
 
-Same extensions, same UTF-8-or-nothing and same blank-file rule as DroppedDocument;
-a mixed drop is refused whole, for the reason SourcePane already refuses a multiple
-selection.
+Same extensions, same UTF-8-or-nothing and same blank-file rule as DroppedDocument.
+A mixed drop is kept and its refusals are named: SourcePane's «taking the acceptable
+ones is a guess about which was meant» is about one slot and many candidates, and a
+queue has a slot per file and no ambiguity. What the transplant would have cost is
+the deciding part — dropDestination's Bool is the whole error channel, and a
+spring-back is legible for one file and a riddle for ten. The drop is refused
+outright only when nothing in it is readable.
 
 The ceiling is 2 MB rather than DroppedDocument's 256 KB, and that is the point of a
 separate type: 256 KB is justified by what a person waits for *at a window*, and the
@@ -629,11 +661,17 @@ Replace the `backgroundModel` removal comment block with the property it promise
         }
         set {
             withMutation(keyPath: \.batchModel) {
-                if let newValue, !newValue.isEmpty {
-                    defaults.set(newValue, forKey: "backgroundModel")
-                } else {
-                    defaults.removeObject(forKey: "backgroundModel")
-                }
+                // `set(nil,)` and not `removeObject(forKey:)`, and the difference is not
+                // stylistic. `InMemoryDefaults` — the only defaults these tests are
+                // allowed to touch — overrides exactly three methods: `object`, `set`
+                // and `string` (`InMemoryDefaults.swift:46-48`). `removeObject` would
+                // fall through to the superclass and empty the throwaway backing suite
+                // while the in-memory dictionary kept the value, so clearing this
+                // setting would appear to do nothing under test and work in production.
+                // Assigning `nil` through the overridden `set` removes the key from that
+                // dictionary, which is the same effect through the door that is open.
+                let stored = (newValue?.isEmpty == false) ? newValue : nil
+                defaults.set(stored, forKey: "backgroundModel")
             }
         }
     }
@@ -734,8 +772,14 @@ Append to `Tests/TranslatorAppTests/RussianCopyTests.swift`:
     // about which part the user is waiting for. partsDone is 3 at that moment.
     #expect(RussianCopy.partProgress(done: 3, total: 7) == "Перевожу часть 4 из 7")
     #expect(RussianCopy.partProgress(done: 0, total: 7) == "Перевожу часть 1 из 7")
-    // The last part completing must not read as «часть 8 из 7».
-    #expect(RussianCopy.partProgress(done: 7, total: 7) == "Перевожу часть 7 из 7")
+}
+
+@Test func thereIsNoPartLineOnceEveryPartIsDone() {
+    // The engine's last report arrives with partsDone == partsTotal, a moment before the
+    // задание becomes .finished. Clamping it to «часть 7 из 7» would put a sentence about
+    // work in progress under a file that has none left; nil lets the row show nothing.
+    #expect(RussianCopy.partProgress(done: 7, total: 7) == nil)
+    #expect(RussianCopy.partProgress(done: 1, total: 1) == nil)
 }
 
 @Test func theDocumentTermCountTakesTheRightRussianPlural() {
@@ -785,14 +829,20 @@ Expected: compile failure — no member `partProgress`.
 Append inside `enum RussianCopy` in `Sources/TranslatorApp/RussianCopy.swift`:
 
 ```swift
-    /// "Перевожу часть 4 из 7" — the running queue row.
+    /// "Перевожу часть 4 из 7" — the running queue row — or nil when there is no next
+    /// часть to name.
     ///
-    /// Takes `done` and names `done + 1`, because the row is about the часть the user
-    /// is *waiting for*, not the ones behind it, and the progress bar beside it is
-    /// filled from the same `done`. Clamped at `total` so the report that arrives with
-    /// the last часть finished does not read «часть 8 из 7».
-    static func partProgress(done: Int, total: Int) -> String {
-        "Перевожу часть \(min(done + 1, total)) из \(total)"
+    /// Takes `done` and names `done + 1`, because the row is about the часть the user is
+    /// *waiting for*, not the ones behind it, and the progress bar beside it is filled
+    /// from the same `done`.
+    ///
+    /// Optional rather than clamped. The engine's final report arrives with
+    /// `done == total`, a moment before the задание becomes `.finished`; clamping it
+    /// would render «часть 7 из 7» — a sentence claiming work in progress under a file
+    /// that has none left. Nil lets the row simply stop saying anything.
+    static func partProgress(done: Int, total: Int) -> String? {
+        guard done < total else { return nil }
+        return "Перевожу часть \(done + 1) из \(total)"
     }
 
     /// "12 терминов документа" — what the run is holding constant across its части.
@@ -807,12 +857,14 @@ Append inside `enum RussianCopy` in `Sources/TranslatorApp/RussianCopy.swift`:
 
     /// "готово за 3 140 мс".
     ///
-    /// Grouped through the same `ru_RU`-pinned formatter `modelSize` uses, so two
-    /// numbers side by side in this app cannot be spelled two ways. Pinned to the
-    /// locale and not to the user's, for `modelSize`'s reason: the app is Russian
-    /// whatever the system is set to.
+    /// Formatted exactly the way `modelSize` does it — `.formatted(.number.locale(…))`
+    /// against a pinned `ru_RU` (`RussianCopy.swift:190`) — and deliberately not through
+    /// a `NumberFormatter` of its own. Two mechanisms for one convention is how two
+    /// numbers side by side in this app come to be spelled two ways, which is the whole
+    /// reason these functions live in one file. Pinned to the locale rather than the
+    /// user's, for `modelSize`'s reason: the app is Russian whatever the system is set to.
     static func finishedIn(milliseconds: Int) -> String {
-        "готово за \(grouped(milliseconds)) мс"
+        "готово за \(milliseconds.formatted(.number.locale(Locale(identifier: "ru_RU")))) мс"
     }
 
     /// "Перевожу 2-й файл из 3 — 9 частей из 13" — the status bar in «Файлы».
@@ -838,16 +890,7 @@ Append inside `enum RussianCopy` in `Sources/TranslatorApp/RussianCopy.swift`:
         "\(count) \(plural(count, "предупреждение", "предупреждения", "предупреждений"))"
     }
 
-    private static func grouped(_ value: Int) -> String {
-        let formatter = NumberFormatter()
-        formatter.locale = Locale(identifier: "ru_RU")
-        formatter.numberStyle = .decimal
-        formatter.maximumFractionDigits = 0
-        return formatter.string(from: NSNumber(value: value)) ?? "\(value)"
-    }
 ```
-
-> If `RussianCopy.modelSize` already contains a private `ru_RU` formatter, reuse it and do not add a second `grouped`. Two formatters for one convention is exactly the drift these functions exist to prevent.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -938,8 +981,15 @@ private func makeModel(_ client: LLMClient,
     configure(settings)
     return FileQueueModel(translator: Translator(client: client),
                           settings: settings,
-                          glossary: GlossaryStore(),
-                          save: { _, _ in nil })   // saving is Task 7; here it never fails
+                          // A scratch URL, never `GlossaryStore()`. Its default is
+                          // `GlossaryStore.defaultURL` — the developer's real
+                          // ~/Library/Application Support/LocalTranslator/glossary.json
+                          // — and a suite that reads a person's own file is the failure
+                          // InMemoryDefaults exists to prevent, one directory over.
+                          glossary: GlossaryStore(url: FileManager.default.temporaryDirectory
+                              .appendingPathComponent("glossary-\(UUID().uuidString).json")),
+                          // Saving is Task 7. Here it always succeeds and reports where.
+                          save: { job, _ in .success(job.url.appendingPathExtension("ru")) })
 }
 
 private func job(_ name: String, _ text: String) -> FileJob {
@@ -1046,8 +1096,15 @@ private func job(_ name: String, _ text: String) -> FileJob {
     #expect(model.jobs[0].result?.elapsedMS != nil)
 }
 
-@MainActor @Test func aFileThatFailsDoesNotStopTheOnesBehindIt() async {
-    // An empty reply is the engine's «модель вернула пустой ответ» case.
+@MainActor @Test func aFileThatFailsIsNotRetriedWithinTheSameRun() async {
+    // The test that catches a re-scanning loop. `run()` must decide its work list once:
+    // a loop that re-asked «what is not finished?» after each задание would find the one
+    // it had just marked .failed and translate it again, forever, on the main actor.
+    //
+    // The client answers every call, so a re-scanning implementation **hangs** rather
+    // than failing — which is why the assertion is on the call count and why this fixture
+    // does not run out of replies. A test that wedges the suite instead of naming the
+    // defect is worse than no test.
     let client = QueueClient(replies: ["", "второй"])
     let model = makeModel(client, prefix: "queue-failure")
     model.add([job("a.md", "first"), job("b.md", "second")])
@@ -1056,6 +1113,37 @@ private func job(_ name: String, _ text: String) -> FileJob {
 
     if case .failed = model.jobs[0].state {} else { Issue.record("expected the first file to fail") }
     #expect(model.jobs[1].state == .finished)
+    #expect(client.callCount == 2)   // one attempt each, not one-and-forever
+}
+
+@MainActor @Test func anUnreadableFileIsShownButNeverTranslated() async {
+    let client = QueueClient(replies: ["перевод"])
+    let model = makeModel(client, prefix: "queue-unreadable")
+    var refused = job("broken.pdf", "")
+    refused.state = .unreadable
+    model.add([refused, job("b.md", "second")])
+
+    await model.run()
+
+    // It stays on screen naming the file the drop could not take, and the queue neither
+    // translates it nor retries it on a later run.
+    #expect(model.jobs[0].state == .unreadable)
+    #expect(model.jobs[1].state == .finished)
+    #expect(client.callCount == 1)
+}
+
+@MainActor @Test func theSelectionStaysWhereTheUserPutIt() async {
+    // The queue must not follow the running file: a user reading a finished translation
+    // would have it pulled out from under them, and the status bar already says which
+    // file is running.
+    let client = QueueClient(replies: ["один", "два"], paced: true)
+    let model = makeModel(client, prefix: "queue-selection")
+    model.add([job("a.md", "first"), job("b.md", "second")])
+    model.selection = model.jobs[1].id
+
+    await model.run()
+
+    #expect(model.selection == model.jobs[1].id)
 }
 
 @MainActor @Test func aSecondRunIsRefusedWhileOneIsAlreadyGoing() async {
@@ -1175,8 +1263,14 @@ final class FileQueueModel {
     private let glossary: GlossaryStore
     /// Writing is injected so a queue can be run end to end in a test without touching
     /// a filesystem, and so the save-panel fallback lives at the app's edge rather than
-    /// inside the runner. Returns a problem to show, or nil on success.
-    private let save: (FileJob, String) -> String?
+    /// inside the runner.
+    ///
+    /// **Returns the URL it wrote**, not just success or failure. An earlier version
+    /// returned only a problem and let the runner recompute the destination for its
+    /// «saved here» link — which asks the filesystem *after* the write, finds the name
+    /// now taken, and answers with the next number. The link would have pointed at a
+    /// file that does not exist. Only the writer knows where the bytes went.
+    private let save: (FileJob, String) -> Result<URL, String>
 
     private var current: Task<TranslationOutcome, Error>?
 
@@ -1194,7 +1288,7 @@ final class FileQueueModel {
     private(set) var streamingText = ""
 
     init(translator: Translator, settings: AppSettings, glossary: GlossaryStore,
-         save: @escaping (FileJob, String) -> String?) {
+         save: @escaping (FileJob, String) -> Result<URL, String>) {
         self.translator = translator
         self.settings = settings
         self.glossary = glossary
@@ -1204,6 +1298,34 @@ final class FileQueueModel {
     func add(_ new: [FileJob]) {
         jobs.append(contentsOf: new)
         if selection == nil { selection = jobs.first?.id }
+    }
+
+    /// Turn a drop into заданиями, planning each readable file off the main actor.
+    ///
+    /// Planning lives here and not in the view for two reasons. It needs
+    /// `settings.chunkSize` — a view using the 900 that happens to be its default would
+    /// promise «4 части» to a user who set 500 and then serve them seven — and
+    /// `Chunker.plan` is a line split plus a `String.count` per block plus sentence
+    /// enumeration over oversized ones, which for twenty 2 MB files is not work to do
+    /// while the drop animation is still running.
+    ///
+    /// The count it stores is an estimate the run supersedes: `chunkSize` can change
+    /// between the drop and the turn, so the running row draws from
+    /// `TranslationProgress.partsTotal` and only the queued row uses this.
+    func add(dropped items: [QueueDrop.Item]) async {
+        let chunkSize = settings.chunkSize
+        let planned = await Task.detached(priority: .userInitiated) {
+            items.map { item -> FileJob in
+                guard let text = item.text else {
+                    var job = FileJob(url: item.url, text: "", partsTotal: 0)
+                    job.state = .unreadable
+                    return job
+                }
+                return FileJob(url: item.url, text: text,
+                               partsTotal: Chunker.plan(text, maxCharacters: chunkSize).chunks.count)
+            }
+        }.value
+        add(planned)
     }
 
     func remove(_ id: FileJob.ID) {
@@ -1227,12 +1349,21 @@ final class FileQueueModel {
         pausedAfterWarnings = false
         defer { isRunning = false }
 
-        while let index = jobs.firstIndex(where: { $0.state != .finished }) {
-            // `.interrupted` and `.failed` are included on purpose: resuming retries
-            // what did not work. A queue that silently steps over a file it failed to
-            // translate reports success for work it never performed.
-            let stopped = await translate(at: index)
-            if stopped { return }
+        // **The work list is decided once, here.** `.interrupted` and `.failed` are in it
+        // on purpose — resuming retries what did not work, because a queue that steps
+        // over a file it failed to translate reports success for work it never performed
+        // — and `.unreadable` is not, because there is nothing to retry.
+        //
+        // Re-scanning instead of snapshotting is a hang, not a slowdown: `.failed` is not
+        // `.finished`, so a loop asking «what is unfinished?» after each задание would
+        // find the one it had just failed and translate it again, forever, on the main
+        // actor. `aFileThatFailsIsNotRetriedWithinTheSameRun` is the guard.
+        let pending = jobs.filter { $0.state != .finished && $0.state != .unreadable }.map(\.id)
+        for id in pending {
+            // Looked up by id rather than carried as an index: `remove(_:)` is refused
+            // while running, but nothing here should depend on that from a distance.
+            guard let index = jobs.firstIndex(where: { $0.id == id }) else { continue }
+            if await translate(at: index) { return }
         }
     }
 
@@ -1241,7 +1372,9 @@ final class FileQueueModel {
     /// - Returns: whether the queue should stop here.
     private func translate(at index: Int) async -> Bool {
         let job = jobs[index]
-        selection = job.id
+        // The selection is deliberately **not** moved here. Following the running file
+        // would yank a finished translation out from under whoever is reading it, and
+        // the status bar already says which file is running.
         streamingText = ""
         jobs[index].state = .running(TranslationProgress(partsDone: 0,
                                                          partsTotal: job.partsTotal,
@@ -1301,11 +1434,16 @@ final class FileQueueModel {
                                    markupDiffs: outcome.markupDiffs,
                                    elapsedMS: Int(Date().timeIntervalSince(started) * 1000))
             if settings.saveNextToSource {
-                jobs[index].saveProblem = save(job, outcome.final)
-                if jobs[index].saveProblem == nil {
-                    result.savedTo = OutputNaming.destination(
-                        for: job.url, target: target,
-                        exists: { FileManager.default.fileExists(atPath: $0.path) })
+                // The writer says where it wrote. Recomputing the destination here would
+                // ask the filesystem *after* the write, find the name taken by that very
+                // write, and answer with the next number — a «показать в Finder» link
+                // pointing at a file that does not exist.
+                switch save(job, outcome.final) {
+                case .success(let url):
+                    result.savedTo = url
+                    jobs[index].saveProblem = nil
+                case .failure(let problem):
+                    jobs[index].saveProblem = problem
                 }
             }
             jobs[index].result = result
@@ -1376,7 +1514,7 @@ carries roughly three copies of the document."
 
 **Interfaces:**
 - Consumes: `OutputNaming.destination(for:target:exists:)`.
-- Produces: `enum TranslatedFileWriter` with `static func write(_ text: String, to destination: URL) -> String?` — returns a Russian problem to show, or `nil` on success.
+- Produces: `enum TranslatedFileWriter` with `static func write(_ text: String, beside source: URL, target: Language) -> Result<URL, String>` — the URL it wrote, or a Russian problem to show. Naming and writing are one call precisely so no caller can recompute the destination after the write and get a different answer.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1394,34 +1532,41 @@ private func scratchDirectory() -> URL {
     return url
 }
 
-@Test func aTranslationIsWrittenAsUTF8AtTheNameItWasGiven() throws {
+@Test func aTranslationIsWrittenAsUTF8BesideItsSourceAndSaysWhere() throws {
     let directory = scratchDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
-    let destination = directory.appendingPathComponent("doc.ru.md")
+    let source = directory.appendingPathComponent("doc.md")
+    try Data("source".utf8).write(to: source)
 
-    #expect(TranslatedFileWriter.write("Привет, мир.", to: destination) == nil)
-    #expect(try String(contentsOf: destination, encoding: .utf8) == "Привет, мир.")
+    let written = try TranslatedFileWriter.write("Привет, мир.", beside: source, target: .ru).get()
+
+    #expect(written.lastPathComponent == "doc.ru.md")
+    #expect(try String(contentsOf: written, encoding: .utf8) == "Привет, мир.")
 }
 
-@Test func anExistingFileIsNeverOverwrittenEvenIfTheNameWasClearedFirst() throws {
-    // The naming rule checks, then this writes, and another process can create the file
-    // in between. .withoutOverwriting is what makes that race lose safely instead of
-    // destroying a document.
+@Test func theReturnedURLIsWhereTheBytesWentEvenWhenTheFirstNameWasTaken() throws {
+    // The whole reason naming and writing are one call. Asking OutputNaming again after
+    // the write finds the name taken by that very write and answers with the next
+    // number — a «показать в Finder» link pointing at a file that does not exist.
     let directory = scratchDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
-    let destination = directory.appendingPathComponent("doc.ru.md")
-    try Data("не трогать".utf8).write(to: destination)
+    let source = directory.appendingPathComponent("doc.md")
+    try Data("source".utf8).write(to: source)
+    try Data("занято".utf8).write(to: directory.appendingPathComponent("doc.ru.md"))
 
-    let problem = TranslatedFileWriter.write("новый перевод", to: destination)
+    let written = try TranslatedFileWriter.write("новый перевод", beside: source, target: .ru).get()
 
-    #expect(problem != nil)
-    #expect(try String(contentsOf: destination, encoding: .utf8) == "не трогать")
+    #expect(written.lastPathComponent == "doc.ru 2.md")
+    #expect(try String(contentsOf: written, encoding: .utf8) == "новый перевод")
+    // And the file that was already there is untouched.
+    #expect(try String(contentsOf: directory.appendingPathComponent("doc.ru.md"),
+                       encoding: .utf8) == "занято")
 }
 
-@Test func aRefusedWriteComesBackAsARussianSentenceAndNotAnNSErrorDump() {
-    let denied = URL(fileURLWithPath: "/System/definitely-not-writable/doc.ru.md")
-    let problem = TranslatedFileWriter.write("текст", to: denied)
-    let message = try! #require(problem)
+@Test func aRefusedWriteComesBackAsARussianSentenceAndNotAnNSErrorDump() throws {
+    let denied = URL(fileURLWithPath: "/System/definitely-not-writable/doc.md")
+    guard case let .failure(message) = TranslatedFileWriter.write("текст", beside: denied, target: .ru)
+    else { Issue.record("expected the write to be refused"); return }
     // The user reads this. An NSCocoaErrorDomain description is English and names a
     // domain nobody outside this process has heard of.
     #expect(message.contains("Не удалось сохранить"))
@@ -1456,25 +1601,38 @@ import Foundation
 /// panel rather than a message: `NSSavePanel` confers the write right itself, which
 /// makes it an actual way out of a refusal rather than an apology for one.
 enum TranslatedFileWriter {
-    /// - Returns: a Russian sentence to show the user, or nil if the file was written.
-    static func write(_ text: String, to destination: URL) -> String? {
+    /// Name it and write it, in one call.
+    ///
+    /// The two are inseparable on purpose. A caller that named the file, wrote it, and
+    /// then asked `OutputNaming` again for its «показать в Finder» link would be asking
+    /// *after* the write — the name is taken now, by that very write — and would be told
+    /// the next number. Only whoever wrote the bytes knows where they went, so only this
+    /// function answers.
+    ///
+    /// - Returns: the URL written, or a Russian sentence to show the user.
+    static func write(_ text: String, beside source: URL, target: Language) -> Result<URL, String> {
+        let destination = OutputNaming.destination(
+            for: source, target: target,
+            exists: { FileManager.default.fileExists(atPath: $0.path) })
         do {
             // `.withoutOverwriting` and not a plain write: `OutputNaming` checks for a
             // free name and this writes, and another process can create the file in
             // between. Losing that race must cost a numbered name, not a document.
             try Data(text.utf8).write(to: destination, options: [.withoutOverwriting])
-            return nil
+            return .success(destination)
         } catch {
             // The error's own `localizedDescription` is English and names
             // NSCocoaErrorDomain; neither belongs on a Russian screen. The code is
             // logged for diagnosis and the sentence says what to do instead.
             Log.files.error("could not write a translation: \(error.localizedDescription, privacy: .public)")
-            return "Не удалось сохранить перевод рядом с исходником. "
-                + "Воспользуйтесь кнопкой «Сохранить как…» — это заодно выдаст приложению право на запись."
+            return .failure("Не удалось сохранить перевод рядом с исходником. "
+                + "Воспользуйтесь кнопкой «Сохранить как…» — это заодно выдаст приложению право на запись.")
         }
     }
 }
 ```
+
+`.withoutOverwriting` throws when the file exists, so the numbered-name path in the second test is `OutputNaming`'s doing and not this function's — which is exactly the split intended: `OutputNaming` picks a free name, the write option makes losing a race to another process safe.
 
 `Log` today has three categories — `hotkey`, `engine`, `settings` (`Log.swift:46-50`) — and none of them is this. Add a fourth beside them:
 
@@ -1584,20 +1742,110 @@ Behaviour is unchanged: the full suite is green at the same count."
 ```
 
 ---
+### Task 9: One header height, and the source editor as its own view
 
-### Task 9: The queue pane and the «Текст / Файлы» switch
+Behaviour-preserving groundwork, split out from the queue pane deliberately. `PaneHeader` is shared by both panes and is about to hold a control taller than a caption; `SourcePane` is about to lose its header to the window. Neither change should be visible, and doing them in the same commit as a new pane would leave a regression in the shipped window with no way to tell which half caused it.
 
-§5.1 and §5.2. Views, so almost nothing here is testable from this environment — Task 12 records what is owed to a pair of eyes.
+**Files:**
+- Modify: `Sources/TranslatorApp/SourcePane.swift`
+- Modify: `Sources/TranslatorApp/MainWindowView.swift`
+- Test: none new; the existing suite must stay green at the same count.
+
+**Interfaces:**
+- Produces: `PaneHeader(title: String?, action:)` with `static var height: CGFloat`; `struct SourceEditor: View` — the editor, placeholder, footer and text-file drop, with no header of its own.
+
+- [ ] **Step 1: Give `PaneHeader` an optional title and one pinned height**
+
+In `Sources/TranslatorApp/SourcePane.swift`:
+
+```swift
+struct PaneHeader<Action: View>: View {
+    /// Optional because the left pane's header is about to be a mode switch rather than
+    /// a caption, and the right pane's is still a caption. One type, two contents.
+    let title: String?
+    @ViewBuilder var action: () -> Action
+
+    /// Both panes' headers are pinned to this, and that is the point of the constant.
+    /// The row used to size itself from a caption plus 4 pt of padding; the left one is
+    /// about to hold a `.small` segmented control, which is taller. Two headers a few
+    /// points apart put a visible step in the divider between the panes.
+    ///
+    /// The number is not measured — nothing here can see a screen. It is the smallest
+    /// value that fits a `.small` segmented control with the padding this row already
+    /// had, and `docs/OPEN-ITEMS.md` carries it as owed to a pair of eyes.
+    static var height: CGFloat { 28 }
+
+    var body: some View {
+        HStack {
+            if let title { Text(title).font(.caption).foregroundStyle(.secondary) }
+            Spacer()
+            action().font(.caption)
+        }
+        .padding(.horizontal, 8)
+        .frame(height: Self.height)
+        .background(.quaternary.opacity(0.25))
+        Divider()
+    }
+}
+```
+
+- [ ] **Step 2: Split `SourcePane` into a header-less editor**
+
+Rename the existing `SourcePane` to `SourceEditor` and delete its `PaneHeader` call and its `onClear` parameter — both move to the window in Task 10. Everything else stays exactly as it is: the `ZStack` placeholder, `SourceFooter`, `.frame(minWidth: 280)` and the whole `.dropDestination` block with its comment.
+
+Keep `PaneHeader` in this file. It is used by both panes and moving it now would make this commit's diff look like a reorganisation rather than the two small changes it is.
+
+- [ ] **Step 3: Keep the window compiling and unchanged**
+
+In `MainWindowView.swift`, wrap the editor in the header the pane used to draw itself, so the rendered result is what it was:
+
+```swift
+                VStack(alignment: .leading, spacing: 0) {
+                    PaneHeader(title: "Исходник") {
+                        Button("Очистить") { model.sourceText = "" }
+                            .buttonStyle(.link)
+                            .disabled(model.sourceText.isEmpty)
+                    }
+                    SourceEditor(model: model)
+                }
+```
+
+- [ ] **Step 4: Run the whole suite**
+
+Run: `swift test`
+Expected: PASS at exactly the previous count. This task adds no test because it adds no behaviour; a failure here means the split changed something it should not have.
+
+- [ ] **Step 5: Verify zero warnings and commit**
+
+```bash
+swift build --build-tests 2>&1 | grep -i warning   # expect no output
+git add Sources/TranslatorApp/SourcePane.swift Sources/TranslatorApp/MainWindowView.swift
+git commit -m "refactor(app): pin one header height and lift the source header to the window
+
+Groundwork for the mode switch, kept in its own commit because none of it should be
+visible. PaneHeader takes an optional title and a fixed height: the left header is
+about to hold a small segmented control, which is taller than a caption, and two
+headers a few points apart put a step in the divider between the panes.
+
+SourceEditor is the old SourcePane without its header. Behaviour is unchanged and
+the suite is green at the same count."
+```
+
+---
+
+### Task 10: The queue pane and the «Текст / Файлы» switch
+
+§5.1, §5.2. Views, so almost nothing here is testable from this environment — Task 14 records what is owed to a pair of eyes.
 
 **Files:**
 - Create: `Sources/TranslatorApp/FileQueuePane.swift`
-- Modify: `Sources/TranslatorApp/SourcePane.swift` (the shared `PaneHeader`)
 - Modify: `Sources/TranslatorApp/MainWindowView.swift`
+- Modify: `Sources/TranslatorApp/FileQueueModel.swift`
 - Test: `Tests/TranslatorAppTests/FileQueueModelTests.swift` (append)
 
 **Interfaces:**
-- Consumes: `FileQueueModel`, `QueueDrop.accept(_:)`, `RussianCopy.*`.
-- Produces: `struct FileQueuePane: View`, `enum SourceMode: String, CaseIterable`.
+- Consumes: `FileQueueModel.add(dropped:)`, `QueueDrop.accept(_:)`, `RussianCopy.*`.
+- Produces: `struct FileQueuePane: View`, `enum SourceMode: String, CaseIterable`, `FileQueueModel.canChangeMode: Bool`.
 
 - [ ] **Step 1: Write the failing test for the only decidable part**
 
@@ -1619,9 +1867,36 @@ A view cannot be rendered here, but *which mode is legal right now* is a rule, a
 
     #expect(model.canChangeMode)
 }
+
+@MainActor @Test func aDroppedFileIsPlannedWithTheUsersChunkSizeAndNotThe900Default() async {
+    // The queued row promises «N частей» before anything runs. Planning with the 900 that
+    // happens to be the default would promise four to a user who set 500 and serve seven.
+    let client = QueueClient(replies: [])
+    let model = makeModel(client, prefix: "queue-chunk-size") { $0.chunkSize = 120 }
+    let text = String(repeating: "Одно предложение про ресурс и сервер. ", count: 20)
+
+    await model.add(dropped: [QueueDrop.Item(url: URL(fileURLWithPath: "/tmp/a.md"), text: text)])
+
+    let expected = Chunker.plan(text, maxCharacters: 120).chunks.count
+    #expect(expected > 1)                       // the fixture actually exercises the split
+    #expect(model.jobs[0].partsTotal == expected)
+}
+
+@MainActor @Test func anUnreadableItemBecomesARowRatherThanBeingDropped() async {
+    let client = QueueClient(replies: [])
+    let model = makeModel(client, prefix: "queue-unreadable-row")
+
+    await model.add(dropped: [
+        QueueDrop.Item(url: URL(fileURLWithPath: "/tmp/a.md"), text: "текст"),
+        QueueDrop.Item(url: URL(fileURLWithPath: "/tmp/b.pdf"), text: nil),
+    ])
+
+    #expect(model.jobs.map(\.state) == [.queued, .unreadable])
+    #expect(model.jobs[1].partsTotal == 0)
+}
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [ ] **Step 2: Run them to verify they fail**
 
 Run: `swift test --filter theModeSwitchIsLockedWhileTheQueueRuns`
 Expected: compile failure — no member `canChangeMode`.
@@ -1634,10 +1909,10 @@ In `Sources/TranslatorApp/FileQueueModel.swift`:
     /// Whether the window may switch between «Текст» and «Файлы» right now.
     ///
     /// A property of the model and not a condition restated in the view, for
-    /// `TranslationViewModel.canSwapLanguages`' reason: the control has to answer
-    /// before it is pressed, and a view that re-derived the rule would keep offering a
-    /// switch for a case added later. One window has one primary button; switching
-    /// mid-run would let «Перевести» start a text translation behind a queue.
+    /// `TranslationViewModel.canSwapLanguages`' reason: the control has to answer before
+    /// it is pressed, and a view that re-derived the rule would keep offering a switch
+    /// for a case added later. One window has one primary button; switching mid-run
+    /// would let «Перевести» start a text translation behind a running queue.
     var canChangeMode: Bool { !isRunning }
 ```
 
@@ -1649,7 +1924,6 @@ Create `Sources/TranslatorApp/FileQueuePane.swift`:
 // Sources/TranslatorApp/FileQueuePane.swift
 import SwiftUI
 import TranslationCore
-import UniformTypeIdentifiers
 
 /// Which of the two things the window's left half is showing.
 enum SourceMode: String, CaseIterable, Identifiable {
@@ -1666,29 +1940,40 @@ enum SourceMode: String, CaseIterable, Identifiable {
 /// The window's left half in «Файлы»: the queue.
 struct FileQueuePane: View {
     @Bindable var queue: FileQueueModel
-    let onAdd: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            List(selection: $queue.selection) {
-                ForEach(queue.jobs) { job in
-                    FileQueueRow(job: job).tag(job.id)
+            if queue.jobs.isEmpty {
+                dropTarget
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .overlay(alignment: .bottom) {
+                        Text("Нажмите «Перевести», чтобы начать")
+                            .font(.caption).foregroundStyle(.secondary).padding(.bottom, 20)
+                    }
+            } else {
+                List(selection: $queue.selection) {
+                    ForEach(queue.jobs) { job in
+                        FileQueueRow(job: job).tag(job.id)
+                    }
+                    .onDelete { offsets in
+                        offsets.map { queue.jobs[$0].id }.forEach(queue.remove)
+                    }
                 }
+                .listStyle(.inset)
+                dropTarget
             }
-            .listStyle(.inset)
-            dropTarget
         }
         .frame(minWidth: 280)
-        // Refusal is `false`, which springs every item back — the same and only error
-        // channel `SourcePane` uses, and for the same reason: there is no error surface
-        // in this window, and inventing one to say «это не текст» would be a worse trade
-        // than the feedback the platform already draws.
+        // Refusing returns `false`, which springs every item back — the same and only
+        // error channel `SourcePane` uses. It happens only when nothing in the drop was
+        // readable: a mixed drop is accepted and its refusals become visible rows, so
+        // the user learns *which* file could not be taken instead of watching ten fly
+        // home with no explanation. See `QueueDrop.accept`.
         .dropDestination(for: URL.self) { urls, _ in
-            guard queue.canChangeMode, let accepted = QueueDrop.accept(urls) else { return false }
-            queue.add(accepted.map {
-                FileJob(url: $0.url, text: $0.text,
-                        partsTotal: Chunker.plan($0.text, maxCharacters: 900).chunks.count)
-            })
+            guard queue.canChangeMode, let items = QueueDrop.accept(urls) else { return false }
+            // Reading and planning are the model's, off the main actor; this closure
+            // only decides *when*, exactly as `SourcePane`'s does.
+            Task { await queue.add(dropped: items) }
             return true
         }
     }
@@ -1719,9 +2004,12 @@ private struct FileQueueRow: View {
                 Text(trailing).font(.caption).foregroundStyle(trailingStyle)
             }
             if case let .running(progress) = job.state {
-                ProgressView(value: Double(progress.partsDone), total: Double(max(progress.partsTotal, 1)))
+                ProgressView(value: Double(progress.partsDone),
+                             total: Double(max(progress.partsTotal, 1)))
                     .progressViewStyle(.linear)
-                Text(runningDetail(progress)).font(.caption).foregroundStyle(.secondary)
+                if let detail = runningDetail(progress) {
+                    Text(detail).font(.caption).foregroundStyle(.secondary)
+                }
             }
             if let problem = job.saveProblem {
                 Text(problem).font(.caption).foregroundStyle(.orange)
@@ -1740,16 +2028,25 @@ private struct FileQueueRow: View {
         case .finished: job.result.map { RussianCopy.finishedIn(milliseconds: $0.elapsedMS) } ?? ""
         case .interrupted: "прервано"
         case .failed(let message): message
+        case .unreadable: "не удалось прочитать"
         }
     }
 
-    private var trailingStyle: HierarchicalShapeStyle {
-        if case .failed = job.state { return .secondary }
-        return .secondary
+    /// Only the two states that are a complaint are tinted. An earlier version branched
+    /// and returned `.secondary` from both arms — a switch that pretended to distinguish
+    /// cases it did not.
+    private var trailingStyle: Color {
+        switch job.state {
+        case .failed, .unreadable: .orange
+        default: .secondary
+        }
     }
 
-    private func runningDetail(_ progress: TranslationProgress) -> String {
-        let part = RussianCopy.partProgress(done: progress.partsDone, total: progress.partsTotal)
+    /// Nil once every часть is done — `partProgress` returns nil there rather than
+    /// claiming «часть 7 из 7» under a file with no work left.
+    private func runningDetail(_ progress: TranslationProgress) -> String? {
+        guard let part = RussianCopy.partProgress(done: progress.partsDone,
+                                                  total: progress.partsTotal) else { return nil }
         guard progress.documentTermCount > 0 else { return part }
         return "\(part) · \(RussianCopy.documentTermCount(progress.documentTermCount))"
     }
@@ -1758,14 +2055,13 @@ private struct FileQueueRow: View {
 
 - [ ] **Step 5: Put the switch in the window**
 
-In `Sources/TranslatorApp/MainWindowView.swift`, add `@State private var mode: SourceMode = .text` and a `let queue: FileQueueModel`, then replace the `HSplitView` contents:
+In `MainWindowView.swift`, add `@State private var mode: SourceMode = .text` and `let queue: FileQueueModel`, and replace the header built in Task 9 Step 3:
 
 ```swift
-            HSplitView {
                 VStack(alignment: .leading, spacing: 0) {
                     // The switch replaces the «Исходник» caption rather than sitting
-                    // above it, so the two panes still read as one row of chrome. Both
-                    // headers therefore have to agree on a height — see `PaneHeader`.
+                    // above it, so both panes still read as one row of chrome — which is
+                    // what Task 9 pinned `PaneHeader.height` for.
                     PaneHeader(title: nil) {
                         Picker("", selection: $mode) {
                             ForEach(SourceMode.allCases) { Text($0.label).tag($0) }
@@ -1789,85 +2085,263 @@ In `Sources/TranslatorApp/MainWindowView.swift`, add `@State private var mode: S
                     if mode == .text {
                         SourceEditor(model: model)
                     } else {
-                        FileQueuePane(queue: queue, onAdd: addFiles)
+                        FileQueuePane(queue: queue)
                     }
                 }
-                TranslationPane(title: paneTitle,
-                                text: mode == .text ? model.translatedText : queue.streamingText,
-                                isRunning: mode == .text ? model.state == .running : queue.isRunning,
-                                onCopy: onCopy)
-            }
 ```
 
-`SourcePane`'s editor half becomes `SourceEditor` (the `ZStack` with the placeholder, the footer and the text drop), keeping its `PaneHeader` out — the header is now the window's, shared by both modes. `PaneHeader` gains an optional `title` and a **pinned height**, because a `.small` segmented control is taller than a caption and two headers of different heights read as a broken split:
-
-```swift
-struct PaneHeader<Action: View>: View {
-    let title: String?
-    @ViewBuilder var action: () -> Action
-
-    /// Both panes' headers are pinned to one height. The left one may hold a segmented
-    /// control and the right one holds a caption; without this they differ by a few
-    /// points and the divider between the panes reads as misaligned. The number is the
-    /// control's own height plus the padding this row already had, and is owed a look
-    /// on a real screen — see `docs/OPEN-ITEMS.md`.
-    static var height: CGFloat { 28 }
-
-    var body: some View {
-        HStack {
-            if let title { Text(title).font(.caption).foregroundStyle(.secondary) }
-            Spacer()
-            action().font(.caption)
-        }
-        .padding(.horizontal, 8)
-        .frame(height: Self.height)
-        .background(.quaternary.opacity(0.25))
-        Divider()
-    }
-}
-```
-
-`addFiles` runs an `NSOpenPanel` restricted to `DroppedDocument.readableExtensions` and feeds the result through `QueueDrop.accept`, so the panel and the drop cannot come to accept different things.
+`addFiles` runs an `NSOpenPanel` restricted to `DroppedDocument.readableExtensions`, feeds its result through `QueueDrop.accept` and then `queue.add(dropped:)`, so the panel and the drop cannot come to accept different things.
 
 - [ ] **Step 6: Run the suite and check the build**
 
 Run: `swift test` then `swift build --build-tests 2>&1 | grep -i warning`
-Expected: PASS at the previous count plus the new test; no warnings.
+Expected: PASS at the previous count plus three; no warnings.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add Sources/TranslatorApp/FileQueuePane.swift Sources/TranslatorApp/SourcePane.swift Sources/TranslatorApp/MainWindowView.swift Sources/TranslatorApp/FileQueueModel.swift Tests/TranslatorAppTests/FileQueueModelTests.swift
+git add Sources/TranslatorApp/FileQueuePane.swift Sources/TranslatorApp/MainWindowView.swift Sources/TranslatorApp/FileQueueModel.swift Tests/TranslatorAppTests/FileQueueModelTests.swift
 git commit -m "feat(app): the file queue pane and the «Текст / Файлы» switch
-
-The switch replaces the «Исходник» caption rather than sitting above it, so both
-panes still read as one row of chrome — which is why PaneHeader now pins a height
-for both: a small segmented control is taller than a caption, and two headers a
-few points apart read as a misaligned split.
 
 canChangeMode lives on the model, not in the view: one window has one primary
 button, and switching mid-run would let «Перевести» start a text translation
-behind a running queue."
+behind a running queue.
+
+The drop closure only decides when; reading and planning are the model's, off the
+main actor and with the user's own chunkSize — planning with the 900 that happens
+to be its default would promise «4 части» to someone who set 500 and serve seven.
+
+A file the drop could not read is a visible row saying so, not a silent omission."
 ```
 
 ---
 
-### Task 10: The status bar in «Файлы»
+### Task 11: The primary action follows the mode
 
-§5.4.
+§5.5. The gap this closes was invisible in the spec because the sentence «the toolbar is unchanged» is true of its controls and false of its bindings. Without this task the queue cannot be started or stopped at all.
 
 **Files:**
-- Modify: `Sources/TranslatorApp/RunStatusBar.swift`
 - Modify: `Sources/TranslatorApp/MainWindowView.swift`
+- Modify: `Sources/TranslatorApp/TranslatorApp.swift:124-135`, `154-167`
 - Test: `Tests/TranslatorAppTests/FileQueueModelTests.swift` (append)
 
 **Interfaces:**
-- Consumes: `RussianCopy.queuePosition(fileIndex:fileTotal:partsDone:partsTotal:)`.
-- Produces: `FileQueueModel.statusLine: String?`, `FileQueueModel.selectedResult: JobResult?`.
+- Consumes: `FileQueueModel`, `TranslationViewModel`.
+- Produces: `struct PrimaryAction` — `isRunning: Bool`, `canStart: Bool`, `start: () async -> Void`, `cancel: () -> Void`; `MainWindowView.primaryAction(for:)`; `FileQueueModel` is constructed in `TranslatorApp` and passed to the window.
 
 - [ ] **Step 1: Write the failing test**
 
 ```swift
+@MainActor @Test func thePrimaryActionInFilesModeDrivesTheQueueAndNotTheTextModel() async {
+    let client = QueueClient(replies: ["один"])
+    let queue = makeModel(client, prefix: "primary-files")
+    queue.add([job("a.md", "first")])
+    let text = TranslationViewModel(translator: Translator(client: QueueClient(replies: [])),
+                                    settings: AppSettings(defaults: InMemoryDefaults(prefix: "primary-text")),
+                                    glossary: GlossaryStore(url: FileManager.default.temporaryDirectory
+                                        .appendingPathComponent("g-\(UUID().uuidString).json")),
+                                    pasteboard: NSPasteboard(name: .init("primary-files")))
+
+    let action = PrimaryAction.forMode(.files, text: text, queue: queue)
+    #expect(action.canStart)
+    await action.start()
+
+    #expect(queue.jobs[0].state == .finished)
+    #expect(text.state == .idle)   // the text model was never touched
+}
+
+@MainActor @Test func thePrimaryActionSaysThereIsNothingToStartWhenTheQueueIsEmpty() {
+    let queue = makeModel(QueueClient(replies: []), prefix: "primary-empty")
+    let text = TranslationViewModel(translator: Translator(client: QueueClient(replies: [])),
+                                    settings: AppSettings(defaults: InMemoryDefaults(prefix: "primary-empty-t")),
+                                    glossary: GlossaryStore(url: FileManager.default.temporaryDirectory
+                                        .appendingPathComponent("g-\(UUID().uuidString).json")),
+                                    pasteboard: NSPasteboard(name: .init("primary-empty")))
+
+    // An empty queue and an empty source pane are the same statement to the user: there
+    // is nothing to translate. The button says so in both modes rather than only one.
+    #expect(!PrimaryAction.forMode(.files, text: text, queue: queue).canStart)
+    #expect(!PrimaryAction.forMode(.text, text: text, queue: queue).canStart)
+}
+
+@MainActor @Test func cancellingInFilesModeStopsTheQueueAndNotTheTextModel() async {
+    let client = QueueClient(replies: ["один", "два"], paced: true)
+    let queue = makeModel(client, prefix: "primary-cancel")
+    queue.add([job("a.md", "first"), job("b.md", "second")])
+    let text = TranslationViewModel(translator: Translator(client: QueueClient(replies: [])),
+                                    settings: AppSettings(defaults: InMemoryDefaults(prefix: "primary-cancel-t")),
+                                    glossary: GlossaryStore(url: FileManager.default.temporaryDirectory
+                                        .appendingPathComponent("g-\(UUID().uuidString).json")),
+                                    pasteboard: NSPasteboard(name: .init("primary-cancel")))
+    let action = PrimaryAction.forMode(.files, text: text, queue: queue)
+
+    let run = Task { await action.start() }
+    try? await Task.sleep(for: .milliseconds(10))
+    action.cancel()
+    await run.value
+
+    #expect(queue.jobs[0].state == .interrupted)
+}
+```
+
+- [ ] **Step 2: Run them to verify they fail**
+
+Run: `swift test --filter thePrimaryActionInFilesModeDrivesTheQueueAndNotTheTextModel`
+Expected: compile failure — `PrimaryAction` is not defined.
+
+- [ ] **Step 3: Write `PrimaryAction`**
+
+In `Sources/TranslatorApp/MainWindowView.swift` (it is the window's rule and has no other consumer):
+
+```swift
+/// What «Перевести» / «Отмена» does right now — one answer, read by three controls.
+///
+/// The toolbar button, the «Перевод» menu's ⌘↩ and its ⌘. all have to agree about which
+/// model they are driving, and in «Файлы» that is not the one they were written against:
+/// both menu items call the *text* view model directly. Left alone, «Файлы» would have a
+/// button that ran an empty text model and returned, no «Отмена» at all, and two dead
+/// keyboard shortcuts.
+///
+/// A value rather than three copies of a condition, for `canSwapLanguages`' reason: a
+/// control has to answer before it is pressed, and three restatements of one rule is
+/// three places for a fourth mode to be forgotten.
+@MainActor
+struct PrimaryAction {
+    let isRunning: Bool
+    let canStart: Bool
+    let start: () async -> Void
+    let cancel: () -> Void
+
+    static func forMode(_ mode: SourceMode,
+                        text: TranslationViewModel,
+                        queue: FileQueueModel) -> PrimaryAction {
+        switch mode {
+        case .text:
+            PrimaryAction(
+                isRunning: text.state == .running,
+                canStart: !text.sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                start: { await text.translate() },
+                cancel: { text.cancel() })
+        case .files:
+            PrimaryAction(
+                isRunning: queue.isRunning,
+                // Same statement in both modes: there is nothing to translate. An
+                // `.unreadable` задание is not something to translate either, so it does
+                // not light the button on its own.
+                canStart: queue.jobs.contains { $0.state != .finished && $0.state != .unreadable },
+                start: { await queue.run() },
+                cancel: { queue.cancel() })
+        }
+    }
+}
+```
+
+- [ ] **Step 4: Read it from all three controls**
+
+In `MainWindowView.toolbar`, replace the `.primaryAction` item:
+
+```swift
+        ToolbarItem(placement: .primaryAction) {
+            let action = PrimaryAction.forMode(mode, text: model, queue: queue)
+            if action.isRunning {
+                Button("Отмена") { action.cancel() }
+            } else {
+                Button("Перевести") { Task { await action.start() } }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!status.isHealthy || !action.canStart)
+            }
+        }
+```
+
+Neither button declares a keyboard shortcut — that comment stays true and stays where it is.
+
+In `TranslatorApp.swift`'s `CommandMenu("Перевод")`, the two items read the same value. The window owns `mode`, so it publishes the current `PrimaryAction` upward through a small `@Observable` holder the app already has access to, or the app computes it from the same inputs — whichever the implementer finds fits; what must not happen is a third spelling of the rule.
+
+**The ⌘. reasoning must survive.** CLAUDE.md records that the panel's own ⌘. works because a *disabled* menu item declines its key equivalent and the key window's handler gets it. That argument depends on when the item is disabled, and this task changes that condition — the item is now disabled unless the **visible mode** is running. Re-read the comment at `TranslatorApp.swift:154-166` before editing and keep its claim true, or update it and say why.
+
+- [ ] **Step 5: Construct the queue where the other models are constructed**
+
+In `TranslatorApp.swift`, beside `translation`:
+
+```swift
+    @State private var queue: FileQueueModel
+```
+
+built in `init()` from the same `Translator`, `settings` and `glossary`, with
+`save: { job, text in TranslatedFileWriter.write(text, beside: job.url, target: ...) }`,
+and passed into `MainWindowView(model:queue:glossary:status:…)`.
+
+Third model, same owner. The app owns the models and the scenes read them — the arrangement the window's and the panel's `TranslationViewModel`s already have, and the reason they are two and not one.
+
+- [ ] **Step 6: Run everything, build the bundle, and look**
+
+```bash
+swift test
+swift build --build-tests 2>&1 | grep -i warning
+./Scripts/make-app-bundle.sh && open build/LocalTranslator.app
+```
+
+Press «Перевести» in each mode, press ⌘↩ and ⌘. in each mode, and start a hotkey translation and press ⌘. while the panel has focus and the window is idle. **Record what you actually saw** — none of this is reachable from a test.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add Sources/TranslatorApp/MainWindowView.swift Sources/TranslatorApp/TranslatorApp.swift Tests/TranslatorAppTests/FileQueueModelTests.swift
+git commit -m "feat(app): the primary action follows the visible mode
+
+Without this the queue could not be started or stopped: the toolbar button reads
+the text model's state and both menu items call it directly, so «Файлы» would have
+had a button that ran an empty text model and two dead shortcuts.
+
+One PrimaryAction value read by the toolbar and both menu items, rather than three
+restatements of one rule — the same reasoning canSwapLanguages is a property for.
+
+FileQueueModel is constructed in TranslatorApp beside the other two models: the app
+owns the models, the scenes read them."
+```
+---
+
+### Task 12: The right pane and the status bar in «Файлы»
+
+§5.3 and §5.4. The right pane is here rather than in Task 10 because both halves read the *selection*, and wiring them from one place is what stops them disagreeing about which задание is on screen.
+
+**Files:**
+- Modify: `Sources/TranslatorApp/RunStatusBar.swift`
+- Modify: `Sources/TranslatorApp/WarningsView.swift`
+- Modify: `Sources/TranslatorApp/MainWindowView.swift`
+- Test: `Tests/TranslatorAppTests/FileQueueModelTests.swift` (append)
+
+**Interfaces:**
+- Consumes: `RussianCopy.queuePosition(fileIndex:fileTotal:partsDone:partsTotal:)`, `PrimaryAction` (Task 11).
+- Produces: `FileQueueModel.statusLine: String?`, `.selectedResult: JobResult?`, `.selectedTitle: String`, `.selectedText: String`.
+
+- [ ] **Step 1: Write the failing test**
+
+```swift
+@MainActor @Test func theRightPaneShowsTheSelectedFileAndNotWhicheverIsStreaming() async {
+    // Wiring the pane straight to the running file's stream means selecting a finished
+    // задание shows somebody else's document under its name — visible the moment it is
+    // wrong, and invisible in any test that only ever selects the running file.
+    let client = QueueClient(replies: ["первый перевод", "второй перевод"])
+    let model = makeModel(client, prefix: "queue-right-pane")
+    model.add([job("a.md", "first"), job("b.md", "second")])
+    await model.run()
+
+    model.selection = model.jobs[0].id
+    #expect(model.selectedText == "первый перевод")
+    #expect(model.selectedTitle == "Перевод · a.md")
+
+    model.selection = model.jobs[1].id
+    #expect(model.selectedText == "второй перевод")
+    #expect(model.selectedTitle == "Перевод · b.md")
+}
+
+@MainActor @Test func theRightPaneFallsBackToTheHeaderWithNothingSelected() {
+    let model = makeModel(QueueClient(replies: []), prefix: "queue-right-pane-empty")
+    #expect(model.selectedText.isEmpty)
+    #expect(model.selectedTitle == "Перевод")
+}
+
 @MainActor @Test func theStatusLineCountsFilesAndPartsAcrossTheWholeQueue() async {
     let client = QueueClient(replies: ["один", "два"], paced: true)
     let model = makeModel(client, prefix: "queue-status")
@@ -1924,16 +2398,45 @@ In `Sources/TranslatorApp/FileQueueModel.swift`:
     }
 
     /// The result whose warnings the status bar's disclosure opens.
-    var selectedResult: JobResult? {
-        jobs.first { $0.id == selection }?.result
+    var selectedResult: JobResult? { selectedJob?.result }
+
+    private var selectedJob: FileJob? { jobs.first { $0.id == selection } }
+
+    /// «Перевод · techdoc-en.md», or the plain header with nothing selected.
+    var selectedTitle: String {
+        selectedJob.map { "Перевод · \($0.url.lastPathComponent)" } ?? "Перевод"
+    }
+
+    /// What the right pane shows: the live stream when the selected задание is the one
+    /// running, its stored result otherwise.
+    ///
+    /// Selection-driven and not stream-driven, deliberately. Wiring the pane to
+    /// `streamingText` alone shows the running file's text under the selected file's
+    /// name the moment a user clicks a finished задание while the queue carries on —
+    /// which is exactly when they are most likely to click one.
+    var selectedText: String {
+        guard let job = selectedJob else { return "" }
+        if case .running = job.state { return streamingText }
+        return job.result?.final ?? ""
     }
 ```
 
-- [ ] **Step 4: Render it**
+- [ ] **Step 4: Render both halves**
 
-In `RunStatusBar`, add an optional `queue: FileQueueModel?`. When it is non-nil the row's `line` is `queue.statusLine` and the disclosure opens `WarningsView(outcome:target:…)` built from `queue.selectedResult`.
+In `RunStatusBar`, add an optional `queue: FileQueueModel?`. When it is non-nil the row's `line` is `queue.statusLine` and the disclosure opens `WarningsView` built from `queue.selectedResult`.
 
 `WarningsView` currently takes a `TranslationOutcome`. Give it a second initialiser taking `checks` and `markupDiffs` directly, and have the existing one forward to it — **do not duplicate the view**, for `TranslationPane`'s reason.
+
+In `MainWindowView`, the right pane now dispatches on mode like the primary action does:
+
+```swift
+                TranslationPane(title: mode == .text ? "Перевод" : queue.selectedTitle,
+                                text: mode == .text ? model.translatedText : queue.selectedText,
+                                isRunning: PrimaryAction.forMode(mode, text: model, queue: queue).isRunning,
+                                onCopy: onCopy)
+```
+
+`onCopy` copies what the pane is showing, so it dispatches on mode too — copying the text model's translation while the queue's is on screen is the same defect one layer down.
 
 - [ ] **Step 5: Run the suite and commit**
 
@@ -1942,7 +2445,12 @@ Expected: PASS.
 
 ```bash
 git add Sources/TranslatorApp/FileQueueModel.swift Sources/TranslatorApp/RunStatusBar.swift Sources/TranslatorApp/WarningsView.swift Sources/TranslatorApp/MainWindowView.swift Tests/TranslatorAppTests/FileQueueModelTests.swift
-git commit -m "feat(app): the status bar counts files and части in «Файлы»
+git commit -m "feat(app): the right pane and the status bar follow the selection
+
+The pane shows the selected задание — its stored result when finished, the live
+stream when it is the one running. Wiring it to the stream alone puts the running
+file's text under the selected file's name the moment someone clicks a finished
+one, which is exactly when they will.
 
 Parts are counted across the whole queue rather than within the current file: the
 sentence is about how much of the queue is left, and a per-file count beside a
@@ -1955,7 +2463,7 @@ surfaces come to describe one run differently."
 
 ---
 
-### Task 11: The «Файлы» settings tab
+### Task 13: The «Файлы» settings tab
 
 §7.1–7.2.
 
@@ -2057,7 +2565,7 @@ worse than one that says it is not ready."
 
 ---
 
-### Task 12: Documentation
+### Task 14: Documentation
 
 The repo treats documentation drift as a build failure (`Tests/DocumentationTests`). This task is not optional and not last-minute.
 
@@ -2085,7 +2593,7 @@ Add «задание», «очередь» and «Файлы» to the vocabulary 
 
 - [ ] **Step 4: `docs/OPEN-ITEMS.md` §1**
 
-Add the table from spec §11, verbatim, as a new «Owed by the file queue» block. Add the TCC probe (§9.1) to §2 with whatever Task 11's bundle run actually established — **and nothing it did not**.
+Add the table from spec §11, verbatim, as a new «Owed by the file queue» block. Add the TCC probe (§9.1) to §2 with whatever the bundle runs in Task 11 Step 6 and Task 13 Step 6 actually established — **and nothing they did not**. `PaneHeader.height`'s 28 pt goes here too: it is a chosen number, not a measured one, and it decides whether the two panes read as one row.
 
 - [ ] **Step 5: Spec §12**
 
@@ -2107,17 +2615,35 @@ pair of eyes, and records only what the bundle run actually showed."
 
 ## Self-review
 
-**Spec coverage.** §3.5 → Task 1. §4.1 → Task 3. §4.2, §4.3 → Task 6. §4.4 → Task 2. §4.5 → Task 7. §5.1, §5.2 → Task 9. §5.3 → Task 8. §5.4 → Task 10. §5.5 (toolbar unchanged) → no task, correctly: it is a statement that nothing changes. §7 → Task 11. §8 → Task 5. §9.2 → Task 11 Step 6. §9.1 → Task 7 (the fallback) and Task 12 (recording it). §10 → distributed across every task's tests. §11 → Task 12. §3.1–3.4, §6 → **Phase 2, not this plan.**
+**Spec coverage.** §3.5 → Task 1. §4.1 → Task 3. §4.2, §4.3 → Task 6 and Task 10 Step 3 (planning at drop). §4.4 → Task 2. §4.5 → Task 7. §5.1, §5.2 → Tasks 9 and 10. §5.3 → Task 8 and Task 12. §5.4 → Task 12. §5.5 → **Task 11.** §7 → Task 13. §8 → Task 5. §9.1 → Task 7 (the fallback) and Task 14 (recording it). §9.2 → Task 13 Step 6. §10 → distributed across every task's tests. §11 → Task 14. §3.1–3.4, §6 → **Phase 2, not this plan.**
 
-**Gap found and closed:** the spec's §13 originally put `onProgress` in Phase 2 while §5.2's queue row depends on it. The spec was corrected before this plan was written; Task 1 is the result.
+**Three gaps found and closed after the first draft.** All three came from reviewing the plan against the source rather than against itself:
+
+- The spec's §13 put `onProgress` in Phase 2 while §5.2's queue row depends on it. Corrected in the spec; Task 1 is the result.
+- **§5.5 mapped to no task at all**, because «the toolbar is unchanged» was read as «no work». It is true of the toolbar's controls and false of its bindings: the button reads `model.state` and both menu items call the text view model directly (`MainWindowView.swift:83`, `TranslatorApp.swift:162-166`), so «Файлы» would have shipped with no way to start or stop the queue. Task 11 exists for that, and the spec's §5.5 now says the distinction out loud.
+- Task 9 was four deliverables in one — header height, editor extraction, new pane, window restructure — two of which change nothing visible. Split so a regression in the shipped window has one commit to blame.
+
+**Defects fixed after checking the plan's own code against the repository.** Each was written confidently and was wrong:
+
+- `run()` re-scanned for «the first задание that is not `.finished`», which re-finds a задание it has just marked `.failed`: an infinite loop on the main actor, and a test that would have hung rather than failed. The work list is a snapshot now, and `aFileThatFailsIsNotRetriedWithinTheSameRun` asserts a call count so it fails instead of wedging.
+- The runner recomputed `OutputNaming.destination` after the write to fill in `savedTo` — asking the filesystem after the name had been taken by that very write, so the «saved here» link pointed at a file that does not exist. Naming and writing are one call now, and the writer returns the URL.
+- `batchModel = nil` used `removeObject(forKey:)`, which `InMemoryDefaults` does not override (`InMemoryDefaults.swift:46-48`), so clearing the setting would have appeared to do nothing under test and worked in production. It assigns `nil` through the overridden `set` instead.
+- The drop planned части with a literal `900`, ignoring `settings.chunkSize`, and did it on the main actor for up to twenty 2 MB files. Planning moved into `FileQueueModel.add(dropped:)`, off the main actor, with the user's own value.
+- `finishedIn` grew a `NumberFormatter` beside `modelSize`'s `.formatted(.number.locale(…))` (`RussianCopy.swift:190`) — two mechanisms for one convention, which the same task's own comment forbids.
+- The tests built `GlossaryStore()`, whose default URL is the developer's real glossary (`GlossaryStore.swift:67`). Scratch URLs now.
+- `FileQueueRow.trailingStyle` returned `.secondary` from both arms of a `switch` — a branch pretending to distinguish cases it did not.
+- `partProgress` clamped to «часть 7 из 7», a sentence claiming work in progress under a file with none left. It returns `nil` there.
+- `translate(at:)` moved the selection to each file as it started, pulling a finished translation out from under whoever was reading it.
 
 **Type consistency.** Two names were wrong when first written and were checked against the source rather than left as an instruction to check:
 
 - `GlossaryCheck` has no `isHonoured`. It carries `status: GlossaryStatus`, whose cases are `.satisfied`, `.missing`, `.unverifiable` (`GlossaryVerifier.swift:4-10`). `JobResult.warningCount` counts `.missing` only, and Task 6 now says why `.unverifiable` is excluded.
 - `Log` has no `app`. Its categories are `hotkey`, `engine`, `settings` (`Log.swift:46-50`), so Task 7 adds a fourth, `files`, with its reasoning.
 
-Other names were taken from files read while planning: `ModelsViewModel.installedNames` (`ModelsViewModel.swift:29`) for Task 11's picker, `GlossaryStore.glossary`/`.mutedSet`, `TranslationViewModel.message(for:)`, `Chunker.plan(_:maxCharacters:)`, `AppSettings.targetLanguage(forDetected:)`, `InMemoryDefaults(prefix:)`.
+Other names were taken from files read while planning: `ModelsViewModel.installedNames` (`ModelsViewModel.swift:29`) for Task 13's picker, `GlossaryStore(url:)` and `.glossary`/`.mutedSet` (`GlossaryStore.swift:67,132-133`), `RussianCopy.plural` and `modelSize` (`RussianCopy.swift:64,187-190`), `GlossaryCheck.status` / `GlossaryStatus` (`GlossaryVerifier.swift:4-10`), `Log`'s three categories (`Log.swift:46-50`), `TranslationViewModel.message(for:)`, `Chunker.plan(_:maxCharacters:)`, `AppSettings.targetLanguage(forDetected:)`, `InMemoryDefaults(prefix:)`.
 
-**Placeholder scan.** No "TBD", no "handle errors appropriately", no "similar to Task N". Every code step carries the code. Two steps are deliberately not code — Task 11 Step 6 and Task 12 Step 4 — because they are «open the bundle and look» and «write down only what you actually saw», which is what this environment's lack of GUI automation makes them.
+**Placeholder scan.** No "TBD", no "handle errors appropriately", no "similar to Task N". Every code step carries the code. Three steps are deliberately not code — Task 11 Step 6, Task 13 Step 6 and Task 14 Step 4 — because they are «open the bundle and look» and «write down only what you actually saw», which is what this environment's lack of GUI automation makes them.
+
+**One step left as a judgement rather than a line of code**, and named so it is not mistaken for an oversight: Task 11 Step 4 does not spell out how `MainWindowView`'s `mode` reaches the `CommandMenu` in `TranslatorApp`, because the window owns that state and there are two defensible routes. What it does spell out is the constraint that decides the work: there must not be a third spelling of the rule, and the ⌘. comment at `TranslatorApp.swift:154-166` must still be true afterwards.
 
 **Not in this plan, on purpose.** `reviewDocumentTerms` is stored and drawn but disabled; the engine hook, the continuation guarantee and the terms sheet are Phase 2. Phase 1 is shippable without them: the toggle says it is not ready rather than doing nothing.
