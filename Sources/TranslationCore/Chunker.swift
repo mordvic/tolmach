@@ -10,6 +10,19 @@ public struct Chunk: Sendable, Equatable {
     /// leading whitespace.
     public let separatorBefore: String
     public let containsCodeFence: Bool
+    /// True when this chunk is one indented code block and nothing else — the packing
+    /// rule keeps such a chunk solo precisely so this can be true of the whole of it.
+    ///
+    /// `Translator` does not send these chunks to the model at all; it copies the text
+    /// into the result itself. The prompt's protection for indented code ("lines
+    /// indented by four or more spaces") cannot apply to the block's *first* line,
+    /// because that line's indentation lives in `separatorBefore` — a chunk never
+    /// begins with whitespace (see `Block.range`) — so the model saw the first line
+    /// dedented and translated it, and assembly then restored the indentation in front
+    /// of translated prose. Rather than paper over that with a restored prefix, the
+    /// engine reproduces the block itself: byte-for-byte reproduction of code must not
+    /// depend on model discipline when the engine already holds the exact bytes.
+    public let isIndentedCode: Bool
 }
 
 /// What `Chunker.plan` promises: `chunks.map { $0.separatorBefore + $0.text }.joined()
@@ -80,15 +93,31 @@ public enum Chunker {
         var current = ""
         var currentSeparator = ""
         var currentHasFence = false
+        var currentIsIndentedCode = false
         func flush() {
             guard !current.isEmpty else { return }
             chunks.append(Chunk(index: chunks.count, text: current,
                                 separatorBefore: currentSeparator,
-                                containsCodeFence: currentHasFence))
+                                containsCodeFence: currentHasFence,
+                                isIndentedCode: currentIsIndentedCode))
             current = ""; currentSeparator = ""; currentHasFence = false
+            currentIsIndentedCode = false
         }
         for piece in pieces {
+            // Unreachable today: `blockRange` trims both edges, so a block with any
+            // content at all yields a non-empty piece, and a block with none is never
+            // emitted. Stated as a precondition because an empty piece would take the
+            // `else` branch and *overwrite* `currentSeparator` with its own — silently
+            // dropping the separator of whatever came before it, which is the one way
+            // the byte-for-byte contract could break without a test noticing.
+            precondition(!piece.text.isEmpty, "Chunker: a piece must carry content")
+            // An indented-code piece is never merged, in either direction, so
+            // `isIndentedCode` describes the whole of the chunk it lands in. Merging
+            // *into* one is already impossible — its separator carries the block's own
+            // indentation and so is never exactly "\n\n" — but merging prose *onto* it
+            // was not, and that put the code and untranslated prose in one chunk.
             if !current.isEmpty, piece.separatorBefore == "\n\n",
+               !currentIsIndentedCode, piece.kind != .indentedCode,
                current.count + 2 + piece.text.count <= maxCharacters {
                 current += "\n\n" + piece.text
                 currentHasFence = currentHasFence || piece.kind == .fencedCode
@@ -97,6 +126,7 @@ public enum Chunker {
                 currentSeparator = piece.separatorBefore
                 current = piece.text
                 currentHasFence = piece.kind == .fencedCode
+                currentIsIndentedCode = piece.kind == .indentedCode
             }
         }
         flush()

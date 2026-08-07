@@ -165,6 +165,35 @@ private func reassembled(_ text: String, maxCharacters: Int) -> String {
     #expect(code?.separatorBefore.hasSuffix("    ") == true)
 }
 
+@Test func anIndentedCodeBlockNeverMergesWithTheProseAfterIt() {
+    // "\n\n" separates the block from the prose after it — the one separator packing
+    // is allowed to merge across. It must not merge here: a chunk carrying indented
+    // code is reproduced by the engine rather than translated, so mixing prose into
+    // it would either send the code to the model or leave the prose untranslated.
+    let text = "Intro.\n\n    let a = 1\n\nAfter."
+    let plan = Chunker.plan(text, maxCharacters: 900)
+    #expect(plan.chunks.count == 3)
+    #expect(plan.chunks.map(\.isIndentedCode) == [false, true, false])
+    #expect(plan.chunks.map { $0.separatorBefore + $0.text }.joined()
+            + plan.trailingSeparator == text)
+}
+
+@Test func aTabIndentedBlockIsCodeInBothTheChunkerAndTheSkeleton() {
+    // CommonMark counts one tab as four columns, so a tab-indented run after a blank
+    // line is a code block too. The chunker and the skeleton must agree about that
+    // or the markup diff reports a block one of them never saw.
+    let text = "Intro.\n\n\tlet a = 1\n\tlet b = 2\n\nAfter."
+    let plan = Chunker.plan(text, maxCharacters: 900)
+    #expect(plan.chunks.count == 3)
+    #expect(plan.chunks[1].isIndentedCode) // solo, and never sent to the model
+    #expect(plan.chunks[1].text == "let a = 1\n\tlet b = 2")
+    #expect(plan.chunks.map { $0.separatorBefore + $0.text }.joined()
+            + plan.trailingSeparator == text)
+    let codeBlocks = MarkupSkeleton.tokens(of: text)
+        .filter { if case .codeBlock = $0 { true } else { false } }
+    #expect(codeBlocks.count == 1)
+}
+
 @Test func indentedLinesMidParagraphStayProse() {
     // CommonMark: indented code cannot interrupt a paragraph. No blank line above,
     // so these lines are a prose continuation, not code — the block stays one prose

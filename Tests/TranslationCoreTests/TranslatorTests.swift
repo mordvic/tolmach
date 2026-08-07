@@ -672,16 +672,62 @@ func aPerfectEchoReproducesTheSourceByteForByte(_ text: String) async throws {
 }
 
 @Test func aSeparatorTheModelNeverSeesSurvivesInFinalRegardlessOfTheModel() async throws {
-    let fake = FakeLLMClient(responses: ["Первый абзац.\n\nВторой абзац."])
+    // Separator restoration is unconditional: "\n\n\n" is not the canonical
+    // separator, so it forces a chunk boundary and is never shown to the model at
+    // all — the model's reply cannot affect it. The responses below are deliberately
+    // nothing like the source and are provisioned for the actual call pattern (one
+    // term-list call, then one per chunk), so no call silently falls back to the
+    // empty reply an exhausted queue returns.
+    let fake = FakeLLMClient(responses: ["", "Ответ один.", "Ответ два."])
     let translator = Translator(client: fake)
     let outcome = try await translator.translate(
         text: "First paragraph.\n\n\nSecond paragraph.", target: .ru, tone: .neutral,
         userGlossary: nil, options: ChatOptions(model: "test"), maxChunkCharacters: 900)
-    // Wait — with lossless chunking these two paragraphs are two chunks (the
-    // "\n\n\n" separator forces a boundary) and the separator is restored verbatim,
-    // so a per-chunk perfect echo CANNOT lose it. To lose it the model must merge
-    // within one chunk: use a budget that puts both paragraphs in one chunk only
-    // when the separator is canonical — it is not here, so instead pin the
-    // restored-verbatim behaviour:
+    #expect(outcome.chunks.count == 2)
     #expect(outcome.final.contains("\n\n\n"))
+}
+
+// MARK: - Indented code is reproduced by the engine, never sent to the model.
+
+@Test func anIndentedCodeChunkIsReproducedVerbatimWithNoModelCall() async throws {
+    let text = "Intro.\n\n    let a = 1\n    let b = 2\n\nAfter."
+    let fake = FakeLLMClient(responses: ["", "Введение.", "После."])
+    let translator = Translator(client: fake)
+    let collector = TokenCollector()
+    let outcome = try await translator.translate(
+        text: text, target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900,
+        onToken: collector.onToken)
+    #expect(outcome.chunks.count == 3)
+    #expect(outcome.chunks.map(\.isIndentedCode) == [false, true, false])
+    // Only the two prose chunks were translated. The `<text>` markers appear in the
+    // per-chunk translation prompt and nowhere else — the term-list prompt has none.
+    let chunkPrompts = fake.receivedMessages.filter { $0.last?.content.contains("<text>") == true }
+    #expect(chunkPrompts.count == 2)
+    #expect(!fake.receivedMessages.contains { $0.contains { $0.content.contains("let a = 1") } })
+    // The code bytes reach `final` exactly as the source wrote them — indentation of
+    // the first line included, which lives in the chunk's separator.
+    #expect(outcome.final.contains("\n\n    let a = 1\n    let b = 2\n\n"))
+    #expect(outcome.translatedChunks[1] == outcome.chunks[1].text)
+    #expect(collector.text == outcome.final) // stream and final still agree
+    #expect(outcome.stats.count == 2) // one entry per translation call, and the code chunk made none
+}
+
+@Test func aDocumentThatIsOnlyIndentedCodeNeedsNoModelCallAtAll() async throws {
+    let text = "    let a = 1\n    let b = 2\n"
+    let fake = FakeLLMClient(responses: [])
+    let translator = Translator(client: fake)
+    let collector = TokenCollector()
+    let outcome = try await translator.translate(
+        text: text, target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900,
+        onToken: collector.onToken)
+    #expect(fake.receivedMessages.isEmpty)
+    #expect(outcome.final == text)
+    #expect(collector.text == text)
+    #expect(outcome.stats.isEmpty)
+    // The engine's own output is still content a consumer could see, so the
+    // first-token stamp must be set — nil means "an empty reply", which is wrong here.
+    #expect(outcome.timeToFirstTokenMS != nil)
+    #expect(outcome.markupDiffs.isEmpty)
 }
