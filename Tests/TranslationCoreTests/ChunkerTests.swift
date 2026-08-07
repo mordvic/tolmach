@@ -142,6 +142,22 @@ private func reassembled(_ text: String, maxCharacters: Int) -> String {
     #expect(plan.trailingSeparator.isEmpty)
 }
 
+@Test func aCRLFDocumentMergesLikeAnLFOneAndStaysByteIdentical() {
+    // One blank line in the CRLF convention is "\r\n\r\n", and it must merge exactly
+    // like "\n\n": gating on the LF spelling alone meant a CRLF document never merged
+    // at all — 30 paragraphs became 31 model calls where an LF copy of the same
+    // document needed 3. The join uses the document's own bytes, so the chunk text is
+    // still byte-identical to the source span it came from.
+    let text = "Short first paragraph.\r\n\r\nShort second paragraph."
+    let plan = Chunker.plan(text, maxCharacters: 900)
+    #expect(plan.chunks.count == 1)
+    #expect(plan.chunks[0].text == text)
+    #expect(plan.chunks[0].separatorBefore.isEmpty)
+    #expect(plan.trailingSeparator.isEmpty)
+    // And the byte-for-byte contract still holds when the budget forces a boundary.
+    #expect(reassembled(text, maxCharacters: 30) == text)
+}
+
 @Test func aNonCanonicalSeparatorForcesAChunkBoundaryAndSurvivesVerbatim() {
     let text = "First paragraph.\n\n\nSecond paragraph after a double blank."
     let plan = Chunker.plan(text, maxCharacters: 900)

@@ -82,13 +82,21 @@ public enum Chunker {
             }
         }
 
-        // Pieces → chunks. Merging is allowed only across an exactly-"\n\n" separator:
-        // then the joined text is byte-identical to the source span it came from, and
-        // the model always sees canonical block spacing. Any other separator — three
-        // blank lines, CRLF, a lone "\n" before a fence — forces a chunk boundary and
-        // is restored verbatim at assembly. The cost is a rare extra chunk on
-        // unusually-formatted documents; the gain is that the markup diff can never
-        // cry wolf over spacing the chunker itself changed.
+        // Pieces → chunks. Merging is allowed only across a separator that is exactly
+        // one blank line — in either line-ending convention, "\n\n" or "\r\n\r\n" —
+        // and the join uses the separator's own bytes, so the joined text stays
+        // byte-identical to the source span it came from. Any other separator (three
+        // blank lines, a lone "\n" before a fence, a blank line carrying spaces)
+        // forces a chunk boundary and is restored verbatim at assembly. The cost is a
+        // rare extra chunk on unusually-formatted documents; the gain is that the
+        // markup diff can never cry wolf over spacing the chunker itself changed.
+        //
+        // Accepting the CRLF spelling is not a relaxation of that guarantee. The model
+        // may well normalise an interior "\r\n" to "\n" in its reply, but
+        // `MarkupSkeleton` scans lines through `Chunker.scanLines`, which reads either
+        // as one line break — so the diff cannot cry wolf over the difference. Gating
+        // on the LF spelling alone was measured to cost a CRLF document *every* merge:
+        // 30 paragraphs became 31 model calls where an LF copy needed 3.
         var chunks: [Chunk] = []
         var current = ""
         var currentSeparator = ""
@@ -120,10 +128,15 @@ public enum Chunker {
             // *into* one is already impossible — its separator carries the block's own
             // indentation and so is never exactly "\n\n" — but merging prose *onto* it
             // was not, and that put the code and untranslated prose in one chunk.
-            if !current.isEmpty, piece.separatorBefore == "\n\n",
+            // "\r\n" is a single Swift `Character`, so both spellings of one blank
+            // line have `count == 2` and the budget check below reads the actual
+            // separator rather than a literal.
+            let isOneBlankLine = piece.separatorBefore == "\n\n"
+                || piece.separatorBefore == "\r\n\r\n"
+            if !current.isEmpty, isOneBlankLine,
                !currentIsIndentedCode, piece.kind != .indentedCode,
-               current.count + 2 + piece.text.count <= maxCharacters {
-                current += "\n\n" + piece.text
+               current.count + piece.separatorBefore.count + piece.text.count <= maxCharacters {
+                current += piece.separatorBefore + piece.text
                 currentHasFence = currentHasFence || piece.kind == .fencedCode
             } else {
                 flush()
