@@ -83,6 +83,29 @@ public struct TranslationProgress: Sendable, Equatable {
     }
 }
 
+/// What a human is shown before the translation that will use it.
+///
+/// Carries the user's own matching entries as well as the model's, because the review
+/// draws a «откуда» column and cannot distinguish the two sources by looking at a
+/// `GlossaryEntry`. The user's are context only: `GlossaryMerge.merge(user:document:)`
+/// lets a user entry win over a document one, so an edit to a user row would be discarded
+/// by the very next thing the engine does.
+public struct DocumentTermsDraft: Sendable {
+    /// The term-list call's result, parsed. This is what the review edits.
+    public let documentEntries: [GlossaryEntry]
+    /// `Glossary.relevantEntries(for:)` — the user's entries that occur in this text.
+    public let userEntries: [GlossaryEntry]
+    /// How many частей these terms will be held constant across. The review says this
+    /// number out loud, so it comes from the engine that planned them.
+    public let chunkCount: Int
+
+    public init(documentEntries: [GlossaryEntry], userEntries: [GlossaryEntry], chunkCount: Int) {
+        self.documentEntries = documentEntries
+        self.userEntries = userEntries
+        self.chunkCount = chunkCount
+    }
+}
+
 public struct Translator: Sendable {
     let client: LLMClient
     public init(client: LLMClient) { self.client = client }
@@ -92,7 +115,8 @@ public struct Translator: Sendable {
         options: ChatOptions, maxChunkCharacters: Int,
         ignoredTerms: Set<String> = [],
         onToken: @escaping @Sendable (String) -> Void = { _ in },
-        onProgress: @escaping @Sendable (TranslationProgress) -> Void = { _ in }
+        onProgress: @escaping @Sendable (TranslationProgress) -> Void = { _ in },
+        reviewDocumentTerms: (@Sendable (DocumentTermsDraft) async throws -> [GlossaryEntry])? = nil
     ) async throws -> TranslationOutcome {
         let started = Date()
         var firstTokenAt: Date? = nil
@@ -281,9 +305,39 @@ public struct Translator: Sendable {
             }
         }
 
+        // The review point, and the only correct one: the term-list stream has finished
+        // and no per-часть request has been issued, so **no HTTP request is in flight**
+        // while this waits for a human. Any earlier and there is nothing to show; any
+        // later and the terms have already reached a prompt.
+        //
+        // Deliberately **outside** the `do`/`catch` above. That block turns any
+        // non-cancellation error into an empty glossary and a recorded
+        // `documentGlossaryFailure` — correct for a failed *model* call, wrong for a hook
+        // the app supplied: a throw from the review would be swallowed and the run would
+        // carry on as though the user had approved it.
+        // `anErrorFromTheReviewFailsTheRunRatherThanBeingSwallowed` is the guard.
+        //
+        // Skipped when there is nothing to review — no документный глоссарий was built, or
+        // the term-list call failed. An empty table reads as a failure, and the app is what
+        // has to speak up about the failed call.
+        if let reviewDocumentTerms, !documentEntries.isEmpty {
+            let draft = DocumentTermsDraft(
+                documentEntries: documentEntries,
+                userEntries: userGlossary?.relevantEntries(for: text) ?? [],
+                chunkCount: chunks.count)
+            // A refusal is `CancellationError`, thrown by the hook and propagating from
+            // here — the contract the engine already has, rather than a second refusal
+            // path. The check after it covers a cancellation that landed while the human
+            // was deciding but did not surface as a throw.
+            documentEntries = try await reviewDocumentTerms(draft)
+            try Task.checkCancellation()
+        }
+
         // Reported before the first request, not after it, so a consumer drawing a
         // progress row has a row to draw while the first part is in flight rather than
         // a blank that fills in only once something has already finished.
+        //
+        // Counted after the review, so it reports what the run will actually hold constant.
         let documentTermCount = documentEntries.count
         onProgress(TranslationProgress(partsDone: 0, partsTotal: chunks.count,
                                        documentTermCount: documentTermCount))

@@ -788,3 +788,157 @@ private final class ProgressBox: @unchecked Sendable {
     func append(_ value: TranslationProgress) { lock.lock(); storage.append(value); lock.unlock() }
     var values: [TranslationProgress] { lock.lock(); defer { lock.unlock() }; return storage }
 }
+
+@Test func theReviewHookSeesTheParsedTermsAndTheirPartCount() async throws {
+    let fake = FakeLLMClient(responses: [
+        "resource => ресурс\nserver => сервер",
+        "перевод один", "перевод два", "перевод три", "перевод четыре",
+    ])
+    let translator = Translator(client: fake)
+    let box = DraftBox()
+
+    let outcome = try await translator.translate(
+        text: multiChunkText, target: .ru, tone: .neutral,
+        userGlossary: Glossary(entries: [GlossaryEntry(term: "server", doNotTranslate: true)]),
+        options: ChatOptions(model: "test"), maxChunkCharacters: 200,
+        reviewDocumentTerms: { draft in box.record(draft); return draft.documentEntries })
+
+    #expect(box.count == 1)   // once per run, never once per часть
+    let draft = try #require(box.value)
+    #expect(draft.documentEntries.contains { $0.term.lowercased() == "resource" })
+    // The user's own entry travels alongside, because the review shows a «откуда» column
+    // and cannot tell the two apart without being told.
+    #expect(draft.userEntries.map(\.term) == ["server"])
+    #expect(draft.chunkCount == outcome.chunks.count)
+}
+
+@Test func editsMadeInTheReviewReachThePrompt() async throws {
+    let fake = FakeLLMClient(responses: [
+        "resource => ресурс",
+        "перевод один", "перевод два", "перевод три", "перевод четыре",
+    ])
+    let translator = Translator(client: fake)
+
+    let outcome = try await translator.translate(
+        text: multiChunkText, target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 200,
+        reviewDocumentTerms: { _ in
+            [GlossaryEntry(term: "resource", translations: ["ru": "объект"])]
+        })
+
+    // The whole point: what the user typed is what the model is told, for every часть.
+    let chunkPrompts = fake.receivedMessages.dropFirst()   // drop the term-list call
+    #expect(chunkPrompts.allSatisfy { messages in
+        messages.contains { $0.content.contains("объект") }
+    })
+    #expect(!chunkPrompts.contains { messages in
+        messages.contains { $0.content.contains("ресурс") }
+    })
+    #expect(outcome.documentGlossary.first?.translations["ru"] == "объект")
+}
+
+@Test func refusingTheReviewCancelsTheRunRatherThanFailingIt() async throws {
+    let fake = FakeLLMClient(responses: ["resource => ресурс", "не должно быть запрошено"])
+    let translator = Translator(client: fake)
+
+    await #expect(throws: CancellationError.self) {
+        _ = try await translator.translate(
+            text: multiChunkText, target: .ru, tone: .neutral, userGlossary: nil,
+            options: ChatOptions(model: "test"), maxChunkCharacters: 200,
+            reviewDocumentTerms: { _ in throw CancellationError() })
+    }
+    // One call made — the term list — and not a single часть requested afterwards.
+    #expect(fake.receivedMessages.count == 1)
+}
+
+private struct ReviewExploded: Error {}
+
+@Test func anErrorFromTheReviewFailsTheRunRatherThanBeingSwallowed() async throws {
+    // The sharpest edit in this task: the review must sit *outside* the catch that
+    // swallows a failed term-list call. Inside it, this throw would become an empty
+    // glossary and the run would carry on as though nothing had happened.
+    let fake = FakeLLMClient(responses: ["resource => ресурс", "не должно быть запрошено"])
+    let translator = Translator(client: fake)
+
+    await #expect(throws: ReviewExploded.self) {
+        _ = try await translator.translate(
+            text: multiChunkText, target: .ru, tone: .neutral, userGlossary: nil,
+            options: ChatOptions(model: "test"), maxChunkCharacters: 200,
+            reviewDocumentTerms: { _ in throw ReviewExploded() })
+    }
+    #expect(fake.receivedMessages.count == 1)
+}
+
+@Test func aSingleChunkRunNeverAsksForAReview() async throws {
+    let fake = FakeLLMClient(responses: ["Привет, мир."])
+    let translator = Translator(client: fake)
+    let box = DraftBox()
+
+    _ = try await translator.translate(
+        text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900,
+        reviewDocumentTerms: { draft in box.record(draft); return draft.documentEntries })
+
+    // No документный глоссарий is built here, so there is nothing to review and a table
+    // of nothing would read as a failure.
+    #expect(box.count == 0)
+}
+
+@Test func aFailedTermListCallSkipsTheReviewInsteadOfShowingAnEmptyTable() async throws {
+    let fake = FakeLLMClient(
+        responses: ["ignored", "перевод один", "перевод два", "перевод три", "перевод четыре"],
+        errors: [FakeTermListFailure()])
+    let translator = Translator(client: fake)
+    let box = DraftBox()
+
+    let outcome = try await translator.translate(
+        text: multiChunkText, target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 200,
+        reviewDocumentTerms: { draft in box.record(draft); return draft.documentEntries })
+
+    #expect(box.count == 0)
+    // Still swallowed and still recorded — the app is what has to stop being silent about
+    // it when the user asked for a gate.
+    #expect(outcome.documentGlossaryFailure != nil)
+}
+
+@Test func aHookThatChangesNothingChangesNothing() async throws {
+    // The pinning test. Two runs of the same input, one with no hook and one with a hook
+    // that returns its draft untouched, must agree on everything observable. Comparing the
+    // two runs rather than against literals is what makes this survive a change to the
+    // fixture: a literal would have to be regenerated and would then pin whatever the code
+    // did that day.
+    // Typed explicitly: a ternary infers a non-`@Sendable` closure, which Swift 6 refuses
+    // to convert to the parameter's `@Sendable` type.
+    let identity: (@Sendable (DocumentTermsDraft) async throws -> [GlossaryEntry]) = { $0.documentEntries }
+    func run(withHook: Bool) async throws -> TranslationOutcome {
+        let fake = FakeLLMClient(responses: [
+            "resource => ресурс\nserver => сервер",
+            "перевод один", "перевод два", "перевод три", "перевод четыре",
+        ])
+        return try await Translator(client: fake).translate(
+            text: multiChunkText, target: .ru, tone: .neutral, userGlossary: nil,
+            options: ChatOptions(model: "test"), maxChunkCharacters: 200,
+            reviewDocumentTerms: withHook ? identity : nil)
+    }
+
+    let without = try await run(withHook: false)
+    let with = try await run(withHook: true)
+
+    #expect(without.final == with.final)
+    #expect(without.translatedChunks == with.translatedChunks)
+    #expect(without.chunks.map(\.text) == with.chunks.map(\.text))
+    #expect(without.documentGlossary == with.documentGlossary)
+    #expect(without.checks == with.checks)
+    #expect(without.markupDiffs == with.markupDiffs)
+    #expect(without.detectedSource == with.detectedSource)
+}
+
+/// See `ProgressBox` for why a lock and not a bare array: the hook is `@Sendable`.
+private final class DraftBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [DocumentTermsDraft] = []
+    func record(_ draft: DocumentTermsDraft) { lock.lock(); storage.append(draft); lock.unlock() }
+    var count: Int { lock.lock(); defer { lock.unlock() }; return storage.count }
+    var value: DocumentTermsDraft? { lock.lock(); defer { lock.unlock() }; return storage.first }
+}
