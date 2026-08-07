@@ -672,13 +672,15 @@ one. Esc is the escape and it cancels the run."
 **Files:**
 - Modify: `Sources/TranslatorApp/TranslationViewModel.swift`
 - Modify: `Sources/TranslatorApp/FileQueueModel.swift`
+- Modify: `Sources/TranslatorApp/FileJob.swift`
+- Modify: `Sources/TranslatorApp/FileQueuePane.swift`
 - Modify: `Sources/TranslatorApp/MainWindowView.swift`
 - Modify: `Sources/TranslatorApp/TranslatorApp.swift`
 - Modify: `Sources/TranslatorApp/SettingsFilesView.swift`
 - Test: `Tests/TranslatorAppTests/TranslationViewModelTests.swift`, `FileQueueModelTests.swift`
 
 **Interfaces:**
-- Produces: `TranslationViewModel.pendingTermsRequest: DocumentTermsRequest?`, `FileQueueModel.pendingTermsRequest: DocumentTermsRequest?`, `TranslationViewModel.documentTermsUnavailable: Bool`.
+- Produces: `TranslationViewModel.pendingTermsRequest: DocumentTermsRequest?` and `.documentTermsUnavailable: Bool`; `FileQueueModel.pendingTermsRequest: DocumentTermsRequest?`; `FileJob.documentTermsUnavailable: Bool` (per задание, not per queue — see Step 4).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -803,9 +805,51 @@ and `documentTermsUnavailable` set after the run from
 
 - [ ] **Step 4: Wire `FileQueueModel`**
 
-The same shape, plus §6.4: after each sheet closes, if `request.suppressForRun` was ticked, set a private `suppressTermsForThisRun = true` that makes the hook return `draft.documentEntries` without ever showing a sheet. Reset it at the top of `run()`, because it is a statement about this sitting.
+Write the failing test first, appended to `Tests/TranslatorAppTests/FileQueueModelTests.swift`:
 
-`cancel()` gains `pendingTermsRequest?.cancel()` for the same reason.
+```swift
+@MainActor @Test func aQueueAsksOnceWhenTheUserSaysNotToAskAgain() async {
+    // Thirteen files would otherwise mean thirteen sheets, in exactly the scenario the
+    // gate was designed for.
+    let client = QueueClient(replies: ["resource => ресурс", "первый",
+                                       "resource => ресурс", "второй"])
+    let model = makeModel(client, prefix: "queue-gate-once") { $0.reviewDocumentTerms = true }
+    model.add([job("a.md", longEnoughForTwoParts), job("b.md", longEnoughForTwoParts)])
+
+    let run = Task { await model.run() }
+    while model.pendingTermsRequest == nil { await Task.yield() }
+    model.pendingTermsRequest?.suppressForRun = true
+    model.pendingTermsRequest?.proceed()
+    await run.value
+
+    #expect(model.jobs.allSatisfy { $0.state == .finished })
+    #expect(model.pendingTermsRequest == nil)
+}
+
+@MainActor @Test func theQueueSaysWhenTheTermsItPromisedCouldNotBePrepared() async {
+    // §6.6, the queue's half. The user turned the gate on, the term-list call failed,
+    // and no sheet will ever appear — staying quiet lets the run's terminology differ
+    // from what they were promised with nothing on screen to say so.
+    let client = QueueClient(replies: ["", "перевод"], failCallAtIndex: 0)
+    let model = makeModel(client, prefix: "queue-gate-unavailable") { $0.reviewDocumentTerms = true }
+    model.add([job("a.md", longEnoughForTwoParts)])
+
+    await model.run()
+
+    #expect(model.jobs[0].state == .finished)
+    #expect(model.jobs[0].documentTermsUnavailable)
+    #expect(model.statusLine == nil)   // the run is over; the notice lives on the row
+}
+```
+
+`longEnoughForTwoParts` is a `private let` beside the other fixtures: any string that `Chunker.plan` splits at the default chunk size, so a документный глоссарий is actually built. `QueueClient` needs the same `failCallAtIndex:` parameter Task 4 Step 1 adds for `ScriptedClient`; add it to both in one edit rather than inventing two mechanisms.
+
+Then wire it, the same shape as `TranslationViewModel`'s, plus two things of the queue's own:
+
+- **§6.4.** After each sheet closes, if `request.suppressForRun` was ticked, set a private `suppressTermsForThisRun = true` that makes the hook return `draft.documentEntries` without ever showing a sheet. Reset it at the top of `run()`, because it is a statement about this sitting and not a preference.
+- **§6.6.** `documentTermsUnavailable` is a `Bool` on **`FileJob`**, not on the model, because a queue of thirteen files can have it true for three of them — a single flag on the model would report the last file's luck for all of them. Set from `settings.reviewDocumentTerms && outcome.documentGlossaryFailure != nil` beside the `JobResult` assignment. `FileQueueRow` renders it as one caption under the finished row: «термины документа не удалось подготовить». No detail — the detail is already in the log and is not the user's problem.
+
+`cancel()` gains `pendingTermsRequest?.cancel()` before `current?.cancel()`, so «Отмена» reaches a queue waiting on a human rather than on the network.
 
 - [ ] **Step 5: Present the sheet and wire the escalation**
 
@@ -939,6 +983,6 @@ in a nonactivating panel — as the reason the ⌥⌘T path escalates instead."
 
 **One thing this plan asks the implementer to check rather than assume:** `ScriptedClient` may need a failure mechanism (Task 4 Step 1), and the step says what to do. `RussianCopy.plural`'s visibility was a second such caveat and has been resolved by reading the file — it is `static` and internal (`RussianCopy.swift:64`).
 
-**Known and deliberately left for a later pass:** `documentTermsUnavailable` (§6.6) is wired for `TranslationViewModel` only. The queue path can hit the same case — the user turned the gate on, the term-list call failed, no sheet appears — and says nothing about it. It is one property and one row on `FileQueueModel`, and it is called out here rather than folded in silently so that skipping it stays a choice.
+**Closed since the first draft:** §6.6 was wired for `TranslationViewModel` only, leaving the queue silent in the same case — gate on, term-list call failed, no sheet ever. It is covered now in Task 4 Step 4, and the wiring differs from the window's on purpose: the flag lives on **`FileJob`**, not on `FileQueueModel`, because a queue of thirteen files can hit the failure on three of them and a single flag on the model would report the last file's luck for all of them.
 
 **Risk to watch.** Task 1 Step 4's restructuring is the sharpest edit in either phase: the review must sit *outside* the `catch` that swallows a failed term-list call, or a hook that throws would be silently converted into an empty glossary and the run would continue. `anErrorFromTheReviewFailsTheRunRatherThanBeingSwallowed` is the test that catches it, and it should be run before and after the restructure rather than only after.
