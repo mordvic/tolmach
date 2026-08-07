@@ -29,7 +29,10 @@ struct MainWindowView: View {
         VStack(spacing: 0) {
             HSplitView {
                 SourcePane(model: model, onClear: { model.sourceText = "" })
-                TranslationPane(model: model, onCopy: onCopy)
+                TranslationPane(title: "Перевод",
+                                text: model.translatedText,
+                                isRunning: model.state == .running,
+                                onCopy: onCopy)
             }
             Divider()
             RunStatusBar(model: model, status: status,

@@ -6,22 +6,32 @@ import SwiftUI
 /// A selectable `Text` in a `ScrollView` and **not** a `TextEditor`. The pane used to be a
 /// `TextEditor` bound to `.constant(model.translatedText)`, which takes a caret and silently
 /// discards every keystroke — a control that accepts input and does nothing with it.
+///
+/// Takes the four values it renders rather than a `TranslationViewModel`, because the file
+/// queue's right pane shows a `FileQueueModel`'s translation through this same view. A view
+/// that renders four values does not need a class reference to reach them, and a second
+/// copy of this pane is how two surfaces come to disagree about what a translation looks
+/// like.
 struct TranslationPane: View {
-    let model: TranslationViewModel
+    /// «Перевод», or «Перевод · techdoc-en.md» in the queue. A parameter and not a constant
+    /// because the queue names the file whose translation is showing.
+    let title: String
+    let text: String
+    let isRunning: Bool
     let onCopy: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            PaneHeader(title: "Перевод") {
+            PaneHeader(title: title) {
                 Button("Скопировать", action: onCopy)
                     .buttonStyle(.link)
                     // Enabled the moment the first token lands, not only at the end: an
                     // interrupted run leaves partial output the app keeps on purpose, and
                     // keeping it while refusing to copy it would be pointless. Same rule as
                     // the panel's own copy button.
-                    .disabled(model.translatedText.isEmpty)
+                    .disabled(text.isEmpty)
             }
-            if model.translatedText.isEmpty && model.state != .running {
+            if text.isEmpty && !isRunning {
                 VStack(spacing: 8) {
                     Image(systemName: "character.bubble")
                         .font(.system(size: 28)).foregroundStyle(.tertiary)
@@ -31,7 +41,7 @@ struct TranslationPane: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    Text(model.translatedText)
+                    Text(text)
                         .font(.body)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
