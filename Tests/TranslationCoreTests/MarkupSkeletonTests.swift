@@ -234,3 +234,31 @@ import Testing
     let tokens = MarkupSkeleton.tokens(of: "Paragraph.\n\n---\n---\n\nNext.")
     #expect(!tokens.contains { if case .heading = $0 { true } else { false } })
 }
+
+// MARK: - Line discipline and indented runs must match the chunker's, exactly.
+
+@Test func aCRLFSourceDiffedAgainstAnLFTranslationReportsNothing() {
+    // `components(separatedBy: .newlines)` splits on unicode scalars, so "\r\n"
+    // became two line breaks with an empty line between them — a paragraph break
+    // the document does not contain. A perfectly faithful LF translation of a CRLF
+    // source was then reported as having lost one. The skeleton now scans lines
+    // through `Chunker.scanLines`, the same discipline the chunker itself uses.
+    let source = "First paragraph.\r\n\r\nSecond paragraph."
+    let translation = "Первый абзац.\n\nВторой абзац."
+    #expect(MarkupSkeleton.diff(source: source, translation: translation).isEmpty)
+}
+
+@Test func aFenceMarkerInsideAnIndentedBlockOpensNoFence() {
+    // The chunker's indented run continues on every indented non-blank line and
+    // never looks for fence markers, so a ``` inside an indented block is code
+    // bytes. The skeleton used to test for a fence first: the marker opened a
+    // never-closed fence that swallowed the rest of the document, and the two
+    // layers then disagreed about a block the diff reports on.
+    let text = "Intro.\n\n    let a = 1\n        ```\n    let b = 2\n\nAfter `cmd` runs."
+    let tokens = MarkupSkeleton.tokens(of: text)
+    #expect(tokens.filter { if case .codeBlock = $0 { true } else { false } }.count == 1)
+    // Prose after the block still tokenises — it was not swallowed.
+    #expect(tokens.contains(.inlineCode("cmd")))
+    // And the chunker reads exactly one indented-code block from the same document.
+    #expect(Chunker.blocks(in: text).filter { $0.kind == .indentedCode }.count == 1)
+}

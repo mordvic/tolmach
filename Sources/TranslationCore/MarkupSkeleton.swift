@@ -38,7 +38,15 @@ public enum MarkupSkeleton {
             indentedBuffer = []
         }
 
-        for line in text.components(separatedBy: .newlines) {
+        // Lines are scanned the way `Chunker` scans them, not with
+        // `components(separatedBy: .newlines)`. That character set splits on unicode
+        // scalars, so "\r\n" came out as two breaks with an empty line between them
+        // and fabricated a `.paragraphBreak` — a CRLF source diffed against its LF
+        // translation reported «потеряно: граница абзаца» on a perfect translation.
+        // U+000B, U+000C, U+2028 and U+2029 had the same effect. The chunker treats
+        // all of them as ordinary in-line whitespace; the two layers must read the
+        // same document or the diff reports structure the chunker never saw.
+        for line in Chunker.scanLines(text).map({ String(text[$0.content]) }) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if insideFence {
                 if trimmed.hasPrefix("```") {
@@ -49,7 +57,28 @@ public enum MarkupSkeleton {
                 previousLineHadText = false
                 continue
             }
+            let isIndented = line.hasPrefix("    ") || line.hasPrefix("\t")
+            // An indented run, once started, CONTINUES on every indented non-blank
+            // line — fence markers included. Checked ahead of the fence-open rule
+            // below because `Chunker`'s indented continuation looks only at
+            // blankness and indentation: a ``` inside an indented block is code
+            // bytes to it. With the fence check first, such a line opened a
+            // never-closed fence that swallowed the rest of the document into a code
+            // block the chunker never saw. The run's START keeps the opposite order
+            // (the fence check below still wins after a blank line), because that is
+            // also the order `Chunker.blocks` uses.
+            if !indentedBuffer.isEmpty, isIndented, !trimmed.isEmpty {
+                indentedBuffer.append(line)
+                previousWasBlank = false
+                previousLineHadText = false
+                continue
+            }
             if trimmed.hasPrefix("```") {
+                // Reaching here with a pending run means this line is neither
+                // indented nor blank, so the run ended on the line before — and the
+                // chunker emits that indented block *before* the fenced one. Without
+                // this flush the pending block came out last, after the fence.
+                flushIndented()
                 insideFence = true
                 fenceLang = String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespaces)
                 previousWasBlank = false
@@ -63,15 +92,16 @@ public enum MarkupSkeleton {
                 previousLineHadText = false
                 continue
             }
-            let isIndented = line.hasPrefix("    ") || line.hasPrefix("\t")
-            if !indentedBuffer.isEmpty || (previousWasBlank && isIndented) {
-                if isIndented {
-                    indentedBuffer.append(line)
-                    previousWasBlank = false
-                    previousLineHadText = false
-                    continue
-                }
+            if !indentedBuffer.isEmpty {
+                // Non-indented, non-blank: the run ends here (an indented
+                // continuation already `continue`d above, a blank line already
+                // flushed).
                 flushIndented()
+            } else if previousWasBlank, isIndented {
+                indentedBuffer.append(line)
+                previousWasBlank = false
+                previousLineHadText = false
+                continue
             }
             previousWasBlank = false
             // Setext underline: a line of only "=" (any count) or only "-" (two or
