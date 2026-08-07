@@ -8,6 +8,15 @@ public struct Chunk: Sendable, Equatable {
     /// as a substring of the source document — never synthesised. Assembly restores it
     /// verbatim; the model never sees it. For the first chunk this is the document's
     /// leading whitespace.
+    ///
+    /// **Always whitespace-only**, and consumers depend on it. `Block.range` and
+    /// `splitBySentences` move edge whitespace out of every chunk and nothing else ever
+    /// lands here, so `TranslationViewModel`'s streaming consumer is entitled to tell a
+    /// separator from model content by whitespace alone: it holds whitespace-only
+    /// pieces in `pending` instead of treating them as the first output of a new run.
+    /// A separator carrying a non-whitespace character would clear the previous
+    /// translation off screen for a run that then fails — exactly what spec 8 forbids.
+    /// `Chunker.plan` asserts it at every append.
     public let separatorBefore: String
     public let containsCodeFence: Bool
 }
@@ -20,7 +29,29 @@ public struct ChunkPlan: Sendable, Equatable {
     public let chunks: [Chunk]
     /// Whitespace after the last chunk's content, verbatim. The whole input, when the
     /// input contains no translatable content at all.
+    ///
+    /// Whitespace-only for the same reason and with the same consequence as
+    /// `Chunk.separatorBefore` — see there.
     public let trailingSeparator: String
+
+    /// Reassembly, in one place: the formula `ChunkPlan` promises, applied to the
+    /// translations of `chunks`.
+    ///
+    /// It lived in three — this type's doc comment, `Translator`'s zip-and-join, and
+    /// `ChunkerTests`' helper — so the tests pinning byte-for-byte losslessness pinned
+    /// a *restatement* of the shipped path and would have stayed green while it drifted.
+    ///
+    /// One deliberate divergence from a literal reading of the invariant: an empty plan
+    /// assembles to `""`, not to `trailingSeparator`, even though a whitespace-only
+    /// input puts all of its bytes there. `Translator` emits nothing at all for input
+    /// with no translatable content, and the assembled result is a *translation* — the
+    /// bytes are still on the plan for a caller that wants them.
+    public func assembled(from texts: [String]) -> String {
+        precondition(texts.count == chunks.count,
+                     "ChunkPlan.assembled: one translation per chunk is required")
+        guard !chunks.isEmpty else { return "" }
+        return zip(chunks, texts).map { $0.separatorBefore + $1 }.joined() + trailingSeparator
+    }
 }
 
 public enum Chunker {
@@ -47,10 +78,6 @@ public enum Chunker {
         let separatorBefore: String
         let text: String
         let kind: Block.Kind
-    }
-
-    public static func chunk(_ text: String, maxCharacters: Int) -> [Chunk] {
-        plan(text, maxCharacters: maxCharacters).chunks
     }
 
     public static func plan(_ text: String, maxCharacters: Int) -> ChunkPlan {
@@ -102,6 +129,12 @@ public enum Chunker {
         var currentHasFence = false
         func flush() {
             guard !current.isEmpty else { return }
+            // The whitespace-only separator invariant, checked where it is produced —
+            // see `Chunk.separatorBefore` for the consumer that rests on it. Debug-only
+            // is enough: it is a statement about this function's own arithmetic, not
+            // about anything a user can supply.
+            assert(currentSeparator.allSatisfy(\.isWhitespace),
+                   "Chunker: a separator must be whitespace only")
             chunks.append(Chunk(index: chunks.count, text: current,
                                 separatorBefore: currentSeparator,
                                 containsCodeFence: currentHasFence))
@@ -134,7 +167,10 @@ public enum Chunker {
             }
         }
         flush()
-        return ChunkPlan(chunks: chunks, trailingSeparator: String(text[previousEnd...]))
+        let trailing = String(text[previousEnd...])
+        assert(trailing.allSatisfy(\.isWhitespace),
+               "Chunker: the trailing separator must be whitespace only")
+        return ChunkPlan(chunks: chunks, trailingSeparator: trailing)
     }
 
     // MARK: - Blocks

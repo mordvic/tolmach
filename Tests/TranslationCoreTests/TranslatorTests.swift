@@ -137,7 +137,7 @@ private struct FakeTermListFailure: Error {}
     // Chunker to flush the prose as chunk 0 and the fence alone as chunk 1 — the
     // exact shape that made ResponseCleaner strip a real code block's markers.
     let maxCharacters = prose.trimmingCharacters(in: .whitespacesAndNewlines).count + 20
-    let chunks = Chunker.chunk(doc, maxCharacters: maxCharacters)
+    let chunks = Chunker.plan(doc, maxCharacters: maxCharacters).chunks
     #expect(chunks.count == 2)
     #expect(chunks[1].containsCodeFence)
     #expect(chunks[1].text == fence)
@@ -552,7 +552,7 @@ private func makeCallStartSignal() -> (onCallStart: @Sendable (Int) -> Void, wai
     // A completed run issues 1 (term-list) call + one call per chunk. Computed
     // rather than hard-coded so this doesn't silently stop meaning anything if the
     // fixture or the chunker's split points change.
-    let chunkCount = Chunker.chunk(multiChunkText, maxCharacters: 200).count
+    let chunkCount = Chunker.plan(multiChunkText, maxCharacters: 200).chunks.count
     #expect(chunkCount > 1) // otherwise call 1 wouldn't be a per-chunk call at all
     // Exactly 2 calls were made: the term-list call ran to completion, and the
     // second call — the first per-chunk translation, the one cancellation landed

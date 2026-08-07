@@ -310,15 +310,17 @@ public struct Translator: Sendable {
             try Task.checkCancellation()
             translatedChunks.append(cleaned)
         }
-        var final = zip(chunks, translatedChunks).map { $0.separatorBefore + $1 }.joined()
+        // `ChunkPlan.assembled` owns the reassembly formula — this used to restate it,
+        // and so did the test that pins losslessness, which is how a restatement can
+        // stay green while the shipped path drifts.
+        let final = plan.assembled(from: translatedChunks)
         if !chunks.isEmpty, !plan.trailingSeparator.isEmpty {
             // The document's trailing whitespace is part of the byte-for-byte contract
             // (`ChunkPlan`), and the stream must carry it too or a consumer rendering
             // tokens live reconstructs a different document from the one `final`
-            // describes. Emitted only when the run produced chunks at all: a
-            // whitespace-only input yields no chunks and no output.
+            // describes. This condition is exactly when `assembled` appends it: a
+            // whitespace-only input yields no chunks, no output and nothing to emit.
             onToken(plan.trailingSeparator)
-            final += plan.trailingSeparator
         }
 
         // Same code-stripping as the per-chunk filter above, for the same reason: without

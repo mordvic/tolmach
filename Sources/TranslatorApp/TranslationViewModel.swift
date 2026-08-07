@@ -136,7 +136,7 @@ final class TranslationViewModel {
     /// Known before the run because chunking depends on the input alone. Lets the window
     /// say "3 фрагмента" up front instead of leaving the user with an opaque spinner.
     var expectedChunkCount: Int {
-        Chunker.chunk(sourceText, maxCharacters: settings.chunkSize).count
+        Chunker.plan(sourceText, maxCharacters: settings.chunkSize).chunks.count
     }
 
     /// The source language as the next run would resolve it, or nil if nobody knows yet.

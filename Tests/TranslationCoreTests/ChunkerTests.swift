@@ -17,7 +17,7 @@ Final paragraph after the code, closing the document out with a few more words.
 """
 
 @Test func fencedCodeBlockIsNeverSplit() {
-    let chunks = Chunker.chunk(doc, maxCharacters: 120)
+    let chunks = Chunker.plan(doc, maxCharacters: 120).chunks
     let codeChunks = chunks.filter(\.containsCodeFence)
     #expect(codeChunks.count == 1)
     let code = codeChunks[0].text
@@ -28,20 +28,20 @@ Final paragraph after the code, closing the document out with a few more words.
 }
 
 @Test func chunksAreContiguousAndIndexed() {
-    let chunks = Chunker.chunk(doc, maxCharacters: 120)
+    let chunks = Chunker.plan(doc, maxCharacters: 120).chunks
     #expect(chunks.count > 1)
     for (offset, chunk) in chunks.enumerated() { #expect(chunk.index == offset) }
 }
 
 @Test func shortTextIsOneChunk() {
-    let chunks = Chunker.chunk("Just a sentence.", maxCharacters: 900)
+    let chunks = Chunker.plan("Just a sentence.", maxCharacters: 900).chunks
     #expect(chunks.count == 1)
     #expect(chunks[0].containsCodeFence == false)
 }
 
 @Test func whitespaceOnlyInputYieldsNoChunks() {
-    #expect(Chunker.chunk("   \n\n  \t ", maxCharacters: 900).isEmpty)
-    #expect(Chunker.chunk("", maxCharacters: 900).isEmpty)
+    #expect(Chunker.plan("   \n\n  \t ", maxCharacters: 900).chunks.isEmpty)
+    #expect(Chunker.plan("", maxCharacters: 900).chunks.isEmpty)
 }
 
 @Test func unterminatedFenceIsKeptWholeAndNotSplit() {
@@ -54,7 +54,7 @@ Final paragraph after the code, closing the document out with a few more words.
 
     let c = 3
     """
-    let chunks = Chunker.chunk(doc, maxCharacters: 60)
+    let chunks = Chunker.plan(doc, maxCharacters: 60).chunks
     let fenceChunks = chunks.filter(\.containsCodeFence)
     #expect(fenceChunks.count == 1)
     #expect(fenceChunks[0].text.contains("let a = 1"))
@@ -94,13 +94,60 @@ private let hostileDocuments: [String] = [
 /// edge-whitespace defects lived, and the loss they caused was invisible at 120.
 private let hostileBudgets = [10, 20, 120, 900]
 
+/// Reassembly through the shipped path, `ChunkPlan.assembled` — the same call
+/// `Translator` makes — with each chunk standing in for its own translation. A
+/// hand-rolled restatement of the formula here would pin a copy of it and stay green
+/// while `Translator` drifted.
+///
+/// `assembled` returns "" for an empty plan, so the whitespace-only case is spelled out
+/// rather than fed through it; that divergence is `ChunkPlan.assembled`'s doc comment.
 private func reassembled(_ text: String, maxCharacters: Int) -> String {
     let plan = Chunker.plan(text, maxCharacters: maxCharacters)
-    return plan.chunks.map { $0.separatorBefore + $0.text }.joined() + plan.trailingSeparator
+    guard !plan.chunks.isEmpty else { return plan.trailingSeparator }
+    return plan.assembled(from: plan.chunks.map(\.text))
 }
 
 @Test(arguments: hostileDocuments) func chunkingIsLossless(_ text: String) {
     for budget in hostileBudgets { #expect(reassembled(text, maxCharacters: budget) == text) }
+}
+
+@Test(arguments: hostileDocuments) func everySeparatorIsWhitespaceOnly(_ text: String) {
+    // Stated on `Chunk.separatorBefore`, asserted in `plan`, and rested on by
+    // `TranslationViewModel`: its streaming consumer tells a separator from model
+    // content by whitespace alone, holding whitespace-only pieces in `pending` rather
+    // than treating them as the first output of a new run. A separator carrying a
+    // non-whitespace character would clear the previous translation off screen for a
+    // run that then fails — the case spec 8 says must be survivable. Nothing checked it.
+    // Bound to a `let` before the assertion because `allSatisfy` is `rethrows`, and the
+    // `#expect` macro cannot expand a possibly-throwing call in a non-throwing test.
+    for budget in hostileBudgets {
+        let plan = Chunker.plan(text, maxCharacters: budget)
+        for chunk in plan.chunks {
+            let isWhitespaceOnly = chunk.separatorBefore.allSatisfy(\.isWhitespace)
+            #expect(isWhitespaceOnly)
+        }
+        let trailingIsWhitespaceOnly = plan.trailingSeparator.allSatisfy(\.isWhitespace)
+        #expect(trailingIsWhitespaceOnly)
+    }
+}
+
+@Test(arguments: hostileDocuments) func assembledIsTheReassemblyContract(_ text: String) {
+    // `ChunkPlan.assembled` is the one formula, so it has to hold the invariant itself:
+    // fed each chunk's own text it must give the source back, byte for byte.
+    for budget in hostileBudgets {
+        let plan = Chunker.plan(text, maxCharacters: budget)
+        guard !plan.chunks.isEmpty else { continue }
+        #expect(plan.assembled(from: plan.chunks.map(\.text)) == text)
+    }
+}
+
+@Test func anEmptyPlanAssemblesToNothing() {
+    // The deliberate divergence: a whitespace-only input keeps its bytes on the plan's
+    // trailing separator, but the *translation* of a document with no translatable
+    // content is empty — `Translator` emits nothing for it.
+    let plan = Chunker.plan("   \n\n  \t ", maxCharacters: 900)
+    #expect(plan.assembled(from: []) == "")
+    #expect(plan.trailingSeparator == "   \n\n  \t ")
 }
 
 @Test(arguments: hostileDocuments) func noChunkTextBeginsOrEndsWithWhitespace(_ text: String) {
