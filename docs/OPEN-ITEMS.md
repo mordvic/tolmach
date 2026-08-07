@@ -162,6 +162,7 @@ The toggle ships **off**, so none of this is on a default install's path.
 
 | What to check | Why it needs eyes | Code |
 |---|---|---|
+| **«Перевести» in the sheet drawn as the primary button** | The drawing gives it the same blue fill the window's «Перевести» has. `.borderedProminent` is set explicitly rather than left to `.defaultAction` to imply, because nothing here can render the difference — look at the two side by side and check they match | `DocumentTermsView` |
 | The sheet at a dozen terms | Three columns, an editable «перевод» cell that actually takes typing, and the table scrolling at its 260 pt cap without the buttons going with it — the same failure the panel's `ScrollView` once had | `DocumentTermsView` |
 | **Esc cancelling the run from the sheet** | The whole escape. `onExitCommand` is the intent and no test here can press a key; if it does not fire, the sheet is a trap with one button | `DocumentTermsView`, `DocumentTermsRequest.cancel` |
 | **The ⌥⌘T escalation** | Press the shortcut on a >900-character selection in another app with the toggle on. The main window should come forward — opening if closed — and show the sheet, with the panel still behind it. `activateThisApp()` is cooperative activation that no one has watched work, and this is a second caller for it | `TranslatorApp.body`'s `.onChange`, `activateThisApp()` |

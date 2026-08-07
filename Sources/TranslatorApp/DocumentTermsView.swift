@@ -82,7 +82,14 @@ struct DocumentTermsView: View {
                 // One primary button, not the drawing's two. «Переводить без правок» beside
                 // «Перевести» is indistinguishable from it before any edit and silently
                 // discards work after one; Esc and ⨯ are the escape, and they cancel the run.
+                // `.borderedProminent` explicitly, and not left to `.defaultAction` to
+                // imply it. The drawing gives this button the same blue fill the window's
+                // «Перевести» has, and whether the default-action shortcut alone produces
+                // that fill for a plain `Button` in a custom sheet is not something this
+                // environment can render and check. Stating the style costs one line and
+                // does not depend on the answer.
                 Button("Перевести") { request.proceed() }
+                    .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
             }
             .padding(.horizontal, 16).padding(.vertical, 11)
