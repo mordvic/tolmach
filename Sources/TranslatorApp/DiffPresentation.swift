@@ -15,6 +15,7 @@ enum DiffPresentation {
         case .url(let bare): bare ? "ссылка без разметки" : "ссылка в разметке"
         case .paragraphBreak: "граница абзаца"
         case .hardLineBreak: "жёсткий перенос строки"
+        case .tableRow: "строка таблицы"
         }
     }
 

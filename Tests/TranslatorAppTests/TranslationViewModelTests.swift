@@ -133,11 +133,14 @@ private func makeModel(_ client: LLMClient, pasteboard: NSPasteboard? = nil) -> 
 @MainActor
 @Test func aMultiChunkEmptyReplyLeavesThePreviousTranslationOnScreen() async {
     // The single-chunk case above is not the whole story. Over `AppSettings.chunkSize`
-    // (900) the source chunks, and `Translator` writes the "\n\n" chunk separator
-    // straight to `onToken` without going through `emit` — so it reaches the consumer
-    // while `timeToFirstTokenMS` stays nil. A consumer that treats any arriving piece as
-    // "new output" clears the pane for a run that then reports an empty reply, leaving
-    // the user staring at a blank result. Spec 8 requires the previous text to survive.
+    // (900) the source chunks, and `Translator` writes each chunk's `separatorBefore` —
+    // the source document's own bytes, restored verbatim, and always whitespace-only;
+    // single spaces here, since this source splits by sentence — straight to `onToken`
+    // without going through `emit`, so it reaches the consumer while
+    // `timeToFirstTokenMS` stays nil. A consumer that treats any arriving piece as "new
+    // output" clears the pane for a run that then reports an empty reply, leaving the
+    // user staring at a blank result. The model holds those pieces in `pending` until
+    // real content arrives instead; spec 8 requires the previous text to survive.
     let model = makeModel(ScriptedClient(responses: ["Первый перевод."]))
     model.sourceText = "First."
     await model.translate()

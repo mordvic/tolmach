@@ -62,7 +62,7 @@ struct SourcePane: View {
 /// type.
 ///
 /// `MainWindowView` reads `model.translatedText`, so every streamed token invalidates its
-/// body and everything inlined in it. `expectedChunkCount` runs `Chunker.chunk` in full — a
+/// body and everything inlined in it. `expectedChunkCount` runs `Chunker.plan` in full — a
 /// line split, a `String.count` per block, and `enumerateSubstrings(options: .bySentences)`
 /// over oversized ones — and was measured at 2 evaluations per token, for a value whose only
 /// inputs cannot change while a run is streaming.

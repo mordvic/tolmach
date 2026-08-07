@@ -10,6 +10,7 @@ public enum MarkupToken: Sendable, Equatable, Hashable {
     case url(bare: Bool)
     case paragraphBreak
     case hardLineBreak
+    case tableRow
 }
 
 public struct MarkupDiff: Sendable, Equatable {
@@ -21,33 +22,111 @@ public struct MarkupDiff: Sendable, Equatable {
 public enum MarkupSkeleton {
     public static func tokens(of text: String) -> [MarkupToken] {
         var tokens: [MarkupToken] = []
-        var fenceBuffer: [String] = []
+        // Lines, not strings, so blankness stays `LineScanner`'s one definition when the
+        // EOF flush trims the tail — see `flushFence`.
+        var fenceBuffer: [LineScanner.Line] = []
         var fenceLang = ""
         var insideFence = false
+        var previousLineHadText = false
 
-        for line in text.components(separatedBy: .newlines) {
+        /// `trimmingTail` is the unterminated-fence case: the chunker's fenced block
+        /// runs to the end of the document with its trailing blank lines trimmed off —
+        /// they are document whitespace, not code. Hashing them in made the same code
+        /// with and without a blank tail two different blocks, so a faithful
+        /// translation that dropped the tail read as a changed one. A *closed* fence
+        /// keeps its blank lines: they are inside the block by the author's own marks.
+        func flushFence(_ buffer: [LineScanner.Line], trimmingTail: Bool) -> MarkupToken {
+            var lines = buffer[...]
+            if trimmingTail {
+                while let last = lines.last, LineScanner.isBlank(last, in: text) {
+                    lines = lines.dropLast()
+                }
+            }
+            let content = lines.map { String(text[$0.content]) }.joined(separator: "\n")
+            return .codeBlock(hash: content.hashValue, lang: fenceLang)
+        }
+
+        // An indented run is NOT tokenised as a code block here, and must not be: the
+        // chunker reads indented text as prose and translates it, and the two layers
+        // must see the same document or the diff reports structure the chunker never
+        // saw. Fenced code is the only block form either layer protects.
+        //
+        // Line discipline is `LineScanner`'s, the very same code the chunker runs, and
+        // not `components(separatedBy: .newlines)`: that character set splits on unicode
+        // scalars, so "\r\n" came out as two breaks with an empty line between them and
+        // fabricated a `.paragraphBreak` — a CRLF source diffed against its LF
+        // translation reported «потеряно: граница абзаца» on a perfect translation.
+        // Sharing the scanner is what makes the parity above structural rather than a
+        // promise two files keep in parallel.
+        for scanned in LineScanner.scanLines(text) {
+            let line = String(text[scanned.content])
             let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let isBlankLine = LineScanner.isBlank(scanned, in: text)
             if insideFence {
-                if trimmed.hasPrefix("```") {
-                    tokens.append(.codeBlock(hash: fenceBuffer.joined(separator: "\n").hashValue, lang: fenceLang))
+                if LineScanner.isFenceMarker(scanned, in: text) {
+                    tokens.append(flushFence(fenceBuffer, trimmingTail: false))
                     fenceBuffer = []; fenceLang = ""; insideFence = false
-                } else { fenceBuffer.append(line) }
+                } else { fenceBuffer.append(scanned) }
+                previousLineHadText = false
                 continue
             }
-            if trimmed.hasPrefix("```") {
+            if LineScanner.isFenceMarker(scanned, in: text) {
                 insideFence = true
                 fenceLang = String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespaces)
+                previousLineHadText = false
                 continue
             }
-            if trimmed.isEmpty { tokens.append(.paragraphBreak); continue }
-            if let level = headingLevel(trimmed) { tokens.append(.heading(level: level)) }
-            if trimmed.hasPrefix(">") { tokens.append(.blockquote) }
-            if let depth = listDepth(line) { tokens.append(.listItem(depth: depth)) }
+            if isBlankLine {
+                tokens.append(.paragraphBreak)
+                previousLineHadText = false
+                continue
+            }
+            // Setext underline: a line of only "=" (any count) or only "-" (two or
+            // more — a lone "-" is closer to a stray bullet than to an underline)
+            // directly under a non-blank line. CommonMark reads "---" after a
+            // paragraph as a setext H2, not a thematic break. The shape check is
+            // computed independently of `previousLineHadText` because a dash/equals
+            // run that FAILS the gate (no paragraph text above it — e.g. it follows
+            // another thematic break) is not paragraph text either: it must not let
+            // the *next* line pass the gate. Two consecutive "---" after a blank line
+            // used to tokenise the second as a heading — confirmed by probe — because
+            // the first, despite being read correctly as a thematic break, still set
+            // `previousLineHadText = true` on the ordinary-line path below.
+            let isUnderlineShape = !trimmed.isEmpty
+                && (trimmed.allSatisfy { $0 == "=" }
+                    || (trimmed.count >= 2 && trimmed.allSatisfy { $0 == "-" }))
+            if previousLineHadText && isUnderlineShape {
+                tokens.append(.heading(level: trimmed.first == "=" ? 1 : 2))
+                previousLineHadText = false
+                continue
+            }
+            // Whether this line emitted a *block* token is what arms the setext gate
+            // for the next one — see below. Inline tokens do not count: a paragraph
+            // carrying a URL is still paragraph text.
+            var emittedBlockToken = false
+            if trimmed.hasPrefix("|") { tokens.append(.tableRow); emittedBlockToken = true }
+            if let level = headingLevel(trimmed) {
+                tokens.append(.heading(level: level)); emittedBlockToken = true
+            }
+            if trimmed.hasPrefix(">") { tokens.append(.blockquote); emittedBlockToken = true }
+            if let depth = listDepth(line) {
+                tokens.append(.listItem(depth: depth)); emittedBlockToken = true
+            }
             tokens.append(contentsOf: inlineTokens(in: line))
             // Markdown hard break: two or more trailing spaces on a non-blank line.
             if line.hasSuffix("  ") { tokens.append(.hardLineBreak) }
+            // Only plain paragraph prose can be underlined. A setext underline needs a
+            // paragraph above it, and an ATX heading, a list item, a blockquote and a
+            // table row are each a block of their own — CommonMark reads a "---" under
+            // any of them as a thematic break. Arming on «any non-blank line» instead
+            // made "# Title\n---" tokenise as [heading(1), heading(2)] and
+            // "- item\n---" as [listItem, heading(2)] — both confirmed by probe — so a
+            // translation that rendered the break faithfully read as a dropped
+            // heading. An underline shape that FAILED the gate is excluded for the
+            // same reason it always was: it is not paragraph text either.
+            previousLineHadText = !isUnderlineShape && !emittedBlockToken
         }
-        if insideFence { tokens.append(.codeBlock(hash: fenceBuffer.joined(separator: "\n").hashValue, lang: fenceLang)) }
+        if insideFence { tokens.append(flushFence(fenceBuffer, trimmingTail: true)) }
         return tokens
     }
 
