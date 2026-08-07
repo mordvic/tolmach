@@ -80,7 +80,19 @@ private let hostileDocuments: [String] = [
     // One paragraph far over any budget: split by sentences, reassembled exactly.
     String(repeating: "The server validates the resource before publishing it to every client. ",
            count: 12),
+    // U+2028 LINE SEPARATOR: in-line whitespace to `Chunker.scanLines`, a sentence
+    // boundary to NLTokenizer. A run of them between two sentences made the sentence
+    // splitter emit a whitespace-only group, which tripped the packing precondition.
+    "One sentence here. \u{2028}\u{2028}\u{2028} Two sentence here.",
+    // The same class with one separator: a cut lands at the sentence range's own
+    // lowerBound, so the piece used to BEGIN with the space after the U+2028 —
+    // structure the chunk text must never carry (see `Block.range`).
+    "Word one two. \u{2028} Word three four.",
 ]
+
+/// Budgets small enough to force a cut at nearly every sentence: that is where the
+/// edge-whitespace defects lived, and the loss they caused was invisible at 120.
+private let hostileBudgets = [10, 20, 120, 900]
 
 private func reassembled(_ text: String, maxCharacters: Int) -> String {
     let plan = Chunker.plan(text, maxCharacters: maxCharacters)
@@ -88,8 +100,19 @@ private func reassembled(_ text: String, maxCharacters: Int) -> String {
 }
 
 @Test(arguments: hostileDocuments) func chunkingIsLossless(_ text: String) {
-    #expect(reassembled(text, maxCharacters: 120) == text)
-    #expect(reassembled(text, maxCharacters: 900) == text)
+    for budget in hostileBudgets { #expect(reassembled(text, maxCharacters: budget) == text) }
+}
+
+@Test(arguments: hostileDocuments) func noChunkTextBeginsOrEndsWithWhitespace(_ text: String) {
+    // `Block.range` states this for whole blocks; the sentence splitter has to hold
+    // it too, or `ResponseCleaner.clean`'s edge-trimming of the reply eats structure
+    // the chunker chose to send to the model.
+    for budget in hostileBudgets {
+        for chunk in Chunker.plan(text, maxCharacters: budget).chunks {
+            #expect(chunk.text.first?.isWhitespace == false)
+            #expect(chunk.text.last?.isWhitespace == false)
+        }
+    }
 }
 
 @Test func aSplitParagraphFabricatesNoParagraphBreaks() {

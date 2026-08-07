@@ -104,10 +104,14 @@ public enum Chunker {
             currentIsIndentedCode = false
         }
         for piece in pieces {
-            // Unreachable today: `blockRange` trims both edges, so a block with any
-            // content at all yields a non-empty piece, and a block with none is never
-            // emitted. Stated as a precondition because an empty piece would take the
-            // `else` branch and *overwrite* `currentSeparator` with its own — silently
+            // Structural, and stated rather than assumed because it once was not:
+            // this read "unreachable today", and a sentence group of nothing but
+            // U+2028 line separators reached it and trapped. Both producers now
+            // guarantee it — `blockRange` trims both edges of a block, and
+            // `splitBySentences` moves both edges of every segment into separators
+            // and emits no piece at all for a segment that is entirely whitespace.
+            // Kept as a precondition because an empty piece would take the `else`
+            // branch and *overwrite* `currentSeparator` with its own — silently
             // dropping the separator of whatever came before it, which is the one way
             // the byte-for-byte contract could break without a test noticing.
             precondition(!piece.text.isEmpty, "Chunker: a piece must carry content")
@@ -280,18 +284,41 @@ public enum Chunker {
         var pendingSeparator = separatorBefore
         for (offset, cut) in cuts.enumerated() {
             let end = offset + 1 < cuts.count ? cuts[offset + 1] : body.endIndex
+            // BOTH edges of the segment move into separators, for the reason
+            // `Block.range` gives for whole blocks. The leading edge is not
+            // symmetry: a cut lands at a sentence range's `lowerBound`, and
+            // NLTokenizer puts that boundary *before* whitespace it does not
+            // consider part of either sentence — U+2028 and its neighbours are the
+            // reproducible case, since `scanLines` reads them as in-line whitespace
+            // while the tokenizer reads them as sentence boundaries. A piece
+            // beginning with whitespace then had that whitespace eaten by
+            // `ResponseCleaner.clean`'s edge trim of the reply.
+            var contentStart = cut
+            while contentStart < end, body[contentStart].isWhitespace {
+                contentStart = body.index(after: contentStart)
+            }
+            guard contentStart < end else {
+                // A segment of nothing but whitespace — three U+2028s between two
+                // sentences produce exactly that. It carries no content to
+                // translate, so it becomes separator bytes rather than an empty
+                // piece; emitting one tripped the packing precondition.
+                pendingSeparator += String(body[cut..<end])
+                continue
+            }
             var contentEnd = end
-            while contentEnd > cut {
+            while contentEnd > contentStart {
                 let before = body.index(before: contentEnd)
                 guard body[before].isWhitespace else { break }
                 contentEnd = before
             }
-            pieces.append(Piece(separatorBefore: pendingSeparator,
-                                text: String(body[cut..<contentEnd]), kind: .prose))
+            pieces.append(Piece(separatorBefore: pendingSeparator + String(body[cut..<contentStart]),
+                                text: String(body[contentStart..<contentEnd]), kind: .prose))
             pendingSeparator = String(body[contentEnd..<end])
         }
-        // `body` is already edge-trimmed (see `Block.range`), so the final pending
-        // separator is always empty and dropping it loses nothing.
+        // `body` is already edge-trimmed (see `Block.range`), so its last character
+        // is non-whitespace: the final segment always has content, its `contentEnd`
+        // is its `end`, and the final pending separator is therefore always empty.
+        // Dropping it loses nothing.
         return pieces
     }
 }
