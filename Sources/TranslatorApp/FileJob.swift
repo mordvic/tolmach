@@ -1,0 +1,92 @@
+// Sources/TranslatorApp/FileJob.swift
+import Foundation
+import TranslationCore
+
+/// One file in the queue, and everything the row rendering it needs.
+struct FileJob: Identifiable {
+    let id = UUID()
+    let url: URL
+    /// Read when the file was dropped, not when its turn comes.
+    ///
+    /// A queue can sit for minutes before it reaches a given file, and reading late would
+    /// let an edit — or a deletion — between the drop and the turn change a задание the
+    /// user believes they queued.
+    let text: String
+    /// `Chunker.plan`'s count, computed at drop time off the main actor, because the
+    /// queued row promises «4 части» before anything has run and planning twenty 2 MB
+    /// files is not main-actor work.
+    ///
+    /// An estimate the run supersedes: `chunkSize` can change between the drop and the
+    /// turn, so the *running* row draws from `TranslationProgress.partsTotal`, which the
+    /// engine computed for the run actually happening.
+    let partsTotal: Int
+    var state: State = .queued
+    var result: JobResult?
+    /// Set when the translation could not be written. Deliberately separate from `state`:
+    /// the задание finished, and saying it failed would be a lie about the translation,
+    /// which is in memory and copyable.
+    var saveProblem: String?
+
+    enum State: Equatable {
+        case queued
+        case running(TranslationProgress)
+        case finished
+        /// Cancelled mid-run. Whatever text arrived is kept, matching what the window and
+        /// the panel already do with an interrupted run.
+        case interrupted
+        case failed(String)
+        /// Dropped but not readable. Carried as a row rather than dropped on the floor,
+        /// so a mixed drop can say *which* file it could not take. Never entered by a
+        /// run: the queue skips these, it does not retry them.
+        case unreadable
+    }
+
+    init(url: URL, text: String, partsTotal: Int) {
+        self.url = url
+        self.text = text
+        self.partsTotal = partsTotal
+    }
+}
+
+/// What became of a translation on its way to disk.
+///
+/// An enum of its own rather than `Result<URL, String>`, which does not compile: `Result`
+/// requires its failure type to conform to `Error`, and this one is a Russian sentence for
+/// a human, not something to be thrown. Making `String: Error` to satisfy a generic would
+/// be a conformance on a standard type declared for the convenience of one call site.
+///
+/// It carries the URL because only the writer knows where the bytes went — recomputing the
+/// destination after the write finds the name taken by that very write and answers with
+/// the next number.
+enum SaveOutcome {
+    case saved(URL)
+    /// A sentence to show the user, already in Russian. The underlying error is logged,
+    /// not shown: an `NSCocoaErrorDomain` description is English and names a domain nobody
+    /// outside this process has heard of.
+    case refused(String)
+}
+
+/// What a finished задание keeps.
+///
+/// **Not the whole `TranslationOutcome`.** An outcome carries `chunks` and
+/// `translatedChunks` on top of `final`, i.e. roughly three copies of the document;
+/// retaining that for twenty finished 2 MB файлов is ~120 MB nobody will read. These five
+/// values are everything the right pane and `WarningsView` need.
+struct JobResult {
+    let final: String
+    let checks: [GlossaryCheck]
+    let markupDiffs: [MarkupDiff]
+    let elapsedMS: Int
+    var savedTo: URL?
+
+    /// `.missing` only, not `.unverifiable`.
+    ///
+    /// `GlossaryStatus` has three cases and only one of them is a complaint:
+    /// `.unverifiable` means `LemmaMatcher` could not decide for that language, which is a
+    /// statement about the checker and not about the translation. Counting it would pause
+    /// a `stopOnWarnings` queue on every Japanese file for no reason.
+    var warningCount: Int {
+        checks.filter { $0.status == .missing }.count + markupDiffs.count
+    }
+    var hasWarnings: Bool { warningCount > 0 }
+}
