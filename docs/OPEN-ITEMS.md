@@ -136,6 +136,25 @@ compile check) and none of it has been *looked at*.
 | The two new glyphs in the panel's status row | `exclamationmark.triangle.fill` for an interrupted run, `xmark.octagon.fill` for a failure, in the row's own colour. The table is unit-tested; the row has never been rendered | `PanelStatus.Kind.symbol`, `PanelView.statusLine` |
 | «Скопировать перевод» ⇧⌘C not shadowing ⌘C in the source editor | They are different equivalents, so this should be free — but the source pane is a `TextEditor` and ⌘C on a selection inside it is the one thing that must keep working | `.commands`, `SourcePane` |
 
+**Owed by the file queue.** The queue, its mode switch and the fourth settings tab were built
+with 474 tests green and **nothing rendered**. The bundle assembles and signs; no one has looked
+at it.
+
+| What to check | Why it needs eyes | Code |
+|---|---|---|
+| **The «Текст / Файлы» switch in the pane header, and both headers reading as one row** | The one control this implementation adds that the design document does not draw. `PaneHeader.height` is pinned at 28 pt to fit a `.small` segmented control beside the right pane's caption — **that number is chosen, not measured**, and if it is wrong the divider between the panes has a visible step in it | `PaneHeader`, `MainWindowView` |
+| **The toolbar button and both menu items following the mode** | Nothing here can press a key. Look for: «Перевести» starting the queue in «Файлы» and the text run in «Текст», ⌘↩ and ⌘. doing the same, and ⌘. still reaching the panel while the window is idle. That last one rests on a disabled menu item declining its equivalent, and this change altered *when* the item is disabled | `PrimaryAction.forMode`, `TranslatorApp.body`'s `.commands` |
+| A queue of three files end to end | Rows updating, the bar moving, the right pane streaming, the status bar counting «2-й файл из 3 — 9 частей из 13» | `FileQueuePane`, `RunStatusBar` |
+| **A mixed drop** | Ten `.md` and one `.pdf` should leave eleven rows, the last saying «не удалось прочитать». The rule is tested; the row has never been drawn | `QueueDrop.accept`, `FileQueueRow` |
+| Selecting a finished file while another streams | The pane must show the selected file, not the running one. Tested as a value; never seen | `FileQueueModel.selectedText` |
+| **A translation actually appearing beside its source in Finder** | And the numbered name when one is taken. `OutputNaming` is tested against an injected existence check, not against a real directory a user chose | `TranslatedFileWriter`, `OutputNaming` |
+| **Whether TCC permits the write at all** | Spec §9.1, and the reason the fallback exists. The app is not sandboxed, but a drag grants read, not write, and macOS 14 gates `~/Documents`, `~/Desktop` and `~/Downloads` separately. Nothing here can raise a TCC prompt or see one. Drop a file from `~/Documents`, run the queue, and record what actually happened — a prompt, a silent success, or a refusal | `TranslatedFileWriter.write` |
+| The `NSSavePanel` fallback after a refused write | Unreachable until the row above is answered | `TranslatedFileWriter`, the queue row |
+| **The fourth settings tab at 560 × 480** | Spec §9.2. `.formStyle(.grouped)` scrolls, so the question is whether it *should have to*, and whether four tab items still fit the row | `SettingsFilesView`, `settingsPane()` |
+| The orange caption when the batch model differs from the interactive one | The condition is tested; the sentence has never been rendered | `SettingsFilesView`, `AppSettings.batchModelDiffersFromInteractive` |
+| All of the above in dark mode | Every new surface | — |
+| VoiceOver on the queue | A row should announce its file, its state and its progress, and not re-read on every token. `.accessibilityElement(children: .combine)` is the intent; nothing has listened | `FileQueueRow` |
+
 **Owed by the settings/accessibility/CI wave.**
 
 | What to check | Why it needs eyes | Code |

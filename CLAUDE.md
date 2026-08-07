@@ -124,7 +124,11 @@ Facts that will bite you if you "tidy" them:
   prefix has no Russian counterpart. **The background role is policy only** — nothing reads it,
   batch translation is v2, and the settings control that implied otherwise was removed.
   `keep_alive` (default `30m`) is load-bearing, not an optimisation: cold load ~2000 ms vs
-  ~155 ms warm.
+  ~155 ms warm. **That measurement is why `AppSettings.batchModel` has no fixed default**: one
+  model lives in memory, so a batch model differing from the interactive one costs two cold loads
+  on every ⌥⌘T pressed during a queue run. `nil` means «the same one the hotkey uses», and the
+  settings pane warns when the user picks otherwise. The property is stored under the old
+  `"backgroundModel"` key, as its removal comment promised.
 
 ### The app layer
 
@@ -140,9 +144,25 @@ Facts that will bite you if you "tidy" them:
   `["en"]` and a fully Russian app carries an English menu bar), and `make-app-bundle.sh` must copy
   that directory in **before** `codesign`, like the icon. `CommandGroup(replacing:)` empties a menu
   but does not remove it, so `pruneEmptyMenus()` takes away whatever is left with no items.
-- Two `TranslationViewModel` instances, one for the window and one owned by `HotkeyCoordinator`
-  for the panel, over one shared `OllamaClient`. They must not be merged: a hotkey translation
-  must never overwrite the window, and the re-entrancy guard is per instance.
+- **Three** models over one shared `OllamaClient`: two `TranslationViewModel` instances, one for
+  the window and one owned by `HotkeyCoordinator` for the panel, plus `FileQueueModel` for the
+  file queue. They must not be merged: a hotkey translation must never overwrite the window, and
+  the re-entrancy guard is per instance. All three are built in `TranslatorApp.init` — the app
+  owns the models, the scenes read them.
+- **The window's left pane has two modes and the primary action follows the visible one.**
+  `PrimaryAction.forMode` is that rule, and the toolbar button, ⌘↩ and ⌘. all read it. They used
+  to reach `TranslationViewModel` directly, which would have left «Файлы» with a button that ran
+  an empty text model and two dead shortcuts. `mode` therefore lives in `TranslatorApp`, not in
+  `MainWindowView`: a menu declared in the app's scene cannot read that view's `@State`. The ⌘.
+  argument still holds — a disabled menu item declines its equivalent so the panel gets it — but
+  its condition is now «the *visible mode* is running».
+- **The file queue writes to disk, and that is the only place this app does.** `QueueDrop` decides
+  what it accepts (a mixed drop is kept, with unreadable files shown as rows — refusing the whole
+  drop is `SourcePane`'s one-slot rule, which does not transfer to a queue with a slot per file);
+  `OutputNaming` decides the name and never overwrites; `TranslatedFileWriter` writes and returns
+  where. **Whether TCC permits a sibling write next to a dropped file is unverified** — the app is
+  not sandboxed, but a drag grants read, not write — so a refusal falls back to `NSSavePanel`,
+  which confers the right itself.
 - `HotkeyCoordinator` owns every decision of a press; `PanelView` is a readout. Ordering inside a
   press is measured, not preferred: hide the old panel → read the selection off the main actor →
   show the panel → translate. Showing the panel first breaks the capture, because a
@@ -175,16 +195,18 @@ Facts that will bite you if you "tidy" them:
   writes through `translations[editingLanguage.rawValue]`, so a column that moved mid-word would
   split one translation across two keys. `SettingsGlossaryView` computes it on appear and on
   re-read only, and holds it in `@State`.
-- `SourcePane` takes a dropped file. What it accepts is `DroppedDocument` — a closed extension
+- `SourceEditor` takes a dropped file. What it accepts is `DroppedDocument` — a closed extension
   list, a 256 KB ceiling, UTF-8 or nothing — and a refusal is `false` out of `dropDestination`,
   which makes the system spring the item back. That is the entire error channel and is
   deliberate: there is no error surface in that window, and inventing one to say «this is not
   text» would be worse than the feedback the platform already draws.
 - The main window is a toolbar plus `SourcePane` | `TranslationPane` over a collapsible
   `RunStatusBar`; the translation side is a read-only `Text`, deliberately, because the
-  `TextEditor` it replaced took a caret and discarded typing. The settings are **three** tabs,
-  not four — «Дополнительно» was folded into «Модели» — and all three take one 560 × 480 frame
-  from `settingsPane()`, so adding a pane means checking it fits rather than sizing it itself.
+  `TextEditor` it replaced took a caret and discarded typing. The settings are **four** tabs —
+  «Основные», «Модели», «Глоссарий», «Файлы». They were three: «Дополнительно» was folded into
+  «Модели» and stayed folded, and «Файлы» is new with the queue. All four take one 560 × 480
+  frame from `settingsPane()`, so adding a pane means checking it fits rather than sizing it
+  itself.
 - Capture order is Accessibility first, synthetic ⌘C fallback second, and the fallback must restore
   the *whole* pasteboard. The only path allowed to write the user's clipboard unasked is `autoCopy`,
   off by default — and it is read only by `HotkeyCoordinator`, so it governs the panel and not
@@ -276,3 +298,5 @@ to the code. `docs/PLATFORM-TRAPS.md` has the same list with the facts attached.
 - App activation, scene order → `TranslatorApp/TranslatorApp.swift`
 - Recording a shortcut, `performKeyEquivalent` → `TranslatorApp/HotkeyRecorder.swift`
 - `UserDefaults` in tests → `Tests/TranslatorAppTests/InMemoryDefaults.swift`
+- Writing a file, naming an output, accepting a drop → `TranslatorApp/TranslatedFileWriter.swift`,
+  `OutputNaming.swift`, `QueueDrop.swift`
