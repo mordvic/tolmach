@@ -45,3 +45,11 @@ import Testing
     // No numbering: a numbered reply would put "1. " inside the parsed term.
     #expect(!user.contains("1."))
 }
+
+@Test func theSystemPromptProtectsIndentedCodeBlocksLikeFencedOnes() {
+    let request = TranslationRequest(text: "    let a = 1", source: .en, target: .ru,
+                                     tone: .neutral)
+    let prompt = PromptBuilder.systemPrompt(for: request)
+    #expect(prompt.contains("indented code blocks"))
+    #expect(prompt.contains("byte for byte"))
+}
