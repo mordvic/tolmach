@@ -87,18 +87,19 @@ Facts that will bite you if you "tidy" them:
   `separatorBefore` — the source document's own bytes, restored verbatim — in both `final` and the
   stream, plus the source's trailing whitespace at the end; `ChunkPlan`'s invariant is that this
   reassembly is byte-for-byte lossless. There is a test pinning this invariant.
-- **The packing rule is the structure guarantee.** Blocks merge into one chunk only across an
-  exactly-`"\n\n"` separator, so the model always sees canonical spacing and every other separator
-  never reaches it at all. Indented code (≥ 4 spaces or a tab, after a blank line) is code, and
-  goes further: such a block never merges in either direction, so it is always a solo chunk
-  (`Chunk.isIndentedCode`), and **`Translator` reproduces it itself instead of calling the model**.
-  The prompt's «lines indented by four or more spaces» rule could never protect the block's first
-  line — a chunk never begins with whitespace, so that indentation lives in `separatorBefore` and
-  the model saw the line dedented — and byte-for-byte reproduction of code the engine already holds
-  must not depend on model discipline. No LLM call means no `stats` entry for that chunk, but
-  `timeToFirstTokenMS` is still stamped: it is content a consumer can see. `MarkupSkeleton`
-  tokenises the block the same way, and shares `Chunker.scanLines` so the two layers read the same
-  lines. See `docs/superpowers/specs/2026-08-07-lossless-chunking-design.md`.
+- **The packing rule is the structure guarantee.** Blocks merge into one chunk only across a
+  separator that is exactly one blank line — in either line-ending convention, `"\n\n"` or
+  `"\r\n\r\n"` — and the join uses the document's own separator bytes, so a merged chunk's text is
+  byte-identical to its source span. Every other separator (three blank lines, a lone `"\n"` before
+  a fence, a blank line carrying spaces) forces a chunk boundary and never reaches the model at
+  all. Accepting the CRLF spelling is not a relaxation: the model may normalise an interior
+  `"\r\n"` to `"\n"`, but `MarkupSkeleton` shares `Chunker.scanLines`, which reads either as one
+  line break, so the diff cannot cry wolf — and gating on the LF spelling alone cost a CRLF
+  document *every* merge (30 paragraphs → 31 model calls where an LF copy needed 3). **Indentation
+  is not a code signal anywhere in the pipeline**: fenced and inline code are the only protected
+  forms, indented text is prose and is translated, and its indentation survives because
+  `Block.range` moves edge whitespace into the separators. See
+  `docs/superpowers/specs/2026-08-07-lossless-chunking-design.md` and its correction note.
 - `timeToFirstTokenMS` is `nil` when nothing was ever emitted — that nil *is* the empty-reply
   signal. Do not substitute a sentinel; it makes an absent response read as a slow one.
 - `stats` covers the per-chunk translation calls only, never the term-list call.

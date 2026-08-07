@@ -13,6 +13,18 @@ indentation, line endings, document-edge whitespace — byte for byte. Once the 
 A claim marked **measured** restates an observation already recorded in the code or in `docs/`;
 the citation says where. Everything else is intent.
 
+**Correction (2026-08-07).** The decision that an indented run is code (§1.2–1.3, §3, §5 — never
+sentence-split, kept solo, reproduced by `Translator` with no model call, protected by a prompt
+clause, tokenised as a code block by `MarkupSkeleton`) was implemented and reverted the same day.
+A code-review wave reproduced what it costs a *selection* translator, which has no format or
+container context: tab- and space-indented plain text out of an email or a PDF, and every Markdown
+loose-list continuation paragraph, came back untranslated with a success state. The no-call path
+also stamped `firstTokenAt` with no model content at all, defeating the «nil TTFT == an empty
+reply» contract, and a user-glossary term occurring only inside such a block was deterministically
+reported `.missing`. Indented text is prose again and is translated; its indentation is preserved
+through the verbatim separators instead, and fenced and inline code are the only protected forms.
+Everything else in this document stands. The code is the authority.
+
 This is the first of three sub-projects agreed on 2026-08-07. The other two — rich-text
 (RTF/HTML) capture, and returning the translation into the source application in place of the
 selection — each get their own spec and depend on this one: rich text will be converted to
