@@ -44,6 +44,12 @@ struct TranslatorApp: App {
     /// Built here rather than on first press so that a press never pays for an `NSPanel` and
     /// an `NSHostingView` before it can show anything.
     @State private var panel: PanelController
+    /// Which half of the window's left pane is showing.
+    ///
+    /// Owned here rather than inside `MainWindowView`, and that is not tidying: the
+    /// «Перевод» menu's ⌘↩ and ⌘. must drive whichever mode is visible, and a menu built in
+    /// this scene cannot read a `@State` declared in that view. The window binds to it.
+    @State private var mode: SourceMode = .text
 
     init() {
         let settings = AppSettings()
@@ -151,7 +157,7 @@ struct TranslatorApp: App {
                            onRunFinished: {
                                await statusModel.refresh(interactiveModel: settings.interactiveModel)
                            },
-                           queue: queue)
+                           queue: queue, mode: $mode)
                 .task { await statusModel.refresh(interactiveModel: settings.interactiveModel) }
         }
         // The app had no commands at all, and SwiftUI's defaults for this scene combination
@@ -179,12 +185,24 @@ struct TranslatorApp: App {
                 // this window sits idle reaches the panel, not this. That the fall-through
                 // happens in that order is the one part of this block a physical key press
                 // still has to confirm; `docs/OPEN-ITEMS.md` §1 carries it.
-                Button("Перевести") { Task { await translation.translate() } }
+                //
+                // Both items read `PrimaryAction`, the same value the toolbar button reads,
+                // so the three cannot disagree about which model they drive. Before this,
+                // all three called `translation` directly and «Файлы» had no way to start
+                // or stop a queue at all.
+                //
+                // The ⌘. argument above still holds and its condition is unchanged in
+                // spirit: the item is disabled unless the **visible mode** is running, so a
+                // window sitting idle in either mode still declines ⌘. and lets the panel
+                // have it. What changed is that «running» now means the visible mode's run
+                // rather than the text model's.
+                let action = PrimaryAction.forMode(mode, text: translation, queue: queue)
+                Button("Перевести") { Task { await action.start() } }
                     .keyboardShortcut(.return, modifiers: .command)
-                    .disabled(translation.state == .running || !statusModel.status.isHealthy)
-                Button("Отмена") { translation.cancel() }
+                    .disabled(action.isRunning || !action.canStart || !statusModel.status.isHealthy)
+                Button("Отмена") { action.cancel() }
                     .keyboardShortcut(".", modifiers: .command)
-                    .disabled(translation.state != .running)
+                    .disabled(!action.isRunning)
 
                 Divider()
 

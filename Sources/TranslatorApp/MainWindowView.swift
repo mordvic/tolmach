@@ -4,6 +4,47 @@ import AppKit
 import UniformTypeIdentifiers
 import TranslationCore
 
+/// What «Перевести» / «Отмена» does right now — one answer, read by three controls.
+///
+/// The toolbar button, the «Перевод» menu's ⌘↩ and its ⌘. all have to agree about which
+/// model they are driving, and in «Файлы» that is not the one they were written against:
+/// all three reached `TranslationViewModel` directly. Left alone, «Файлы» would have had a
+/// button that ran an empty text model and returned, no «Отмена» at all, and two dead
+/// keyboard shortcuts — a queue that could be neither started nor stopped.
+///
+/// A value rather than three copies of a condition, for `canSwapLanguages`' reason: a
+/// control has to answer before it is pressed, and three restatements of one rule is three
+/// places for a fourth mode to be forgotten.
+@MainActor
+struct PrimaryAction {
+    let isRunning: Bool
+    let canStart: Bool
+    let start: () async -> Void
+    let cancel: () -> Void
+
+    static func forMode(_ mode: SourceMode,
+                        text: TranslationViewModel,
+                        queue: FileQueueModel) -> PrimaryAction {
+        switch mode {
+        case .text:
+            PrimaryAction(
+                isRunning: text.state == .running,
+                canStart: !text.sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                start: { await text.translate() },
+                cancel: { text.cancel() })
+        case .files:
+            PrimaryAction(
+                isRunning: queue.isRunning,
+                // The same statement in both modes: there is nothing to translate. An
+                // `.unreadable` задание is not something to translate either — the queue
+                // skips it — so it does not light the button on its own.
+                canStart: queue.jobs.contains { $0.state != .finished && $0.state != .unreadable },
+                start: { await queue.run() },
+                cancel: { queue.cancel() })
+        }
+    }
+}
+
 struct MainWindowView: View {
     @Bindable var model: TranslationViewModel
     /// Plain `let`, not `@Bindable`: nothing here binds to the store, it is only read
@@ -29,9 +70,13 @@ struct MainWindowView: View {
     /// The third model, owned by `TranslatorApp` beside the window's and the panel's.
     let queue: FileQueueModel
 
-    /// Which half the left pane is showing. `@State` and not a setting: it is where the
-    /// user is looking right now, not a preference to survive a relaunch.
-    @State private var mode: SourceMode = .text
+    /// Which half the left pane is showing.
+    ///
+    /// A `@Binding` and not `@State`: the «Перевод» menu's ⌘↩ and ⌘. have to drive whichever
+    /// mode is visible, and a menu declared in the app's scene cannot read state that lives
+    /// in this view. `TranslatorApp` owns it. Not a setting either — it is where the user is
+    /// looking right now, not a preference to survive a relaunch.
+    @Binding var mode: SourceMode
 
     var body: some View {
         VStack(spacing: 0) {
@@ -121,12 +166,16 @@ struct MainWindowView: View {
         // working when this window is not the one in front. Declaring the same equivalent in
         // two places leaves two things to keep in step and no statement about which wins.
         ToolbarItem(placement: .primaryAction) {
-            if model.state == .running {
-                Button("Отмена") { model.cancel() }
+            // Reads `PrimaryAction` rather than `model.state`, so the button and the two
+            // menu items cannot disagree about which model they drive. In «Файлы» reading
+            // the text model would run an empty pane and return.
+            let action = PrimaryAction.forMode(mode, text: model, queue: queue)
+            if action.isRunning {
+                Button("Отмена") { action.cancel() }
             } else {
-                Button("Перевести") { Task { await model.translate() } }
+                Button("Перевести") { Task { await action.start() } }
                     .buttonStyle(.borderedProminent)
-                    .disabled(!status.isHealthy)
+                    .disabled(!status.isHealthy || !action.canStart)
             }
         }
     }

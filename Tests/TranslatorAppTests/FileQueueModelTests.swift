@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import Testing
 import TranslationCore
 @testable import TranslatorApp
@@ -301,4 +302,79 @@ private let replyWithoutTheLink = "Смотрите руководство."
 
     #expect(model.jobs.map(\.state) == [.queued, .unreadable])
     #expect(model.jobs[1].partsTotal == 0)
+}
+
+@MainActor
+private func makeTextModel(_ prefix: String) -> TranslationViewModel {
+    TranslationViewModel(translator: Translator(client: QueueClient(replies: [])),
+                         settings: AppSettings(defaults: InMemoryDefaults(prefix: prefix)),
+                         glossary: scratchGlossary(),
+                         pasteboard: NSPasteboard(name: .init("primary-\(prefix)")))
+}
+
+@MainActor @Test func thePrimaryActionInFilesModeDrivesTheQueueAndNotTheTextModel() async {
+    let client = QueueClient(replies: ["один"])
+    let queue = makeQueueModel(client, prefix: "primary-files")
+    queue.add([queueJob("a.md", "first")])
+    let text = makeTextModel("primary-files-text")
+
+    let action = PrimaryAction.forMode(.files, text: text, queue: queue)
+    #expect(action.canStart)
+    await action.start()
+
+    #expect(queue.jobs[0].state == .finished)
+    #expect(text.state == .idle)   // the text model was never touched
+}
+
+@MainActor @Test func thePrimaryActionSaysThereIsNothingToStartWhenTheQueueIsEmpty() {
+    let queue = makeQueueModel(QueueClient(replies: []), prefix: "primary-empty")
+    let text = makeTextModel("primary-empty-text")
+
+    // An empty queue and an empty source pane are the same statement to the user: there is
+    // nothing to translate. The button says so in both modes rather than only one.
+    #expect(!PrimaryAction.forMode(.files, text: text, queue: queue).canStart)
+    #expect(!PrimaryAction.forMode(.text, text: text, queue: queue).canStart)
+}
+
+@MainActor @Test func anUnreadableFileAloneDoesNotLightThePrimaryButton() {
+    let queue = makeQueueModel(QueueClient(replies: []), prefix: "primary-unreadable")
+    var refused = queueJob("broken.pdf", "")
+    refused.state = .unreadable
+    queue.add([refused])
+
+    // There is nothing to translate: the queue would skip it, so offering to start is a
+    // button that does nothing when pressed.
+    #expect(!PrimaryAction.forMode(.files, text: makeTextModel("primary-unreadable-text"),
+                                   queue: queue).canStart)
+}
+
+@MainActor @Test func cancellingInFilesModeStopsTheQueueAndNotTheTextModel() async {
+    let client = QueueClient(replies: ["один", "два"], paced: true)
+    let queue = makeQueueModel(client, prefix: "primary-cancel")
+    queue.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
+    let text = makeTextModel("primary-cancel-text")
+    let action = PrimaryAction.forMode(.files, text: text, queue: queue)
+
+    let run = Task { await action.start() }
+    try? await Task.sleep(for: .milliseconds(10))
+    action.cancel()
+    await run.value
+
+    #expect(queue.jobs[0].state == .interrupted)
+}
+
+@MainActor @Test func thePrimaryActionReportsWhicheverModelIsRunning() async {
+    let client = QueueClient(replies: ["один"], paced: true)
+    let queue = makeQueueModel(client, prefix: "primary-running")
+    queue.add([queueJob("a.md", "first")])
+    let text = makeTextModel("primary-running-text")
+
+    #expect(!PrimaryAction.forMode(.files, text: text, queue: queue).isRunning)
+    let run = Task { await queue.run() }
+    try? await Task.sleep(for: .milliseconds(5))
+    #expect(PrimaryAction.forMode(.files, text: text, queue: queue).isRunning)
+    // ...and the text mode is unaffected, which is what stops one toolbar showing
+    // «Отмена» for a run the visible pane knows nothing about.
+    #expect(!PrimaryAction.forMode(.text, text: text, queue: queue).isRunning)
+    await run.value
 }
