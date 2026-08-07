@@ -206,3 +206,23 @@ import Testing
     let codeBlocks = tokens.filter { if case .codeBlock = $0 { true } else { false } }
     #expect(codeBlocks.count == 1)
 }
+
+@Test func tableRowsTokeniseAndADroppedRowSurfacesInTheDiff() {
+    let source = "| Name | Value |\n|---|---|\n| a | 1 |"
+    let translation = "| Имя | Значение |\n|---|---|"
+    let diffs = MarkupSkeleton.diff(source: source, translation: translation)
+    #expect(diffs.contains { $0.expected == .tableRow && $0.actual == nil })
+}
+
+@Test func setextHeadingsTokeniseAtTheirLevels() {
+    let text = "Title\n=====\n\nSubtitle\n--------\n\nBody text."
+    let tokens = MarkupSkeleton.tokens(of: text)
+    #expect(tokens.contains(.heading(level: 1)))
+    #expect(tokens.contains(.heading(level: 2)))
+}
+
+@Test func aDashRunAfterABlankLineIsNotASetextHeading() {
+    // A thematic break, not an underline: nothing above it to be a heading of.
+    let tokens = MarkupSkeleton.tokens(of: "Paragraph.\n\n---\n\nNext.")
+    #expect(!tokens.contains { if case .heading = $0 { true } else { false } })
+}

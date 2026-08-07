@@ -9,6 +9,7 @@ import Testing
     #expect(DiffPresentation.label(for: .url(bare: true)) == "ссылка без разметки")
     #expect(DiffPresentation.label(for: .url(bare: false)) == "ссылка в разметке")
     #expect(DiffPresentation.label(for: .hardLineBreak) == "жёсткий перенос строки")
+    #expect(DiffPresentation.label(for: .tableRow) == "строка таблицы")
     // The hash is meaningless to a reader and differs between runs, so it must not leak.
     let block = DiffPresentation.label(for: .codeBlock(hash: 12345, lang: "bash"))
     #expect(block == "блок кода (bash)")

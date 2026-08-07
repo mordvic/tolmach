@@ -10,6 +10,7 @@ public enum MarkupToken: Sendable, Equatable, Hashable {
     case url(bare: Bool)
     case paragraphBreak
     case hardLineBreak
+    case tableRow
 }
 
 public struct MarkupDiff: Sendable, Equatable {
@@ -25,6 +26,7 @@ public enum MarkupSkeleton {
         var fenceLang = ""
         var insideFence = false
         var previousWasBlank = true // document start counts as after-a-blank
+        var previousLineHadText = false
         var indentedBuffer: [String] = []
         func flushIndented() {
             guard !indentedBuffer.isEmpty else { return }
@@ -44,18 +46,21 @@ public enum MarkupSkeleton {
                     fenceBuffer = []; fenceLang = ""; insideFence = false
                 } else { fenceBuffer.append(line) }
                 previousWasBlank = false
+                previousLineHadText = false
                 continue
             }
             if trimmed.hasPrefix("```") {
                 insideFence = true
                 fenceLang = String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespaces)
                 previousWasBlank = false
+                previousLineHadText = false
                 continue
             }
             if trimmed.isEmpty {
                 flushIndented()
                 tokens.append(.paragraphBreak)
                 previousWasBlank = true
+                previousLineHadText = false
                 continue
             }
             let isIndented = line.hasPrefix("    ") || line.hasPrefix("\t")
@@ -63,17 +68,32 @@ public enum MarkupSkeleton {
                 if isIndented {
                     indentedBuffer.append(line)
                     previousWasBlank = false
+                    previousLineHadText = false
                     continue
                 }
                 flushIndented()
             }
             previousWasBlank = false
+            // Setext underline: a line of only "=" (any count) or only "-" (two or
+            // more — a lone "-" is closer to a stray bullet than to an underline)
+            // directly under a non-blank line. CommonMark reads "---" after a
+            // paragraph as a setext H2, not a thematic break.
+            let isSetextUnderline = previousLineHadText && !trimmed.isEmpty
+                && (trimmed.allSatisfy { $0 == "=" }
+                    || (trimmed.count >= 2 && trimmed.allSatisfy { $0 == "-" }))
+            if isSetextUnderline {
+                tokens.append(.heading(level: trimmed.first == "=" ? 1 : 2))
+                previousLineHadText = false
+                continue
+            }
+            if trimmed.hasPrefix("|") { tokens.append(.tableRow) }
             if let level = headingLevel(trimmed) { tokens.append(.heading(level: level)) }
             if trimmed.hasPrefix(">") { tokens.append(.blockquote) }
             if let depth = listDepth(line) { tokens.append(.listItem(depth: depth)) }
             tokens.append(contentsOf: inlineTokens(in: line))
             // Markdown hard break: two or more trailing spaces on a non-blank line.
             if line.hasSuffix("  ") { tokens.append(.hardLineBreak) }
+            previousLineHadText = true
         }
         if insideFence { tokens.append(.codeBlock(hash: fenceBuffer.joined(separator: "\n").hashValue, lang: fenceLang)) }
         flushIndented()
