@@ -60,3 +60,74 @@ Final paragraph after the code, closing the document out with a few more words.
     #expect(fenceChunks[0].text.contains("let a = 1"))
     #expect(fenceChunks[0].text.contains("let c = 3"))
 }
+
+// MARK: - Lossless chunking: the plan reassembles the source byte for byte.
+
+private let hostileDocuments: [String] = [
+    // CRLF endings, including in the separators.
+    "First paragraph.\r\nStill the first paragraph here.\r\n\r\nSecond paragraph after CRLF.\r\n",
+    // A run of blank lines that used to collapse to one.
+    "First paragraph up top.\n\n\n\nSecond paragraph after three blank lines.",
+    // Hard line breaks: interior ones stay inside the block, the block-final one
+    // moves into the separator — both must survive reassembly.
+    "Line one  \nLine two  \n\nNext paragraph closing out.",
+    // Document-edge whitespace, both ends.
+    "  \nLeading blank-ish line above.\n\nAnd a trailing tail below.\n\n  ",
+    // A blank line that contains spaces is still a separator, spaces included.
+    "A blank line with spaces below this.\n   \nAnd the paragraph after it.",
+    // A fence with no blank lines around it: the "\n" separators must survive.
+    "Run the command below.\n```bash\nls -la\n```\nDone.",
+    // One paragraph far over any budget: split by sentences, reassembled exactly.
+    String(repeating: "The server validates the resource before publishing it to every client. ",
+           count: 12),
+]
+
+private func reassembled(_ text: String, maxCharacters: Int) -> String {
+    let plan = Chunker.plan(text, maxCharacters: maxCharacters)
+    return plan.chunks.map { $0.separatorBefore + $0.text }.joined() + plan.trailingSeparator
+}
+
+@Test(arguments: hostileDocuments) func chunkingIsLossless(_ text: String) {
+    #expect(reassembled(text, maxCharacters: 120) == text)
+    #expect(reassembled(text, maxCharacters: 900) == text)
+}
+
+@Test func aSplitParagraphFabricatesNoParagraphBreaks() {
+    // One long paragraph, no blank lines anywhere. Today every sentence-split
+    // piece is joined back with "\n\n" — fabricated paragraph breaks the markup
+    // diff can never see. After the fix, no chunk boundary inside this paragraph
+    // may carry a blank line.
+    let paragraph = String(
+        repeating: "The server validates the resource before publishing it to every client. ",
+        count: 12)
+    let plan = Chunker.plan(paragraph, maxCharacters: 120)
+    #expect(plan.chunks.count > 1)
+    for chunk in plan.chunks.dropFirst() {
+        #expect(!chunk.separatorBefore.contains("\n"))
+    }
+    #expect(!plan.chunks.contains { $0.text.contains("\n\n") })
+}
+
+@Test func mergedBlocksAreByteIdenticalToTheSourceSpan() {
+    // Two short paragraphs separated by exactly "\n\n" merge into one chunk, and
+    // the merge must be a byte-level no-op: the chunk text IS the source span.
+    let text = "Short first paragraph.\n\nShort second paragraph."
+    let plan = Chunker.plan(text, maxCharacters: 900)
+    #expect(plan.chunks.count == 1)
+    #expect(plan.chunks[0].text == text)
+    #expect(plan.chunks[0].separatorBefore.isEmpty)
+    #expect(plan.trailingSeparator.isEmpty)
+}
+
+@Test func aNonCanonicalSeparatorForcesAChunkBoundaryAndSurvivesVerbatim() {
+    let text = "First paragraph.\n\n\nSecond paragraph after a double blank."
+    let plan = Chunker.plan(text, maxCharacters: 900)
+    #expect(plan.chunks.count == 2)
+    #expect(plan.chunks[1].separatorBefore == "\n\n\n")
+}
+
+@Test func whitespaceOnlyInputPutsEverythingInTheTrailingSeparator() {
+    let plan = Chunker.plan("   \n\n  \t ", maxCharacters: 900)
+    #expect(plan.chunks.isEmpty)
+    #expect(plan.trailingSeparator == "   \n\n  \t ")
+}
