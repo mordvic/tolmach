@@ -25,7 +25,7 @@ public struct ChunkPlan: Sendable, Equatable {
 
 public enum Chunker {
     struct Block {
-        enum Kind { case prose, fencedCode }
+        enum Kind { case prose, fencedCode, indentedCode }
         let kind: Kind
         /// Content range in the source: first non-whitespace character of the block's
         /// first line through last non-whitespace character of its last line. Edge
@@ -146,6 +146,10 @@ public enum Chunker {
         func isFenceMarker(_ line: Line) -> Bool {
             text[line.content].trimmingCharacters(in: .whitespaces).hasPrefix("```")
         }
+        func isIndented(_ line: Line) -> Bool {
+            let content = text[line.content]
+            return content.hasPrefix("    ") || content.first == "\t"
+        }
         /// Content range trimmed of whitespace at both edges — see `Block.range`.
         func blockRange(first: Line, last: Line) -> Range<String.Index> {
             var start = first.content.lowerBound
@@ -159,8 +163,9 @@ public enum Chunker {
             return start..<end
         }
 
+        var previousWasBlank = true // document start behaves like after a blank line
         while index < lines.count {
-            if isBlank(lines[index]) { index += 1; continue }
+            if isBlank(lines[index]) { previousWasBlank = true; index += 1; continue }
 
             if isFenceMarker(lines[index]) {
                 var last = index
@@ -176,6 +181,24 @@ public enum Chunker {
                 blocks.append(Block(kind: .fencedCode,
                                     range: blockRange(first: lines[index], last: lines[last])))
                 index = last + 1
+                previousWasBlank = false
+                continue
+            }
+
+            // CommonMark: indented code starts only at the document start or after a
+            // blank line — it cannot interrupt a paragraph. A blank line ends it;
+            // an indented run after the next blank line simply starts a new block,
+            // and the separator between them is restored verbatim like any other.
+            if previousWasBlank, isIndented(lines[index]) {
+                var last = index
+                while last + 1 < lines.count, !isBlank(lines[last + 1]),
+                      isIndented(lines[last + 1]) {
+                    last += 1
+                }
+                blocks.append(Block(kind: .indentedCode,
+                                    range: blockRange(first: lines[index], last: lines[last])))
+                index = last + 1
+                previousWasBlank = false
                 continue
             }
 
@@ -188,6 +211,7 @@ public enum Chunker {
             blocks.append(Block(kind: .prose,
                                 range: blockRange(first: lines[index], last: lines[last])))
             index = last + 1
+            previousWasBlank = false
         }
         return blocks
     }

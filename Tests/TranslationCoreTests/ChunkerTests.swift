@@ -131,3 +131,47 @@ private func reassembled(_ text: String, maxCharacters: Int) -> String {
     #expect(plan.chunks.isEmpty)
     #expect(plan.trailingSeparator == "   \n\n  \t ")
 }
+
+// MARK: - Indented code blocks (4+ spaces after a blank line) are code.
+
+@Test func anIndentedCodeBlockIsNeverSentenceSplitAndReassemblesExactly() {
+    // The code lines are sentence-shaped prose; if the block were treated as text,
+    // a 60-character budget would split it. CommonMark: a run of lines indented by
+    // four or more spaces after a blank line is a code block.
+    let text = """
+    Intro paragraph before the code.
+
+        This looks like a sentence. And another sentence here. And one more now.
+        let a = compute(1)
+
+    Prose after the code block.
+    """
+    let plan = Chunker.plan(text, maxCharacters: 60)
+    #expect(plan.chunks.map { $0.separatorBefore + $0.text }.joined()
+            + plan.trailingSeparator == text)
+    let codeChunk = plan.chunks.first { $0.text.contains("let a = compute(1)") }
+    #expect(codeChunk != nil)
+    #expect(codeChunk?.text.contains("This looks like a sentence. And another sentence here. And one more now.") == true)
+}
+
+@Test func indentationInsideAnIndentedCodeBlockSurvivesInTheChunkText() {
+    // The block's FIRST line's indentation lives in the separator (chunk text never
+    // starts with whitespace — see Block.range), but every continuation line keeps
+    // its own indentation inside the chunk text.
+    let text = "Intro.\n\n    first line\n    second line"
+    let plan = Chunker.plan(text, maxCharacters: 900)
+    let code = plan.chunks.first { $0.text.contains("first line") }
+    #expect(code?.text.contains("\n    second line") == true)
+    #expect(code?.separatorBefore.hasSuffix("    ") == true)
+}
+
+@Test func indentedLinesMidParagraphStayProse() {
+    // CommonMark: indented code cannot interrupt a paragraph. No blank line above,
+    // so these lines are a prose continuation, not code — the block stays one prose
+    // block and an oversized one would still split by sentences.
+    let text = "A paragraph line.\n    An indented continuation of the same paragraph."
+    let plan = Chunker.plan(text, maxCharacters: 900)
+    #expect(plan.chunks.count == 1)
+    #expect(plan.chunks.map { $0.separatorBefore + $0.text }.joined()
+            + plan.trailingSeparator == text)
+}
