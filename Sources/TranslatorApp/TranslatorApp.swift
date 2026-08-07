@@ -20,6 +20,13 @@ struct TranslatorApp: App {
     @State private var glossary: GlossaryStore
     @State private var statusModel: OllamaStatusModel
     @State private var translation: TranslationViewModel
+    /// The file queue — the window's third model, beside its own `translation` and the
+    /// panel's inside `coordinator`.
+    ///
+    /// Owned here for the reason the other two are: the app owns the models and the scenes
+    /// read them. One run per model with a per-instance guard is what keeps the three from
+    /// overwriting each other, and it only holds while nobody builds a second copy.
+    @State private var queue: FileQueueModel
     /// Owned here rather than created inside the settings pane so the installed list and a
     /// download in progress survive the settings window being closed and reopened.
     @State private var models: ModelsViewModel
@@ -77,10 +84,22 @@ struct TranslatorApp: App {
         // sharing the client is what matters, because it is what holds the `URLSession`.
         let coordinator = HotkeyCoordinator(settings: settings, glossary: glossary,
                                             translator: Translator(client: client))
+        // A third `Translator` over the same client, for the same reason as the second.
+        // The save closure is where the queue meets the filesystem, and it is injected
+        // rather than reached for inside the runner so a test can run a whole queue
+        // without writing anything.
+        let queue = FileQueueModel(
+            translator: Translator(client: client), settings: settings, glossary: glossary,
+            save: { job, text in
+                TranslatedFileWriter.write(
+                    text, beside: job.url,
+                    target: settings.targetLanguage(forDetected: LanguageDetector.detect(job.text)))
+            })
         _settings = State(initialValue: settings)
         _glossary = State(initialValue: glossary)
         _statusModel = State(initialValue: statusModel)
         _translation = State(initialValue: translation)
+        _queue = State(initialValue: queue)
         // Both halves of this take the shared client: the probe behind the installed and
         // resident lists, and the puller behind «Скачать». `OllamaClient` is a `Sendable`
         // struct — `LLMClient` requires it — so the closure may capture it.
@@ -131,7 +150,8 @@ struct TranslatorApp: App {
                            onCopy: { Task { await translation.copyToPasteboard() } },
                            onRunFinished: {
                                await statusModel.refresh(interactiveModel: settings.interactiveModel)
-                           })
+                           },
+                           queue: queue)
                 .task { await statusModel.refresh(interactiveModel: settings.interactiveModel) }
         }
         // The app had no commands at all, and SwiftUI's defaults for this scene combination

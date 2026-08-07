@@ -1,5 +1,7 @@
 // Sources/TranslatorApp/MainWindowView.swift
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 import TranslationCore
 
 struct MainWindowView: View {
@@ -24,17 +26,46 @@ struct MainWindowView: View {
     /// second call site compile while silently never refreshing — the same trap a default
     /// would have been worth taking on `PanelHost` too, if it had more than one caller.
     let onRunFinished: () async -> Void
+    /// The third model, owned by `TranslatorApp` beside the window's and the panel's.
+    let queue: FileQueueModel
+
+    /// Which half the left pane is showing. `@State` and not a setting: it is where the
+    /// user is looking right now, not a preference to survive a relaunch.
+    @State private var mode: SourceMode = .text
 
     var body: some View {
         VStack(spacing: 0) {
             HSplitView {
                 VStack(alignment: .leading, spacing: 0) {
-                    PaneHeader(title: "Исходник") {
-                        Button("Очистить") { model.sourceText = "" }
-                            .buttonStyle(.link)
-                            .disabled(model.sourceText.isEmpty)
+                    // The switch replaces the «Исходник» caption rather than sitting above
+                    // it, so both panes still read as one row of chrome — which is what
+                    // `PaneHeader.height` is pinned for.
+                    PaneHeader(title: nil) {
+                        Picker("", selection: $mode) {
+                            ForEach(SourceMode.allCases) { Text($0.label).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .controlSize(.small)
+                        .fixedSize()
+                        .disabled(!queue.canChangeMode)
+                        .help("Что переводить: набранный текст или очередь файлов")
+                        Spacer()
+                        if mode == .text {
+                            Button("Очистить") { model.sourceText = "" }
+                                .buttonStyle(.link)
+                                .disabled(model.sourceText.isEmpty)
+                        } else {
+                            Button("Добавить…", action: addFiles)
+                                .buttonStyle(.link)
+                                .disabled(!queue.canChangeMode)
+                        }
                     }
-                    SourceEditor(model: model)
+                    if mode == .text {
+                        SourceEditor(model: model)
+                    } else {
+                        FileQueuePane(queue: queue)
+                    }
                 }
                 TranslationPane(title: "Перевод",
                                 text: model.translatedText,
@@ -98,6 +129,24 @@ struct MainWindowView: View {
                     .disabled(!status.isHealthy)
             }
         }
+    }
+
+    /// «Добавить…» — the other way into the queue.
+    ///
+    /// The panel's result goes through `QueueDrop.accept` exactly as a drop does, so the
+    /// two doors into the queue cannot come to accept different things: one rule, one
+    /// place, checked by `QueueDropTests`.
+    private func addFiles() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = DroppedDocument.readableExtensions.compactMap {
+            UTType(filenameExtension: $0)
+        }
+        panel.prompt = "Добавить"
+        panel.message = "Выберите текстовые файлы для перевода"
+        guard panel.runModal() == .OK, let items = QueueDrop.accept(panel.urls) else { return }
+        Task { await queue.add(dropped: items) }
     }
 
     /// Muting is two steps and only the first is guaranteed. `mute` updates the in-memory

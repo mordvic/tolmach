@@ -259,3 +259,46 @@ private let replyWithoutTheLink = "Смотрите руководство."
     #expect(!model.pausedAfterWarnings)
     #expect(model.jobs.allSatisfy { $0.state == .finished })
 }
+
+@MainActor @Test func theModeSwitchIsLockedWhileTheQueueRuns() async {
+    // One window, one primary button. If the mode could change mid-run the user could
+    // switch to «Текст» and press «Перевести», putting two runs behind one toolbar.
+    let client = QueueClient(replies: ["один"], paced: true)
+    let model = makeQueueModel(client, prefix: "queue-mode-lock")
+    model.add([queueJob("a.md", "first")])
+    #expect(model.canChangeMode)
+
+    let run = Task { await model.run() }
+    try? await Task.sleep(for: .milliseconds(5))
+    #expect(!model.canChangeMode)
+    await run.value
+
+    #expect(model.canChangeMode)
+}
+
+@MainActor @Test func aDroppedFileIsPlannedWithTheUsersChunkSizeAndNotThe900Default() async {
+    // The queued row promises «N частей» before anything runs. Planning with the 900 that
+    // happens to be the default would promise four to a user who set 500 and serve seven.
+    let model = makeQueueModel(QueueClient(replies: []), prefix: "queue-chunk-size") {
+        $0.chunkSize = 120
+    }
+    let text = String(repeating: "Одно предложение про ресурс и сервер. ", count: 20)
+
+    await model.add(dropped: [QueueDrop.Item(url: URL(fileURLWithPath: "/tmp/a.md"), text: text)])
+
+    let expected = Chunker.plan(text, maxCharacters: 120).chunks.count
+    #expect(expected > 1)                       // the fixture actually exercises the split
+    #expect(model.jobs[0].partsTotal == expected)
+}
+
+@MainActor @Test func anUnreadableItemBecomesARowRatherThanBeingDropped() async {
+    let model = makeQueueModel(QueueClient(replies: []), prefix: "queue-unreadable-row")
+
+    await model.add(dropped: [
+        QueueDrop.Item(url: URL(fileURLWithPath: "/tmp/a.md"), text: "текст"),
+        QueueDrop.Item(url: URL(fileURLWithPath: "/tmp/b.pdf"), text: nil),
+    ])
+
+    #expect(model.jobs.map(\.state) == [.queued, .unreadable])
+    #expect(model.jobs[1].partsTotal == 0)
+}
