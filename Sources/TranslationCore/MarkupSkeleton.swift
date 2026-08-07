@@ -77,11 +77,18 @@ public enum MarkupSkeleton {
             // Setext underline: a line of only "=" (any count) or only "-" (two or
             // more — a lone "-" is closer to a stray bullet than to an underline)
             // directly under a non-blank line. CommonMark reads "---" after a
-            // paragraph as a setext H2, not a thematic break.
-            let isSetextUnderline = previousLineHadText && !trimmed.isEmpty
+            // paragraph as a setext H2, not a thematic break. The shape check is
+            // computed independently of `previousLineHadText` because a dash/equals
+            // run that FAILS the gate (no paragraph text above it — e.g. it follows
+            // another thematic break) is not paragraph text either: it must not let
+            // the *next* line pass the gate. Two consecutive "---" after a blank line
+            // used to tokenise the second as a heading — confirmed by probe — because
+            // the first, despite being read correctly as a thematic break, still set
+            // `previousLineHadText = true` on the ordinary-line path below.
+            let isUnderlineShape = !trimmed.isEmpty
                 && (trimmed.allSatisfy { $0 == "=" }
                     || (trimmed.count >= 2 && trimmed.allSatisfy { $0 == "-" }))
-            if isSetextUnderline {
+            if previousLineHadText && isUnderlineShape {
                 tokens.append(.heading(level: trimmed.first == "=" ? 1 : 2))
                 previousLineHadText = false
                 continue
@@ -93,7 +100,7 @@ public enum MarkupSkeleton {
             tokens.append(contentsOf: inlineTokens(in: line))
             // Markdown hard break: two or more trailing spaces on a non-blank line.
             if line.hasSuffix("  ") { tokens.append(.hardLineBreak) }
-            previousLineHadText = true
+            previousLineHadText = !isUnderlineShape
         }
         if insideFence { tokens.append(.codeBlock(hash: fenceBuffer.joined(separator: "\n").hashValue, lang: fenceLang)) }
         flushIndented()

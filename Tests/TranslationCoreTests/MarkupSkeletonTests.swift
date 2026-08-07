@@ -226,3 +226,11 @@ import Testing
     let tokens = MarkupSkeleton.tokens(of: "Paragraph.\n\n---\n\nNext.")
     #expect(!tokens.contains { if case .heading = $0 { true } else { false } })
 }
+
+@Test func consecutiveDashRunsAfterABlankLineFabricateNoHeading() {
+    // The first "---" is a thematic break (blank line above), so the second one has
+    // no paragraph text above it either — CommonMark makes neither a heading. A
+    // dash-run that FAILED the setext gate must not count as prose for the next line.
+    let tokens = MarkupSkeleton.tokens(of: "Paragraph.\n\n---\n---\n\nNext.")
+    #expect(!tokens.contains { if case .heading = $0 { true } else { false } })
+}
