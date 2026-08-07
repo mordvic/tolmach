@@ -548,6 +548,23 @@ private let longEnoughForTwoParts = String(
         pasteboard: NSPasteboard(name: .init("gate-\(prefix)")))
 }
 
+/// Waits for the sheet, with a ceiling.
+///
+/// An unbounded `while model.pendingTermsRequest == nil { await Task.yield() }` turns «the
+/// sheet never appeared» into a hung suite instead of a failed test — and «never appeared»
+/// is a real outcome here: a term-list reply that does not parse leaves no glossary to
+/// review, so the hook is never called.
+@MainActor
+private func waitForSheet(_ model: TranslationViewModel,
+                          _ comment: Comment = "the terms sheet never appeared") async -> DocumentTermsRequest? {
+    for _ in 0..<400 {
+        if let request = model.pendingTermsRequest { return request }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
+    Issue.record(comment)
+    return nil
+}
+
 @MainActor @Test func theTermsGateIsSkippedEntirelyWhenTheSettingIsOff() async {
     let model = gateModel(ScriptedClient(responses: ["resource => ресурс", "перевод", "перевод"]),
                           "gate-off", review: false)
@@ -566,9 +583,9 @@ private let longEnoughForTwoParts = String(
     model.sourceText = longEnoughForTwoParts
 
     let run = Task { await model.translate() }
-    while model.pendingTermsRequest == nil { await Task.yield() }
-    model.pendingTermsRequest?.entries = [GlossaryEntry(term: "resource", translations: ["ru": "объект"])]
-    model.pendingTermsRequest?.proceed()
+    let sheet = await waitForSheet(model)
+    sheet?.entries = [GlossaryEntry(term: "resource", translations: ["ru": "объект"])]
+    sheet?.proceed()
     await run.value
 
     #expect(model.state == .finished)
@@ -583,8 +600,7 @@ private let longEnoughForTwoParts = String(
     model.sourceText = longEnoughForTwoParts
 
     let run = Task { await model.translate() }
-    while model.pendingTermsRequest == nil { await Task.yield() }
-    model.pendingTermsRequest?.cancel()
+    await waitForSheet(model)?.cancel()
     await run.value
 
     #expect(model.state == .interrupted)
@@ -601,7 +617,7 @@ private let longEnoughForTwoParts = String(
     model.sourceText = longEnoughForTwoParts
 
     let run = Task { await model.translate() }
-    while model.pendingTermsRequest == nil { await Task.yield() }
+    _ = await waitForSheet(model)
     model.cancel()
     await run.value
 
@@ -631,8 +647,7 @@ private let longEnoughForTwoParts = String(
     #expect(model.documentTermsUnavailable)
 
     let run = Task { await model.translate() }
-    while model.pendingTermsRequest == nil { await Task.yield() }
-    model.pendingTermsRequest?.proceed()
+    await waitForSheet(model)?.proceed()
     await run.value
 
     #expect(!model.documentTermsUnavailable)

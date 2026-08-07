@@ -41,7 +41,7 @@ final class QueueClient: LLMClient, @unchecked Sendable {
         }
         return AsyncThrowingStream { continuation in
             let producer = Task {
-                if paced { try? await Task.sleep(for: .milliseconds(20)) }
+                if paced { try? await Task.sleep(for: .milliseconds(60)) }
                 if !reply.isEmpty { continuation.yield(.token(reply)) }
                 continuation.yield(.done(ChatStats(loadDurationMS: 1, promptEvalCount: 1,
                     promptEvalDurationMS: 1, evalCount: reply.count, evalDurationMS: 1)))
@@ -80,6 +80,28 @@ func queueJob(_ name: String, _ text: String) -> FileJob {
     FileJob(url: URL(fileURLWithPath: "/tmp/\(name)"), text: text, partsTotal: 1)
 }
 
+/// Waits until a задание is actually in flight, then returns.
+///
+/// **State, not a sleep.** These tests used `try? await Task.sleep(for: .milliseconds(10))`
+/// and cancelled afterwards, on the assumption that a 60 ms paced reply would still be in
+/// the air. Under a full 510-test run that sleep overshoots — measured: roughly one run in
+/// five, `cancel()` arrived after the whole three-file queue had finished and every
+/// assertion about `.interrupted` failed. `FakeLLMClient.onCallStart` carries the same
+/// lesson in its own doc comment: racing a cancellation against a guessed duration only
+/// ever pins the timing on one machine.
+///
+/// The gap between observing `.running` and the caller's `cancel()` is a single yield on
+/// the main actor, so the paced reply cannot have landed in it.
+@MainActor
+private func waitUntilRunning(_ model: FileQueueModel, _ index: Int,
+                              _ comment: Comment = "the задание never started") async {
+    for _ in 0..<20_000 {
+        if case .running = model.jobs[index].state { return }
+        await Task.yield()
+    }
+    Issue.record(comment)
+}
+
 @MainActor @Test func theQueueTranslatesItsFilesInOrder() async {
     let client = QueueClient(replies: ["один", "два", "три"])
     let model = makeQueueModel(client, prefix: "queue-order")
@@ -98,8 +120,7 @@ func queueJob(_ name: String, _ text: String) -> FileJob {
     model.add([queueJob("a.md", "first"), queueJob("b.md", "second"), queueJob("c.md", "third")])
 
     let run = Task { await model.run() }
-    // Let the first file get into the stream, then stop it.
-    try? await Task.sleep(for: .milliseconds(10))
+    await waitUntilRunning(model, 0)
     model.cancel()
     await run.value
 
@@ -115,7 +136,7 @@ func queueJob(_ name: String, _ text: String) -> FileJob {
     model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
 
     let first = Task { await model.run() }
-    try? await Task.sleep(for: .milliseconds(10))
+    await waitUntilRunning(model, 0)
     model.cancel()
     await first.value
     #expect(model.jobs[0].state == .interrupted)
@@ -182,7 +203,7 @@ func queueJob(_ name: String, _ text: String) -> FileJob {
     model.add([queueJob("a.md", "first")])
 
     let first = Task { await model.run() }
-    try? await Task.sleep(for: .milliseconds(5))
+    await waitUntilRunning(model, 0)
     await model.run()   // must return immediately, not start a second pass
     await first.value
 
@@ -280,7 +301,7 @@ private let replyWithoutTheLink = "Смотрите руководство."
     #expect(model.canChangeMode)
 
     let run = Task { await model.run() }
-    try? await Task.sleep(for: .milliseconds(5))
+    await waitUntilRunning(model, 0)
     #expect(!model.canChangeMode)
     await run.value
 
@@ -366,7 +387,7 @@ private func makeTextModel(_ prefix: String) -> TranslationViewModel {
     let action = PrimaryAction.forMode(.files, text: text, queue: queue)
 
     let run = Task { await action.start() }
-    try? await Task.sleep(for: .milliseconds(10))
+    await waitUntilRunning(queue, 0)
     action.cancel()
     await run.value
 
@@ -381,7 +402,7 @@ private func makeTextModel(_ prefix: String) -> TranslationViewModel {
 
     #expect(!PrimaryAction.forMode(.files, text: text, queue: queue).isRunning)
     let run = Task { await queue.run() }
-    try? await Task.sleep(for: .milliseconds(5))
+    await waitUntilRunning(queue, 0)
     #expect(PrimaryAction.forMode(.files, text: text, queue: queue).isRunning)
     // ...and the text mode is unaffected, which is what stops one toolbar showing
     // «Отмена» for a run the visible pane knows nothing about.
@@ -422,7 +443,7 @@ private func makeTextModel(_ prefix: String) -> TranslationViewModel {
     #expect(model.statusLine == nil)
 
     let run = Task { await model.run() }
-    try? await Task.sleep(for: .milliseconds(10))
+    await waitUntilRunning(model, 0)
     let line = model.statusLine
     await run.value
 
