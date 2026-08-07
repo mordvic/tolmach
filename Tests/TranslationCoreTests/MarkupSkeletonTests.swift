@@ -210,6 +210,36 @@ import Testing
     #expect(!tokens.contains { if case .heading = $0 { true } else { false } })
 }
 
+@Test func aDashRunUnderAnATXHeadingFabricatesNoSecondHeading() {
+    // "---" under "# Title" is a thematic break: CommonMark's setext underline needs a
+    // *paragraph* above it, and a heading is not paragraph text. The gate armed on any
+    // non-blank line, so this tokenised as [heading(1), heading(2)] — confirmed by
+    // probe — and a translation that renders the break faithfully looked like a
+    // dropped heading.
+    let tokens = MarkupSkeleton.tokens(of: "# Title\n---")
+    #expect(tokens == [.heading(level: 1)])
+}
+
+@Test func aDashRunUnderAListItemFabricatesNoHeading() {
+    // Same gate, the list case — and the one a real document hits, since a "---"
+    // closing a bulleted section is ordinary Markdown.
+    let tokens = MarkupSkeleton.tokens(of: "- item\n---")
+    #expect(!tokens.contains { if case .heading = $0 { true } else { false } })
+    #expect(tokens.contains(.listItem(depth: 0)))
+}
+
+@Test func aDashRunUnderABlockquoteOrATableRowFabricatesNoHeading() {
+    #expect(!MarkupSkeleton.tokens(of: "> quoted\n---")
+        .contains { if case .heading = $0 { true } else { false } })
+    #expect(!MarkupSkeleton.tokens(of: "| a | b |\n---")
+        .contains { if case .heading = $0 { true } else { false } })
+}
+
+@Test func aDashRunUnderParagraphProseIsStillASetextHeading() {
+    // The gate must still arm on the case it exists for.
+    #expect(MarkupSkeleton.tokens(of: "Title\n---").contains(.heading(level: 2)))
+}
+
 // MARK: - Line discipline must match the chunker's, exactly.
 
 @Test func aCRLFSourceDiffedAgainstAnLFTranslationReportsNothing() {
@@ -238,6 +268,15 @@ import Testing
     let source = "First paragraph.\u{2029}\u{2029}Second paragraph."
     let translation = "Первый абзац.\n\nВторой абзац."
     #expect(MarkupSkeleton.diff(source: source, translation: translation).isEmpty)
+}
+
+@Test func trailingBlankLinesUnderAnUnterminatedFenceAreNotCode() {
+    // The chunker's unterminated fence runs to the end of the document with its
+    // trailing blank lines trimmed off — they are document whitespace, not code. The
+    // skeleton's EOF flush hashed them into the block, so the same code with and
+    // without a blank tail produced two different `codeBlock` hashes and a faithful
+    // translation that dropped the tail read as a changed code block.
+    #expect(MarkupSkeleton.tokens(of: "```\ncode\n\n\n") == MarkupSkeleton.tokens(of: "```\ncode"))
 }
 
 @Test func anIndentedFenceMarkerOpensAFenceInBothLayers() {

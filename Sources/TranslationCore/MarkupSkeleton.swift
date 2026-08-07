@@ -22,10 +22,29 @@ public struct MarkupDiff: Sendable, Equatable {
 public enum MarkupSkeleton {
     public static func tokens(of text: String) -> [MarkupToken] {
         var tokens: [MarkupToken] = []
-        var fenceBuffer: [String] = []
+        // Lines, not strings, so blankness stays `LineScanner`'s one definition when the
+        // EOF flush trims the tail — see `flushFence`.
+        var fenceBuffer: [LineScanner.Line] = []
         var fenceLang = ""
         var insideFence = false
         var previousLineHadText = false
+
+        /// `trimmingTail` is the unterminated-fence case: the chunker's fenced block
+        /// runs to the end of the document with its trailing blank lines trimmed off —
+        /// they are document whitespace, not code. Hashing them in made the same code
+        /// with and without a blank tail two different blocks, so a faithful
+        /// translation that dropped the tail read as a changed one. A *closed* fence
+        /// keeps its blank lines: they are inside the block by the author's own marks.
+        func flushFence(_ buffer: [LineScanner.Line], trimmingTail: Bool) -> MarkupToken {
+            var lines = buffer[...]
+            if trimmingTail {
+                while let last = lines.last, LineScanner.isBlank(last, in: text) {
+                    lines = lines.dropLast()
+                }
+            }
+            let content = lines.map { String(text[$0.content]) }.joined(separator: "\n")
+            return .codeBlock(hash: content.hashValue, lang: fenceLang)
+        }
 
         // An indented run is NOT tokenised as a code block here, and must not be: the
         // chunker reads indented text as prose and translates it, and the two layers
@@ -45,9 +64,9 @@ public enum MarkupSkeleton {
             let isBlankLine = LineScanner.isBlank(scanned, in: text)
             if insideFence {
                 if LineScanner.isFenceMarker(scanned, in: text) {
-                    tokens.append(.codeBlock(hash: fenceBuffer.joined(separator: "\n").hashValue, lang: fenceLang))
+                    tokens.append(flushFence(fenceBuffer, trimmingTail: false))
                     fenceBuffer = []; fenceLang = ""; insideFence = false
-                } else { fenceBuffer.append(line) }
+                } else { fenceBuffer.append(scanned) }
                 previousLineHadText = false
                 continue
             }
@@ -81,16 +100,33 @@ public enum MarkupSkeleton {
                 previousLineHadText = false
                 continue
             }
-            if trimmed.hasPrefix("|") { tokens.append(.tableRow) }
-            if let level = headingLevel(trimmed) { tokens.append(.heading(level: level)) }
-            if trimmed.hasPrefix(">") { tokens.append(.blockquote) }
-            if let depth = listDepth(line) { tokens.append(.listItem(depth: depth)) }
+            // Whether this line emitted a *block* token is what arms the setext gate
+            // for the next one — see below. Inline tokens do not count: a paragraph
+            // carrying a URL is still paragraph text.
+            var emittedBlockToken = false
+            if trimmed.hasPrefix("|") { tokens.append(.tableRow); emittedBlockToken = true }
+            if let level = headingLevel(trimmed) {
+                tokens.append(.heading(level: level)); emittedBlockToken = true
+            }
+            if trimmed.hasPrefix(">") { tokens.append(.blockquote); emittedBlockToken = true }
+            if let depth = listDepth(line) {
+                tokens.append(.listItem(depth: depth)); emittedBlockToken = true
+            }
             tokens.append(contentsOf: inlineTokens(in: line))
             // Markdown hard break: two or more trailing spaces on a non-blank line.
             if line.hasSuffix("  ") { tokens.append(.hardLineBreak) }
-            previousLineHadText = !isUnderlineShape
+            // Only plain paragraph prose can be underlined. A setext underline needs a
+            // paragraph above it, and an ATX heading, a list item, a blockquote and a
+            // table row are each a block of their own — CommonMark reads a "---" under
+            // any of them as a thematic break. Arming on «any non-blank line» instead
+            // made "# Title\n---" tokenise as [heading(1), heading(2)] and
+            // "- item\n---" as [listItem, heading(2)] — both confirmed by probe — so a
+            // translation that rendered the break faithfully read as a dropped
+            // heading. An underline shape that FAILED the gate is excluded for the
+            // same reason it always was: it is not paragraph text either.
+            previousLineHadText = !isUnderlineShape && !emittedBlockToken
         }
-        if insideFence { tokens.append(.codeBlock(hash: fenceBuffer.joined(separator: "\n").hashValue, lang: fenceLang)) }
+        if insideFence { tokens.append(flushFence(fenceBuffer, trimmingTail: true)) }
         return tokens
     }
 
