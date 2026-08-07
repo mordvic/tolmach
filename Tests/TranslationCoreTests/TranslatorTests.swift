@@ -737,3 +737,54 @@ func aPerfectEchoReproducesTheSourceByteForByte(_ text: String) async throws {
     #expect(outcome.stats.count == 1)
     #expect(outcome.timeToFirstTokenMS != nil)
 }
+
+@Test func progressIsReportedOncePerPartPlusOnceBeforeTheFirst() async throws {
+    // response 0 = the term list, then one per chunk
+    let fake = FakeLLMClient(responses: [
+        "resource => ресурс\nserver => сервер",
+        "перевод один", "перевод два", "перевод три", "перевод четыре",
+    ])
+    let translator = Translator(client: fake)
+    let box = ProgressBox()
+    let outcome = try await translator.translate(
+        text: multiChunkText, target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 200,
+        onProgress: { box.append($0) })
+
+    let seen = box.values
+    // One report before the first part, so a queue row can draw an empty bar instead
+    // of nothing while the term-list call is still in flight.
+    #expect(seen.count == outcome.chunks.count + 1)
+    #expect(seen.map(\.partsDone) == Array(0...outcome.chunks.count))
+    #expect(seen.allSatisfy { $0.partsTotal == outcome.chunks.count })
+    // The term count is known from the very first report, which is the whole reason
+    // it travels here rather than being read off the finished outcome.
+    #expect(seen.allSatisfy { $0.documentTermCount == outcome.documentGlossary.count })
+    #expect(seen.first?.documentTermCount == 2)
+}
+
+@Test func aSingleChunkRunStillReportsProgressWithNoDocumentTerms() async throws {
+    let fake = FakeLLMClient(responses: ["Привет, мир."])
+    let translator = Translator(client: fake)
+    let box = ProgressBox()
+    _ = try await translator.translate(
+        text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900,
+        onProgress: { box.append($0) })
+
+    #expect(box.values == [
+        TranslationProgress(partsDone: 0, partsTotal: 1, documentTermCount: 0),
+        TranslationProgress(partsDone: 1, partsTotal: 1, documentTermCount: 0),
+    ])
+}
+
+/// `onProgress` is `@Sendable` and is called from the engine's task, so a bare local
+/// array cannot collect it under Swift 6's checking. A lock is the smallest thing that
+/// is actually correct here; an actor would force the assertions to be `await`ed and
+/// buy nothing.
+private final class ProgressBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [TranslationProgress] = []
+    func append(_ value: TranslationProgress) { lock.lock(); storage.append(value); lock.unlock() }
+    var values: [TranslationProgress] { lock.lock(); defer { lock.unlock() }; return storage }
+}

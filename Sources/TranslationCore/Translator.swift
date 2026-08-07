@@ -61,6 +61,28 @@ public struct TranslationOutcome: Sendable {
 // which owns a Translator from a @MainActor view model) fails to compile with
 // "sending 'self.translator' risks causing data races". The package still pins
 // Swift 5 language mode, which hides this today.
+/// What a long-running consumer needs to draw a progress row, reported from inside the
+/// run because that is the only place all three numbers exist at once.
+///
+/// `documentTermCount` travels here rather than being read off `TranslationOutcome`
+/// because a queue row says «12 терминов документа» *while* the run is going, and the
+/// outcome does not exist until it is over.
+public struct TranslationProgress: Sendable, Equatable {
+    /// Parts whose translation has been received in full.
+    public let partsDone: Int
+    /// Fixed for the whole run: chunking depends on the input alone.
+    public let partsTotal: Int
+    /// Terms the документный глоссарий is holding constant. Zero when there is none —
+    /// a single-part run, an unrecognised source language, or an empty term list.
+    public let documentTermCount: Int
+
+    public init(partsDone: Int, partsTotal: Int, documentTermCount: Int) {
+        self.partsDone = partsDone
+        self.partsTotal = partsTotal
+        self.documentTermCount = documentTermCount
+    }
+}
+
 public struct Translator: Sendable {
     let client: LLMClient
     public init(client: LLMClient) { self.client = client }
@@ -69,7 +91,8 @@ public struct Translator: Sendable {
         text: String, target: Language, tone: Tone, userGlossary: Glossary?,
         options: ChatOptions, maxChunkCharacters: Int,
         ignoredTerms: Set<String> = [],
-        onToken: @escaping @Sendable (String) -> Void = { _ in }
+        onToken: @escaping @Sendable (String) -> Void = { _ in },
+        onProgress: @escaping @Sendable (TranslationProgress) -> Void = { _ in }
     ) async throws -> TranslationOutcome {
         let started = Date()
         var firstTokenAt: Date? = nil
@@ -258,6 +281,13 @@ public struct Translator: Sendable {
             }
         }
 
+        // Reported before the first request, not after it, so a consumer drawing a
+        // progress row has a row to draw while the first part is in flight rather than
+        // a blank that fills in only once something has already finished.
+        let documentTermCount = documentEntries.count
+        onProgress(TranslationProgress(partsDone: 0, partsTotal: chunks.count,
+                                       documentTermCount: documentTermCount))
+
         // Per-chunk translation. The user glossary is filtered by occurrence; the document
         // glossary is not — see the task notes for why the two rules differ.
         var translatedChunks: [String] = []
@@ -309,6 +339,9 @@ public struct Translator: Sendable {
             // in-flight incremental output.
             try Task.checkCancellation()
             translatedChunks.append(cleaned)
+            onProgress(TranslationProgress(partsDone: translatedChunks.count,
+                                           partsTotal: chunks.count,
+                                           documentTermCount: documentTermCount))
         }
         // `ChunkPlan.assembled` owns the reassembly formula — this used to restate it,
         // and so did the test that pins losslessness, which is how a restatement can
