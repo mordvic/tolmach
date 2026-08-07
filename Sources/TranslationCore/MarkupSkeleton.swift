@@ -24,6 +24,17 @@ public enum MarkupSkeleton {
         var fenceBuffer: [String] = []
         var fenceLang = ""
         var insideFence = false
+        var previousWasBlank = true // document start counts as after-a-blank
+        var indentedBuffer: [String] = []
+        func flushIndented() {
+            guard !indentedBuffer.isEmpty else { return }
+            // Same shape as a fenced block with no info string: the reader of a diff
+            // is told "a code block was dropped/added" either way, and folding the two
+            // spellings together is exactly how CommonMark treats them.
+            tokens.append(.codeBlock(hash: indentedBuffer.joined(separator: "\n").hashValue,
+                                     lang: ""))
+            indentedBuffer = []
+        }
 
         for line in text.components(separatedBy: .newlines) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -39,7 +50,22 @@ public enum MarkupSkeleton {
                 fenceLang = String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespaces)
                 continue
             }
-            if trimmed.isEmpty { tokens.append(.paragraphBreak); continue }
+            if trimmed.isEmpty {
+                flushIndented()
+                tokens.append(.paragraphBreak)
+                previousWasBlank = true
+                continue
+            }
+            let isIndented = line.hasPrefix("    ") || line.hasPrefix("\t")
+            if !indentedBuffer.isEmpty || (previousWasBlank && isIndented) {
+                if isIndented {
+                    indentedBuffer.append(line)
+                    previousWasBlank = false
+                    continue
+                }
+                flushIndented()
+            }
+            previousWasBlank = false
             if let level = headingLevel(trimmed) { tokens.append(.heading(level: level)) }
             if trimmed.hasPrefix(">") { tokens.append(.blockquote) }
             if let depth = listDepth(line) { tokens.append(.listItem(depth: depth)) }
@@ -48,6 +74,7 @@ public enum MarkupSkeleton {
             if line.hasSuffix("  ") { tokens.append(.hardLineBreak) }
         }
         if insideFence { tokens.append(.codeBlock(hash: fenceBuffer.joined(separator: "\n").hashValue, lang: fenceLang)) }
+        flushIndented()
         return tokens
     }
 

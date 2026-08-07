@@ -170,3 +170,29 @@ import Testing
     let translation = "First paragraph.\n\nSecond paragraph."
     #expect(!MarkupSkeleton.diff(source: source, translation: translation).isEmpty)
 }
+
+@Test func anIndentedCodeBlockTokenisesAsACodeBlock() {
+    let text = "Intro paragraph.\n\n    let a = `1`\n    let b = 2\n\nAfter."
+    let tokens = MarkupSkeleton.tokens(of: text)
+    #expect(tokens.contains { if case .codeBlock(_, let lang) = $0 { lang.isEmpty } else { false } })
+    // The backticks inside the code are code bytes, not an inline-code span.
+    #expect(!tokens.contains { if case .inlineCode = $0 { true } else { false } })
+}
+
+@Test func indentedLinesMidParagraphDoNotTokeniseAsACodeBlock() {
+    // No blank line above: a prose continuation, exactly as the Chunker treats it.
+    // The two layers must agree, or the diff reports structure the chunker never saw.
+    let text = "A paragraph line.\n    An indented continuation line."
+    let tokens = MarkupSkeleton.tokens(of: text)
+    #expect(!tokens.contains { if case .codeBlock = $0 { true } else { false } })
+}
+
+@Test func aDroppedIndentedCodeBlockSurfacesInTheDiff() {
+    let source = "Intro.\n\n    let a = 1\n\nAfter."
+    let translation = "Введение.\n\nПосле."
+    let diffs = MarkupSkeleton.diff(source: source, translation: translation)
+    #expect(diffs.contains { diff in
+        if case .codeBlock = diff.expected ?? .paragraphBreak { return diff.actual == nil }
+        return false
+    })
+}
