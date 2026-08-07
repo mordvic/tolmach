@@ -158,6 +158,24 @@ private func reassembled(_ text: String, maxCharacters: Int) -> String {
     #expect(reassembled(text, maxCharacters: 30) == text)
 }
 
+@Test(arguments: ["\r\r", "\r\n\n", "\n\r\n"])
+func oneBlankLineInAnyEndingConventionMerges(_ separator: String) {
+    // The merge gate used to enumerate two spellings, "\n\n" and "\r\n\r\n", so a
+    // CR-only document (classic Mac, and what some editors still emit) and every
+    // mixed-EOL document — routine in a hand-edited file, or in a selection pasted
+    // together from two sources — never merged at all: 2 chunks at a 900-character
+    // budget where the LF twin gave 1. The rule is structural now: exactly one blank
+    // line, whatever the document spells it with.
+    let text = "Short first paragraph.\(separator)Short second paragraph."
+    let plan = Chunker.plan(text, maxCharacters: 900)
+    #expect(plan.chunks.count == 1)
+    #expect(plan.chunks[0].text == text)
+    #expect(plan.chunks[0].separatorBefore.isEmpty)
+    #expect(plan.trailingSeparator.isEmpty)
+    // And the byte-for-byte contract still holds when the budget forces a boundary.
+    for budget in hostileBudgets { #expect(reassembled(text, maxCharacters: budget) == text) }
+}
+
 @Test func aNonCanonicalSeparatorForcesAChunkBoundaryAndSurvivesVerbatim() {
     let text = "First paragraph.\n\n\nSecond paragraph after a double blank."
     let plan = Chunker.plan(text, maxCharacters: 900)

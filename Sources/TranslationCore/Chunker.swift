@@ -76,22 +76,26 @@ public enum Chunker {
         }
 
         // Pieces → chunks. Merging is allowed only across a separator that is exactly
-        // one blank line — in either line-ending convention, "\n\n" or "\r\n\r\n" —
-        // and the join uses the separator's own bytes, so the joined text stays
-        // byte-identical to the source span it came from. Any other separator (three
-        // blank lines, a lone "\n" before a fence, a blank line carrying spaces)
-        // forces a chunk boundary and is restored verbatim at assembly. The cost is a
-        // rare extra chunk on unusually-formatted documents; the gain is that the
-        // markup diff can never cry wolf over spacing the chunker itself changed.
+        // one blank line — `LineScanner.isExactlyOneBlankLine`, i.e. two bare line
+        // terminators in whatever convention the document is written in — and the join
+        // uses the separator's own bytes, so the joined text stays byte-identical to
+        // the source span it came from. Any other separator (three blank lines, a lone
+        // "\n" before a fence, a blank line carrying spaces) forces a chunk boundary
+        // and is restored verbatim at assembly. The cost is a rare extra chunk on
+        // unusually-formatted documents; the gain is that the markup diff can never cry
+        // wolf over spacing the chunker itself changed.
         //
-        // Accepting the CRLF spelling is not a relaxation of that guarantee. The model
+        // Accepting every convention is not a relaxation of that guarantee. The model
         // may well normalise an interior "\r\n" to "\n" in its reply, but
-        // `MarkupSkeleton` scans lines through `Chunker.scanLines`, which reads either
-        // as one line break — so the diff cannot cry wolf over the difference. Gating
-        // on the LF spelling alone cost a CRLF document *every* merge: measured on 30
-        // short paragraphs at a 900-character budget, 30 chunks (31 model calls, with
-        // the term-list call) against the 2 chunks — 3 calls — an LF copy of the very
-        // same document produced. Both conventions now yield 2.
+        // `MarkupSkeleton` scans lines through the same `LineScanner`, which reads
+        // either as one line break — so the diff cannot cry wolf over the difference.
+        // Enumerating spellings instead cost whole conventions every merge: gating on
+        // "\n\n" alone cost a CRLF document 30 chunks (31 model calls, with the
+        // term-list call) on 30 short paragraphs at a 900-character budget, against the
+        // 2 chunks — 3 calls — an LF copy of the same document produced; adding
+        // "\r\n\r\n" to the list left CR-only and mixed-EOL documents in the same hole
+        // (measured: 2 chunks against the LF twin's 1). Structural, so there is no list
+        // to fall behind.
         var chunks: [Chunk] = []
         var current = ""
         var currentSeparator = ""
@@ -115,12 +119,10 @@ public enum Chunker {
             // dropping the separator of whatever came before it, which is the one way
             // the byte-for-byte contract could break without a test noticing.
             precondition(!piece.text.isEmpty, "Chunker: a piece must carry content")
-            // "\r\n" is a single Swift `Character`, so both spellings of one blank
-            // line have `count == 2` and the budget check below reads the actual
-            // separator rather than a literal.
-            let isOneBlankLine = piece.separatorBefore == "\n\n"
-                || piece.separatorBefore == "\r\n\r\n"
-            if !current.isEmpty, isOneBlankLine,
+            // Every line terminator is a single Swift `Character` ("\r\n" included), so
+            // one blank line is `count == 2` in every convention and the budget check
+            // below reads the actual separator rather than a literal.
+            if !current.isEmpty, LineScanner.isExactlyOneBlankLine(piece.separatorBefore),
                current.count + piece.separatorBefore.count + piece.text.count <= maxCharacters {
                 current += piece.separatorBefore + piece.text
                 currentHasFence = currentHasFence || piece.kind == .fencedCode
@@ -135,51 +137,24 @@ public enum Chunker {
         return ChunkPlan(chunks: chunks, trailingSeparator: String(text[previousEnd...]))
     }
 
-    // MARK: - Line scanning
-
-    struct Line {
-        /// The line's characters, terminator excluded.
-        let content: Range<String.Index>
-        /// Index just past the terminator — the start of the next line.
-        let end: String.Index
-    }
-
-    /// Hand-rolled rather than `components(separatedBy: .newlines)` because the whole
-    /// point is to keep ranges into the original string: separators are extracted as
-    /// substrings, so "\r\n" and every other byte survive. "\r\n" is a single Swift
-    /// `Character`, so it must be compared for explicitly and one `index(after:)`
-    /// consumes both scalars.
-    static func scanLines(_ text: String) -> [Line] {
-        var lines: [Line] = []
-        var index = text.startIndex
-        while index < text.endIndex {
-            var cursor = index
-            while cursor < text.endIndex {
-                let character = text[cursor]
-                if character == "\n" || character == "\r" || character == "\r\n" { break }
-                cursor = text.index(after: cursor)
-            }
-            let contentEnd = cursor
-            let lineEnd = cursor < text.endIndex ? text.index(after: cursor) : cursor
-            lines.append(Line(content: index..<contentEnd, end: lineEnd))
-            index = lineEnd
-        }
-        return lines
-    }
-
     // MARK: - Blocks
 
     static func blocks(in text: String) -> [Block] {
-        let lines = scanLines(text)
+        // Line discipline — what breaks a line, what a blank line is, what opens a
+        // fence — lives in `LineScanner` and is shared with `MarkupSkeleton`. The two
+        // layers must read the same document or the markup diff reports structure the
+        // chunker never saw; sharing one implementation is what makes that structural
+        // rather than a parallel-maintenance promise.
+        let lines = LineScanner.scanLines(text)
         var blocks: [Block] = []
         var index = 0
 
-        func isBlank(_ line: Line) -> Bool { text[line.content].allSatisfy(\.isWhitespace) }
-        func isFenceMarker(_ line: Line) -> Bool {
-            text[line.content].trimmingCharacters(in: .whitespaces).hasPrefix("```")
+        func isBlank(_ line: LineScanner.Line) -> Bool { LineScanner.isBlank(line, in: text) }
+        func isFenceMarker(_ line: LineScanner.Line) -> Bool {
+            LineScanner.isFenceMarker(line, in: text)
         }
         /// Content range trimmed of whitespace at both edges — see `Block.range`.
-        func blockRange(first: Line, last: Line) -> Range<String.Index> {
+        func blockRange(first: LineScanner.Line, last: LineScanner.Line) -> Range<String.Index> {
             var start = first.content.lowerBound
             var end = last.content.upperBound
             while start < end, text[start].isWhitespace { start = text.index(after: start) }
@@ -263,20 +238,28 @@ public enum Chunker {
             // `Block.range` gives for whole blocks. The leading edge is not
             // symmetry: a cut lands at a sentence range's `lowerBound`, and
             // NLTokenizer puts that boundary *before* whitespace it does not
-            // consider part of either sentence — U+2028 and its neighbours are the
-            // reproducible case, since `scanLines` reads them as in-line whitespace
-            // while the tokenizer reads them as sentence boundaries. A piece
-            // beginning with whitespace then had that whitespace eaten by
-            // `ResponseCleaner.clean`'s edge trim of the reply.
+            // consider part of either sentence — a lone U+2028 between two non-blank
+            // lines is the reproducible case: `LineScanner` breaks the line there but
+            // the run stays one block, so the separator sits *inside* the body while
+            // the tokenizer reads it as a sentence boundary. A piece beginning with
+            // whitespace then had that whitespace eaten by `ResponseCleaner.clean`'s
+            // edge trim of the reply. Still live after the terminator widening:
+            // measured, the hostile corpus takes this branch 6 times.
             var contentStart = cut
             while contentStart < end, body[contentStart].isWhitespace {
                 contentStart = body.index(after: contentStart)
             }
             guard contentStart < end else {
-                // A segment of nothing but whitespace — three U+2028s between two
-                // sentences produce exactly that. It carries no content to
+                // A segment of nothing but whitespace. It carries no content to
                 // translate, so it becomes separator bytes rather than an empty
-                // piece; emitting one tripped the packing precondition.
+                // piece; emitting one tripped the packing precondition below.
+                // The reproducer that found this — three U+2028s between two
+                // sentences — no longer reaches here: `LineScanner` now breaks lines
+                // on U+2028, so a run of them is blank lines and the two sentences
+                // are separate blocks. Kept, and no longer measured as reachable (the
+                // hostile corpus takes it 0 times), because the precondition below
+                // depends on it and a whitespace-only segment is not a shape the
+                // tokenizer promises never to produce.
                 pendingSeparator += String(body[cut..<end])
                 continue
             }

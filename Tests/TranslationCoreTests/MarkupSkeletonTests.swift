@@ -223,6 +223,23 @@ import Testing
     #expect(MarkupSkeleton.diff(source: source, translation: translation).isEmpty)
 }
 
+@Test func aU2028SeparatedListDiffsCleanlyAgainstAnLFTranslation() {
+    // U+2028 LINE SEPARATOR is a mandatory line break to Unicode, and a model
+    // normalises it to "\n" in its reply. Recognising only LF and CR here read the
+    // source as one line and the translation as two, and reported «добавлено: элемент
+    // списка» on a faithful translation.
+    let source = "- one\u{2028}- two"
+    let translation = "- один\n- два"
+    #expect(MarkupSkeleton.diff(source: source, translation: translation).isEmpty)
+}
+
+@Test func aU2029SeparatedPairOfParagraphsDiffsCleanlyAgainstAnLFTranslation() {
+    // Same family, the paragraph case: U+2029 twice is one blank line.
+    let source = "First paragraph.\u{2029}\u{2029}Second paragraph."
+    let translation = "Первый абзац.\n\nВторой абзац."
+    #expect(MarkupSkeleton.diff(source: source, translation: translation).isEmpty)
+}
+
 @Test func anIndentedFenceMarkerOpensAFenceInBothLayers() {
     // An indented ``` is still a fence marker — the chunker's `isFenceMarker` trims
     // the line before testing it, so the two layers must agree here or the diff

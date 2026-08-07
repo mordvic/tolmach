@@ -32,31 +32,32 @@ public enum MarkupSkeleton {
         // must see the same document or the diff reports structure the chunker never
         // saw. Fenced code is the only block form either layer protects.
         //
-        // Lines are scanned the way `Chunker` scans them, not with
-        // `components(separatedBy: .newlines)`. That character set splits on unicode
-        // scalars, so "\r\n" came out as two breaks with an empty line between them
-        // and fabricated a `.paragraphBreak` — a CRLF source diffed against its LF
-        // translation reported «потеряно: граница абзаца» on a perfect translation.
-        // U+000B, U+000C, U+2028 and U+2029 had the same effect. The chunker treats
-        // all of them as ordinary in-line whitespace; the two layers must read the
-        // same document or the diff reports structure the chunker never saw.
-        for line in Chunker.scanLines(text).map({ String(text[$0.content]) }) {
+        // Line discipline is `LineScanner`'s, the very same code the chunker runs, and
+        // not `components(separatedBy: .newlines)`: that character set splits on unicode
+        // scalars, so "\r\n" came out as two breaks with an empty line between them and
+        // fabricated a `.paragraphBreak` — a CRLF source diffed against its LF
+        // translation reported «потеряно: граница абзаца» on a perfect translation. The
+        // two layers must read the same document or the diff reports structure the
+        // chunker never saw; sharing the scanner makes that structural.
+        for scanned in LineScanner.scanLines(text) {
+            let line = String(text[scanned.content])
             let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let isBlankLine = LineScanner.isBlank(scanned, in: text)
             if insideFence {
-                if trimmed.hasPrefix("```") {
+                if LineScanner.isFenceMarker(scanned, in: text) {
                     tokens.append(.codeBlock(hash: fenceBuffer.joined(separator: "\n").hashValue, lang: fenceLang))
                     fenceBuffer = []; fenceLang = ""; insideFence = false
                 } else { fenceBuffer.append(line) }
                 previousLineHadText = false
                 continue
             }
-            if trimmed.hasPrefix("```") {
+            if LineScanner.isFenceMarker(scanned, in: text) {
                 insideFence = true
                 fenceLang = String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespaces)
                 previousLineHadText = false
                 continue
             }
-            if trimmed.isEmpty {
+            if isBlankLine {
                 tokens.append(.paragraphBreak)
                 previousLineHadText = false
                 continue
