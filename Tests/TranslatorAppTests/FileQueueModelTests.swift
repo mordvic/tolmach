@@ -647,3 +647,17 @@ private func savingModel(_ prefix: String,
     #expect(!model.needsSaving(model.jobs[0]))   // queued
     #expect(!model.needsSaving(model.jobs[1]))   // unreadable
 }
+
+@MainActor @Test func aQueueHeldOnTheSheetSaysItIsWaitingAndNotTranslating() async {
+    let client = QueueClient(replies: ["resource => ресурс", "первый", "первый-2"])
+    let model = makeQueueModel(client, prefix: "queue-awaiting") { $0.reviewDocumentTerms = true }
+    model.add([queueJob("a.md", longEnoughForTwoParts)])
+
+    let run = Task { await model.run() }
+    let sheet = await waitForSheet(model)
+    #expect(model.isAwaitingTerms)
+    sheet?.proceed()
+    await run.value
+
+    #expect(!model.isAwaitingTerms)
+}

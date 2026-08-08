@@ -224,3 +224,43 @@ private func model() -> TranslationViewModel {
     let message = "Ollama не запущена. Запустите её командой «ollama serve»."
     #expect(PanelView.announcement(for: .failed(message)) == message)
 }
+
+@Test func aRunWaitingOnTheTermsSheetDoesNotClaimToBeTranslating() {
+    // The escalation opens the sheet on the main window and leaves the panel on screen
+    // behind it. With the panel still saying «Перевожу…» the user is shown two
+    // contradictory things at once: a table asking for their attention, and a spinner
+    // claiming the machine is busy. Nothing is being translated — the model is idle and
+    // the app is waiting on a person.
+    let waiting = PanelView.status(for: .running, awaitingTerms: true)
+    #expect(waiting?.message == "Жду ваших правок…")
+    #expect(waiting?.kind == .awaitingUser)
+    #expect(waiting?.offersRetry == false)
+
+    // And the ordinary case is untouched.
+    let translating = PanelView.status(for: .running, awaitingTerms: false)
+    #expect(translating?.message == "Перевожу…")
+    #expect(translating?.kind == .progress)
+}
+
+@Test func onlyTheProgressRowCarriesASpinner() {
+    // `.progress` is the one state where the machine is working. A spinner beside «Жду
+    // ваших правок…» would say the opposite of the words next to it.
+    #expect(PanelStatus.Kind.progress.showsSpinner)
+    #expect(!PanelStatus.Kind.awaitingUser.showsSpinner)
+    #expect(!PanelStatus.Kind.interrupted.showsSpinner)
+    #expect(!PanelStatus.Kind.failure.showsSpinner)
+}
+
+@Test func waitingOnAPersonIsToldByAGlyphAndNotOnlyByWords() {
+    // Every other status in this row pairs its message with a symbol, for the reader who
+    // does not see colour. This one is no different.
+    #expect(PanelStatus.Kind.awaitingUser.symbol != nil)
+}
+
+@Test func awaitingTermsOnlyChangesTheRunningRow() {
+    // A finished or failed run is not waiting on anyone, whatever the flag says.
+    #expect(PanelView.status(for: .finished, awaitingTerms: true) == nil)
+    #expect(PanelView.status(for: .idle, awaitingTerms: true) == nil)
+    #expect(PanelView.status(for: .failed("x"), awaitingTerms: true)?.kind == .failure)
+    #expect(PanelView.status(for: .interrupted, awaitingTerms: true)?.kind == .interrupted)
+}

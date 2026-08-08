@@ -652,3 +652,18 @@ private func waitForSheet(_ model: TranslationViewModel,
 
     #expect(!model.documentTermsUnavailable)
 }
+
+@MainActor @Test func aWindowRunHeldOnTheSheetSaysItIsWaitingAndNotTranslating() async {
+    let model = gateModel(ScriptedClient(responses: ["resource => ресурс", "перевод", "перевод"]),
+                          "gate-awaiting", review: true)
+    model.sourceText = longEnoughForTwoParts
+    #expect(!model.isAwaitingTerms)
+
+    let run = Task { await model.translate() }
+    let sheet = await waitForSheet(model)
+    #expect(model.isAwaitingTerms)
+    sheet?.proceed()
+    await run.value
+
+    #expect(!model.isAwaitingTerms)
+}

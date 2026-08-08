@@ -60,6 +60,13 @@ final class TranslationViewModel {
     /// Cleared in the same `defer` that ends the wait, so a cancelled or failed run cannot
     /// leave a modal over a window that has already finished.
     private(set) var pendingTermsRequest: DocumentTermsRequest?
+    /// Whether this run is suspended on the terms sheet rather than on the model.
+    ///
+    /// A named property and not `pendingTermsRequest != nil` written at each view, for
+    /// `canSwapLanguages`' reason: two surfaces read it — the panel's status row and the
+    /// window's status bar — and a restated condition is how they come to disagree about
+    /// what the app is doing.
+    var isAwaitingTerms: Bool { pendingTermsRequest != nil }
     /// The user asked for the gate and it could not be prepared.
     ///
     /// The engine keeps swallowing a failed term-list call — that is right when nobody

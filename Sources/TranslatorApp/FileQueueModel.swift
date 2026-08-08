@@ -48,6 +48,13 @@ final class FileQueueModel {
     private(set) var streamingText = ""
     /// The «Термины документа» sheet this queue is waiting on, or nil.
     private(set) var pendingTermsRequest: DocumentTermsRequest?
+    /// Whether this run is suspended on the terms sheet rather than on the model.
+    ///
+    /// A named property and not `pendingTermsRequest != nil` written at each view, for
+    /// `canSwapLanguages`' reason: two surfaces read it — the panel's status row and the
+    /// window's status bar — and a restated condition is how they come to disagree about
+    /// what the app is doing.
+    var isAwaitingTerms: Bool { pendingTermsRequest != nil }
     /// Set when a sheet came back with «Больше не спрашивать в этом прогоне» ticked. A
     /// statement about this sitting and not a preference, so `run()` clears it.
     private var suppressTermsForThisRun = false

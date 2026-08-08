@@ -162,6 +162,7 @@ The toggle ships **off**, so none of this is on a default install's path.
 
 | What to check | Why it needs eyes | Code |
 |---|---|---|
+| **«Жду ваших правок…» in the panel and in the status bar** | Turn the gate on, press ⌥⌘T on a long selection, and look at what is *behind* the sheet. The panel used to say «Перевожу…» with a spinner while the model sat idle. Check the new row has no spinner, and that `square.and.pencil` actually renders — an unresolved SF Symbol name draws an empty image rather than failing | `PanelStatus.Kind.awaitingUser`, `RunStatusBar` |
 | **«Перевести» in the sheet drawn as the primary button** | The drawing gives it the same blue fill the window's «Перевести» has. `.borderedProminent` is set explicitly rather than left to `.defaultAction` to imply, because nothing here can render the difference — look at the two side by side and check they match | `DocumentTermsView` |
 | The sheet at a dozen terms | Three columns, an editable «перевод» cell that actually takes typing, and the table scrolling at its 260 pt cap without the buttons going with it — the same failure the panel's `ScrollView` once had | `DocumentTermsView` |
 | **Esc cancelling the run from the sheet** | The whole escape. `onExitCommand` is the intent and no test here can press a key; if it does not fire, the sheet is a trap with one button | `DocumentTermsView`, `DocumentTermsRequest.cancel` |

@@ -105,7 +105,12 @@ struct RunStatusBar: View {
         // «Файлы» reports the queue: one row, and the text model behind it is not what the
         // user is looking at.
         if let queue {
-            if let status = queue.statusLine {
+            // Same correction as the panel's: the sheet is up over this very window and the
+            // model is idle, so a spinner and «Перевожу…» would contradict it.
+            if queue.isAwaitingTerms {
+                Label("Жду ваших правок…", systemImage: "square.and.pencil")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else if let status = queue.statusLine {
                 HStack(spacing: 6) {
                     if queue.isRunning { ProgressView().controlSize(.small) }
                     Text(status).font(.caption)
@@ -125,9 +130,14 @@ struct RunStatusBar: View {
         case .idle:
             Text(status.label).font(.caption).foregroundStyle(.secondary)
         case .running:
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.small)
-                Text("Перевожу…").font(.caption)
+            if model.isAwaitingTerms {
+                Label("Жду ваших правок…", systemImage: "square.and.pencil")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Перевожу…").font(.caption)
+                }
             }
         case .finished:
             if let outcome = model.outcome {

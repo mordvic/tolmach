@@ -10,7 +10,17 @@ import TextCapture
 /// A `@ViewBuilder` switch can only be read; this can be checked.
 struct PanelStatus: Equatable {
     enum Kind: Equatable {
-        case progress, interrupted, failure
+        case progress, awaitingUser, interrupted, failure
+
+        /// Whether this row's state means *the machine* is working.
+        ///
+        /// Only `.progress` does. `.awaitingUser` is the run held open on a person — the
+        /// terms sheet is up on the main window and the model is idle — and a spinner
+        /// beside «Жду ваших правок…» would say the opposite of the words next to it. That
+        /// contradiction is exactly the defect this case was added to remove: the panel
+        /// stays on screen behind the escalated sheet, and it used to keep claiming
+        /// «Перевожу…» while nothing was being translated.
+        var showsSpinner: Bool { self == .progress }
 
         /// The glyph that says what `colour(of:)` says, for everyone who does not see colour.
         ///
@@ -25,10 +35,17 @@ struct PanelStatus: Equatable {
         /// Nil for `.progress` on purpose: that row already carries a `ProgressView`, and a
         /// spinner beside a glyph beside a word is three ways of saying «идёт перевод».
         ///
-        /// Both are SF Symbols 1 (macOS 11), so they need no `#available` at this floor.
+        /// All three are SF Symbols 1 (macOS 11), so they need no `#available` at this
+        /// floor. A name that does not resolve renders as an empty image rather than
+        /// trapping, which is why `square.and.pencil` reaching a screen is owed a look in
+        /// `docs/OPEN-ITEMS.md` rather than provable here.
         var symbol: String? {
             switch self {
             case .progress: nil
+            // The row has no spinner in this state, so unlike `.progress` there is nothing
+            // else in it carrying the meaning — and «жду вас» told by wording alone is the
+            // same colour-only failure the two symbols below were added to fix.
+            case .awaitingUser: "square.and.pencil"
             case .interrupted: "exclamationmark.triangle.fill"
             case .failure: "xmark.octagon.fill"
             }
@@ -353,9 +370,9 @@ struct PanelView: View {
     /// grow downwards instead, and the `Spacer` keeps the button pinned right rather than
     /// letting it drift in against a wrapped message.
     @ViewBuilder private var statusLine: some View {
-        if let status = Self.status(for: model.state) {
+        if let status = Self.status(for: model.state, awaitingTerms: model.isAwaitingTerms) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                if status.kind == .progress { ProgressView().controlSize(.small) }
+                if status.kind.showsSpinner { ProgressView().controlSize(.small) }
                 if let symbol = status.kind.symbol {
                     Image(systemName: symbol)
                         .font(.caption)
@@ -377,7 +394,7 @@ struct PanelView: View {
 
     private func colour(of kind: PanelStatus.Kind) -> Color {
         switch kind {
-        case .progress: .secondary
+        case .progress, .awaitingUser: .secondary
         case .interrupted: .orange
         case .failure: .red
         }
@@ -445,13 +462,26 @@ struct PanelView: View {
     /// words for.
     ///
     /// `nonisolated` for the reason given on `direction(outcome:target:)` above.
-    nonisolated static func status(for state: TranslationState) -> PanelStatus? {
+    /// - Parameter awaitingTerms: whether the run is suspended on the «Термины документа»
+    ///   sheet. A parameter rather than a fifth `TranslationState`, because it is not a
+    ///   state the run *reaches* — it is a thing happening inside `.running`, and adding a
+    ///   case would make every other switch over `TranslationState` in this app answer a
+    ///   question it has no business answering.
+    nonisolated static func status(for state: TranslationState,
+                                   awaitingTerms: Bool = false) -> PanelStatus? {
         switch state {
         case .idle, .finished:
             // Nothing to add. The panel opens on a translation and closes on Esc; a caption
             // saying so would be a line of chrome over a result the user is trying to read.
             return nil
         case .running:
+            // The escalated sheet is on the main window, in front; this panel is behind it
+            // and the model is idle. Saying «Перевожу…» here contradicts the table asking
+            // for the user's attention two windows up.
+            if awaitingTerms {
+                return PanelStatus(kind: .awaitingUser, message: "Жду ваших правок…",
+                                   offersRetry: false)
+            }
             return PanelStatus(kind: .progress, message: "Перевожу…", offersRetry: false)
         case .interrupted:
             return PanelStatus(kind: .interrupted,
