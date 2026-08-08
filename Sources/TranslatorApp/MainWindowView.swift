@@ -93,7 +93,6 @@ struct MainWindowView: View {
     /// The value, not the `OllamaStatusModel`. The window only reads the status; the app
     /// owns the model and the refresh schedule.
     let status: OllamaStatus
-    var onCopy: () -> Void = {}
     /// Refreshes `OllamaStatusModel` whenever this window's `state` moves to anything that is
     /// not `.running` — the window's own half of the "after a translation attempt" trigger;
     /// `PanelHost` covers the hotkey half. That guard is deliberately wider than "a run

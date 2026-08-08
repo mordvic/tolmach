@@ -151,11 +151,6 @@ struct TranslatorApp: App {
         Window("Толмач", id: TranslatorApp.mainWindowID) {
             MainWindowView(model: translation,
                            glossary: glossary, status: statusModel.status,
-                           // Same shape as the panel's own `onCopy` below: the write
-                           // itself is `TranslationViewModel.copyToPasteboard()`, which
-                           // shares `GeneralPasteboard.write` with `HotkeyCoordinator`'s,
-                           // so there is one write to test rather than two to keep in sync.
-                           onCopy: { Task { await translation.copyToPasteboard() } },
                            onRunFinished: {
                                await statusModel.refresh(interactiveModel: settings.interactiveModel)
                            },

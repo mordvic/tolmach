@@ -53,6 +53,16 @@ public struct TranslationOutcome: Sendable {
     /// `translate-cli` prints it, and the acceptance harness can read it. Nothing renders it
     /// to the user: it is a diagnostic about an enhancement, not a warning about the result.
     public let documentGlossaryFailure: String?
+    /// Whether this run actually asked the model for a term list.
+    ///
+    /// False when there was nothing to ask about: a single-часть run, a source language the
+    /// detector could not name, or a document `TermExtractor` found no candidates in.
+    ///
+    /// It exists because «the review sheet never appeared» has two causes and only one of
+    /// them is a failure. Without this the app told a user who had turned the gate on that
+    /// terms «не удалось подготовить» for every prose document whose tagger yielded no
+    /// candidates — asserting a failure that never happened.
+    public let documentGlossaryAttempted: Bool
 }
 
 // Every other public value type in this API is already Sendable; the entry point
@@ -283,9 +293,12 @@ public struct Translator: Sendable {
         var documentEntries: [GlossaryEntry] = []
         /// Set only on the swallowed path below. See `TranslationOutcome.documentGlossaryFailure`.
         var documentGlossaryFailure: String?
+        /// See `TranslationOutcome.documentGlossaryAttempted`.
+        var documentGlossaryAttempted = false
         if chunks.count > 1, let source = detected {
             let terms = TermExtractor.extract(from: text, language: source)
             if !terms.isEmpty {
+                documentGlossaryAttempted = true
                 do {
                     try Task.checkCancellation()
                     let raw = try await streamTermList(PromptBuilder.termListMessages(terms: terms, target: target))
@@ -465,6 +478,7 @@ public struct Translator: Sendable {
             stats: stats,
             timeToFirstTokenMS: firstTokenAt.map { $0.timeIntervalSince(started) * 1000 },
             totalMS: Date().timeIntervalSince(started) * 1000,
-            documentGlossaryFailure: documentGlossaryFailure)
+            documentGlossaryFailure: documentGlossaryFailure,
+            documentGlossaryAttempted: documentGlossaryAttempted)
     }
 }

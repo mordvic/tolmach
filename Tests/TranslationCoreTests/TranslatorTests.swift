@@ -1010,3 +1010,45 @@ private final class DraftBox: @unchecked Sendable {
 
     #expect(box.count == 0)
 }
+
+@Test func aDocumentWithNoTermCandidatesNeverAsksTheModelForATermList() async throws {
+    // «The sheet never appeared» has two causes and only one of them is a failure. Without
+    // this the app told a user who had turned the gate on that terms «не удалось
+    // подготовить» for every prose document whose tagger yields no candidates — asserting a
+    // failure that never happened.
+    let fake = FakeLLMClient(responses: ["перевод один", "перевод два", "перевод три"])
+    let translator = Translator(client: fake)
+
+    // Digits and punctuation: more than one часть, a recognised language, no nouns to take.
+    let outcome = try await translator.translate(
+        text: "1 2 3 4 5 6 7 8 9 10.\n\n11 12 13 14 15 16 17 18 19 20.",
+        target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 20)
+
+    #expect(outcome.chunks.count > 1)
+    #expect(!outcome.documentGlossaryAttempted)
+    #expect(outcome.documentGlossaryFailure == nil)
+}
+
+@Test func aRunThatAsksForATermListSaysSoWhateverComesBack() async throws {
+    let fake = FakeLLMClient(responses: [
+        "не список вовсе",
+        "перевод один", "перевод два", "перевод три", "перевод четыре",
+    ])
+    let outcome = try await Translator(client: fake).translate(
+        text: multiChunkText, target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 200)
+
+    // Asked, answered, parsed to nothing: attempted, and no failure recorded — which is
+    // exactly the case that still owes the user a word when the gate was on.
+    #expect(outcome.documentGlossaryAttempted)
+    #expect(outcome.documentGlossary.isEmpty)
+    #expect(outcome.documentGlossaryFailure == nil)
+}
+
+@Test func aSingleChunkRunNeverAsksForATermListEither() async throws {
+    let outcome = try await Translator(client: FakeLLMClient(responses: ["Привет."])).translate(
+        text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900)
+    #expect(!outcome.documentGlossaryAttempted)
+}

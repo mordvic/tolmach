@@ -15,11 +15,19 @@ enum OutputNaming {
     /// becomes `techdoc-en.ru.md` and sorts next to its original in Finder.
     ///
     /// - Parameter exists: whether a URL is already taken. Injected so the naming rule
-    ///   is testable without a filesystem; production passes `FileManager`. It is only
-    ///   a politeness — the actual write uses `.withoutOverwriting`, so a file created
-    ///   by another process between this check and the write loses the race safely
-    ///   rather than being destroyed.
-    static func destination(for source: URL, target: Language,
+    ///   is testable without a filesystem; production passes `FileManager`. It is only a
+    ///   politeness — the actual write goes to a temporary sibling and is moved into place,
+    ///   and `moveItem` refuses an occupied destination, so a file created by another
+    ///   process between this check and the move loses the race safely rather than being
+    ///   destroyed.
+    /// - Parameter draft: whether this is a partial translation.
+    ///
+    ///   A cancelled задание keeps whatever arrived, and `FileQueueModel.canSaveElsewhere`
+    ///   lets the user save it — but **not** under the canonical name, because half a
+    ///   document called `techdoc-en.ru.md` is indistinguishable from a whole one. That rule
+    ///   was written and then undone by the save panel, which pre-filled exactly that name:
+    ///   pressing Return dropped a truncated file over a complete earlier translation.
+    static func destination(for source: URL, target: Language, draft: Bool = false,
                             exists: (URL) -> Bool) -> URL {
         let directory = source.deletingLastPathComponent()
         let extensionPart = source.pathExtension
@@ -28,9 +36,10 @@ enum OutputNaming {
         let stem = source.deletingPathExtension().lastPathComponent
         let code = target.rawValue
 
+        let mark = draft ? " — черновик" : ""
         func url(_ suffix: String) -> URL {
-            let name = extensionPart.isEmpty ? "\(stem).\(code)\(suffix)"
-                                             : "\(stem).\(code)\(suffix).\(extensionPart)"
+            let name = extensionPart.isEmpty ? "\(stem).\(code)\(mark)\(suffix)"
+                                             : "\(stem).\(code)\(mark)\(suffix).\(extensionPart)"
             return directory.appendingPathComponent(name)
         }
 

@@ -39,3 +39,21 @@ private let dir = URL(fileURLWithPath: "/tmp/does-not-need-to-exist")
                                        target: .ru, exists: { _ in false })
     #expect(out.lastPathComponent == "v1.2.notes.ru.md")
 }
+
+@Test func aPartialTranslationIsOfferedAsADraftAndNotUnderTheCanonicalName() {
+    // Half a document called «techdoc-en.ru.md» is indistinguishable from a whole one, and
+    // the save panel overwrites what it is pointed at — so suggesting that name for a
+    // cancelled задание and letting the user press Return drops a truncated file over a
+    // complete translation.
+    let out = OutputNaming.destination(for: dir.appendingPathComponent("techdoc-en.md"),
+                                       target: .ru, draft: true, exists: { _ in false })
+    #expect(out.lastPathComponent == "techdoc-en.ru — черновик.md")
+}
+
+@Test func aDraftNameTakesANumberOfItsOwnWhenOccupied() {
+    let taken: Set<String> = ["doc.ru — черновик.md"]
+    let out = OutputNaming.destination(for: dir.appendingPathComponent("doc.md"),
+                                       target: .ru, draft: true,
+                                       exists: { taken.contains($0.lastPathComponent) })
+    #expect(out.lastPathComponent == "doc.ru — черновик 2.md")
+}

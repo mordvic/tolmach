@@ -1238,3 +1238,16 @@ private func savingModel(_ prefix: String,
 
     #expect(model.runningID == nil)
 }
+
+@MainActor @Test func aFileWithNoTermsToReviewIsNotToldTheGateFailed() async {
+    // Nothing was attempted and nothing went wrong: claiming «не удалось подготовить» here
+    // asserts a failure that never happened.
+    let client = QueueClient(replies: ["перевод", "перевод"])
+    let model = makeQueueModel(client, prefix: "queue-no-terms") { $0.reviewDocumentTerms = true }
+    model.add([queueJob("a.md", "1 2 3 4 5 6 7 8 9 10.\n\n11 12 13 14 15 16 17 18 19 20.")])
+
+    await model.run()
+
+    #expect(model.jobs[0].state == .finished)
+    #expect(!model.jobs[0].documentTermsUnavailable)
+}

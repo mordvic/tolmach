@@ -54,7 +54,8 @@ private func quietOutcome(documentGlossary: [GlossaryEntry] = [],
                        stats: [],
                        timeToFirstTokenMS: 12,
                        totalMS: 34,
-                       documentGlossaryFailure: nil)
+                       documentGlossaryFailure: nil,
+                       documentGlossaryAttempted: false)
 }
 
 @MainActor @Test func anOutcomeWithNothingToWarnAboutDrawsNothing() {

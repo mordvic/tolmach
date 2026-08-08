@@ -141,7 +141,11 @@ final class FileQueueModel {
     /// The name the automatic save would have used, for the save panel's default.
     func suggestedName(for id: FileJob.ID) -> String {
         guard let job = jobs.first(where: { $0.id == id }) else { return "" }
+        // A partial is offered as a draft, never under the canonical name — the panel
+        // overwrites what it is pointed at, so suggesting that name and letting the user
+        // press Return is how a truncated file lands over a complete translation.
         return OutputNaming.destination(for: job.url, target: target(for: job),
+                                        draft: job.state == .interrupted,
                                         exists: { _ in false }).lastPathComponent
     }
 
@@ -542,13 +546,15 @@ final class FileQueueModel {
                     jobs[index].saveProblem = problem
                 }
             }
-            // «The gate was asked for and never opened», whatever the reason. Keyed on
-            // whether a sheet was actually raised rather than on `documentGlossaryFailure`,
-            // which is nil when the term-list call *succeeded* and parsed to nothing, and
-            // when the source language was not recognised — both of which leave the user
-            // waiting for a table that never comes, with nothing on screen to say why.
+            // «The gate was asked for, terms were actually sought, and no sheet appeared».
+            //
+            // Not `documentGlossaryFailure != nil`: that is nil when the term-list call
+            // succeeded and parsed to nothing, which still leaves the user waiting. And not
+            // «more than one часть» either — that claimed a failure for every prose document
+            // `TermExtractor` found no candidates in, where nothing was attempted and
+            // nothing went wrong.
             jobs[index].documentTermsUnavailable = settings.reviewDocumentTerms
-                && outcome.chunks.count > 1 && !raisedTermsSheet
+                && outcome.documentGlossaryAttempted && !raisedTermsSheet
             jobs[index].result = result
             jobs[index].state = .finished
             if settings.stopOnWarnings, result.hasWarnings {

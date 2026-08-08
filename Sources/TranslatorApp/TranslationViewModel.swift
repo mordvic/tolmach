@@ -370,12 +370,15 @@ final class TranslationViewModel {
             // The gate was asked for and could not be prepared. Recorded here rather than
             // logged, unlike the swallowed failure itself: the user is waiting for
             // something that will never appear.
-            // Keyed on whether a sheet was actually raised, not on `documentGlossaryFailure`
-            // — which is nil when the term-list call succeeded and parsed to nothing, and
-            // when the source language was not recognised. Both leave a user who asked for
-            // the gate waiting for a table that never comes.
+            // «The gate was asked for, terms were actually sought, and no sheet appeared».
+            //
+            // Not `documentGlossaryFailure != nil`: that is nil when the term-list call
+            // succeeded and parsed to nothing, which still leaves the user waiting for a
+            // table that never comes. And not «more than one часть» either — that claimed a
+            // failure for every prose document `TermExtractor` found no candidates in, where
+            // nothing was attempted and nothing went wrong.
             documentTermsUnavailable = settings.reviewDocumentTerms
-                && result.chunks.count > 1 && !raisedTermsSheet
+                && result.documentGlossaryAttempted && !raisedTermsSheet
             resolvedTarget = target
             outcome = result
             translatedText = result.final
