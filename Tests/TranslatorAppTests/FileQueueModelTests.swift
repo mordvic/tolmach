@@ -1693,8 +1693,15 @@ private final class SaveCall: @unchecked Sendable {
     // reply with no `"\n"` in it never reaches `streamingText` at all. Written as
     // `"второй"` the wait below could not succeed — it exhausted all 20 000 yields and ran
     // on as a ~150 ms sleep, which is exactly what `waitUntilRunning`'s doc comment warns
-    // against, and left the test asserting against an **empty** stream. Measured: with the
-    // newline the loop breaks at ~10 041 iterations with `streamingText == "второй\n"`.
+    // against, and left the test asserting against an **empty** stream.
+    //
+    // Measured: with the newline the loop breaks at ~10 000 iterations with the **whole**
+    // reply on the stream — `"второй\nстрока"`, not `"второй\n"`, as this comment first
+    // claimed. The newline settles the *shape* of the reply, it does not flush a line:
+    // `streamChunkTranslation` decides there is no preamble to strip and then emits the
+    // entire buffer in one `onToken`. Worth stating precisely, because the next fixture
+    // built on a first-line-only reading would be written against behaviour the engine
+    // does not have.
     let client = QueueClient(replies: ["первый перевод", "второй\nстрока"],
                              paced: true, holdCallAtIndex: 1)
     let model = makeQueueModel(client, prefix: "round30-selection")
@@ -1749,30 +1756,58 @@ private final class SaveCall: @unchecked Sendable {
     #expect(model.jobs[1].state == .queued, "c.md was never started and must be untouched")
 }
 
-@MainActor @Test func aFileInterruptedFromTheTermsSheetDoesNotReportTheReadersDeliberation() async {
+@MainActor @Test func aFileInterruptedFromTheTermsSheetDoesNotReportTheReadersDeliberation() async throws {
     // No app test reads `JobResult.elapsedMS` at all, so neither the `- termsWait`
     // subtraction on this path nor the «прервано за …» it feeds was checked. Deleting the
     // subtraction left the suite green — and then a файл cancelled after four minutes in the
     // terms sheet reads «прервано за 240 000 мс», which is the reader's time, not the
-    // machine's. `Translator` had three engine tests rewritten to keep exactly this
-    // property; this is its app-side twin.
+    // machine's.
     //
-    // Compared against the wall clock of the same run rather than against a constant, for
-    // the reason `EmissionClock` gives in TranslatorTests: a constant measures the runner.
-    let client = QueueClient(replies: ["resource => ресурс", "первый", "первый-2"])
-    let model = makeQueueModel(client, prefix: "round30-elapsed") { $0.reviewDocumentTerms = true }
-    model.add([queueJob("a.md", longEnoughForTwoParts)])
+    // Run **twice over one fixture**, differing only in how long the reader deliberates, and
+    // compared with each other. Neither a constant nor a wall-clock difference works here,
+    // and both were tried:
+    //
+    // - «`elapsedMS < 250`» is a constant, and the machine-work term it has to clear is not
+    //   small: measured 12–189 ms for this fixture, 189 under twelve busy loops, against a
+    //   mutated value of ≥ 300. A 1.3× margin is not a margin.
+    // - «`wallMS - elapsedMS >= 250`» compares two clocks, which was the previous shape and
+    //   the reason this test passed under its own defect about half the time and *always*
+    //   under load: the gap between the two brackets — task scheduling, the off-actor
+    //   detect, `waitForSheet`'s 5 ms polling, `drain()`, the final resume — is unbounded and
+    //   on its own clears 250 ms. Measured under the mutation: 85, 134, 158, 297, 316.
+    //
+    // Two runs of identical work cancel that term exactly. What is left is the difference of
+    // two measurements of the same work, which is centred on zero — while under the defect it
+    // is the difference of the two deliberations, by construction.
+    func elapsedAfterDeliberating(_ ms: Int, _ prefix: String) async throws -> Int {
+        let client = QueueClient(replies: ["resource => ресурс", "первый", "первый-2"])
+        let model = makeQueueModel(client, prefix: prefix) { $0.reviewDocumentTerms = true }
+        model.add([queueJob("a.md", longEnoughForTwoParts)])
 
-    let startedAt = Date()
-    let run = Task { await model.run() }
-    let sheet = await waitForSheet(model)
-    try? await Task.sleep(for: .milliseconds(300))   // the reader, deliberating
-    sheet?.cancel()
-    model.cancel()
-    await run.value
+        let run = Task { await model.run() }
+        let sheet = await waitForSheet(model)
+        try await Task.sleep(for: .milliseconds(ms))   // the reader, deliberating
+        sheet?.cancel()
+        model.cancel()
+        await run.value
+        return try #require(model.jobs[0].result?.elapsedMS,
+                            "an interrupted файл still reports how long the machine worked")
+    }
 
-    let wallMS = Date().timeIntervalSince(startedAt) * 1000
-    let reported = try? #require(model.jobs[0].result?.elapsedMS)
-    #expect(reported != nil, "an interrupted файл still reports how long the machine worked")
-    #expect(wallMS - Double(reported ?? 0) >= 250)
+    // Concurrently: the two runs share nothing — their own model, settings, glossary and
+    // pasteboard — and run sequentially this test is the suite's long pole, a second of
+    // deliberate sleeping against a suite that otherwise finishes in about one.
+    async let briefRun = elapsedAfterDeliberating(50, "round30-elapsed-brief")
+    async let longRun = elapsedAfterDeliberating(1050, "round30-elapsed-long")
+    let (brief, long) = try await (briefRun, longRun)
+
+    // A **second** more deliberation must buy at most noise. The gap is a second and not the
+    // 500 ms first tried because the noise is bigger than it looks: the difference of two
+    // measurements of this fixture's own work ranged over −275…+65 ms under sixteen busy
+    // loops, and against a 500 ms signal the mutated case came back at 267 against a 250
+    // threshold — a 7% margin, which is not one. Measured at a second: clean stays inside
+    // that same ±280 band, the mutated difference is ~1000 less the same band, and 500 sits
+    // between the two with room on both sides. Measured under sixteen busy loops, five runs
+    // each: clean −237…−7, mutated 875…986.
+    #expect(long - brief < 500)
 }
