@@ -667,3 +667,28 @@ private func waitForSheet(_ model: TranslationViewModel,
 
     #expect(!model.isAwaitingTerms)
 }
+
+@MainActor @Test func theWindowsSourceLanguageReachesTheModelAndNotJustTheTarget() async {
+    // The «Текст» half of the wiring. Its twin in FileQueueModelTests pins the queue's call
+    // site, and the commit that added it claimed both — deleting `source: detected,` from
+    // this one left all 593 tests green, so «both» was true of the fix and not of the
+    // coverage. The same toolbar picker feeds both models and the ⌥⌘T panel shares this
+    // path, so this is the call site more of the app goes through.
+    let client = QueueClient(replies: ["перевод"])
+    let model = TranslationViewModel(
+        translator: Translator(client: client),
+        settings: AppSettings(defaults: InMemoryDefaults(prefix: "vm-source-wiring")),
+        glossary: scratchGlossary(),
+        pasteboard: NSPasteboard(name: .init("vm-source-wiring")))
+    model.sourceText = "The server validates the request."
+    // Stated German over text the detector reads as English. `knownSource` reads the
+    // override first, so the toolbar looks right whether or not the model is ever told —
+    // which is exactly why this needs a test and not a glance.
+    model.sourceOverride = .de
+
+    await model.translate()
+
+    let prompts = client.receivedMessages.flatMap { $0 }.map(\.content)
+    #expect(prompts.contains { $0.contains("German") })
+    #expect(prompts.contains { $0.contains("English") } == false)
+}

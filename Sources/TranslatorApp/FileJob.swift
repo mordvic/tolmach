@@ -31,8 +31,10 @@ struct FileJob: Identifiable {
     /// instant later.
     var actualPartsTotal: Int?
     /// The number to *show* — the engine's if this задание has run, the estimate if not.
-    /// One accessor because two call sites read it and a counter built from two spellings
-    /// of the same rule is exactly what went wrong.
+    /// One accessor because every reader of the pair must answer the same way, and a counter
+    /// built from two spellings of the same rule is exactly what went wrong — twice: the
+    /// `statusLine` sums first, and then the run-start seed, which was the one site still
+    /// taking the estimate and made the total fall on a retry.
     var parts: Int { actualPartsTotal ?? partsTotal }
     var state: State = .queued
     var result: JobResult?

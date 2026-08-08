@@ -152,7 +152,10 @@ public struct Translator: Sendable {
     ///
     ///   It also removes a second full scan: the queue must detect to choose a target
     ///   before calling, so every file without an override was read end to end twice by
-    ///   `NLLanguageRecognizer`, which has no prefix cap and accepts 2 MB here.
+    ///   `NLLanguageRecognizer`, which has no prefix cap and accepts 2 MB here. Only for a
+    ///   language the app can name, though — a caller whose own detect returned nil passes
+    ///   nil, and the line below then scans again. Measured: 2.06 MB of Ukrainian — a language outside
+    ///   `Language` — detects as nil in 48 ms, and is then read again.
     public func translate(
         text: String, target: Language, tone: Tone, userGlossary: Glossary?,
         source: Language? = nil,

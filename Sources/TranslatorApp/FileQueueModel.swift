@@ -618,9 +618,11 @@ final class FileQueueModel {
             try await translator.translate(
                 text: job.text, target: target, tone: tone,
                 userGlossary: glossary.glossary,
-                // Detected once, above, and handed over — so the engine does not read a
-                // 2 MB file end to end a second time, and the toolbar's «Из» governs what
-                // the model is told rather than only where the text goes.
+                // Detected once, above, and handed over — so the engine does not read the
+                // file end to end a second time, and the toolbar's «Из» governs what the
+                // model is told rather than only where the text goes. Nil when the detector
+                // could not name the language, and then the engine does scan again; that is
+                // the one case the saving does not cover.
                 source: detected,
                 options: options,
                 maxChunkCharacters: settings.chunkSize,

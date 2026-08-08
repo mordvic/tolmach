@@ -120,15 +120,20 @@ Facts that will bite you if you "tidy" them:
   only protected forms, indented text is prose and is translated, and its indentation survives
   because `Block.range` moves edge whitespace into the separators. See
   `docs/superpowers/specs/2026-08-07-lossless-chunking-design.md` and its correction note.
-- **`translate(source:)` is how a caller states the language, and both callers do.** Nil still
+- **`translate(source:)` is how a caller states the language, and every caller does** — the
+  window, the queue and `translate-cli --from`. Nil still
   means «detect it», but a stated source governs everything downstream — the prompt, the tagger
   `TermExtractor` parses with, and `detectedSource`. It used to be resolved in the app to pick a
   *target* and then dropped, so the toolbar's «Из» changed where the text went and nothing about
   how it was read: correcting a misdetection left the model told «translate from …» whatever the
-  detector had guessed. It also removes a second full scan — the queue must detect before calling,
-  and `NLLanguageRecognizer` has no prefix cap against files up to 2 MB. All **three** callers
-  state it — the window, the queue and `translate-cli --from`, which parsed the flag and dropped
-  it on the floor for as long as there was nowhere to put it.
+  detector had guessed. `translate-cli` was the worst of the three: it parsed `--from` into a
+  variable with one occurrence in the file, so the flag was advertised and did nothing at all.
+  It also removes a second full scan of a file up to 2 MB — but **only for a language the app
+  can name**. `detected` is `source ?? LanguageDetector.detect(text)`, and a caller passes nil
+  when its own detect returned nil, so a document in a language outside the supported nine is
+  still scanned twice. Measured: 2.06 MB of Ukrainian detects as nil in 48 ms (best of
+  three), so such a file pays ~96 ms of scanning instead of ~48. Both scans are off the main actor, which is why this is a note and
+  not a defect — but it is not «no second scan».
 - `timeToFirstTokenMS` is `nil` when nothing was ever emitted — that nil *is* the empty-reply
   signal. Do not substitute a sentinel; it makes an absent response read as a slow one.
 - `stats` covers the per-chunk translation calls only, never the term-list call.
