@@ -115,7 +115,8 @@ enum TranslatedFileWriter {
 
     /// Remove `.tolmach-*.partial` files this app abandoned in `folder`.
     ///
-    /// The temporary is deleted on every failure path inside the `do` below, but not by a
+    /// The temporary is deleted on every failure path inside the `do` in
+    /// `write(_:beside:target:)` above, but not by a
     /// process that dies between the write and the move — and a 2 MB write followed by up to
     /// eight `moveItem` attempts is a real window. Nothing else ever cleans them up, so each
     /// interrupted save left another hidden file beside the user's document, accumulating

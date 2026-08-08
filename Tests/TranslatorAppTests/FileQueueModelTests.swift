@@ -42,10 +42,19 @@ final class QueueClient: LLMClient, @unchecked Sendable {
 
     var callCount: Int { lock.lock(); defer { lock.unlock() }; return _callCount }
 
+    /// Every prompt this client was handed, in order.
+    ///
+    /// Recorded so a test can pin the *wiring* and not just the engine: the app resolving
+    /// «Из» and then failing to pass it was a defect that lived entirely between the toolbar
+    /// and `translate`, where a `TranslationCore` test cannot see it.
+    var receivedMessages: [[ChatMessage]] { lock.lock(); defer { lock.unlock() }; return _received }
+    private var _received: [[ChatMessage]] = []
+
     func chat(messages: [ChatMessage], options: ChatOptions) -> AsyncThrowingStream<ChatEvent, Error> {
         lock.lock()
         let index = _callCount
         _callCount += 1
+        _received.append(messages)
         // Deliberately does **not** run out: a queue that re-scanned its work list would
         // loop forever here, and a fixture that exhausted itself would turn that hang
         // into a different, misleading failure. The call count is what the test asserts.
@@ -1519,4 +1528,70 @@ private final class SaveCall: @unchecked Sendable {
     // total is — it read as coverage of the header count and provided none.
     #expect(line == RussianCopy.queuePosition(fileIndex: 0, fileTotal: 1,
                                               partsDone: 0, partsTotal: 1))
+}
+
+@MainActor @Test func aRunRecordsTheEnginesOwnPartCountOverTheDropTimeEstimate() async {
+    // The other half of `theQueueCounterNeverRunsBackwards…`, which builds its state by hand
+    // and therefore cannot see whether anything in production ever *records* the engine's
+    // count. Deleting that one line left the whole suite green — the same gap the hand-built
+    // test was written to close, mirrored onto the other half of the fix.
+    let client = QueueClient(replies: ["первый", "первый-2"])
+    let model = makeQueueModel(client, prefix: "queue-records-parts")
+    // `queueJob` estimates 1 часть; this text really plans as more. That is the shape the
+    // whole mechanism exists for: «размер части» changed between the drop and the turn.
+    let job = queueJob("a.md", longEnoughForTwoParts)
+    #expect(job.parts == 1, "the estimate must actually be wrong, or this pins nothing")
+    model.add([job])
+
+    await model.run()
+
+    #expect(model.jobs[0].actualPartsTotal == 2)
+    #expect(model.jobs[0].parts == 2)
+}
+
+@MainActor @Test func theToolbarsSourceLanguageReachesTheModelAndNotJustTheTarget() async {
+    // The wiring, which is where the defect lived: the app resolved «Из» to choose a target
+    // and dropped it, so `translate` detected the language again for the prompt, for the
+    // tagger and for `detectedSource`. A TranslationCore test pins the parameter; only this
+    // pins that anything passes it.
+    let client = QueueClient(replies: ["перевод"])
+    let model = makeQueueModel(client, prefix: "queue-source-wiring")
+    model.add([queueJob("a.md", "The server validates the request.")])
+
+    await model.run()
+
+    // Stated German over text the detector reads as English.
+    let prompts = client.receivedMessages.flatMap { $0 }.map(\.content)
+    #expect(prompts.contains { $0.contains("English") })
+
+    let second = QueueClient(replies: ["перевод"])
+    let stated = makeQueueModel(second, prefix: "queue-source-wiring-de")
+    stated.add([queueJob("b.md", "The server validates the request.")])
+
+    await stated.run(source: .de)
+
+    let statedPrompts = second.receivedMessages.flatMap { $0 }.map(\.content)
+    #expect(statedPrompts.contains { $0.contains("German") })
+    #expect(statedPrompts.contains { $0.contains("English") } == false)
+}
+
+@MainActor @Test func aRetriedJobIsSeededWithTheEnginesCountAndNotTheDropTimeEstimate() async {
+    // The row a run *starts* with. Every other reader of the two numbers goes through
+    // `FileJob.parts`; this one call site still took the estimate, so a задание the engine
+    // had already planned — one interrupted by a cancel — went back on screen with its
+    // drop-time guess, and the queue total fell until the first `onProgress` arrived. That
+    // window is real: the off-actor detect of up to 2 MB runs before it.
+    let client = QueueClient(replies: ["перевод"], paced: true)
+    let model = makeQueueModel(client, prefix: "queue-retry-seed")
+    var job = queueJob("a.md", "text")            // estimated at 1 часть when dropped
+    job.actualPartsTotal = 3                       // and planned as 3 by an earlier attempt
+    model.jobs = [job]
+
+    let run = Task { await model.run() }
+    await waitUntilRunning(model, 0)
+    let seeded = model.statusLine
+    await run.value
+
+    #expect(seeded == RussianCopy.queuePosition(fileIndex: 0, fileTotal: 1,
+                                                partsDone: 0, partsTotal: 3))
 }

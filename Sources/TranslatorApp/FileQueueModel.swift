@@ -534,8 +534,15 @@ final class FileQueueModel {
         // that no longer exists.
         jobs[index].documentTermsUnavailable = false
         jobs[index].saveProblem = nil
+        // `job.parts`, not `job.partsTotal`: a **retried** задание has already been planned
+        // by the engine once, and seeding the row with the drop-time estimate made the queue
+        // total fall for as long as it took the first `onProgress` to arrive — which is not
+        // instant, the off-actor detect of up to 2 MB runs first. Measured on paper: file B
+        // finished at an engine count of 2, file A cancelled after the engine planned 3
+        // against an estimate of 1, and the bar goes «2 части из 5» → «2 части из 3». This
+        // was the one call site not reading the rule `FileJob.parts` exists to state.
         jobs[index].state = .running(TranslationProgress(partsDone: 0,
-                                                         partsTotal: job.partsTotal,
+                                                         partsTotal: job.parts,
                                                          documentTermCount: 0))
 
         // Detected off the main actor, for the reason `add(dropped:)` plans off it:

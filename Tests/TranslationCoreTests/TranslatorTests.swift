@@ -1144,6 +1144,46 @@ private final class DraftBox: @unchecked Sendable {
     #expect(fake.receivedMessages.first?.contains { $0.content.contains("German") } == true)
 }
 
+@Test func aStatedSourceIsTheLanguageTermsAreExtractedWith() async throws {
+    // The «and the terms» half of the test above, which that one could not reach: its
+    // fixture is one часть, and `TermExtractor` is only consulted when there is more than
+    // one. So a regression that re-detected the language for the tagger alone passed.
+    //
+    // Observable because the tagger's language decides what it finds at all. Measured, on
+    // this text: the English tagger yields 6 terms («database», «request», «resource»,
+    // «resource server», «result», «server») and the German tagger yields **none**. So a
+    // stated `.de` means no term list is worth asking for, and the term-list call — call 0
+    // for a multi-часть file — does not happen. The call count is the assertion.
+    let text = String(
+        repeating: "The resource server validates the request and the database stores the result. ",
+        count: 20)
+
+    // Both runs **state** their language, so the only thing that differs between them is
+    // which tagger `TermExtractor` was handed. (Detection is no use as the control here:
+    // measured, `LanguageDetector.detect` returns nil on this deliberately repetitive text,
+    // so a run that relied on it would build no document glossary for a reason that has
+    // nothing to do with the tagger — and that is itself worth knowing, because a stated
+    // source makes a документный глоссарий possible where detection gives up.)
+    let english = FakeLLMClient(responses: ["термины", "часть-1", "часть-2"])
+    let byEnglish = try await Translator(client: english).translate(
+        text: text, target: .ru, tone: .neutral, userGlossary: nil,
+        source: .en,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900)
+    #expect(byEnglish.chunks.count > 1, "the fixture must split, or TermExtractor is never asked")
+    #expect(byEnglish.documentGlossaryAttempted, "the English tagger finds terms here")
+
+    let stating = FakeLLMClient(responses: ["часть-1", "часть-2"])
+    let byStatement = try await Translator(client: stating).translate(
+        text: text, target: .ru, tone: .neutral, userGlossary: nil,
+        source: .de,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900)
+    #expect(byStatement.documentGlossaryAttempted == false,
+            "the German tagger finds nothing here, so the stated language must be the one used")
+    // One call per часть and no term-list call at all.
+    #expect(stating.receivedMessages.count == byStatement.chunks.count)
+    #expect(english.receivedMessages.count == byEnglish.chunks.count + 1)
+}
+
 @Test func withNoStatedSourceTheEngineStillDetectsItsOwn() async throws {
     let fake = FakeLLMClient(responses: ["перевод"])
     let outcome = try await Translator(client: fake).translate(
