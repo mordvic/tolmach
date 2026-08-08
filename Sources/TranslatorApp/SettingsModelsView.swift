@@ -133,7 +133,7 @@ struct SettingsModelsView: View {
                 // Spec 8: the pane must say why it is empty. `error` covers both an
                 // unreachable server at load and a download that failed halfway.
                 if let error = models.error {
-                    SettingsNote(text: error, icon: "xmark.octagon.fill", tint: .red)
+                    SettingsNote(text: error, icon: "xmark.octagon.fill", tint: StatusColour.failure)
                 }
             }
 
@@ -267,7 +267,7 @@ private struct ModelChoice: View {
             // The name is known exactly here, so the download is one press.
             HStack {
                 SettingsNote(text: "«\(selection)» не установлена.",
-                             icon: "arrow.down.circle", tint: .orange)
+                             icon: "arrow.down.circle", tint: StatusColour.warning)
                 Button("Скачать") { onDownload(selection) }
                     .font(.caption)
                     .disabled(models.isPulling)
@@ -276,7 +276,7 @@ private struct ModelChoice: View {
         // Blacklisted models stay selectable: the reason is measured evidence, and the user
         // may have a reason to override it.
         if let warning = models.warning(for: selection) {
-            SettingsNote(text: warning, icon: "exclamationmark.triangle.fill", tint: .orange)
+            SettingsNote(text: warning, icon: "exclamationmark.triangle.fill", tint: StatusColour.warning)
         }
     }
 }

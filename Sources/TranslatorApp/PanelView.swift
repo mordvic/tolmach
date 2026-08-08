@@ -382,10 +382,10 @@ struct PanelView: View {
         if model.documentTermsUnavailable, model.state == .finished {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.caption).foregroundStyle(.orange)
+                    .font(.caption).foregroundStyle(StatusColour.warning)
                     .accessibilityHidden(true)
                 Text("Термины документа не удалось подготовить")
-                    .font(.caption).foregroundStyle(.orange)
+                    .font(.caption).foregroundStyle(StatusColour.warning)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
             }
@@ -423,8 +423,8 @@ struct PanelView: View {
     private func colour(of kind: PanelStatus.Kind) -> Color {
         switch kind {
         case .progress, .awaitingUser: .secondary
-        case .interrupted: .orange
-        case .failure: .red
+        case .interrupted: StatusColour.warning
+        case .failure: StatusColour.failure
         }
     }
 

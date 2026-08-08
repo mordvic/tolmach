@@ -160,10 +160,10 @@ private struct FileQueueRow: View {
                 // the run's terminology differ from what they were promised with nothing on
                 // screen to say why.
                 Text("термины документа не удалось подготовить")
-                    .font(.caption).foregroundStyle(.orange)
+                    .font(.caption).foregroundStyle(StatusColour.warning)
             }
             if let problem = job.saveProblem {
-                Text(problem).font(.caption).foregroundStyle(.orange)
+                Text(problem).font(.caption).foregroundStyle(StatusColour.warning)
                     .fixedSize(horizontal: false, vertical: true)
             }
             // An interrupted задание keeps its partial text, and «Сохранить как…» is the
@@ -259,7 +259,7 @@ private struct FileQueueRow: View {
     /// it did not.
     private var trailingStyle: Color {
         switch job.state {
-        case .failed, .unreadable: .orange
+        case .failed, .unreadable: StatusColour.warning
         default: .secondary
         }
     }

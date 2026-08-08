@@ -57,13 +57,13 @@ struct RunStatusBar: View {
             // nothing below folds it into a count any more.
             if let problem = glossaryProblem {
                 Label(problem, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption).foregroundStyle(.orange)
+                    .font(.caption).foregroundStyle(StatusColour.warning)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if queue == nil, model.documentTermsUnavailable, model.state == .finished {
                 Label("Термины документа не удалось подготовить, перевод шёл без них",
                       systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption).foregroundStyle(.orange)
+                    .font(.caption).foregroundStyle(StatusColour.warning)
             }
             // Gated on `canDisclose`, the same property the chevron reads. `expanded` is
             // `@State` and survives across runs and across a change of selection, so a
@@ -178,7 +178,7 @@ struct RunStatusBar: View {
                 HStack(spacing: 6) {
                     if queue.isRunning { ProgressView().controlSize(.small) }
                     Text(status).font(.caption)
-                        .foregroundStyle(queue.pausedAfterWarnings ? AnyShapeStyle(.orange)
+                        .foregroundStyle(queue.pausedAfterWarnings ? AnyShapeStyle(StatusColour.warning)
                                                                    : AnyShapeStyle(.secondary))
                 }
             } else if let summary {
@@ -216,14 +216,14 @@ struct RunStatusBar: View {
             }
         case .interrupted:
             Text("Перевод прерван — показана та часть, что успела прийти")
-                .font(.caption).foregroundStyle(.orange)
+                .font(.caption).foregroundStyle(StatusColour.warning)
         case .failed(let message):
             // Spec 8 pairs both failure rows — a timed-out request and an empty model reply
             // — with a retry. Reachable: `translate()` opens with `guard state != .running`,
             // and `.failed` is not `.running`. The source text is still in the editor, so
             // retrying costs the user nothing but the wait.
             HStack(spacing: 8) {
-                Text(message).font(.caption).foregroundStyle(.red)
+                Text(message).font(.caption).foregroundStyle(StatusColour.failure)
                     .fixedSize(horizontal: false, vertical: true)
                 // Small, not standard. The drawing gives this button 19 pt and an 11 pt
                 // label against the 22 and 12 every other button in the app gets, because

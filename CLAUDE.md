@@ -21,6 +21,7 @@ swift test --filter TranslationCoreTests   # one test target
 
 ./Scripts/make-app-bundle.sh      # assemble build/LocalTranslator.app (debug); pass "release" for release
 swift Scripts/make-icon.swift build/AppIcon.icns   # redraw the icon; make-app-bundle.sh does this itself
+swift Scripts/colour-contrast.swift               # re-measure the status colours against both appearances
 swift run translate-cli --to ru --tone technical "text"   # needs a live Ollama; reads stdin if no text
 swift run acceptance              # live-Ollama corpus run; MUST run from the package root (reads ./corpus)
 ```
@@ -288,6 +289,13 @@ Facts that will bite you if you "tidy" them:
 - Tests use **Swift Testing** (`@Test`, `#expect`), not XCTest. Test names are sentences describing
   the behaviour being pinned. `UserDefaults`-backed tests use `InMemoryDefaults`, never a real suite
   (a written suite leaves a plist in `~/Library/Preferences` that nothing reliably removes).
+- **The three status colours are `StatusColour`, not `.orange`/`.green`/`.red`.** In the dark
+  appearance the system colours are what the design uses and `StatusColour` returns them; in
+  the light one it returns the design's darkened values, because `systemOrange` on a white pane
+  is 2.31:1 against 11 pt text and this app writes every warning at that size. Measured — the
+  table is in the type's doc comment, the probe is `Scripts/colour-contrast.swift`, and
+  `StatusColourTests` turns the figures into assertions. Reaching for a bare `.orange` in a new
+  view puts one warning back at a quarter of the contrast of the one beside it.
 - All user-facing strings are Russian, with «guillemets» and «ё». **No backticks in strings rendered
   by `Text(String)`** — the plain-`String` initialiser does not parse Markdown and they show as
   literal grave accents. Identifiers (`aya-expanse:8b`) and key glyphs (⌥⌘T) stay as they are.
