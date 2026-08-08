@@ -264,3 +264,15 @@ private func model() -> TranslationViewModel {
     #expect(PanelView.status(for: .failed("x"), awaitingTerms: true)?.kind == .failure)
     #expect(PanelView.status(for: .interrupted, awaitingTerms: true)?.kind == .interrupted)
 }
+
+@MainActor @Test func theStatusSummaryAndItsDisclosureAnswerFromOneRun() {
+    // The label read the *previous* run's outcome while the body took its problem-only
+    // branch: «4 предупреждения» over a disclosure containing one row. TranslationViewModel
+    // drops `outcome` only when the next run's first real token arrives, so during
+    // `.running` the stale one is still there.
+    //
+    // Pinned through the static half of the rule, which is the part a test can reach: with
+    // no finished outcome the count is the problem's alone, whatever `outcome` still holds.
+    #expect(RunStatusBar.summary(outcome: nil, problem: "не сохранилось") == "1 предупреждение")
+    #expect(RunStatusBar.summary(outcome: nil, problem: nil) == nil)
+}

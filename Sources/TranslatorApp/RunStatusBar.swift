@@ -97,7 +97,15 @@ struct RunStatusBar: View {
             guard let count = queue.selectedResult?.disclosureCount, count > 0 else { return nil }
             return RussianCopy.warningCount(count)
         }
-        return Self.summary(outcome: model.outcome, problem: glossaryProblem)
+        // Branched exactly as `warningsView` is, and that is the point. `TranslationViewModel`
+        // drops the previous `outcome` only when the first real token of the next run
+        // arrives, so during `.running` it is still the *last* run's — and reading it here
+        // while `warningsView` took its problem-only branch produced «4 предупреждения» over
+        // a disclosure containing one row. The label and the body answer from one condition.
+        guard let outcome = model.outcome, model.state == .finished else {
+            return glossaryProblem.map { _ in RussianCopy.warningCount(1) }
+        }
+        return Self.summary(outcome: outcome, problem: glossaryProblem)
     }
 
     /// Whether the disclosure is offered at all. In «Текст» that is a finished run; in

@@ -222,13 +222,18 @@ final class FileQueueModel {
         jobs.contains { $0.state != .finished && $0.state != .unreadable }
     }
 
-    /// Whether the window may switch between «Текст» and «Файлы» right now.
+    /// The queue's half of «may the window switch modes right now».
+    ///
+    /// **Only its half.** The window pairs this with the text model's state, because a run
+    /// on either side is a run that switching would abandon — see `MainWindowView`'s own
+    /// `canChangeMode`. This one also guards the queue's own controls, which exist only in
+    /// «Файлы» and so have nothing to ask the text model about: the drop target and the
+    /// row context menu.
     ///
     /// A property of the model and not a condition restated in the view, for
-    /// `TranslationViewModel.canSwapLanguages`' reason: the control has to answer before
-    /// it is pressed, and a view that re-derived the rule would keep offering a switch for
-    /// a case added later. One window has one primary button; switching mid-run would let
-    /// «Перевести» start a text translation behind a running queue.
+    /// `TranslationViewModel.canSwapLanguages`' reason: the control has to answer before it
+    /// is pressed, and a view that re-derived the rule would keep offering a switch for a
+    /// case added later.
     var canChangeMode: Bool { !isRunning }
 
     private var selectedJob: FileJob? { jobs.first { $0.id == selection } }
