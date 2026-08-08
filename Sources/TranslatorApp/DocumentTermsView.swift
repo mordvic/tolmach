@@ -53,18 +53,24 @@ struct DocumentTermsView: View {
         }
     }
 
-    /// The user's entries first, then the model's — and a model entry whose term the user's
-    /// glossary already covers is dropped rather than shown twice.
+    /// The user's entries first, then the model's — **all** of them, including terms the
+    /// user's glossary also names.
     ///
-    /// `GlossaryMerge.merge(user:document:)` lets the user's entry win, so an editable
-    /// duplicate would take a change that the engine discards on the very next line.
-    /// Compared case-insensitively, because `merge` does.
+    /// It used to drop those, on the reasoning that `GlossaryMerge.merge(user:document:)`
+    /// lets the user's entry win so an editable duplicate would take a change the engine
+    /// discards. That is true of a *part where the user's term occurs*, and only there: the
+    /// engine filters the user side per часть — `relevantEntries(for:)` over that часть's
+    /// code-stripped text — while the документный глоссарий goes into every часть whole
+    /// (ADR 0001). `userEntries` here is computed once over the whole document.
+    ///
+    /// So a term the user glossary names in prose in часть 1 and that appears only inside a
+    /// fenced block in часть 4 has *no* user entry injected for часть 4 — the model's
+    /// version is what reaches that prompt, and hiding its row made it the one thing in the
+    /// document the gate could not show or correct. Both rows are on screen now: the user's
+    /// as read-only context, the model's editable, and «откуда» says which is which.
     static func rows(for draft: DocumentTermsDraft) -> [DocumentTermsRow] {
-        let covered = Set(draft.userEntries.map { $0.term.lowercased() })
-        return draft.userEntries.map { DocumentTermsRow.user($0) }
-            + draft.documentEntries.enumerated()
-                .filter { !covered.contains($0.element.term.lowercased()) }
-                .map { DocumentTermsRow.document($0.offset) }
+        draft.userEntries.map { DocumentTermsRow.user($0) }
+            + draft.documentEntries.indices.map { DocumentTermsRow.document($0) }
     }
 
     var body: some View {

@@ -25,16 +25,20 @@ private func draft(document: [GlossaryEntry], user: [GlossaryEntry]) -> Document
     guard case .document = rows.last else { Issue.record("expected a document row last"); return }
 }
 
-@MainActor @Test func aDocumentTermThatTheUserGlossaryAlreadyCoversIsNotOfferedTwice() {
-    // GlossaryMerge lets the user's entry win, so an editable duplicate would accept a
-    // change the very next line of the engine discards.
+@MainActor @Test func aTermTheGlossaryAlsoNamesIsStillOfferedForReview() {
+    // It used to be hidden, on the reasoning that the engine would discard an edit to it
+    // anyway. That holds only for a часть where the user's term *occurs*: the engine filters
+    // the user side per часть over code-stripped text, while the документный глоссарий goes
+    // into every часть whole. A term the glossary names in prose in one часть and that
+    // appears only inside a fence in another has no user entry injected there — so the
+    // model's version reaches that prompt, and hiding its row made it the one thing the gate
+    // could not show.
     let rows = DocumentTermsView.rows(for: draft(
-        document: [GlossaryEntry(term: "profile", translations: ["ru": "профиль"]),
-                   GlossaryEntry(term: "Profile", translations: ["ru": "анкета"])],
-        user: [GlossaryEntry(term: "PROFILE", doNotTranslate: true)]))
+        document: [GlossaryEntry(term: "cache", translations: ["ru": "кэш-память"])],
+        user: [GlossaryEntry(term: "CACHE", translations: ["ru": "кеш"])]))
 
-    #expect(rows.count == 1)
-    guard case .user = rows.first else { Issue.record("expected only the user's row"); return }
+    #expect(rows == [.user(GlossaryEntry(term: "CACHE", translations: ["ru": "кеш"])),
+                     .document(0)])
 }
 
 @MainActor @Test func aDocumentRowCarriesTheIndexItEditsThrough() {
@@ -69,13 +73,11 @@ private func draft(document: [GlossaryEntry], user: [GlossaryEntry]) -> Document
     #expect(DocumentTermsView.origin(.document(0)) == "документ")
 }
 
-@MainActor @Test func theHeadlineCountsTheRowsTheSheetActuallyShows() {
-    // `rows(for:)` drops a model term the user's glossary already covers, so counting the
-    // raw list titled the sheet «— 3» over two rows.
+@MainActor @Test func theHeadlineCountsEveryRowTheSheetShows() {
     let d = draft(document: [GlossaryEntry(term: "profile"), GlossaryEntry(term: "slice")],
                   user: [GlossaryEntry(term: "PROFILE", doNotTranslate: true)])
-    #expect(DocumentTermsView.rows(for: d).count == 2)
-    #expect(DocumentTermsView.headline(for: d) == "Термины документа — 2")
+    #expect(DocumentTermsView.rows(for: d).count == 3)
+    #expect(DocumentTermsView.headline(for: d) == "Термины документа — 3")
 }
 
 @MainActor @Test func theSheetsEscapeIsNamedForWhatItStops() {

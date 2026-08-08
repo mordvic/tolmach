@@ -457,6 +457,16 @@ user glossary — the user's own entry wins. An editable glossary row would ther
 change that the very next line of the engine discards. Editing the user glossary has a place, and
 it is its own settings tab.
 
+**That rule is about the glossary rows, not about the model's.** An earlier version also hid a
+model row whose term the user glossary names, on the same reasoning — and that was wrong,
+because the two sides are filtered differently: the engine takes the user's entries per часть,
+by occurrence in that часть's code-stripped text, while the документный глоссарий goes into
+every часть whole (ADR 0001). A term the glossary names in prose in one часть and that appears
+only inside a fenced block in another therefore has **no** user entry injected for the second —
+the model's version is what reaches that prompt. Hiding its row made it the one term in the
+document the gate could neither show nor correct, which is the opposite of what the gate is for.
+Both rows are shown; «откуда» distinguishes them.
+
 «Добавить в пользовательский глоссарий» promotes the edited document entries into
 `GlossaryStore` and saves. Saving can fail in the two ways `GlossaryStore` already refuses —
 never loaded, changed on disk — and it reports them with the wording `MainWindowView.mute`
