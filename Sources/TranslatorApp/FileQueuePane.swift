@@ -1,7 +1,6 @@
 // Sources/TranslatorApp/FileQueuePane.swift
 import SwiftUI
 import AppKit
-import UniformTypeIdentifiers
 import TranslationCore
 
 /// Which of the two things the window's left half is showing.
@@ -33,6 +32,12 @@ struct FileQueuePane: View {
                 List(selection: $queue.selection) {
                     ForEach(queue.jobs) { job in
                         FileQueueRow(job: job,
+                                     // The row is the third surface that could claim work
+                                     // while the model sits idle. The panel and the status
+                                     // bar were corrected; this one kept a filled bar and
+                                     // «Перевожу часть 1 из 4» directly above a bar reading
+                                     // «Жду ваших правок…».
+                                     awaitingTerms: queue.isAwaitingTerms && job.id == queue.runningID,
                                      needsSaving: queue.needsSaving(job),
                                      canSaveElsewhere: queue.canSaveElsewhere(job),
                                      onSaveBeside: { queue.saveBesideSource(job.id) },
@@ -106,6 +111,7 @@ struct FileQueuePane: View {
 
 private struct FileQueueRow: View {
     let job: FileJob
+    let awaitingTerms: Bool
     let needsSaving: Bool
     let canSaveElsewhere: Bool
     let onSaveBeside: () -> Void
@@ -120,11 +126,16 @@ private struct FileQueueRow: View {
                 Text(trailing).font(.caption).foregroundStyle(trailingStyle)
             }
             if case let .running(progress) = job.state {
-                ProgressView(value: Double(progress.partsDone),
-                             total: Double(max(progress.partsTotal, 1)))
-                    .progressViewStyle(.linear)
-                if let detail = runningDetail(progress) {
-                    Text(detail).font(.caption).foregroundStyle(.secondary)
+                if awaitingTerms {
+                    // No bar: nothing is moving. Same words the panel and the status bar use.
+                    Text("Жду ваших правок…").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    ProgressView(value: Double(progress.partsDone),
+                                 total: Double(max(progress.partsTotal, 1)))
+                        .progressViewStyle(.linear)
+                    if let detail = runningDetail(progress) {
+                        Text(detail).font(.caption).foregroundStyle(.secondary)
+                    }
                 }
             }
             if job.documentTermsUnavailable {

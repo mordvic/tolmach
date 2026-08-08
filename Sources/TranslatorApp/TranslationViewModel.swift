@@ -416,14 +416,18 @@ final class TranslationViewModel {
     /// network call to interrupt, so `task?.cancel()` alone would leave it sitting on a
     /// continuation nobody resumes — forever, and invisibly, which is the whole reason
     /// `DocumentTermsRequest` exists.
-    /// Only `translate()` and `adopt(from:)` write this in the app; a test needs to set up
-    /// the state one run leaves behind without running one.
-    func setDocumentTermsUnavailableForTesting(_ value: Bool) { documentTermsUnavailable = value }
-
     func cancel() {
         pendingTermsRequest?.cancel()
         task?.cancel()
     }
+
+    /// Only `translate()` and `adopt(from:)` write this in the app; a test needs to set up
+    /// the state one run leaves behind without running one.
+    ///
+    /// Below `cancel()` and not above it: inserted between that function and its own doc
+    /// comment, it captured a load-bearing explanation of cancellation ordering and left
+    /// `cancel()` undocumented.
+    func setDocumentTermsUnavailableForTesting(_ value: Bool) { documentTermsUnavailable = value }
 
     /// Raise the sheet and wait for an answer.
     ///

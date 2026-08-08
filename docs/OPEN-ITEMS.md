@@ -137,7 +137,7 @@ compile check) and none of it has been *looked at*.
 | «Скопировать перевод» ⇧⌘C not shadowing ⌘C in the source editor | They are different equivalents, so this should be free — but the source pane is a `TextEditor` and ⌘C on a selection inside it is the one thing that must keep working | `.commands`, `SourcePane` |
 
 **Owed by the file queue.** The queue, its mode switch and the fourth settings tab were built
-with 474 tests green and **nothing rendered**. The bundle assembles and signs; no one has looked
+with the suite green and **nothing rendered**. The bundle assembles and signs; no one has looked
 at it.
 
 | What to check | Why it needs eyes | Code |

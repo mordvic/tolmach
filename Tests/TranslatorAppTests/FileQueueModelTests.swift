@@ -122,6 +122,21 @@ private func waitUntilCalled(_ client: QueueClient, _ count: Int = 1) async {
     Issue.record("the model was never asked")
 }
 
+/// Waits until some translated text has actually reached the pane.
+///
+/// The strongest of the three waits, and the one a «cancel a *partial*» test needs.
+/// `waitUntilCalled` counts entries into `chat`, which happen before the producer yields
+/// anything — measured, one run in ten: the cancel landed first and the задание came back
+/// interrupted with nothing in it, which is a different case entirely.
+@MainActor
+private func waitUntilStreaming(_ model: FileQueueModel) async {
+    for _ in 0..<20_000 {
+        if !model.streamingText.isEmpty { return }
+        await Task.yield()
+    }
+    Issue.record("no text ever reached the pane")
+}
+
 /// Waits until a задание's row reports it is running.
 ///
 /// Weaker than `waitUntilCalled` on purpose, and only for tests that *observe* a run —
@@ -1162,7 +1177,7 @@ private func savingModel(_ prefix: String,
     model.add([queueJob("a.md", "first")])
 
     let run = Task { await model.run() }
-    await waitUntilCalled(client)
+    await waitUntilStreaming(model)
     model.cancel()
     await run.value
 
@@ -1199,4 +1214,27 @@ private func savingModel(_ prefix: String,
 
     #expect(model.jobs[0].state == .interrupted)
     #expect(!model.canSaveElsewhere(model.jobs[0]))
+}
+
+// MARK: - Review round 10
+
+@MainActor @Test func onlyTheFileWaitingOnTheSheetIsTheOneHeldUp() async {
+    // The row is the third surface that could claim work while the model sits idle. The
+    // panel and the status bar were corrected; without `runningID` the row could not tell
+    // «I am the file waiting» from «I am merely in a queue that is».
+    let client = QueueClient(replies: ["resource => ресурс", "первый", "первый-2",
+                                       "resource => ресурс", "второй", "второй-2"])
+    let model = makeQueueModel(client, prefix: "queue-row-awaiting") { $0.reviewDocumentTerms = true }
+    model.add([queueJob("a.md", longEnoughForTwoParts), queueJob("b.md", longEnoughForTwoParts)])
+
+    let run = Task { await model.run() }
+    let sheet = await waitForSheet(model)
+    #expect(model.isAwaitingTerms)
+    #expect(model.runningID == model.jobs[0].id)   // the first file, not the queued one
+    #expect(model.runningID != model.jobs[1].id)
+    sheet?.suppressForRun = true
+    sheet?.proceed()
+    await run.value
+
+    #expect(model.runningID == nil)
 }

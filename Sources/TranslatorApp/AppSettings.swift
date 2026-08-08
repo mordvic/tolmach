@@ -154,7 +154,10 @@ final class AppSettings {
     /// switch in the batch settings and reasoned about a file; the gate reaches every
     /// path that builds a документный глоссарий, ⌥⌘T included, and a default that
     /// changes the flagship interaction for every existing user is not one a mock can
-    /// grant. Read by nothing until the review gate lands.
+    /// grant.
+    ///
+    /// Read by `TranslationViewModel.translate` and `FileQueueModel.translate` — which pass
+    /// the engine a review hook only when it is on — and by the pane that draws it.
     var reviewDocumentTerms: Bool {
         get {
             access(keyPath: \.reviewDocumentTerms)

@@ -14,7 +14,7 @@ window. Batch file translation is v2.
 ```bash
 swift build                       # build everything
 swift build --build-tests         # must stay at zero warnings — this is a standing rule
-swift test                        # ~341 tests, all offline (fake LLMClient), a few seconds
+swift test                        # ~557 tests, all offline (fake LLMClient), about a second
 swift test --filter someTestName  # one test, by name (Swift Testing function names)
 swift test --filter TranslationCoreTests   # one test target
 
@@ -238,10 +238,15 @@ Facts that will bite you if you "tidy" them:
   recorded at the site it bit — `PermissionsGate.swift`, `HotkeyManager.swift`,
   `Tests/TranslatorAppTests/WarningsViewTests.swift`.
 - **No external dependencies.** Foundation, NaturalLanguage, SwiftUI, AppKit, Observation,
-  ApplicationServices, CoreGraphics, CoreText, ImageIO, Carbon, os, Swift Testing only. This list is
+  ApplicationServices, CoreGraphics, CoreText, ImageIO, Carbon, os, UniformTypeIdentifiers,
+  Swift Testing only. This list is
   a closed whitelist, not an illustration: adding a framework to it is a deliberate edit, not a
   formality. CoreText and ImageIO are here for `Scripts/make-icon.swift` alone — glyph layout and
-  PNG encoding for the icon — and nothing in the shipped targets uses them. `os` was added
+  PNG encoding for the icon — and nothing in the shipped targets uses them. `UniformTypeIdentifiers` was added for one
+  call: `MainWindowView.addFiles`'s `NSOpenPanel.allowedContentTypes`, which takes `UTType`
+  and has no string-based equivalent that is not deprecated — the extension list itself is
+  still `DroppedDocument.readableExtensions`, so the panel and the drop cannot come to
+  accept different things. `os` was added
   deliberately, for `Log` in `TranslatorApp` and nowhere else: it is what makes this app's four
   deliberate swallowed failures diagnosable on a user's machine. `TranslationCore` does **not** get
   it — the engine reports through `TranslationOutcome.documentGlossaryFailure` instead, so the

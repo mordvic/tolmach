@@ -260,6 +260,12 @@ final class FileQueueModel {
     /// term lookups. Nil before it has run, which is also when there are no warnings.
     var selectedTarget: Language? { selectedJob?.resolvedTarget }
 
+    /// Which задание is in flight, or nil. The row uses it to tell «this file is the one
+    /// waiting on the sheet» from «this file is merely in a queue that is».
+    var runningID: FileJob.ID? {
+        jobs.first { if case .running = $0.state { true } else { false } }?.id
+    }
+
     /// Whether the задание the pane is showing is the one being translated.
     ///
     /// Not `isRunning`, which answers about the *queue*. The right pane is selection-driven
