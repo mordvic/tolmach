@@ -34,7 +34,7 @@ enum QueueDrop {
     ///
     /// **A mixed drop is accepted and its refusals are named.** Ten `.md` files and one
     /// `.pdf` yields eleven items, one of them textless. An earlier version refused the
-    /// whole drop on `SourcePane`'s rule that «taking the acceptable ones is a guess about
+    /// whole drop on the text pane's rule that «taking the acceptable ones is a guess about
     /// which was meant» — but that rule is about *one slot and many candidates*, and a queue
     /// has a slot per file and no ambiguity at all. What the transplant cost is the part
     /// that decided it: `dropDestination`'s `Bool` is the entire error channel here, and a

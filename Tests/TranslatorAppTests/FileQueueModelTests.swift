@@ -1251,3 +1251,35 @@ private func savingModel(_ prefix: String,
     #expect(model.jobs[0].state == .finished)
     #expect(!model.jobs[0].documentTermsUnavailable)
 }
+
+// MARK: - Review round 12
+
+@MainActor @Test func aFileAddedWhileTheQueueRunsIsPickedUpRatherThanLeftBehind() async {
+    // A drop is accepted at once and its reading finishes on a detached task some
+    // hundreds of milliseconds later. With a single snapshot the run walked past anything
+    // that arrived after it and stopped with «в очереди» still on screen.
+    let client = QueueClient(replies: ["один", "два"], paced: true)
+    let model = makeQueueModel(client, prefix: "queue-added-midrun")
+    model.add([queueJob("a.md", "first")])
+
+    let run = Task { await model.run() }
+    await waitUntilCalled(client)
+    model.add([queueJob("b.md", "second")])
+    await run.value
+
+    #expect(model.jobs.allSatisfy { $0.state == .finished })
+    #expect(!model.hasWorkLeft)
+}
+
+@MainActor @Test func aFileThatKeepsFailingIsStillAttemptedOnlyOncePerRun() async {
+    // The other half of the same rule. Re-asking «what is unfinished?» without remembering
+    // what this run already tried is the infinite loop the snapshot was introduced to stop.
+    let client = QueueClient(replies: ["", ""])
+    let model = makeQueueModel(client, prefix: "queue-added-noloop")
+    model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
+
+    await model.run()
+
+    #expect(client.callCount == 2)
+    #expect(model.jobs.allSatisfy { if case .failed = $0.state { true } else { false } })
+}

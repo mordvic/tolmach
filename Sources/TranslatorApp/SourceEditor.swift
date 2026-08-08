@@ -1,4 +1,8 @@
-// Sources/TranslatorApp/SourcePane.swift
+// Sources/TranslatorApp/SourceEditor.swift
+//
+// Named for `SourceEditor` since the window's left half became two modes. `PaneHeader`
+// lives here rather than in a file of its own because both panes use it and it was already
+// shared before the split; `SourceFooter` is private to the editor.
 import SwiftUI
 
 /// The window's left half in «Текст»: what the user typed.

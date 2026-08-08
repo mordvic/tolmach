@@ -5,9 +5,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 «Толмач» (`LocalTranslator`) — a macOS translator running entirely on local LLMs through
-Ollama at `http://127.0.0.1:11434`. Text never leaves the machine. Two surfaces ship in v1:
-a global hotkey that translates the current selection into a floating panel, and a main
-window. Batch file translation is v2.
+Ollama at `http://127.0.0.1:11434`. Text never leaves the machine. Three surfaces: a global
+hotkey that translates the current selection into a floating panel, a main window, and — in
+that window's «Файлы» mode — a queue of files translated one after another and written back
+to disk.
 
 ## Commands
 
@@ -128,8 +129,9 @@ Facts that will bite you if you "tidy" them:
   and `gpt-oss:20b` for the background path, and carries a blacklist with measured reasons. Those
   reasons are English and reach `translate-cli`; the settings pane renders
   `RussianCopy.blacklistReasons`, keyed by the same prefixes, and falls back to the English if a
-  prefix has no Russian counterpart. **The background role is policy only** — nothing reads it,
-  batch translation is v2, and the settings control that implied otherwise was removed.
+  prefix has no Russian counterpart. **`ModelRole.background` is still policy only** — the
+  file queue reads `AppSettings.batchModel` (see below), not `ModelPolicy.defaultModel(for:
+  .background)`, so the recommendation and the setting stay separate things.
   `keep_alive` (default `30m`) is load-bearing, not an optimisation: cold load ~2000 ms vs
   ~155 ms warm. **That measurement is why `AppSettings.batchModel` has no fixed default**: one
   model lives in memory, so a batch model differing from the interactive one costs two cold loads
@@ -165,7 +167,7 @@ Facts that will bite you if you "tidy" them:
   its condition is now «the *visible mode* is running».
 - **The file queue writes to disk, and that is the only place this app does.** `QueueDrop` decides
   what it accepts (a mixed drop is kept, with unreadable files shown as rows — refusing the whole
-  drop is `SourcePane`'s one-slot rule, which does not transfer to a queue with a slot per file);
+  drop is the text pane's one-slot rule, which does not transfer to a queue with a slot per file);
   `OutputNaming` decides the name and never overwrites; `TranslatedFileWriter` writes and returns
   where. **Whether TCC permits a sibling write next to a dropped file is unverified** — the app is
   not sandboxed, but a drag grants read, not write — so a refusal falls back to `NSSavePanel`,
@@ -207,7 +209,7 @@ Facts that will bite you if you "tidy" them:
   which makes the system spring the item back. That is the entire error channel and is
   deliberate: there is no error surface in that window, and inventing one to say «this is not
   text» would be worse than the feedback the platform already draws.
-- The main window is a toolbar plus `SourcePane` | `TranslationPane` over a collapsible
+- The main window is a toolbar plus `SourceEditor`/`FileQueuePane` | `TranslationPane` over a collapsible
   `RunStatusBar`; the translation side is a read-only `Text`, deliberately, because the
   `TextEditor` it replaced took a caret and discarded typing. The settings are **four** tabs —
   «Основные», «Модели», «Глоссарий», «Файлы». They were three: «Дополнительно» was folded into

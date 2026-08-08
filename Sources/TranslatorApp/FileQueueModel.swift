@@ -373,18 +373,35 @@ final class FileQueueModel {
         // `.finished`, so a loop asking «what is unfinished?» after each задание would
         // find the one it had just failed and translate it again, forever, on the main
         // actor. `aFileThatFailsIsNotRetriedWithinTheSameRun` is the guard.
-        let pending = jobs.filter { $0.state != .finished && $0.state != .unreadable }.map(\.id)
-        for id in pending {
-            // Looked up by id rather than carried as an index: `remove(_:)` is refused
-            // while running, but nothing here should depend on that from a distance.
-            guard !cancelled else { return }
-            guard let index = jobs.firstIndex(where: { $0.id == id }) else { continue }
-            if await translate(at: index, source: source, target: target, tone: tone) {
-                // «Нажмите "Перевести", чтобы продолжить» over a disabled button is a
-                // sentence with no way out: `canStart` is false once nothing is unfinished,
-                // so a pause earned by the *last* задание could never be dismissed.
-                if pausedAfterWarnings, !hasWorkLeft { pausedAfterWarnings = false }
-                return
+        // Re-asked after each pass, but never for a задание this run has already attempted.
+        //
+        // A single snapshot missed files dropped *while* the queue was going: a drop is
+        // accepted at once and its reading and planning finish on a detached task some
+        // hundreds of milliseconds later, so the rows arrived after the list was taken and
+        // the run walked straight past them — stopping with «в очереди» still on screen.
+        // Re-scanning *without* `attempted` is the other failure, and this file already
+        // guards against it once: `.failed` is not `.finished`, so a plain re-scan would
+        // find the задание it had just failed and translate it again, forever.
+        var attempted: Set<FileJob.ID> = []
+        while true {
+            let pending = jobs.filter {
+                $0.state != .finished && $0.state != .unreadable && !attempted.contains($0.id)
+            }.map(\.id)
+            guard !pending.isEmpty else { return }
+            for id in pending {
+                attempted.insert(id)
+                // Looked up by id rather than carried as an index: `remove(_:)` is refused
+                // while running, but nothing here should depend on that from a distance.
+                guard !cancelled else { return }
+                guard let index = jobs.firstIndex(where: { $0.id == id }) else { continue }
+                if await translate(at: index, source: source, target: target, tone: tone) {
+                    // «Нажмите "Перевести", чтобы продолжить» over a disabled button is a
+                    // sentence with no way out: `canStart` is false once nothing is
+                    // unfinished, so a pause earned by the *last* задание could never be
+                    // dismissed.
+                    if pausedAfterWarnings, !hasWorkLeft { pausedAfterWarnings = false }
+                    return
+                }
             }
         }
     }

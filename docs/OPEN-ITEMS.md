@@ -102,7 +102,7 @@ toolbar, two panes and a collapsible status bar. Nothing in it has been rendered
 | ⇄ enabled and disabled at the right moments, and swapping what it says it swaps | `canSwapLanguages` and `swapLanguages()` are unit-tested; the button's own disabled state and the pickers updating under it are not | `TranslationViewModel.swapLanguages`, `MainWindowView` |
 | The status bar collapsing and expanding, and its disclosure triangle appearing only when there is something to disclose | The triangle's condition and the warning count are tested as values. Whether the row reads as one line of status, and whether the expanded warnings stop at the 200 pt cap instead of eating the window, is a thing you have to see | `RunStatusBar.swift` |
 | «Скопировать» in the window putting the translation on the real pasteboard | The write now goes through `GeneralPasteboard.write(_:to:)` and is tested against a scratch board, never against `NSPasteboard.general` | `TranslationViewModel.copyToPasteboard`, `GeneralPasteboard.swift` |
-| The two pane headers, the source placeholder and the empty translation state | Placeholder position and its padding, the empty state's centring, and whether `PaneHeader`'s divider and tint read correctly side by side — all five were listed as unobserved when they were written | `SourcePane.swift`, `TranslationPane.swift` |
+| The two pane headers, the source placeholder and the empty translation state | Placeholder position and its padding, the empty state's centring, and whether `PaneHeader`'s divider and tint read correctly side by side — all five were listed as unobserved when they were written | `SourceEditor.swift`, `TranslationPane.swift` |
 
 **Owed by the UI redesign, Tasks 9, 10 and 12 — the settings.** All three panes now share one
 `settingsPane()` frame, and two of them grew sections while that frame stayed fixed.
@@ -134,7 +134,7 @@ compile check) and none of it has been *looked at*.
 | **Whether an `LSUIElement` app draws a menu bar at all** | The open question underneath the two rows above. Everything here rests on the menu being *installed*, which is measured; whether the user ever sees it is not, and it decides how much of this wave is visible rather than merely correct | — |
 | The panel with «Уменьшение прозрачности» on | The material becomes an opaque `windowBackgroundColor` clipped to the same rounded rectangle. Whether the corner still reads correctly against a dark desktop, and whether the panel still looks like a panel rather than a plain box, is exactly what no test sees | `PanelView.background` |
 | The two new glyphs in the panel's status row | `exclamationmark.triangle.fill` for an interrupted run, `xmark.octagon.fill` for a failure, in the row's own colour. The table is unit-tested; the row has never been rendered | `PanelStatus.Kind.symbol`, `PanelView.statusLine` |
-| «Скопировать перевод» ⇧⌘C not shadowing ⌘C in the source editor | They are different equivalents, so this should be free — but the source pane is a `TextEditor` and ⌘C on a selection inside it is the one thing that must keep working | `.commands`, `SourcePane` |
+| «Скопировать перевод» ⇧⌘C not shadowing ⌘C in the source editor | They are different equivalents, so this should be free — but the source pane is a `TextEditor` and ⌘C on a selection inside it is the one thing that must keep working | `.commands`, `SourceEditor` |
 
 **Owed by the file queue.** The queue, its mode switch and the fourth settings tab were built
 with the suite green and **nothing rendered**. The bundle assembles and signs; no one has looked
@@ -180,9 +180,9 @@ The toggle ships **off**, so none of this is on a default install's path.
 | What to check | Why it needs eyes | Code |
 |---|---|---|
 | **VoiceOver on the panel, end to end** | The only way to know whether any of the new accessibility work reaches a user. Press the shortcut with VoiceOver running and listen for: the panel announcing itself, «Перевод готов» once the run settles, and the translation *not* being re-read on every token. The announcement's wording is unit-tested; that it is spoken at all is not, and cannot be from here — see §2 | `PanelView.announcement(for:)`, `configurePanel`'s `onRunFinished` |
-| Dropping a `.md` file on the source pane | The decision — which files, how large, what counts as text — is `DroppedDocument` and is tested against real temp files. What no test can do is drag something: whether the pane shows a drop target, whether the refusal springs back the way the platform draws it, and whether dropping onto the *translation* side does nothing | `SourcePane`, `DroppedDocument` |
+| Dropping a `.md` file on the source pane | The decision — which files, how large, what counts as text — is `DroppedDocument` and is tested against real temp files. What no test can do is drag something: whether the pane shows a drop target, whether the refusal springs back the way the platform draws it, and whether dropping onto the *translation* side does nothing | `SourceEditor`, `DroppedDocument` |
 | **The CI workflow's first run** | Written but never executed. Two things could be wrong and neither is knowable from here: whether `macos-15` ships an Xcode new enough for `swift-tools-version: 6.0` and `.swiftLanguageMode(.v6)`, and whether `ls -d /Applications/Xcode*.app \| sort -V \| tail -1` picks the right one on that image. If it fails, the fix is a pinned `xcode-version`, not a change to the package | `.github/workflows/ci.yml` |
-| ⇧⌘C and the drop target not fighting the `TextEditor` | Both are new on a pane that already owns the keyboard | `SourcePane`, `.commands` |
+| ⇧⌘C and the drop target not fighting the `TextEditor` | Both are new on a pane that already owns the keyboard | `SourceEditor`, `.commands` |
 
 **Owed by the UI redesign, Task 13 — the menu bar glyph and status row.** The whole visible
 result of this task is unobserved: it is a menu-bar icon and a new first row of menu text, and

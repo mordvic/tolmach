@@ -22,12 +22,11 @@ struct FileQueuePane: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if queue.jobs.isEmpty {
-                VStack(spacing: 10) {
-                    dropTarget
-                    Text("Нажмите «Перевести», чтобы начать")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // No «Нажмите "Перевести"» here: with an empty queue that button is
+                // disabled, so the instruction pointed at a control that does nothing. It
+                // belongs below, where there is something to start.
+                dropTarget
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List(selection: $queue.selection) {
                     ForEach(queue.jobs) { job in
@@ -56,6 +55,12 @@ struct FileQueuePane: View {
                     }
                 }
                 .listStyle(.inset)
+                if !queue.isRunning, queue.hasWorkLeft {
+                    Text("Нажмите «Перевести», чтобы начать")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 6)
+                }
                 dropTarget
             }
         }
