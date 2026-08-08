@@ -287,6 +287,7 @@ struct PanelView: View {
                         .fixedSize(horizontal: false, vertical: true)
 
                     statusLine
+                    termsNotice
 
                     // Gated on `outcome`, not on `state == .finished`, and the header above is
                     // gated the same way — because `TranslationViewModel` drops `outcome` at the
@@ -369,6 +370,24 @@ struct PanelView: View {
     /// retries the same failure while hiding the fix. `fixedSize(vertical:)` makes the text
     /// grow downwards instead, and the `Spacer` keeps the button pinned right rather than
     /// letting it drift in against a wrapped message.
+    /// §6.6 in the panel. The window says this in its status bar and every queue row says
+    /// it too; the hotkey path said nothing at all — which is the exact silence the flag
+    /// exists to remove, and «Файлы» settings promise the gate works «и по сочетанию
+    /// клавиш».
+    @ViewBuilder private var termsNotice: some View {
+        if model.documentTermsUnavailable, model.state == .finished {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.caption).foregroundStyle(.orange)
+                    .accessibilityHidden(true)
+                Text("Термины документа не удалось подготовить")
+                    .font(.caption).foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
     @ViewBuilder private var statusLine: some View {
         if let status = Self.status(for: model.state, awaitingTerms: model.isAwaitingTerms) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {

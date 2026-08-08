@@ -115,7 +115,10 @@ struct RunStatusBar: View {
     /// condition in two.
     private var canDisclose: Bool {
         guard summary != nil, warningsView != nil else { return false }
-        return queue != nil || model.state == .finished
+        // A glossary problem is worth disclosing whatever the run is doing — it is the app's
+        // trouble, not the run's, and gating it on `.finished` hid it behind a state it has
+        // nothing to do with.
+        return queue != nil || model.state == .finished || glossaryProblem != nil
     }
 
     /// The warnings for whatever this bar is currently describing, or nil if there are none
@@ -137,7 +140,16 @@ struct RunStatusBar: View {
                                 target: queue.selectedTarget, problem: nil,
                                 onMute: onMute)
         }
-        guard let outcome = model.outcome, model.state == .finished else { return nil }
+        guard let outcome = model.outcome, model.state == .finished else {
+            // `promoteToGlossary` is a new writer of `glossaryProblem` and it can fire with
+            // no outcome at all — the terms sheet is raised by the queue or the panel while
+            // this window's own text model has never run. Without this the Russian
+            // explanation of a refused save was written to a property nothing rendered.
+            return glossaryProblem.map {
+                WarningsView(checks: [], markupDiffs: [], documentGlossary: [],
+                             target: nil, problem: $0, onMute: onMute)
+            }
+        }
         return WarningsView(outcome: outcome, target: model.resolvedTarget,
                             problem: glossaryProblem, onMute: onMute)
     }

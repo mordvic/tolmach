@@ -1026,3 +1026,49 @@ private func savingModel(_ prefix: String,
     #expect(!model.jobs[0].documentTermsUnavailable)
     #expect(model.jobs[0].result == nil)
 }
+
+// MARK: - Review round 6
+
+@MainActor @Test func theStatusLineCountsOnlyWhatActuallyHappened() async {
+    // Crediting every preceding row regardless of state counted a failed file's parts as
+    // translated, over-reporting the queue's progress by exactly the work that did not
+    // happen. `.unreadable` rows are not counted at all: run() skips them, so including
+    // them promised work the queue will never do.
+    let client = QueueClient(replies: ["", "второй"], paced: true)
+    let model = makeQueueModel(client, prefix: "queue-status-honest")
+    var refused = queueJob("broken.pdf", "")
+    refused.state = .unreadable
+    model.add([queueJob("a.md", "first"), refused, queueJob("b.md", "second")])
+
+    let run = Task { await model.run() }
+    await waitUntilCalled(client, 2)          // the first file has failed; the second is up
+    let line = model.statusLine
+    await run.value
+
+    if case .failed = model.jobs[0].state {} else { Issue.record("expected the first file to fail") }
+    // Two countable files, not three; the second of them, and none of the first's parts.
+    #expect(line == "Перевожу 2-й файл из 2 — 0 частей из 2")
+}
+
+@MainActor @Test func theUnavailableNoticeMovesWithTheRunItDescribes() async {
+    // `adopt(from:)` moves the five values that make up a run; leaving this one behind put
+    // the window's orange «не удалось подготовить» under an adopted translation it had
+    // nothing to do with, and lost it from a panel run that really had gone without terms.
+    let source = gateModelForAdoption("adopt-source", unavailable: true)
+    let target = gateModelForAdoption("adopt-target", unavailable: false)
+
+    #expect(target.adopt(from: source))
+
+    #expect(target.documentTermsUnavailable)
+}
+
+@MainActor private func gateModelForAdoption(_ prefix: String,
+                                             unavailable: Bool) -> TranslationViewModel {
+    let model = TranslationViewModel(
+        translator: Translator(client: QueueClient(replies: [])),
+        settings: AppSettings(defaults: InMemoryDefaults(prefix: prefix)),
+        glossary: scratchGlossary(),
+        pasteboard: NSPasteboard(name: .init("adopt-\(prefix)")))
+    model.setDocumentTermsUnavailableForTesting(unavailable)
+    return model
+}

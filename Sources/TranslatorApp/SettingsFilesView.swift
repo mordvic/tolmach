@@ -21,7 +21,14 @@ struct SettingsFilesView: View {
                     // so a batch model differing from the interactive one costs two cold
                     // loads on every ⌥⌘T pressed during a queue run.
                     Text("Как для перевода по клавише").tag(String?.none)
-                    ForEach(models.installedNames, id: \.self) { Text($0).tag(String?.some($0)) }
+                    // `options(selecting:)` and not `installedNames`, for the reason that
+                    // function exists: a `Picker` bound to a value absent from its options
+                    // renders blank, and a blank row is indistinguishable from «nothing
+                    // selected» — so a stored model the user has since removed looked like
+                    // the nil default, and touching the picker discarded it silently.
+                    ForEach(models.options(selecting: settings.batchModel ?? ""), id: \.self) { name in
+                        if !name.isEmpty { Text(models.optionLabel(name)).tag(String?.some(name)) }
+                    }
                 }
                 Text("Здесь важнее качество перевода, чем время до первого символа, — можно "
                      + "взять модель медленнее той, что работает по сочетанию клавиш.")
@@ -59,6 +66,10 @@ struct SettingsFilesView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
+        // Nothing else loads the list for this tab: `reload()` is called from «Модели»'s
+        // own `.task`, and `TabView` builds panes lazily — so opening Settings and clicking
+        // «Файлы» first offered a picker with no models in it at all.
+        .task { await models.reload() }
         .settingsPane()
     }
 }

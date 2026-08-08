@@ -264,22 +264,33 @@ final class FileQueueModel {
         if pausedAfterWarnings {
             return "Очередь остановлена на предупреждениях — нажмите «Перевести», чтобы продолжить"
         }
-        guard let index = jobs.firstIndex(where: { if case .running = $0.state { true } else { false } }),
-              case let .running(progress) = jobs[index].state
+        // `.unreadable` заданиям are not counted at all: `run()` skips them, so including
+        // them promised work the queue will never do — «2-й файл из 5» over a queue that
+        // will translate three.
+        let counted = jobs.filter { $0.state != .unreadable }
+        guard let index = counted.firstIndex(where: { if case .running = $0.state { true } else { false } }),
+              case let .running(progress) = counted[index].state
         else { return nil }
         // Parts are counted across the whole queue, not within the current file: the
         // sentence is about how much of the *queue* is left, and a per-file count next to a
         // per-queue file count would be two scales in one line.
+        //
+        // Only заданиям that actually **finished** contribute their parts as done. Crediting
+        // every preceding row regardless of state counted a failed or interrupted file's
+        // parts as translated, over-reporting the queue by exactly the work that did not
+        // happen.
+        //
         // The running задание contributes the engine's own total, not its drop-time
         // estimate — `FileJob.partsTotal`'s doc comment says so, and mixing the two put
         // «20 частей из 13» on screen for a user who changed «размер части» after dropping.
         // The ones that have not run can only offer the estimate, and that is honest: they
         // have no other number yet.
-        let done = jobs.prefix(index).reduce(0) { $0 + $1.partsTotal } + progress.partsDone
-        let total = jobs.enumerated().reduce(0) { sum, pair in
+        let done = counted.prefix(index).reduce(0) { $0 + ($1.state == .finished ? $1.partsTotal : 0) }
+            + progress.partsDone
+        let total = counted.enumerated().reduce(0) { sum, pair in
             sum + (pair.offset == index ? progress.partsTotal : pair.element.partsTotal)
         }
-        return RussianCopy.queuePosition(fileIndex: index, fileTotal: jobs.count,
+        return RussianCopy.queuePosition(fileIndex: index, fileTotal: counted.count,
                                          partsDone: done, partsTotal: total)
     }
 

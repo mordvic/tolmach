@@ -156,6 +156,12 @@ final class TranslationViewModel {
         translatedText = other.translatedText
         outcome = other.outcome
         resolvedTarget = other.resolvedTarget
+        // Moved with the rest, for this function's own reason: a value that outlives the run
+        // it describes is rendered under the next one. Left behind, the window's orange
+        // «Термины документа не удалось подготовить» stayed under an adopted translation it
+        // had nothing to do with — and a panel run that *did* lose its terms said nothing
+        // once adopted.
+        documentTermsUnavailable = other.documentTermsUnavailable
         state = other.state
         // `clearedPrevious` is deliberately not touched. It is written and read only inside
         // `translate()`, which resets it before every run, so an assignment here would be
@@ -392,6 +398,10 @@ final class TranslationViewModel {
     /// network call to interrupt, so `task?.cancel()` alone would leave it sitting on a
     /// continuation nobody resumes — forever, and invisibly, which is the whole reason
     /// `DocumentTermsRequest` exists.
+    /// Only `translate()` and `adopt(from:)` write this in the app; a test needs to set up
+    /// the state one run leaves behind without running one.
+    func setDocumentTermsUnavailableForTesting(_ value: Bool) { documentTermsUnavailable = value }
+
     func cancel() {
         pendingTermsRequest?.cancel()
         task?.cancel()
