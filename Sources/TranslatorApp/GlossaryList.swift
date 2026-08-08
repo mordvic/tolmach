@@ -70,7 +70,14 @@ struct GlossaryEntryRow: View {
 
     var body: some View {
         HStack {
+            // Stated, not inherited. These two fields carried no style at all while the
+            // search field in `GlossaryHeader` above them and the «перевод» field in
+            // `DocumentTermsView` both ask for `.roundedBorder` — three fields for one kind
+            // of value, described by two rules. The drawing gives all of them the same
+            // border, and `.automatic` inside a `List` inside a grouped `Form` is a
+            // container-dependent answer to a question this row should not be asking.
             TextField("термин", text: $entry.term)
+                .textFieldStyle(.roundedBorder)
                 .frame(minWidth: 110)
             Toggle("не переводить", isOn: $entry.doNotTranslate)
                 .toggleStyle(.checkbox)
@@ -79,6 +86,7 @@ struct GlossaryEntryRow: View {
             // `GlossaryEntry.requiredTranslation(for:)`), so an enabled field here would
             // accept edits that change nothing about any translation.
             TextField("перевод", text: translation)
+                .textFieldStyle(.roundedBorder)
                 .frame(minWidth: 110)
                 .disabled(entry.doNotTranslate)
             Button(role: .destructive) { onRemove() } label: {
