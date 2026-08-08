@@ -536,7 +536,10 @@ final class FileQueueModel {
         let target = overrideTarget ?? settings.targetLanguage(forDetected: detected)
         // Recorded before the run rather than after it, so «Сохранить как…» suggests the
         // right name even for a задание that was interrupted or failed.
-        jobs[index].resolvedTarget = target
+        // Through `row()`, not the bare index: `LanguageDetector.detect` above is a
+        // suspension like any other, and this write is the first thing after it.
+        guard let afterDetect = row() else { return false }
+        jobs[afterDetect].resolvedTarget = target
         // Resolved here, on the main actor, rather than inside the run's `Task`: reading
         // `settings` from there is what Swift 6 flags as sending a non-Sendable value, and
         // the value is a fact about the moment the run started anyway.
@@ -633,12 +636,16 @@ final class FileQueueModel {
                 // comment saying why; the write was the one that stayed, and it is the
                 // heaviest: `OutputNaming` can make up to 999 `fileExists` probes before a
                 // 2 MB atomic write and a move.
-                switch await save(job.url, outcome.final, target) {
+                let written = await save(job.url, outcome.final, target)
+                // Re-found: that call is the longest suspension in this function — up to 999
+                // `fileExists` probes and a 2 MB atomic write — and `at` was taken before it.
+                guard let afterSave = row() else { return false }
+                switch written {
                 case .saved(let url):
                     result.savedTo = url
-                    jobs[at].saveProblem = nil
+                    jobs[afterSave].saveProblem = nil
                 case .refused(let problem):
-                    jobs[at].saveProblem = problem
+                    jobs[afterSave].saveProblem = problem
                 }
             }
             // «The gate was asked for, terms were actually sought, and no sheet appeared».
@@ -648,10 +655,11 @@ final class FileQueueModel {
             // «more than one часть» either — that claimed a failure for every prose document
             // `TermExtractor` found no candidates in, where nothing was attempted and
             // nothing went wrong.
-            jobs[at].documentTermsUnavailable = gateRequested
+            guard let final = row() else { return false }
+            jobs[final].documentTermsUnavailable = gateRequested
                 && outcome.documentGlossaryAttempted && !raisedTermsSheet
-            jobs[at].result = result
-            jobs[at].state = .finished
+            jobs[final].result = result
+            jobs[final].state = .finished
             if settings.stopOnWarnings, result.hasWarnings {
                 pausedAfterWarnings = true
                 return true
