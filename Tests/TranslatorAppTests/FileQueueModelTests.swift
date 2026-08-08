@@ -11,17 +11,33 @@ final class QueueClient: LLMClient, @unchecked Sendable {
     private let lock = NSLock()
     private var replies: [String]
     private var _callCount = 0
-    /// Blocks each reply behind a small sleep, so a cancellation has a window in which to
-    /// land. A fully synchronous fake never suspends, and a test against it would pin
-    /// nothing about cancellation at all.
+    /// Blocks each reply behind a sleep, so a cancellation has a window in which to land. A
+    /// fully synchronous fake never suspends, and a test against it would pin nothing about
+    /// cancellation at all.
     private let paced: Bool
+    /// Which call, by zero-based index, waits long enough that a cancellation cannot lose
+    /// the race to it.
+    ///
+    /// 60 ms of pacing is enough for a test that only *observes* a run in flight. It is not
+    /// enough for one that means to cancel it: under the full suite the test's own task can
+    /// wait longer than that to be scheduled, and the reply lands first — measured, one run
+    /// in six. Ten seconds cannot be lost, and costs nothing, because cancelling aborts the
+    /// sleep.
+    ///
+    /// Targeted at one call rather than applied to all of them, and that is not tidiness:
+    /// making every reply wait ten seconds took the suite from 0.9 s to 20 s, because the
+    /// files a cancellation test *does not* cancel then pay it in full.
+    private let holdCallAtIndex: Int?
 
     /// Which call, by zero-based index, fails instead of answering. The term-list call is
     /// call 0 for a multi-часть file, which is what the gate's failure test needs to break.
     private let failCallAtIndex: Int?
 
-    init(replies: [String], paced: Bool = false, failCallAtIndex: Int? = nil) {
-        self.replies = replies; self.paced = paced; self.failCallAtIndex = failCallAtIndex
+    init(replies: [String], paced: Bool = false, holdCallAtIndex: Int? = nil,
+         failCallAtIndex: Int? = nil) {
+        self.replies = replies; self.paced = paced
+        self.holdCallAtIndex = holdCallAtIndex
+        self.failCallAtIndex = failCallAtIndex
     }
 
     var callCount: Int { lock.lock(); defer { lock.unlock() }; return _callCount }
@@ -36,12 +52,14 @@ final class QueueClient: LLMClient, @unchecked Sendable {
         let reply = replies.isEmpty ? "перевод" : replies.removeFirst()
         lock.unlock()
         let paced = self.paced
+        let hold = index == holdCallAtIndex
         if index == failCallAtIndex {
             return AsyncThrowingStream { $0.finish(throwing: ScriptedFailure()) }
         }
         return AsyncThrowingStream { continuation in
             let producer = Task {
-                if paced { try? await Task.sleep(for: .milliseconds(60)) }
+                if hold { try? await Task.sleep(for: .seconds(10)) }
+                else if paced { try? await Task.sleep(for: .milliseconds(60)) }
                 if !reply.isEmpty { continuation.yield(.token(reply)) }
                 continuation.yield(.done(ChatStats(loadDurationMS: 1, promptEvalCount: 1,
                     promptEvalDurationMS: 1, evalCount: reply.count, evalDurationMS: 1)))
@@ -96,7 +114,12 @@ private func waitUntilCalled(_ client: QueueClient, _ count: Int = 1) async {
     Issue.record("the model was never asked")
 }
 
-/// Waits until a задание is actually in flight, then returns.
+/// Waits until a задание's row reports it is running.
+///
+/// Weaker than `waitUntilCalled` on purpose, and only for tests that *observe* a run —
+/// the row's state flips before `chat` is entered. A cancellation test that used this
+/// cancelled before the model had been asked anything, which is a different test, and it
+/// hid a 10 s hold behind the wrong call: the suite went from 0.9 s to 11 s.
 ///
 /// **State, not a sleep.** These tests used `try? await Task.sleep(for: .milliseconds(10))`
 /// and cancelled afterwards, on the assumption that a 60 ms paced reply would still be in
@@ -131,12 +154,12 @@ private func waitUntilRunning(_ model: FileQueueModel, _ index: Int,
 }
 
 @MainActor @Test func cancelStopsTheRunningFileAndLeavesTheRestQueued() async {
-    let client = QueueClient(replies: ["один", "два", "три"], paced: true)
+    let client = QueueClient(replies: ["один", "два", "три"], paced: true, holdCallAtIndex: 0)
     let model = makeQueueModel(client, prefix: "queue-cancel")
     model.add([queueJob("a.md", "first"), queueJob("b.md", "second"), queueJob("c.md", "third")])
 
     let run = Task { await model.run() }
-    await waitUntilRunning(model, 0)
+    await waitUntilCalled(client)
     model.cancel()
     await run.value
 
@@ -147,12 +170,12 @@ private func waitUntilRunning(_ model: FileQueueModel, _ index: Int,
 }
 
 @MainActor @Test func runningAgainRetriesWhatDidNotFinishRatherThanSkippingIt() async {
-    let client = QueueClient(replies: ["один", "два"], paced: true)
+    let client = QueueClient(replies: ["один", "два"], paced: true, holdCallAtIndex: 0)
     let model = makeQueueModel(client, prefix: "queue-resume")
     model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
 
     let first = Task { await model.run() }
-    await waitUntilRunning(model, 0)
+    await waitUntilCalled(client)
     model.cancel()
     await first.value
     #expect(model.jobs[0].state == .interrupted)
@@ -397,14 +420,14 @@ private func makeTextModel(_ prefix: String) -> TranslationViewModel {
 }
 
 @MainActor @Test func cancellingInFilesModeStopsTheQueueAndNotTheTextModel() async {
-    let client = QueueClient(replies: ["один", "два"], paced: true)
+    let client = QueueClient(replies: ["один", "два"], paced: true, holdCallAtIndex: 0)
     let queue = makeQueueModel(client, prefix: "primary-cancel")
     queue.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
     let text = makeTextModel("primary-cancel-text")
     let action = PrimaryAction.forMode(.files, text: text, queue: queue)
 
     let run = Task { await action.start() }
-    await waitUntilRunning(queue, 0)
+    await waitUntilCalled(client)
     action.cancel()
     await run.value
 
@@ -907,7 +930,7 @@ private func savingModel(_ prefix: String,
 @MainActor @Test func aFailedRetryDoesNotLeaveThePreviousAttemptsTextOnScreen() async {
     // The row would read «Модель вернула пустой ответ.» while the right pane still showed
     // the partial text of the attempt before it, as though it belonged to the failed one.
-    let client = QueueClient(replies: ["частичный перевод", ""], paced: true)
+    let client = QueueClient(replies: ["частичный перевод", ""], paced: true, holdCallAtIndex: 0)
     let model = makeQueueModel(client, prefix: "queue-stale-result")
     model.add([queueJob("a.md", "first")])
 
@@ -962,4 +985,44 @@ private func savingModel(_ prefix: String,
     await model.run()
 
     #expect(!model.jobs[0].documentTermsUnavailable)
+}
+
+// MARK: - Review round 5
+
+@MainActor @Test func removingTheLastUnfinishedFileClearsAPauseItCanNoLongerDismiss() async {
+    let client = QueueClient(replies: [replyWithoutTheLink, "второй"])
+    let model = makeQueueModel(client, prefix: "queue-remove-pause") { $0.stopOnWarnings = true }
+    model.add([queueJob("a.md", sourceWithALink), queueJob("b.md", "second")])
+    await model.run()
+    #expect(model.pausedAfterWarnings)
+
+    model.remove(model.jobs[1].id)
+
+    // «Нажмите "Перевести", чтобы продолжить» over a button `canStart` has just disabled.
+    #expect(!model.hasWorkLeft)
+    #expect(!model.pausedAfterWarnings)
+    #expect(model.statusLine == nil)
+}
+
+@MainActor @Test func aRetryDropsEverythingThePreviousAttemptSaid() async {
+    // `documentTermsUnavailable` is only recomputed on the success path, so without a reset
+    // at the start of an attempt a retry that fails keeps an orange «термины документа не
+    // удалось подготовить» describing a run that never reached the review point.
+    //
+    // No timing in this test: the first run's replies make the gate fail to open, the
+    // second's are empty, which is the engine's «модель вернула пустой ответ».
+    let client = QueueClient(replies: ["ничего похожего на список", "перевод", "перевод",
+                                       "", "", ""])
+    let model = makeQueueModel(client, prefix: "queue-retry-clears") { $0.reviewDocumentTerms = true }
+    model.add([queueJob("a.md", longEnoughForTwoParts)])
+    await model.run()
+    #expect(model.jobs[0].documentTermsUnavailable)   // the gate never opened
+    #expect(model.jobs[0].result != nil)
+
+    model.jobs[0].state = .interrupted                // as a cancel would have left it
+    await model.run()
+
+    if case .failed = model.jobs[0].state {} else { Issue.record("expected the retry to fail") }
+    #expect(!model.jobs[0].documentTermsUnavailable)
+    #expect(model.jobs[0].result == nil)
 }

@@ -52,10 +52,12 @@ struct PrimaryAction {
         case .files:
             PrimaryAction(
                 isRunning: queue.isRunning,
-                // The same statement in both modes: there is nothing to translate. An
-                // `.unreadable` задание is not something to translate either — the queue
-                // skips it — so it does not light the button on its own.
-                canStart: queue.jobs.contains { $0.state != .finished && $0.state != .unreadable },
+                // The same statement in both modes: there is nothing to translate. Asked of
+                // the model rather than restated here — `hasWorkLeft`'s own doc comment
+                // promises this button and the stop-on-warnings pause cannot disagree, and
+                // a copy of the condition is how a seventh `FileJob.State` gets remembered
+                // in one place and forgotten in the other.
+                canStart: queue.hasWorkLeft,
                 // The toolbar's three pickers are drawn on this screen and must configure
                 // this run. They are read from the text model because that is what the
                 // toolbar binds to — one owner for those values, passed in per run.

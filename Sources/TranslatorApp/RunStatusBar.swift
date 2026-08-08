@@ -45,6 +45,15 @@ struct RunStatusBar: View {
             // right when nobody asked — but the user who turned the gate on is waiting for
             // something that will never appear, and the run's terminology quietly differs
             // from what they were promised.
+            // The glossary's own trouble, which belongs to no файл: `promoteToGlossary`
+            // writes its three save failures here, raised from the terms sheet the queue
+            // opens, and they can land before any задание has finished. Always visible in
+            // «Файлы» rather than folded into a count or hidden under a disclosure.
+            if queue != nil, let problem = glossaryProblem {
+                Label(problem, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption).foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if queue == nil, model.documentTermsUnavailable, model.state == .finished {
                 Label("Термины документа не удалось подготовить, перевод шёл без них",
                       systemImage: "exclamationmark.triangle.fill")
@@ -78,15 +87,14 @@ struct RunStatusBar: View {
     }
 
     private var summary: String? {
-        if queue != nil {
-            // Counted by asking the very view this disclosure opens, exactly as the text
-            // mode's `summary(outcome:problem:)` does. It used to add up `JobResult`'s own
-            // count instead, and the two answer different questions: that one is «is there
-            // something wrong with this file», which `stopOnWarnings` needs and which a
-            // document glossary is not — so a clean multi-часть file with twelve terms
-            // produced no chevron here and a "1 предупреждение" chevron in «Текст», and its
-            // «Термины документа (12)» list was unreachable.
-            guard let count = warningsView?.warningCount, count > 0 else { return nil }
+        if let queue {
+            // The **file's** count, the same `disclosureCount` its row shows. Counting
+            // through `WarningsView` instead folded `glossaryProblem` in, so the bar said
+            // «N+1 предупреждение» beside a row saying «N» for one file — the very
+            // two-counts-for-one-file failure `disclosureCount` exists to remove. The
+            // glossary problem is the app's trouble and not the file's, so it gets a line of
+            // its own below rather than a place in this number.
+            guard let count = queue.selectedResult?.disclosureCount, count > 0 else { return nil }
             return RussianCopy.warningCount(count)
         }
         return Self.summary(outcome: model.outcome, problem: glossaryProblem)
@@ -115,21 +123,18 @@ struct RunStatusBar: View {
     /// contents cannot disagree about which run they belong to.
     private var warningsView: WarningsView? {
         if let queue {
-            // Built even with no finished задание, because `glossaryProblem` alone is worth
-            // showing: `promoteToGlossary` writes its three save failures there, raised from
-            // the terms sheet the queue itself opens, and they can land before any file has
-            // finished.
-            guard queue.selectedResult != nil || glossaryProblem != nil else { return nil }
-            let result = queue.selectedResult
+            guard let result = queue.selectedResult else { return nil }
             // `problem` and `target` were both nil here, and neither was harmless.
             // `glossaryProblem` is exactly where `promoteToGlossary` writes its three save
             // failures — raised from the terms sheet, which the queue itself opens — so a
             // refused save explained itself to a property no visible surface read. And a nil
             // target makes the «Термины документа» disclosure render by lexicographic key
             // instead of by the language the задание was translated into.
-            return WarningsView(checks: result?.checks ?? [], markupDiffs: result?.markupDiffs ?? [],
-                                documentGlossary: result?.documentGlossary ?? [],
-                                target: queue.selectedTarget, problem: glossaryProblem,
+            // `problem: nil` — it is rendered as its own row below instead, so it cannot be
+            // hidden under a chevron that a file with nothing to report never draws.
+            return WarningsView(checks: result.checks, markupDiffs: result.markupDiffs,
+                                documentGlossary: result.documentGlossary,
+                                target: queue.selectedTarget, problem: nil,
                                 onMute: onMute)
         }
         guard let outcome = model.outcome, model.state == .finished else { return nil }

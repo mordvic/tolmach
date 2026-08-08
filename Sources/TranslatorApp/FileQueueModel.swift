@@ -208,6 +208,11 @@ final class FileQueueModel {
         guard !isRunning else { return }
         jobs.removeAll { $0.id == id }
         if selection == id { selection = jobs.first?.id }
+        // The same guard `run()` applies at its own exit, for the same reason: «нажмите
+        // "Перевести", чтобы продолжить» over a button `canStart` has disabled is a sentence
+        // with no way out, and removing the last unfinished задание reaches that state just
+        // as finishing it does.
+        if pausedAfterWarnings, !hasWorkLeft { pausedAfterWarnings = false }
     }
 
     /// Whether any задание is still waiting to be translated. The same question
@@ -354,6 +359,15 @@ final class FileQueueModel {
         return answer
     }
 
+    /// Both cancellation paths land here, so «whatever text arrived is kept» is one
+    /// statement rather than two that can drift.
+    private func markInterrupted(_ index: Int, started: Date) {
+        jobs[index].state = .interrupted
+        jobs[index].result = JobResult(final: streamingText, checks: [], markupDiffs: [],
+                                       documentGlossary: [],
+                                       elapsedMS: Int(Date().timeIntervalSince(started) * 1000))
+    }
+
     /// - Returns: whether the queue should stop here.
     private func translate(at index: Int, source: Language?, target overrideTarget: Language?,
                            tone overrideTone: Tone?) async -> Bool {
@@ -368,6 +382,13 @@ final class FileQueueModel {
         // the first try, and a second try that fails would have shown it under «Модель
         // вернула пустой ответ.» as though it belonged there.
         jobs[index].result = nil
+        // Everything the previous attempt said goes with its result. `documentTermsUnavailable`
+        // is only recomputed on the success path, so a retry that was interrupted or failed
+        // kept an orange «термины документа не удалось подготовить» describing a run that
+        // never reached the review point at all; `saveProblem` described a write for text
+        // that no longer exists.
+        jobs[index].documentTermsUnavailable = false
+        jobs[index].saveProblem = nil
         jobs[index].state = .running(TranslationProgress(partsDone: 0,
                                                          partsTotal: job.partsTotal,
                                                          documentTermCount: 0))
@@ -480,10 +501,7 @@ final class FileQueueModel {
             return false
         } catch is CancellationError {
             await drain()
-            jobs[index].state = .interrupted
-            jobs[index].result = JobResult(final: streamingText, checks: [], markupDiffs: [],
-                                           documentGlossary: [],
-                                           elapsedMS: Int(Date().timeIntervalSince(started) * 1000))
+            markInterrupted(index, started: started)
             return true
         } catch {
             await drain()
@@ -492,7 +510,14 @@ final class FileQueueModel {
             // rather than a CancellationError, and reporting that as a failure would show
             // English right after the user pressed Cancel.
             if run.isCancelled {
-                jobs[index].state = .interrupted
+                // The same treatment as the `CancellationError` branch above, and it has to
+                // be: this branch exists because an identical cancellation can surface as
+                // `URLError(.cancelled)` instead. Leaving the result unset here made
+                // `FileJob.State.interrupted`'s promise — «whatever text arrived is kept» —
+                // true on one of the two paths and false on the other, so the partial
+                // translation the user was watching vanished from the pane depending on
+                // which error the stream happened to produce.
+                markInterrupted(index, started: started)
                 return true
             }
             jobs[index].state = .failed(TranslationViewModel.message(for: error))

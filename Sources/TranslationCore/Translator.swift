@@ -335,7 +335,13 @@ public struct Translator: Sendable {
         if let reviewDocumentTerms, !documentEntries.isEmpty {
             let draft = DocumentTermsDraft(
                 documentEntries: documentEntries,
-                userEntries: userGlossary?.relevantEntries(for: text) ?? [],
+                // Filtered over code-stripped text, exactly as the per-часть filter and the
+                // final verification below are, and for the same reason. Over the raw source
+                // a user term occurring only inside a fenced or inline code span counts as
+                // «covered by the glossary» — and the sheet drops the model's row for it,
+                // so a term the engine will *not* inject for those части becomes silently
+                // unreviewable.
+                userEntries: userGlossary?.relevantEntries(for: TermExtractor.strippingCode(text)) ?? [],
                 chunkCount: chunks.count,
                 target: target)
             // A refusal is `CancellationError`, thrown by the hook and propagating from
