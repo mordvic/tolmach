@@ -202,12 +202,13 @@ nothing in this environment can see either.
 ## 2. Known and accepted
 
 - **Esc in the «Термины документа» sheet ends the whole queue, not just that file.**
-  *Flagged by two separate reviews, so it is worth saying why it survived both.* There is no
-  missing affordance: «Перевести» already **is** «skip the review for this file» — it
-  proceeds with the model's own list — so Esc is left meaning what it means everywhere else
-  in this app, «stop». What a human should judge is whether the stop reads as deliberate
-  when it happens: the файл shows «прервано» and the rest stay «в очереди», and nothing
-  says «because you pressed Esc».
+  *Flagged by three separate reviews, which is why it stopped being defended and got a
+  control instead.* The scope is unchanged and deliberate — «Перевести» already **is** «skip
+  the review for this file», so «stop» is the only other thing the sheet can mean — but Esc
+  is no longer the only way to say it: the sheet carries a button labelled «Остановить
+  очередь» in a queue run and «Отмена» otherwise, with Esc as its shortcut. What is owed to
+  a human is whether that label makes the effect readable *before* it is pressed, which is
+  the whole point of adding it.
 
   `askAboutTerms` throws `CancellationError`, which is the engine's «abort this run», and
   `run()` returns. It is the same contract `queue.cancel()` has and the same one the spec

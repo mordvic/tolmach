@@ -141,6 +141,16 @@ enum RussianCopy {
         "готово за \(milliseconds.formatted(.number.locale(Locale(identifier: "ru_RU")))) мс"
     }
 
+    /// "прервано за 3 140 мс" — a задание the user stopped.
+    ///
+    /// The time is the machine's, not the reader's: `markInterrupted` subtracts whatever was
+    /// spent in the terms sheet, exactly as `totalMS` does on the finished path. Rendered
+    /// rather than merely computed — a corrected number nothing shows is bookkeeping
+    /// defending a value nobody can see.
+    static func interruptedAfter(milliseconds: Int) -> String {
+        "прервано за \(milliseconds.formatted(.number.locale(Locale(identifier: "ru_RU")))) мс"
+    }
+
     /// "Перевожу 2-й файл из 3 — 9 частей из 13" — the status bar in «Файлы».
     ///
     /// `fileIndex` is zero-based, matching the array it comes from; the sentence is

@@ -640,7 +640,12 @@ For `docs/OPEN-ITEMS.md` §1. Every one of these is unobservable from this envir
    no visible way in or out. An implicit mode reached by dropping would retire the shipped, tested
    behaviour that a dropped file fills the editor.
 2. **The ⌥⌘T path escalates to the window** instead of showing the table in the panel (§6.1).
-3. **«Переводить без правок» is dropped** (§6.3).
+3. **«Переводить без правок» is dropped** (§6.3) — but a cancel button was **added**, which
+   the drawing also lacks. The two are not in tension: the dropped one duplicated «Перевести»,
+   while this one does what no other control in the sheet can. It exists because Esc alone was
+   filed by three separate review passes as a conventional gesture with an unreadable effect —
+   in a queue it abandons every file behind the one on screen — and the fix is to let the user
+   read that before pressing it, which is why its label says «Остановить очередь» there.
 4. **Esc and ⨯ cancel the run** from the terms sheet. The drawing has no cancel at all; a modal
    sheet with no way out is a trap.
 5. **The queue starts on «Перевести»**, not on the drop (§4.3).

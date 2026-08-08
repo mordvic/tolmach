@@ -89,11 +89,12 @@ Translation by hotkey, where time to the first character matters more than prose
 _Avoid_: быстрый режим, режим хоткея
 
 **Фоновый путь** — *background path*
-Translation by button or in batch, where prose quality matters more than speed. **The queue is
-built.** `AppSettings.batchModel` selects its model and defaults to «the same one the hotkey
-uses» — one model lives in Ollama's memory, so two different ones make every ⌥⌘T during a queue
-run pay two cold loads. What is still v2 is the document-terms review gate. The settings control that
-used to imply otherwise was removed.
+Translation by button or in batch, where prose quality matters more than speed. **Built** — the
+file queue and the document-terms review gate both ship. `AppSettings.batchModel` selects the
+queue's model in Settings → «Файлы» and defaults to «the same one the hotkey uses»: one model
+lives in Ollama's memory, so two different ones make every ⌥⌘T during a queue run pay two cold
+loads. `ModelRole.background` stays what it always was — a recommendation in `ModelPolicy`, read
+by nothing.
 → `ModelRole.background`, `ModelPolicy.defaultModel(for: .background)`
 _Avoid_: медленный режим, качественный режим
 

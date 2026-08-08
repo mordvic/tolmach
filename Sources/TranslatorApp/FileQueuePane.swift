@@ -223,7 +223,8 @@ private struct FileQueueRow: View {
         // The ✓ is the drawing's, and it earns its place: «готово за 3 140 мс» and
         // «прервано» are otherwise two greys of the same weight in the same corner.
         case .finished: job.result.map { "✓ " + RussianCopy.finishedIn(milliseconds: $0.elapsedMS) } ?? "✓"
-        case .interrupted: "прервано"
+        case .interrupted:
+            job.result.map { RussianCopy.interruptedAfter(milliseconds: $0.elapsedMS) } ?? "прервано"
         case .failed(let message): message
         case .unreadable: "не удалось прочитать"
         }

@@ -40,6 +40,12 @@ struct DocumentTermsView: View {
             + "Исправьте то, что переведено не так, — перевод ещё не начался."
     }
 
+    /// What the escape is called. A queue run says which queue it stops, because that is
+    /// the case where the effect reaches past the file on screen.
+    static func cancelLabel(inQueue: Bool) -> String {
+        inQueue ? "Остановить очередь" : "Отмена"
+    }
+
     static func origin(_ row: DocumentTermsRow) -> String {
         switch row {
         case .user: "глоссарий"
@@ -83,9 +89,21 @@ struct DocumentTermsView: View {
                     Toggle("Больше не спрашивать в этом прогоне", isOn: $request.suppressForRun)
                         .toggleStyle(.checkbox).font(.caption)
                 }
-                // One primary button, not the drawing's two. «Переводить без правок» beside
-                // «Перевести» is indistinguishable from it before any edit and silently
-                // discards work after one; Esc and ⨯ are the escape, and they cancel the run.
+                // The escape, named for what it does. Esc alone was the whole of it, and
+                // **three separate reviews** filed the same complaint: a conventional
+                // dismiss gesture was quietly abandoning every file behind this one. The
+                // answer is not to shrink what Esc does — «Перевести» already is «skip this
+                // file's review», so «stop» is the only other thing the sheet can mean — but
+                // to let the user read it before pressing it. In a queue that means saying
+                // out loud that the queue is what stops.
+                //
+                // This is why the drawing's *second* button was still right to drop and this
+                // one is right to add: «Переводить без правок» duplicated «Перевести», while
+                // this does something no other control here can.
+                Button(Self.cancelLabel(inQueue: showsSuppress)) { request.cancel() }
+                    .keyboardShortcut(.cancelAction)
+                // One primary button beside it. «Переводить без правок» is indistinguishable
+                // from «Перевести» before any edit and silently discards work after one.
                 // `.borderedProminent` explicitly, and not left to `.defaultAction` to
                 // imply it. The drawing gives this button the same blue fill the window's
                 // «Перевести» has, and whether the default-action shortcut alone produces

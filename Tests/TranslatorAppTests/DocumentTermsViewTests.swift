@@ -77,3 +77,12 @@ private func draft(document: [GlossaryEntry], user: [GlossaryEntry]) -> Document
     #expect(DocumentTermsView.rows(for: d).count == 2)
     #expect(DocumentTermsView.headline(for: d) == "Термины документа — 2")
 }
+
+@MainActor @Test func theSheetsEscapeIsNamedForWhatItStops() {
+    // Esc alone was filed by three review passes as a conventional gesture with an
+    // unreadable effect: in a queue it abandons every file behind the one on screen. The
+    // scope did not change — «Перевести» is already «skip this file's review» — but the
+    // label now says which it is before it is pressed.
+    #expect(DocumentTermsView.cancelLabel(inQueue: true) == "Остановить очередь")
+    #expect(DocumentTermsView.cancelLabel(inQueue: false) == "Отмена")
+}
