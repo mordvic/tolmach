@@ -40,8 +40,10 @@ enum PanelSizer {
     ///   - previous: the panel's current size. `.zero` before it is first shown.
     ///   - screen: the `visibleFrame` of the screen the panel is on.
     ///   - userSized: the user has dragged the panel's edge, so it is theirs until it hides.
+    ///   - settling: the run has just ended, so this is the last size this presentation will
+    ///     be asked for. It is the one call allowed to make the panel *smaller*.
     static func fit(ideal: CGSize, frozenWidth: CGFloat?, previous: CGSize,
-                    screen: CGRect, userSized: Bool) -> Fit {
+                    screen: CGRect, userSized: Bool, settling: Bool = false) -> Fit {
         let wanted = CGSize(width: measured(ideal.width, unmeasured: minWidth, unbounded: maxWidth),
                             height: measured(ideal.height, unmeasured: minHeight,
                                              unbounded: .greatestFiniteMagnitude))
@@ -118,8 +120,20 @@ enum PanelSizer {
         // below the floor, and a panel shorter than its own buttons is the worse failure.
         let ceiling = max(minHeight, screen.height * maxHeightFraction)
         let fitted = min(max(wanted.height, minHeight), ceiling)
-        // Monotonic within a presentation. The caller resets `previous` by hiding the panel.
-        let height = min(max(fitted, previous.height), ceiling)
+        // Monotonic within a presentation — **except at the settle**. The caller resets
+        // `previous` by hiding the panel.
+        //
+        // The exception is what keeps the panel's three sections honest. The reservation in
+        // `PanelView` holds the panel at the height the reply was expected to need, and the
+        // «Перевожу…» row is 24 pt of that; when the run ends both go, and a strictly
+        // monotonic height would keep the space as a hole between the text and the buttons.
+        // Shrinking there costs one movement, at one moment, in the direction of less — and
+        // the rule it bends exists to stop the panel moving *while the reader reads*, which
+        // the settle is not: it is the instant reading begins.
+        //
+        // Growth at the settle still goes through the same expression, because `fitted` is
+        // simply used as-is: a run that ends with warnings is taller, not shorter.
+        let height = settling ? min(fitted, ceiling) : min(max(fitted, previous.height), ceiling)
         return Fit(size: CGSize(width: width, height: height), scrolls: wanted.height > height)
     }
 

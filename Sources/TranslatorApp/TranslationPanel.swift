@@ -410,7 +410,7 @@ final class PanelController: NSObject, NSWindowDelegate {
         lastFit = CFAbsoluteTimeGetCurrent()
         let visible = panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame
             ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
-        let fit = measure(previous: panel.frame.size, screen: visible)
+        let fit = measure(previous: panel.frame.size, screen: visible, settling: settling)
         // The settle is where the width stops being provisional and becomes this
         // presentation's width, for the reason `PanelSizer.fit`'s width rule measures out: the
         // panel asks for 347 pt before any of the reply has arrived and for 6929 once all of it
@@ -441,7 +441,8 @@ final class PanelController: NSObject, NSWindowDelegate {
         }
     }
 
-    private func measure(previous: CGSize, screen: CGRect) -> PanelSizer.Fit {
+    private func measure(previous: CGSize, screen: CGRect,
+                         settling: Bool = false) -> PanelSizer.Fit {
         // Rebuilt on every measurement rather than once in `init`, and then laid out. Both
         // lines are load-bearing and they answer two different kinds of staleness.
         //
@@ -514,12 +515,13 @@ final class PanelController: NSObject, NSWindowDelegate {
         // discards that and reads only `.size.width`, so the floor is not applied twice.
         let width = PanelSizer.fit(ideal: CGSize(width: idealWidth, height: 0),
                                    frozenWidth: frozenWidth, previous: previous,
-                                   screen: screen, userSized: userSized).size.width
+                                   screen: screen, userSized: userSized,
+                                   settling: settling).size.width
         let idealHeight = measuring.sizeThatFits(
             in: CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)).height
         return PanelSizer.fit(ideal: CGSize(width: idealWidth, height: idealHeight),
                               frozenWidth: frozenWidth ?? width, previous: previous,
-                              screen: screen, userSized: userSized)
+                              screen: screen, userSized: userSized, settling: settling)
     }
 
     private func setScrolling(_ wanted: Bool) {

@@ -30,15 +30,20 @@ swift run acceptance              # live-Ollama corpus run; MUST run from the pa
 
 No count here on purpose: it went stale twice in one review cycle, and a number nothing
 checks is a contract nobody can keep. What is worth stating is what the line above already
-says — the suite is offline and finishes in about a second and a half, so there is no reason
-not to run it. That number has a floor and a reason: one test
+says — the suite is offline and finishes in about two seconds, so there is no reason not to
+run it. That number has a floor and a reason: one test
 (`aFileInterruptedFromTheTermsSheetDoesNotReportTheReadersDeliberation`) sleeps a deliberate
 second, because the property it pins — that a reader's time in the terms sheet is not reported
 as the machine's — can only be seen by letting real time pass in the sheet. Its two runs go
-concurrently, so the floor is ~1.05 s rather than ~1.1 s, and everything else together is under
-a second. If the suite ever reads much above this, suspect the machine before the code: a
-leaked load generator from an earlier session made the same hardware measure 0.87 s and 3.0 s
-on the same commit.
+concurrently, so the floor is ~1.05 s rather than ~1.1 s.
+
+That floor has since become the *whole* of the figure rather than most of it. The suite reads
+**~2.1 s** now, and the reason is contention rather than any test being slow: `TranslationPanelTests`
+shows real `NSPanel`s and lays out real `NSHostingController`s — 22 tests, 0.75 s on their own —
+and running beside them stretches the sleeping test's own two runs from ~1.05 s to ~1.97 s. So the
+number to watch is still that one test's, not the total. If the suite ever reads much above this,
+suspect the machine before the code: a leaked load generator from an earlier session made the same
+hardware measure 0.87 s and 3.0 s on the same commit.
 
 `swift test` never touches the network. `translate-cli` and `acceptance` do — `acceptance` is
 the deliberately-not-in-CI harness that measures TTFT, markup integrity and term consistency

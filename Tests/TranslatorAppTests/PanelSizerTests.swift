@@ -150,3 +150,50 @@ private let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)   // ceiling: 
                              previous: .zero, screen: screen, userSized: true)
     #expect(fit.size == CGSize(width: 300, height: 120))
 }
+
+/// The settle is the one fit allowed to make the panel smaller, and the three sections need
+/// it to be.
+///
+/// The middle section stretches, so anything the height keeps after the content has given it
+/// back sits as a hole between the translation and the buttons. Two things hand space back at
+/// the settle — `PanelView`'s reservation lifts, and the «Перевожу…» row goes — and a strictly
+/// monotonic height would keep both.
+///
+/// Asserted here rather than against a real panel deliberately. The settle is the **one**
+/// resize `PanelController` animates, so a panel-level test has to wait for
+/// `panel.animator()` and then reads a frame that is only sometimes there: written that way
+/// first, it passed alone and failed in the full suite, twice for «no change at all» and once
+/// for a single point of rounding. That is what this type exists for — the rule is a value,
+/// and a value can be checked without a clock.
+@Test func theSettleIsTheOneFitAllowedToMakeThePanelSmaller() {
+    let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+    let previous = CGSize(width: 560, height: 300)
+    // The content has given space back: the reply is shorter than what was reserved for it.
+    let ideal = CGSize(width: 560, height: 160)
+
+    let during = PanelSizer.fit(ideal: ideal, frozenWidth: 560, previous: previous,
+                                screen: screen, userSized: false)
+    let settling = PanelSizer.fit(ideal: ideal, frozenWidth: 560, previous: previous,
+                                  screen: screen, userSized: false, settling: true)
+
+    #expect(during.size.height == 300)
+    #expect(settling.size.height == 160)
+}
+
+/// The exception is narrow: it lets the height follow the content down, not out of bounds.
+@Test func theSettleStillRespectsTheFloorAndTheCeiling() {
+    let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+    let previous = CGSize(width: 560, height: 400)
+
+    let tiny = PanelSizer.fit(ideal: CGSize(width: 560, height: 10), frozenWidth: 560,
+                              previous: previous, screen: screen, userSized: false,
+                              settling: true)
+    #expect(tiny.size.height == PanelSizer.minHeight)
+
+    // A run that ends with warnings is taller, not shorter, and goes through the same rule.
+    let huge = PanelSizer.fit(ideal: CGSize(width: 560, height: 5000), frozenWidth: 560,
+                              previous: previous, screen: screen, userSized: false,
+                              settling: true)
+    #expect(huge.size.height == screen.height * PanelSizer.maxHeightFraction)
+    #expect(huge.scrolls)
+}

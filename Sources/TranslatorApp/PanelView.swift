@@ -346,57 +346,55 @@ struct PanelView: View {
                         .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    statusLine
-                    termsNotice
-
-                    // Gated on `outcome`, not on `state == .finished`, and the header above is
-                    // gated the same way — because `TranslationViewModel` drops `outcome` at the
-                    // exact instant it clears `translatedText`, so "there is an outcome" means
-                    // "this outcome describes the text in the pane" and nothing weaker. One
-                    // condition governs everything derived from the run, so the header, the
-                    // warnings and the text can never disagree about which run they belong to.
-                    //
-                    // The visible difference from a `.finished` gate is a run that fails without
-                    // producing output — Ollama down, an empty reply — where spec 8 requires the
-                    // previous translation to stay on screen. It keeps its own header and warnings,
-                    // with the failure and its «Повторить» underneath, instead of a labelled
-                    // paragraph losing its annotations for a reason that has nothing to do with it.
-                    if let outcome = model.outcome {
-                        // `onMute:` is deliberately not passed. Muting a term is a
-                        // decision about the glossary, and the glossary is not on screen here; the
-                        // window is where that belongs.
-                        // Gated on `hasContent`, not merely on `outcome` being present. A short clean
-                        // translation has no diffs, no missing terms and no document glossary, so
-                        // `WarningsView` draws an empty `VStack` — and the sizer measures whatever is
-                        // here, so an empty stack would still add its `VStack` spacing to a height
-                        // nothing is asking for. The 120pt slot this used to fill is gone — `scrolls`
-                        // and `PanelSizer` own the ceiling now — and this gate exists only so an empty
-                        // stack does not pad a measured height.
-                        let warnings = WarningsView(outcome: outcome, target: model.resolvedTarget)
-                        if warnings.hasContent {
-                            warnings
-                        }
-                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            // **The one section that stretches.** The panel is three: a header that does not
+            // move, the translation, and everything below it. Only the middle takes the
+            // difference between the panel's height and the text's, so the header stays at the
+            // top and the status row, the warnings and the buttons stay together at the bottom
+            // rather than floating on a spacer.
+            //
+            // Gated on `fillsPanel` for the reason the spacer it replaces had to be —
+            // measured: anything greedy inside the copy `PanelController` sizes from answers
+            // «as much as you will give me», and every panel came back at 998 pt, the
+            // 0.6-of-screen ceiling, for every reply length from one sentence to twenty.
+            .frame(maxHeight: fillsPanel ? .infinity : nil, alignment: .top)
 
-            // Holds the buttons at the panel's bottom edge instead of just under the text.
-            //
-            // The reservation above stops the panel growing during a run, and this is what
-            // stops the one movement left: the «Перевожу…» row disappears at the settle, so
-            // the content gets 24 pt shorter — measured, at every reply length from two
-            // sentences to twenty — while the panel's height is monotonic and does not follow
-            // it. Without a spacer the button row rose by those 24 pt at the exact moment the
-            // user reached for it.
-            //
-            // **Only in the installed copy**, and `minLength: 0` is not enough to make that
-            // unnecessary — measured. With the spacer present in the copy `PanelController`
-            // measures, every panel came back at 998 pt, the 0.6-of-screen ceiling, for every
-            // reply length from one sentence to twenty: a `Spacer` is greedy on the axis it
-            // sits on, so the ideal height it reports is «as much as you will give me». That
-            // is the same trap `fillsPanel` was introduced for, one row further down.
-            if fillsPanel { Spacer(minLength: 0) }
+            // The bottom section, static. What the run has to say about itself belongs with
+            // the buttons that act on it: the status row, the notice and the warnings were
+            // inside the scrolling middle, where a long translation scrolled them out of
+            // reach — and where they took the space the reader wanted for the text.
+            statusLine
+            termsNotice
+                // Gated on `outcome`, not on `state == .finished`, and the header above is
+                // gated the same way — because `TranslationViewModel` drops `outcome` at the
+                // exact instant it clears `translatedText`, so "there is an outcome" means
+                // "this outcome describes the text in the pane" and nothing weaker. One
+                // condition governs everything derived from the run, so the header, the
+                // warnings and the text can never disagree about which run they belong to.
+                //
+                // The visible difference from a `.finished` gate is a run that fails without
+                // producing output — Ollama down, an empty reply — where spec 8 requires the
+                // previous translation to stay on screen. It keeps its own header and warnings,
+                // with the failure and its «Повторить» underneath, instead of a labelled
+                // paragraph losing its annotations for a reason that has nothing to do with it.
+                if let outcome = model.outcome {
+                    // `onMute:` is deliberately not passed. Muting a term is a
+                    // decision about the glossary, and the glossary is not on screen here; the
+                    // window is where that belongs.
+                    // Gated on `hasContent`, not merely on `outcome` being present. A short clean
+                    // translation has no diffs, no missing terms and no document glossary, so
+                    // `WarningsView` draws an empty `VStack` — and the sizer measures whatever is
+                    // here, so an empty stack would still add its `VStack` spacing to a height
+                    // nothing is asking for. The 120pt slot this used to fill is gone — `scrolls`
+                    // and `PanelSizer` own the ceiling now — and this gate exists only so an empty
+                    // stack does not pad a measured height.
+                    let warnings = WarningsView(outcome: outcome, target: model.resolvedTarget)
+                    if warnings.hasContent {
+                        warnings
+                    }
+                }
 
             // Pinned, and «Отмена» below is why this matters most: it exists only while a run
             // is in flight, which is exactly when the text above it is still growing. In the
