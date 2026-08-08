@@ -34,6 +34,12 @@ struct PrimaryAction {
     /// not offered there. Rows leave the queue one at a time, through their own context menu.
     let canClear: Bool
     let clear: () -> Void
+    /// ⇄. The last of the mode-sensitive controls to be routed through here, and it was
+    /// the most destructive of them: in «Файлы» its `disabled` read the *text* model, so it
+    /// stayed live mid-queue-run and `swapLanguages()` moved that model's translation into
+    /// its source pane — off screen, with nothing to undo it.
+    let canSwap: Bool
+    let swap: () -> Void
 
     static func forMode(_ mode: SourceMode,
                         text: TranslationViewModel,
@@ -48,7 +54,9 @@ struct PrimaryAction {
                 canCopy: !text.translatedText.isEmpty,
                 copy: { await text.copyToPasteboard() },
                 canClear: !text.sourceText.isEmpty && text.state != .running,
-                clear: { text.sourceText = "" })
+                clear: { text.sourceText = "" },
+                canSwap: text.canSwapLanguages,
+                swap: { text.swapLanguages() })
         case .files:
             PrimaryAction(
                 isRunning: queue.isRunning,
@@ -68,7 +76,11 @@ struct PrimaryAction {
                 canCopy: !queue.selectedText.isEmpty,
                 copy: { await queue.copySelection() },
                 canClear: false,
-                clear: {})
+                clear: {},
+                // The pickers are all there is to exchange here, and exchanging them must
+                // not touch the text model's panes: they are not on screen.
+                canSwap: text.canSwapOverrides && !queue.isRunning,
+                swap: { text.swapOverrides() })
         }
     }
 }
@@ -172,7 +184,7 @@ struct MainWindowView: View {
                 // — puts one document's text under another document's name.
                 TranslationPane(title: mode == .text ? "Перевод" : queue.selectedTitle,
                                 text: mode == .text ? model.translatedText : queue.selectedText,
-                                isRunning: action.isRunning,
+                                isRunning: mode == .text ? action.isRunning : queue.selectedIsRunning,
                                 onCopy: { Task { await action.copy() } })
             }
             Divider()
@@ -201,7 +213,17 @@ struct MainWindowView: View {
                               onAddToGlossary: { promoteToGlossary(request) })
                 .interactiveDismissDisabled()
                 .onAppear { presented = request }
-                .onDisappear { if presented === request { presented = nil } }
+                .onDisappear {
+                    if presented === request { presented = nil }
+                    // Insurance, not the normal path. The sheet has no cancel button by
+                    // design and `.interactiveDismissDisabled()` makes Esc the only escape,
+                    // so a dismissal that reaches here *unanswered* means something took the
+                    // sheet away without a decision — and leaving it at that is the
+                    // «suspended forever» failure `DocumentTermsRequest` exists to prevent,
+                    // one layer up. Answered requests are untouched: `cancel()` after a
+                    // `proceed()` is already a no-op.
+                    request.cancel()
+                }
         }
         // The queue's half of the same trigger. `onRunFinished` re-probes Ollama, and
         // nothing watched the queue: a thirteen-file run could fail every file to a dead
@@ -231,11 +253,11 @@ struct MainWindowView: View {
                 ForEach(Language.allCases, id: \.self) { Text($0.russianName).tag(Language?.some($0)) }
             }
             Button {
-                model.swapLanguages()
+                action.swap()
             } label: {
                 Image(systemName: "arrow.left.arrow.right")
             }
-            .disabled(!model.canSwapLanguages)
+            .disabled(!action.canSwap)
             .help("Перевести в обратную сторону")
             Picker("В", selection: $model.targetOverride) {
                 Text("По правилу").tag(Language?.none)

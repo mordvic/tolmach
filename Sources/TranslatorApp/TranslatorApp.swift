@@ -211,9 +211,9 @@ struct TranslatorApp: App {
                 // ⌃⌘S rather than anything with ⌥: the toolbar's ⇄ is the discoverable half
                 // and this is the shortcut for it, and ⌥-combinations are where the system's
                 // own reserved space is thickest.
-                Button("Поменять языки местами") { translation.swapLanguages() }
+                Button("Поменять языки местами") { action.swap() }
                     .keyboardShortcut("s", modifiers: [.command, .control])
-                    .disabled(!translation.canSwapLanguages)
+                    .disabled(!action.canSwap)
 
                 Divider()
 

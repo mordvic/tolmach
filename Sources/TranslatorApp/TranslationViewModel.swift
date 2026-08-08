@@ -202,6 +202,24 @@ final class TranslationViewModel {
     /// directions — left in place it would be a translation of text that is no longer in the
     /// source pane, and cleared without being moved it would throw away the only thing the
     /// user has to translate back.
+    /// Whether the two toolbar pickers hold explicit languages to exchange.
+    ///
+    /// Separate from `canSwapLanguages`, which also consults the last run's detected source
+    /// and moves the text. In «Файлы» there is no text in this model to move and no run of
+    /// its own to learn a language from — the pickers are all there is.
+    var canSwapOverrides: Bool { sourceOverride != nil && targetOverride != nil }
+
+    /// Exchange the two pickers and **nothing else**.
+    ///
+    /// `swapLanguages()` also moves the translation into the source pane, which is right in
+    /// «Текст» and destructive in «Файлы»: that pane is not on screen, so the move happens
+    /// unseen and there is nothing to undo it with.
+    func swapOverrides() {
+        guard let source = sourceOverride, let target = targetOverride else { return }
+        sourceOverride = target
+        targetOverride = source
+    }
+
     func swapLanguages() {
         guard canSwapLanguages, let source = knownSource, let target = knownTarget else { return }
         sourceOverride = target

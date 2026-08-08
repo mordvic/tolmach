@@ -245,6 +245,18 @@ final class FileQueueModel {
     /// term lookups. Nil before it has run, which is also when there are no warnings.
     var selectedTarget: Language? { selectedJob?.resolvedTarget }
 
+    /// Whether the задание the pane is showing is the one being translated.
+    ///
+    /// Not `isRunning`, which answers about the *queue*. The right pane is selection-driven
+    /// — that is the whole argument on `selectedText` — and taking the queue's answer for
+    /// the empty state undid half of it: clicking a still-queued row while file 3 ran gave
+    /// the pane empty text and «running», so it drew a blank scroll view instead of the
+    /// «здесь появится перевод» placeholder.
+    var selectedIsRunning: Bool {
+        guard let job = selectedJob, case .running = job.state else { return false }
+        return true
+    }
+
     /// «Перевод · techdoc-en.md», or the plain header with nothing selected.
     var selectedTitle: String {
         selectedJob.map { "Перевод · \($0.url.lastPathComponent)" } ?? "Перевод"
@@ -290,7 +302,15 @@ final class FileQueueModel {
         // «20 частей из 13» on screen for a user who changed «размер части» after dropping.
         // The ones that have not run can only offer the estimate, and that is honest: they
         // have no other number yet.
-        let done = counted.prefix(index).reduce(0) { $0 + ($1.state == .finished ? $1.partsTotal : 0) }
+        //
+        // Counted over the **whole** queue, not just the rows before the running one. A
+        // resume starts at the first unfinished задание, which can sit before files that
+        // already finished — «Перевожу 1-й файл из 2 — 0 частей из 20» with half the work
+        // already on disk. `fileTotal` deliberately keeps counting the finished ones,
+        // unlike the `.unreadable` rows above: those the queue will never translate, while
+        // these it already has, and dropping them would make «N-й файл из M» shrink under
+        // the reader as the queue advanced.
+        let done = counted.reduce(0) { $0 + ($1.state == .finished ? $1.partsTotal : 0) }
             + progress.partsDone
         let total = counted.enumerated().reduce(0) { sum, pair in
             sum + (pair.offset == index ? progress.partsTotal : pair.element.partsTotal)

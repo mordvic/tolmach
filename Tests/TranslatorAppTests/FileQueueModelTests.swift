@@ -1072,3 +1072,72 @@ private func savingModel(_ prefix: String,
     model.setDocumentTermsUnavailableForTesting(unavailable)
     return model
 }
+
+// MARK: - Review round 8
+
+@MainActor @Test func aResumeCountsWorkThatIsAlreadyOnDisk() async {
+    // `done` used to credit only the rows *before* the running one. A resume starts at the
+    // first unfinished задание, which can sit before files that already finished — «0 частей
+    // из 20» with half the queue translated.
+    let client = QueueClient(replies: ["", "второй", "перевод", "перевод"], paced: true)
+    let model = makeQueueModel(client, prefix: "queue-resume-count")
+    model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
+    await model.run()
+    if case .failed = model.jobs[0].state {} else { Issue.record("expected the first file to fail") }
+    #expect(model.jobs[1].state == .finished)
+
+    let run = Task { await model.run() }          // retries a.md only
+    await waitUntilCalled(client, 3)
+    let line = model.statusLine
+    await run.value
+
+    // b.md's part is done and says so, and the file count keeps both rows.
+    #expect(line == "Перевожу 1-й файл из 2 — 1 часть из 2")
+}
+
+@MainActor @Test func theRightPaneIsIdleWhenTheSelectedFileIsNotTheRunningOne() async {
+    // `isRunning` used to answer about the queue, so clicking a still-queued row while
+    // another file translated gave the pane empty text *and* «running» — a blank scroll
+    // view where the «здесь появится перевод» placeholder belongs.
+    let client = QueueClient(replies: ["один", "два"], paced: true, holdCallAtIndex: 0)
+    let model = makeQueueModel(client, prefix: "queue-selected-running")
+    model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
+
+    let run = Task { await model.run() }
+    await waitUntilCalled(client)
+    model.selection = model.jobs[1].id            // the one still waiting
+    #expect(model.isRunning)
+    #expect(!model.selectedIsRunning)
+    model.selection = model.jobs[0].id            // the one in flight
+    #expect(model.selectedIsRunning)
+    model.cancel()
+    await run.value
+}
+
+@MainActor @Test func swappingInFilesModeTouchesThePickersAndNotTheHiddenPanes() {
+    // `swapLanguages()` moves the translation into the source pane, which is right in
+    // «Текст» and destructive in «Файлы»: that pane is off screen, so the move happens
+    // unseen and nothing undoes it.
+    let text = makeTextModel("swap-files")
+    text.sourceText = "исходник"
+    text.translatedText = "перевод"
+    text.sourceOverride = .en
+    text.targetOverride = .ru
+
+    text.swapOverrides()
+
+    #expect(text.sourceOverride == .ru)
+    #expect(text.targetOverride == .en)
+    #expect(text.sourceText == "исходник")
+    #expect(text.translatedText == "перевод")
+}
+
+@MainActor @Test func swappingIsOfferedInFilesModeOnlyWhenBothPickersAreSet() {
+    let queue = makeQueueModel(QueueClient(replies: []), prefix: "swap-offer")
+    let text = makeTextModel("swap-offer-text")
+    #expect(!PrimaryAction.forMode(.files, text: text, queue: queue).canSwap)
+
+    text.sourceOverride = .en
+    text.targetOverride = .de
+    #expect(PrimaryAction.forMode(.files, text: text, queue: queue).canSwap)
+}
