@@ -85,6 +85,13 @@ struct RunStatusBar: View {
                     ScrollView { warnings }
                 }
                 .frame(maxHeight: 200)
+                // The drawing indents the whole disclosure by 16 pt, which puts «Разметка
+                // изменилась» under «Готово за 4 812 мс» rather than under the chevron that
+                // opened it. Flush left, the bold group titles start at the same x as the
+                // summary's own control and read as three peers of it instead of as its
+                // contents — and this row is the one place in the window where a heading and
+                // the thing it belongs to are stacked rather than side by side.
+                .padding(.leading, 16)
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
