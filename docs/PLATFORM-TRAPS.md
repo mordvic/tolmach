@@ -245,6 +245,17 @@ tested and cleared, and the probe does not reproduce the failure at all: `MODE=o
 there and fails on the app. So instrument the bundle, not the probe, before trimming any of
 the three. → `WindowTitleHidden` in `Sources/TranslatorApp/MainWindowView.swift`
 
+**`TextEditor` has no top inset, and 5 pt of leading that is not padding.** Asked of the
+`NSTextView` on the running bundle: `textContainerInset` is `{0, 0}` and `textContainerOrigin`
+is `{0, 0}`, so text begins hard against the top edge — while the horizontal 5 pt comes from
+`NSTextContainer.lineFragmentPadding`, which is a default of the text system rather than
+anything SwiftUI applies. A placeholder overlaid on the editor must therefore be offset by
+5 horizontally and by **whatever the editor itself is padded by** vertically, or the caret and
+the grey text end up on different lines: they were 8 pt apart here, which reads as the caret
+being in the wrong place. `firstRect(forCharacterRange:)` is how to ask where the caret
+actually is — it answered `x = 5`, flush with the text view's top, both before and after.
+→ `Sources/TranslatorApp/SourceEditor.swift`
+
 **A toolbar item wraps its content in chrome, so its content must be one control.** Measured
 on the bundle by walking `NSToolbar.items`: a `ToolbarItem` host is 36 pt tall, and a `Picker`
 inside it renders a `SwiftUIPopupButton` that is *also* 36 pt with `isBordered = true`. Put a

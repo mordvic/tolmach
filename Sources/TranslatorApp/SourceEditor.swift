@@ -13,19 +13,40 @@ import SwiftUI
 struct SourceEditor: View {
     @Bindable var model: TranslationViewModel
 
+    /// The drawing's 8 pt top margin for this pane, applied to the editor **and** to the
+    /// placeholder from one place. Two copies of it is exactly how the caret and the grey
+    /// text came to sit 8 pt apart.
+    private static let textTopInset: CGFloat = 8
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ZStack(alignment: .topLeading) {
                 TextEditor(text: $model.sourceText)
                     .font(.body)
                     .scrollContentBackground(.hidden)
+                    // **The editor's own top margin, and the reason the caret used to look
+                    // misplaced.** Asked of the text view on the running bundle:
+                    // `textContainerInset` is `{0, 0}` and `textContainerOrigin` is `{0, 0}`,
+                    // so text begins hard against the top edge of the pane; the caret's own
+                    // rect came back at exactly the text view's top, at x = 5. The 5 is
+                    // `lineFragmentPadding`, which `NSTextContainer` defaults to and which is
+                    // why the placeholder's leading inset below is 5 and not 8.
+                    //
+                    // Vertically there was nothing, so the placeholder's 8 pt put the grey
+                    // text a whole 8 pt below the caret that was supposed to sit in front of
+                    // it. Padding the editor rather than un-padding the placeholder, because
+                    // the drawing gives this pane `padding: 8px 5px` — the margin is wanted,
+                    // it was simply being applied to the wrong one of the two.
+                    .padding(.top, Self.textTopInset)
                 // A placeholder and not a first line of grey text in the editor itself:
                 // anything in the binding is text the user would have to delete, and would
                 // be translated if they did not.
                 if model.sourceText.isEmpty {
                     Text("Вставьте или наберите текст")
                         .font(.body).foregroundStyle(.tertiary)
-                        .padding(.top, 8).padding(.leading, 5)
+                        // The same constant the editor is padded by, so the two cannot drift.
+                        // The 5 is `lineFragmentPadding`, measured, not chosen.
+                        .padding(.top, Self.textTopInset).padding(.leading, 5)
                         .allowsHitTesting(false)
                 }
             }
