@@ -180,9 +180,15 @@ private func model() -> TranslationViewModel {
 ///
 /// Written as a count over every kind rather than as two literal lookups, so it fails in both
 /// directions: a kind that loses its symbol, and a kind that grows one it should not have.
+///
+/// Over `allCases` and not a hand-written array. It **was** a hand-written array, and a kind
+/// added to the enum afterwards — `.awaitingUser` — never joined it, so «every kind» was three
+/// of four and the newest case was the unchecked one. A literal list cannot keep that promise;
+/// the compiler's own list can.
 @MainActor @Test func everyStatusThatIsNotProgressCarriesAGlyphAsWellAsAColour() {
-    let kinds: [PanelStatus.Kind] = [.progress, .interrupted, .failure]
-    #expect(kinds.filter { $0.symbol != nil }.count == 2)
+    let kinds = PanelStatus.Kind.allCases
+    #expect(kinds.count == 4, "a new kind needs a glyph decision, not a bigger count here")
+    #expect(kinds.filter { $0.symbol != nil }.count == 3)
     // `.progress` is the deliberate exception: that row already draws a `ProgressView`, so a
     // glyph beside the spinner beside the word would be three ways of saying one thing.
     #expect(PanelStatus.Kind.progress.symbol == nil)

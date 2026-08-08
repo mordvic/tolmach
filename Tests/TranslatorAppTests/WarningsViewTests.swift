@@ -113,3 +113,33 @@ private func quietOutcome(documentGlossary: [GlossaryEntry] = [],
     #expect(RunStatusBar.summary(
         outcome: quietOutcome(markupDiffs: [dropped, added])) == "2 предупреждения")
 }
+
+@MainActor @Test func theTwoWarningCountsForOneFileAgreeWithTheViewThatDrawsThem() {
+    // `JobResult.warningCount`/`disclosureCount` are a second, independent spelling of
+    // `WarningsView.warningCount`. Two mutations survived: counting `.unverifiable`, and
+    // dropping the документный-глоссарий term. Both put two different numbers for one файл
+    // on screen at once — the row's and the bar's — which is the failure the doc comments
+    // on both sides name.
+    let result = JobResult(
+        final: "перевод",
+        checks: [
+            GlossaryCheck(term: "endpoint", expected: "конечная точка", status: .missing),
+            // The one that must **not** count: `LemmaMatcher` could not decide, which is a
+            // statement about the checker. Counted, `stopOnWarnings` pauses on every
+            // Japanese file.
+            GlossaryCheck(term: "payload", expected: "полезная нагрузка", status: .unverifiable),
+            GlossaryCheck(term: "server", expected: "сервер", status: .satisfied),
+        ],
+        markupDiffs: [MarkupDiff(expected: .blockquote, actual: nil, note: "dropped in translation")],
+        documentGlossary: [GlossaryEntry(term: "endpoint", translations: ["ru": "конечная точка"])],
+        elapsedMS: 10)
+
+    let view = WarningsView(checks: result.checks, markupDiffs: result.markupDiffs,
+                            documentGlossary: result.documentGlossary, target: .ru)
+
+    // «Is something wrong with this файл» — the number `stopOnWarnings` reads.
+    #expect(result.warningCount == 2)
+    // «What is under the chevron» — and it is the view's own count, asked of the view.
+    #expect(result.disclosureCount == view.warningCount)
+    #expect(view.warningCount == 3)
+}

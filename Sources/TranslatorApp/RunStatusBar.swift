@@ -139,15 +139,17 @@ struct RunStatusBar: View {
     private var warningsView: WarningsView? {
         if let queue {
             guard let result = queue.selectedResult else { return nil }
-            // `problem` and `target` were both nil here, and neither was harmless.
-            // `glossaryProblem` is exactly where `promoteToGlossary` writes its three save
-            // failures — raised from the terms sheet, which the queue itself opens — so a
-            // refused save explained itself to a property no visible surface read. And a nil
-            // target makes the «Термины документа» disclosure render by lexicographic key
-            // instead of by the language the задание was translated into.
-            // No glossary problem here — it is rendered as its own row above instead, so
-            // it cannot be hidden under a chevron that a file with nothing to report never
-            // draws.
+            // `target` was nil here and that was not harmless: a nil target makes the
+            // «Термины документа» disclosure render by lexicographic key instead of by the
+            // language the задание was translated into.
+            //
+            // No glossary problem, though — it is rendered as its own row above, so it
+            // cannot be hidden under a chevron that a file with nothing to report never
+            // draws. This comment used to argue the opposite in its first half and the
+            // present rule in its second, both at once: an intermediate fix passed
+            // `problem` here, a later one moved it out to the row, and only the tail of the
+            // paragraph was rewritten. Following the half that was left would put
+            // «N+1 предупреждение» back beside a file row saying «N».
             return WarningsView(checks: result.checks, markupDiffs: result.markupDiffs,
                                 documentGlossary: result.documentGlossary,
                                 target: queue.selectedTarget, onMute: onMute)

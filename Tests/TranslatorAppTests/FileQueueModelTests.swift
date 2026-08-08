@@ -412,8 +412,9 @@ private let longSourceWithALink = sourceWithALink + "\n\n" + longEnoughForTwoPar
 }
 
 @MainActor
-private func makeTextModel(_ prefix: String) -> TranslationViewModel {
-    TranslationViewModel(translator: Translator(client: QueueClient(replies: [])),
+private func makeTextModel(_ prefix: String,
+                           client: LLMClient = QueueClient(replies: [])) -> TranslationViewModel {
+    TranslationViewModel(translator: Translator(client: client),
                          settings: AppSettings(defaults: InMemoryDefaults(prefix: prefix)),
                          glossary: scratchGlossary(),
                          pasteboard: NSPasteboard(name: .init("primary-\(prefix)")))
@@ -574,8 +575,25 @@ private func waitForSheet(_ model: FileQueueModel,
     let sheet = await waitForSheet(model)
     sheet?.suppressForRun = true
     sheet?.proceed()
+
+    // Bounded, for the reason `aPauseOnWarningsDoesNotUndo…` states: under the defect the
+    // second file raises a sheet, `run()` waits for a человек who is not there, and a bare
+    // `await run.value` turns a failed test into a suite that never terminates. On CI that
+    // is the whole job's timeout instead of a red test.
+    //
+    // Compared by identity, not by «is one pending»: `proceed()` resolves the continuation
+    // but the property is cleared by the code awaiting it, so for a moment the *first*
+    // sheet is still there and a naive poll reports the answered one as a new one.
+    var reappeared: DocumentTermsRequest?
+    for _ in 0..<400 {
+        if model.jobs.allSatisfy({ $0.state == .finished }) { break }
+        if let request = model.pendingTermsRequest, request !== sheet { reappeared = request; break }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
+    reappeared?.proceed()
     await run.value
 
+    #expect(reappeared == nil, "the second file must not raise a sheet of its own")
     #expect(model.jobs.allSatisfy { $0.state == .finished })
     #expect(model.pendingTermsRequest == nil)
 }
@@ -1255,8 +1273,25 @@ private final class SaveCall: @unchecked Sendable {
     #expect(model.runningID != model.jobs[1].id)
     sheet?.suppressForRun = true
     sheet?.proceed()
+
+    // Bounded, like its two neighbours. This is a **two-file** queue with the tick set, so
+    // under the defect `aQueueAsksOnceWhenTheUserSaysNotToAskAgain` exists to catch — the
+    // second file re-raising the sheet — a bare `await run.value` waits for a человек who is
+    // not there. Measured with the suppression short-circuit removed: `aQueueAsksOnce…`
+    // alone goes red in 0.10 s, and the **full suite never terminates**, killed at ten
+    // minutes with 565 of 602 done. One forever-suspended `@MainActor` test wedges about
+    // forty others, so a single unbounded wait costs CI the whole job's timeout rather than
+    // a red test. This was the last one in the file.
+    var reappeared: DocumentTermsRequest?
+    for _ in 0..<400 {
+        if model.jobs.allSatisfy({ $0.state == .finished }) { break }
+        if let request = model.pendingTermsRequest, request !== sheet { reappeared = request; break }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
+    reappeared?.proceed()
     await run.value
 
+    #expect(reappeared == nil, "the second файл must not raise a sheet of its own")
     #expect(model.runningID == nil)
 }
 
@@ -1390,6 +1425,28 @@ private final class SaveCall: @unchecked Sendable {
     await run.value
 
     #expect(PrimaryAction.forMode(.text, text: text, queue: queue).canStart)
+}
+
+@MainActor @Test func filesCannotStartWhileTheTextPaneIsRunningEither() async {
+    // The other direction of the test above, whose name promises «neither mode» and whose
+    // body checked one. Deleting `&& text.state != .running` from `.files`' `canStart` left
+    // the whole suite green — and Ollama holds one model, so a queue started against a text
+    // run in flight is two conversations over one loaded model.
+    let held = QueueClient(replies: ["перевод"], paced: true, holdCallAtIndex: 0)
+    let text = makeTextModel("primary-exclusive-reverse", client: held)
+    text.sourceText = "что-то"
+    let queue = makeQueueModel(QueueClient(replies: ["один"]), prefix: "primary-exclusive-rev-q")
+    queue.add([queueJob("a.md", "first")])
+
+    #expect(PrimaryAction.forMode(.files, text: text, queue: queue).canStart)
+
+    let run = Task { await text.translate() }
+    await waitUntilCalled(held)
+    #expect(!PrimaryAction.forMode(.files, text: text, queue: queue).canStart)
+    text.cancel()
+    await run.value
+
+    #expect(PrimaryAction.forMode(.files, text: text, queue: queue).canStart)
 }
 
 @MainActor @Test func aRowRemovedFromUnderARunDoesNotTakeAnotherFilesResult() async {
@@ -1594,4 +1651,182 @@ private final class SaveCall: @unchecked Sendable {
 
     #expect(seeded == RussianCopy.queuePosition(fileIndex: 0, fileTotal: 1,
                                                 partsDone: 0, partsTotal: 3))
+}
+
+// MARK: - Review round 30: mutations that survived, and the tests that now kill them
+
+@MainActor @Test func theSwapActionInFilesModeGoesThroughPrimaryActionAndTouchesNoHiddenPane() async {
+    // `swappingInFilesModeTouchesThePickersAndNotTheHiddenPanes` calls `swapOverrides()`
+    // **directly**, so it pins the method and not the route. Restoring the pre-fix wiring —
+    // `swap: { text.swapLanguages() }` — left all 594 green, and that is the destructive
+    // one: it moves the hidden pane's translation into its source pane, off screen, with
+    // nothing to undo it.
+    let queue = makeQueueModel(QueueClient(replies: ["один"]), prefix: "round30-swap")
+    queue.add([queueJob("a.md", "first")])
+    let text = makeTextModel("round30-swap-text")
+    text.sourceText = "исходник"
+    text.translatedText = "перевод"
+    text.sourceOverride = .en
+    text.targetOverride = .ru
+
+    let action = PrimaryAction.forMode(.files, text: text, queue: queue)
+    #expect(action.canSwap)
+    action.swap()
+
+    #expect(text.sourceOverride == .ru)
+    #expect(text.targetOverride == .en)
+    // The panes are untouched — they are not on screen, and this action never claimed them.
+    #expect(text.sourceText == "исходник")
+    #expect(text.translatedText == "перевод")
+}
+
+@MainActor @Test func swappingIsRefusedInFilesModeWhileTheQueueRuns() async {
+    // The `!queue.isRunning` half of `canSwap`, which no test reached: both existing ones
+    // vary only whether the pickers are set.
+    let client = QueueClient(replies: ["один"], paced: true, holdCallAtIndex: 0)
+    let queue = makeQueueModel(client, prefix: "round30-swap-running")
+    queue.add([queueJob("a.md", "first")])
+    let text = makeTextModel("round30-swap-running-text")
+    text.sourceOverride = .en
+    text.targetOverride = .ru
+
+    #expect(PrimaryAction.forMode(.files, text: text, queue: queue).canSwap)
+
+    let run = Task { await queue.run() }
+    await waitUntilCalled(client)
+    #expect(!PrimaryAction.forMode(.files, text: text, queue: queue).canSwap)
+    queue.cancel()
+    await run.value
+}
+
+@MainActor @Test func aFileSelectedWhileAnotherIsStreamingShowsItsOwnTextAndNotTheStream() async {
+    // `theRightPaneShowsTheSelectedFileAndNotWhicheverIsStreaming` awaits the whole queue
+    // before selecting, so nothing is ever streaming while a selection is read — and
+    // `if case .running = job.state` could be replaced by the queue-level `if isRunning`
+    // with the suite still green. That substitution is the defect the doc comment
+    // describes: the running file's stream under the selected file's name.
+    // The held reply carries a newline, and that is load-bearing rather than decorative:
+    // `streamChunkTranslation` buffers until the whole first line is settled, so a held
+    // reply with no `"\n"` in it never reaches `streamingText` at all. Written as
+    // `"второй"` the wait below could not succeed — it exhausted all 20 000 yields and ran
+    // on as a ~150 ms sleep, which is exactly what `waitUntilRunning`'s doc comment warns
+    // against, and left the test asserting against an **empty** stream.
+    //
+    // Measured: with the newline the loop breaks at 7 500–9 400 yields run alone and ~3 400
+    // inside the full suite — never by exhaustion — with the **whole**
+    // reply on the stream — `"второй\nстрока"`, not `"второй\n"`, as this comment first
+    // claimed. The newline settles the *shape* of the reply, it does not flush a line:
+    // `streamChunkTranslation` decides there is no preamble to strip and then emits the
+    // entire buffer in one `onToken`. Worth stating precisely, because the next fixture
+    // built on a first-line-only reading would be written against behaviour the engine
+    // does not have.
+    let client = QueueClient(replies: ["первый перевод", "второй\nстрока"],
+                             paced: true, holdCallAtIndex: 1)
+    let model = makeQueueModel(client, prefix: "round30-selection")
+    model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
+
+    let run = Task { await model.run() }
+    // The second файл running *and* something of its own already on the stream — the exact
+    // window in which a selection can be read while another задание streams.
+    for _ in 0..<20_000 {
+        if case .running = model.jobs[1].state, !model.streamingText.isEmpty { break }
+        await Task.yield()
+    }
+    model.selection = model.jobs[0].id
+    let shown = model.selectedText
+    model.cancel()
+    await run.value
+
+    #expect(shown == "первый перевод")
+}
+
+@MainActor @Test func aRowActuallyRemovedMidRunDoesNotSendItsNeighboursResultAstray() async {
+    // The test named for this removes no row: it runs two files to completion and checks
+    // each result landed on its own. Replacing every `row()` re-lookup with the bare index
+    // left it green. The guarantee is that a *shifted* array cannot misfile a result, so
+    // the array has to shift.
+    //
+    // `jobs` is mutated directly rather than through `remove`, which refuses while running.
+    // That refusal is exactly the second of the two facts the doc comment says were holding
+    // each other up — pinning the re-lookup through the guard would pin the guard instead.
+    // Same newline, same reason as the test above: without it this wait is a sleep in
+    // disguise rather than a wait on the state it names.
+    let client = QueueClient(replies: ["один", "два\nстроки"], paced: true, holdCallAtIndex: 1)
+    let model = makeQueueModel(client, prefix: "round30-row-removed")
+    model.add([queueJob("a.md", "first"), queueJob("b.md", "second"), queueJob("c.md", "third")])
+
+    let run = Task { await model.run() }
+    for _ in 0..<20_000 {
+        if case .running = model.jobs[1].state, !model.streamingText.isEmpty { break }
+        await Task.yield()
+    }
+    // `a.md` goes; `b.md` is now at index 0 and `c.md` at index 1.
+    model.jobs.remove(at: 0)
+    model.cancel()
+    await run.value
+
+    let names = model.jobs.map { $0.url.lastPathComponent }
+    #expect(names == ["b.md", "c.md"])
+    // The interruption belongs to the файл that was interrupted.
+    if case .interrupted = model.jobs[0].state {} else {
+        Issue.record("b.md should carry its own interruption, not c.md's row")
+    }
+    #expect(model.jobs[1].state == .queued, "c.md was never started and must be untouched")
+}
+
+@MainActor @Test func aFileInterruptedFromTheTermsSheetDoesNotReportTheReadersDeliberation() async throws {
+    // No app test reads `JobResult.elapsedMS` at all, so neither the `- termsWait`
+    // subtraction on this path nor the «прервано за …» it feeds was checked. Deleting the
+    // subtraction left the suite green — and then a файл cancelled after four minutes in the
+    // terms sheet reads «прервано за 240 000 мс», which is the reader's time, not the
+    // machine's.
+    //
+    // Run **twice over one fixture**, differing only in how long the reader deliberates, and
+    // compared with each other. Neither a constant nor a wall-clock difference works here,
+    // and both were tried:
+    //
+    // - «`elapsedMS < 250`» is a constant, and the machine-work term it has to clear is not
+    //   small: measured 2–6 ms warm inside the suite but up to 671 ms at 144×
+    //   oversubscription, against a mutated value of ≥ 300. There is no constant that
+    //   separates those.
+    // - «`wallMS - elapsedMS >= 250`» compares two clocks, which was the previous shape and
+    //   the reason this test passed under its own defect about half the time and *always*
+    //   under load: the gap between the two brackets — task scheduling, the off-actor
+    //   detect, `waitForSheet`'s 5 ms polling, `drain()`, the final resume — is unbounded and
+    //   on its own clears 250 ms. Measured under the mutation: 85, 134, 158, 297, 316.
+    //
+    // Two runs of identical work cancel that term exactly. What is left is the difference of
+    // two measurements of the same work, which is centred on zero — while under the defect it
+    // is the difference of the two deliberations, by construction.
+    func elapsedAfterDeliberating(_ ms: Int, _ prefix: String) async throws -> Int {
+        let client = QueueClient(replies: ["resource => ресурс", "первый", "первый-2"])
+        let model = makeQueueModel(client, prefix: prefix) { $0.reviewDocumentTerms = true }
+        model.add([queueJob("a.md", longEnoughForTwoParts)])
+
+        let run = Task { await model.run() }
+        let sheet = await waitForSheet(model)
+        try await Task.sleep(for: .milliseconds(ms))   // the reader, deliberating
+        sheet?.cancel()
+        model.cancel()
+        await run.value
+        return try #require(model.jobs[0].result?.elapsedMS,
+                            "an interrupted файл still reports how long the machine worked")
+    }
+
+    // Concurrently: the two runs share nothing — their own model, settings, glossary and
+    // pasteboard — and run sequentially this test is the suite's long pole, a second of
+    // deliberate sleeping against a suite that otherwise finishes in about one.
+    async let briefRun = elapsedAfterDeliberating(50, "round30-elapsed-brief")
+    async let longRun = elapsedAfterDeliberating(1050, "round30-elapsed-long")
+    let (brief, long) = try await (briefRun, longRun)
+
+    // A **second** more deliberation must buy at most noise. The gap is a second and not the
+    // 500 ms first tried because the noise is bigger than it looks: the difference of two
+    // measurements of this fixture's own work ranged over −275…+65 ms under sixteen busy
+    // loops, and against a 500 ms signal the mutated case came back at 267 against a 250
+    // threshold — a 7% margin, which is not one. Measured at a second: clean stays inside
+    // that same ±280 band, the mutated difference is ~1000 less the same band, and 500 sits
+    // between the two with room on both sides. Measured under sixteen busy loops, five runs
+    // each: clean −237…−7, mutated 875…986.
+    #expect(long - brief < 500)
 }

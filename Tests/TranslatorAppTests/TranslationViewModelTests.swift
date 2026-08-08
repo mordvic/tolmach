@@ -269,7 +269,14 @@ private func makeModel(_ client: LLMClient, pasteboard: NSPasteboard? = nil) -> 
     // A second run that streams real content, then is cancelled mid-flight.
     model.sourceText = String(repeating: "x ", count: 40)
     let run = Task { await model.translate() }
-    try? await Task.sleep(for: .milliseconds(300))
+    // Waited on the **state**, not the clock. A fixed 300 ms race against a token stream is
+    // the shape `waitUntilRunning`'s own doc comment warns against, and it lost: measured 3
+    // failures in ~40 runs at 16× oversubscription, where the second run had not reached the
+    // pane when the cancel landed and both assertions below fired on the *first* run's text.
+    for _ in 0..<20_000 {
+        if !model.translatedText.isEmpty, model.translatedText != "Первый перевод." { break }
+        await Task.yield()
+    }
     model.cancel()
     await run.value
 
@@ -691,4 +698,28 @@ private func waitForSheet(_ model: TranslationViewModel,
     let prompts = client.receivedMessages.flatMap { $0 }.map(\.content)
     #expect(prompts.contains { $0.contains("German") })
     #expect(prompts.contains { $0.contains("English") } == false)
+}
+
+@MainActor @Test func aShortWindowRunNeverApologisesForAGateItNeverNeeded() async {
+    // `documentTermsUnavailable = gateRequested && result.documentGlossaryAttempted &&
+    // !raisedTermsSheet`. The queue pins both halves of the middle conjunct; the window and
+    // the ⌥⌘T panel pinned neither, so dropping `documentGlossaryAttempted` left the suite
+    // green — and then every short translation with the gate on drew orange «Термины
+    // документа не удалось подготовить» for a table that was never going to exist.
+    //
+    // One часть, so `TermExtractor` is never consulted: nothing was attempted and nothing
+    // went wrong.
+    let client = QueueClient(replies: ["перевод"])
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "vm-gate-short"))
+    settings.reviewDocumentTerms = true
+    let model = TranslationViewModel(
+        translator: Translator(client: client), settings: settings,
+        glossary: scratchGlossary(),
+        pasteboard: NSPasteboard(name: .init("vm-gate-short")))
+    model.sourceText = "Hello, world."
+
+    await model.translate()
+
+    #expect(model.state == .finished)
+    #expect(model.documentTermsUnavailable == false)
 }
