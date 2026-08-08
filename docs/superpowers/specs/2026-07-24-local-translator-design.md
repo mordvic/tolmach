@@ -644,7 +644,8 @@ acceptance harness and has not been moved into the core.
   window; see `docs/superpowers/specs/2026-08-07-batch-translation-design.md`. The claim above
   turned out to be very nearly right: the core took two additions, both defaulted so that
   nothing already calling it changed — `onProgress`, because a queue row cannot say «часть 4 из
-  7» without it, and (still to come) a review hook for the document glossary.
+  7» without it, and a review hook for the document glossary — which this line called «still
+  to come» until it shipped on the same branch that wrote the words.
 - **A built-in model benchmark** — moving the prototype's harness into settings, so the blacklist
   is built from measurements on the user's machine rather than hard-wired in code.
 - **The second pass** — to be reconsidered if a model appears for which it makes sense. Both

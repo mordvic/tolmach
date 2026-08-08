@@ -9,7 +9,11 @@ import TextCapture
 /// model's own Russian survives the trip to the screen are decisions, and spec 8 pins both.
 /// A `@ViewBuilder` switch can only be read; this can be checked.
 struct PanelStatus: Equatable {
-    enum Kind: Equatable {
+    /// `CaseIterable` for the tests, and deliberately: `everyStatusThatIsNotProgress…`
+    /// claims to count over **every** kind, and with a hand-written array it silently did
+    /// not — `.awaitingUser` was added to this enum and never to that list, so the one case
+    /// whose glyph rule is least obvious was the one nothing checked.
+    enum Kind: Equatable, CaseIterable {
         case progress, awaitingUser, interrupted, failure
 
         /// Whether this row's state means *the machine* is working.

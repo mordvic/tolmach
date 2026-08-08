@@ -692,3 +692,27 @@ private func waitForSheet(_ model: TranslationViewModel,
     #expect(prompts.contains { $0.contains("German") })
     #expect(prompts.contains { $0.contains("English") } == false)
 }
+
+@MainActor @Test func aShortWindowRunNeverApologisesForAGateItNeverNeeded() async {
+    // `documentTermsUnavailable = gateRequested && result.documentGlossaryAttempted &&
+    // !raisedTermsSheet`. The queue pins both halves of the middle conjunct; the window and
+    // the ⌥⌘T panel pinned neither, so dropping `documentGlossaryAttempted` left the suite
+    // green — and then every short translation with the gate on drew orange «Термины
+    // документа не удалось подготовить» for a table that was never going to exist.
+    //
+    // One часть, so `TermExtractor` is never consulted: nothing was attempted and nothing
+    // went wrong.
+    let client = QueueClient(replies: ["перевод"])
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "vm-gate-short"))
+    settings.reviewDocumentTerms = true
+    let model = TranslationViewModel(
+        translator: Translator(client: client), settings: settings,
+        glossary: scratchGlossary(),
+        pasteboard: NSPasteboard(name: .init("vm-gate-short")))
+    model.sourceText = "Hello, world."
+
+    await model.translate()
+
+    #expect(model.state == .finished)
+    #expect(model.documentTermsUnavailable == false)
+}
