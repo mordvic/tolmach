@@ -231,11 +231,14 @@ struct TranslatorApp: App {
                 // ⇧⌘C, not ⌘C: plain ⌘C belongs to «Правка» → «Скопировать» and must keep
                 // working on a selection inside the source editor. This copies the whole
                 // translation, which is a different action and deserves a different key.
-                Button("Скопировать перевод") { Task { await translation.copyToPasteboard() } }
+                // Both read the same `PrimaryAction` the toolbar does. Before this ⇧⌘C was
+                // disabled by the *text* model's emptiness while a file's translation sat on
+                // screen, and «Очистить исходник» acted on a pane that was not visible.
+                Button("Скопировать перевод") { Task { await action.copy() } }
                     .keyboardShortcut("c", modifiers: [.command, .shift])
-                    .disabled(translation.translatedText.isEmpty)
-                Button("Очистить исходник") { translation.sourceText = "" }
-                    .disabled(translation.sourceText.isEmpty || translation.state == .running)
+                    .disabled(!action.canCopy)
+                Button("Очистить исходник", action: action.clear)
+                    .disabled(!action.canClear)
             }
 
             // In «Окно», beside the window list, because that is what it does. It duplicates

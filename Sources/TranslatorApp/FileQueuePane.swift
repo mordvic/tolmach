@@ -38,6 +38,15 @@ struct FileQueuePane: View {
                                      onSaveAs: { saveAs(job) },
                                      onReveal: { reveal(job) })
                             .tag(job.id)
+                            // The one way a row leaves the queue. The spec promises an
+                            // unreadable file «can be removed», and until now nothing
+                            // could remove anything — `remove(_:)` existed and no view
+                            // called it. Refused mid-run by the model, so a задание cannot
+                            // vanish from under the task translating it.
+                            .contextMenu {
+                                Button("Убрать из очереди") { queue.remove(job.id) }
+                                    .disabled(!queue.canChangeMode)
+                            }
                     }
                 }
                 .listStyle(.inset)

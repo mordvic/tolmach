@@ -74,7 +74,8 @@ func makeQueueModel(_ client: LLMClient,
                           // Saving is TranslatedFileWriter's; here it always succeeds and
                           // reports where, so these tests never touch a filesystem.
                           save: { job, _ in .saved(job.url.appendingPathExtension("ru")) },
-                          saveAs: { _, url in .saved(url) })
+                          saveAs: { _, url in .saved(url) },
+                          pasteboard: NSPasteboard(name: .init("queue-\(prefix)")))
 }
 
 func queueJob(_ name: String, _ text: String) -> FileJob {
@@ -660,4 +661,97 @@ private func savingModel(_ prefix: String,
     await run.value
 
     #expect(!model.isAwaitingTerms)
+}
+
+// MARK: - The controls that were blind to the mode
+
+@MainActor @Test func theQueueTranslatesIntoTheToolbarsTargetAndNotTheSettingsRule() async {
+    // Three pickers are drawn on the batch screen. Before this they configured nothing: the
+    // queue read settings.targetLanguage(forDetected:) and settings.defaultTone, so a user
+    // who chose «В: немецкий» got Russian and had no way to find out why.
+    let client = QueueClient(replies: ["перевод"])
+    let model = makeQueueModel(client, prefix: "queue-override-target")
+    model.add([queueJob("a.md", "The resource is published.")])
+
+    await model.run(source: nil, target: .de, tone: .technical)
+
+    #expect(model.jobs[0].resolvedTarget == .de)
+}
+
+@MainActor @Test func withNoOverrideTheQueueStillFollowsTheSettingsRule() async {
+    let client = QueueClient(replies: ["перевод"])
+    let model = makeQueueModel(client, prefix: "queue-override-none")
+    model.add([queueJob("a.md", "The resource is published.")])
+
+    await model.run()
+
+    // English text, default settings: into the primary language.
+    #expect(model.jobs[0].resolvedTarget == .ru)
+}
+
+@MainActor @Test func theNameASavedFileGetsFollowsTheTargetTheRunActuallyUsed() async {
+    // Otherwise «Сохранить как…» would suggest «a.ru.md» for a file translated into German.
+    let client = QueueClient(replies: ["перевод"])
+    let model = makeQueueModel(client, prefix: "queue-override-name")
+    model.add([queueJob("a.md", "The resource is published.")])
+
+    await model.run(source: nil, target: .de, tone: nil)
+
+    #expect(model.suggestedName(for: model.jobs[0].id) == "a.de.md")
+}
+
+@MainActor @Test func copyingInFilesModePutsTheSelectedFilesTranslationOnTheBoard() async {
+    let board = NSPasteboard(name: .init("queue-copy-\(UUID().uuidString)"))
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "queue-copy"))
+    let model = FileQueueModel(translator: Translator(client: QueueClient(replies: ["первый", "второй"])),
+                               settings: settings, glossary: scratchGlossary(),
+                               save: { job, _ in .saved(job.url) },
+                               saveAs: { _, url in .saved(url) },
+                               pasteboard: board)
+    model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
+    await model.run()
+
+    model.selection = model.jobs[1].id
+    await model.copySelection()
+
+    #expect(board.string(forType: .string) == "второй")
+}
+
+@MainActor @Test func thePrimaryActionCopiesWhateverTheVisibleModeIsShowing() async {
+    let client = QueueClient(replies: ["перевод файла"])
+    let queue = makeQueueModel(client, prefix: "primary-copy")
+    queue.add([queueJob("a.md", "first")])
+    await queue.run()
+    let text = makeTextModel("primary-copy-text")
+
+    // The text pane is empty and the queue has a translation on screen: «Скопировать» must
+    // be lit in «Файлы» and dark in «Текст». It used to be lit in both and act on the text
+    // model in both, so pressing it in «Файлы» was a silent no-op.
+    #expect(PrimaryAction.forMode(.files, text: text, queue: queue).canCopy)
+    #expect(!PrimaryAction.forMode(.text, text: text, queue: queue).canCopy)
+}
+
+@MainActor @Test func clearingTheSourceIsOfferedOnlyWhereThereIsASourceToClear() async {
+    let queue = makeQueueModel(QueueClient(replies: []), prefix: "primary-clear")
+    let text = makeTextModel("primary-clear-text")
+    text.sourceText = "что-то"
+
+    #expect(PrimaryAction.forMode(.text, text: text, queue: queue).canClear)
+    // «Очистить исходник» names the text pane. In «Файлы» that pane is not on screen, and
+    // repurposing the item to empty the queue would throw away translations that may not
+    // be saved yet — without a visible control saying so.
+    #expect(!PrimaryAction.forMode(.files, text: text, queue: queue).canClear)
+}
+
+@MainActor @Test func aRowCanBeTakenOutOfTheQueue() async {
+    let model = makeQueueModel(QueueClient(replies: []), prefix: "queue-remove")
+    var refused = queueJob("broken.pdf", "")
+    refused.state = .unreadable
+    model.add([queueJob("a.md", "first"), refused])
+
+    // The spec promises an unreadable file «can be removed», and until now nothing could
+    // remove anything: `remove(_:)` existed and no view called it.
+    model.remove(model.jobs[1].id)
+
+    #expect(model.jobs.map { $0.url.lastPathComponent } == ["a.md"])
 }

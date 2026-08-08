@@ -4,23 +4,36 @@ import AppKit
 import UniformTypeIdentifiers
 import TranslationCore
 
-/// What «Перевести» / «Отмена» does right now — one answer, read by three controls.
+/// What every mode-sensitive control does right now — one answer, read by all of them.
 ///
-/// The toolbar button, the «Перевод» menu's ⌘↩ and its ⌘. all have to agree about which
-/// model they are driving, and in «Файлы» that is not the one they were written against:
-/// all three reached `TranslationViewModel` directly. Left alone, «Файлы» would have had a
-/// button that ran an empty text model and returned, no «Отмена» at all, and two dead
-/// keyboard shortcuts — a queue that could be neither started nor stopped.
+/// The toolbar's «Перевести»/«Отмена», its «Скопировать», the «Перевод» menu's ⌘↩, ⌘.,
+/// ⇧⌘C and «Очистить исходник» all have to agree about which model they are driving, and in
+/// «Файлы» that is not the one they were written against: every one of them reached
+/// `TranslationViewModel` directly.
 ///
-/// A value rather than three copies of a condition, for `canSwapLanguages`' reason: a
-/// control has to answer before it is pressed, and three restatements of one rule is three
-/// places for a fourth mode to be forgotten.
+/// Each of those was a real defect, and they are worth naming because they were invisible
+/// to the tests that existed. «Перевести» ran an empty text model and returned. «Отмена»
+/// never appeared. «Скопировать» was lit — its `disabled` came from the *displayed* text —
+/// and copied the text model's empty translation, which `GeneralPasteboard.write` drops, so
+/// pressing it did nothing at all. ⇧⌘C was disabled while a translation sat on screen.
+///
+/// A value rather than a condition restated at each site, for `canSwapLanguages`' reason: a
+/// control has to answer before it is pressed, and six restatements of one rule is six
+/// places for a third mode to be forgotten.
 @MainActor
 struct PrimaryAction {
     let isRunning: Bool
     let canStart: Bool
     let start: () async -> Void
     let cancel: () -> Void
+    let canCopy: Bool
+    let copy: () async -> Void
+    /// «Очистить исходник» names the *text* pane, and in «Файлы» that pane is not on
+    /// screen. Repurposing the item to empty the queue would throw away translations that
+    /// may not be saved yet, from a menu item with no visible counterpart — so it is simply
+    /// not offered there. Rows leave the queue one at a time, through their own context menu.
+    let canClear: Bool
+    let clear: () -> Void
 
     static func forMode(_ mode: SourceMode,
                         text: TranslationViewModel,
@@ -31,7 +44,11 @@ struct PrimaryAction {
                 isRunning: text.state == .running,
                 canStart: !text.sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                 start: { await text.translate() },
-                cancel: { text.cancel() })
+                cancel: { text.cancel() },
+                canCopy: !text.translatedText.isEmpty,
+                copy: { await text.copyToPasteboard() },
+                canClear: !text.sourceText.isEmpty && text.state != .running,
+                clear: { text.sourceText = "" })
         case .files:
             PrimaryAction(
                 isRunning: queue.isRunning,
@@ -39,8 +56,17 @@ struct PrimaryAction {
                 // `.unreadable` задание is not something to translate either — the queue
                 // skips it — so it does not light the button on its own.
                 canStart: queue.jobs.contains { $0.state != .finished && $0.state != .unreadable },
-                start: { await queue.run() },
-                cancel: { queue.cancel() })
+                // The toolbar's three pickers are drawn on this screen and must configure
+                // this run. They are read from the text model because that is what the
+                // toolbar binds to — one owner for those values, passed in per run.
+                start: { await queue.run(source: text.sourceOverride,
+                                         target: text.targetOverride,
+                                         tone: text.toneOverride) },
+                cancel: { queue.cancel() },
+                canCopy: !queue.selectedText.isEmpty,
+                copy: { await queue.copySelection() },
+                canClear: false,
+                clear: {})
         }
     }
 }
@@ -84,6 +110,9 @@ struct MainWindowView: View {
     /// in this view. `TranslatorApp` owns it. Not a setting either — it is where the user is
     /// looking right now, not a preference to survive a relaunch.
     @Binding var mode: SourceMode
+
+    /// Every mode-sensitive control in this window reads this one value.
+    private var action: PrimaryAction { .forMode(mode, text: model, queue: queue) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -131,18 +160,15 @@ struct MainWindowView: View {
                 // — puts one document's text under another document's name.
                 TranslationPane(title: mode == .text ? "Перевод" : queue.selectedTitle,
                                 text: mode == .text ? model.translatedText : queue.selectedText,
-                                isRunning: PrimaryAction.forMode(mode, text: model, queue: queue).isRunning,
-                                onCopy: onCopy)
+                                isRunning: action.isRunning,
+                                onCopy: { Task { await action.copy() } })
             }
             Divider()
             RunStatusBar(model: model, status: status,
                          queue: mode == .files ? queue : nil,
                          glossaryProblem: glossary.lastProblem,
                          onMute: mute,
-                         onRetry: {
-                             let action = PrimaryAction.forMode(mode, text: model, queue: queue)
-                             Task { await action.start() }
-                         })
+                         onRetry: { Task { await action.start() } })
         }
         .frame(minWidth: 700, minHeight: 480)
         .toolbar { toolbar }
@@ -201,7 +227,6 @@ struct MainWindowView: View {
             // Reads `PrimaryAction` rather than `model.state`, so the button and the two
             // menu items cannot disagree about which model they drive. In «Файлы» reading
             // the text model would run an empty pane and return.
-            let action = PrimaryAction.forMode(mode, text: model, queue: queue)
             if action.isRunning {
                 Button("Отмена") { action.cancel() }
             } else {

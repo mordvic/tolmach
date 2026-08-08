@@ -1,6 +1,8 @@
 // Sources/TranslatorApp/FileQueueModel.swift
 import Foundation
 import Observation
+import AppKit
+import TextCapture
 import TranslationCore
 
 /// The file queue: what is in it, what is running, and what happened to each file.
@@ -31,6 +33,9 @@ final class FileQueueModel {
     /// on collisions: that one must never overwrite, this one must — the save panel has
     /// already asked.
     private let saveAs: (String, URL) -> SaveOutcome
+    /// Injected so tests can write to a board of their own rather than the real clipboard —
+    /// same reasoning and the same default as `TranslationViewModel.pasteboard`.
+    private let pasteboard: NSPasteboard
 
     private var current: Task<TranslationOutcome, Error>?
 
@@ -61,12 +66,23 @@ final class FileQueueModel {
 
     init(translator: Translator, settings: AppSettings, glossary: GlossaryStore,
          save: @escaping (FileJob, String) -> SaveOutcome,
-         saveAs: @escaping (String, URL) -> SaveOutcome) {
+         saveAs: @escaping (String, URL) -> SaveOutcome,
+         pasteboard: NSPasteboard = .general) {
         self.translator = translator
         self.settings = settings
         self.glossary = glossary
         self.save = save
         self.saveAs = saveAs
+        self.pasteboard = pasteboard
+    }
+
+    /// «Скопировать» in «Файлы».
+    ///
+    /// Copies what the pane is *showing* — the selected задание — and delegates to
+    /// `GeneralPasteboard.write` like the window's and the panel's copies do, so there is
+    /// one write to test rather than three to keep in step.
+    func copySelection() async {
+        await GeneralPasteboard.write(selectedText, to: pasteboard)
     }
 
     /// Whether this задание still has a translation that is not on disk anywhere.
@@ -114,9 +130,12 @@ final class FileQueueModel {
         }
     }
 
-    /// The language a задание is translated into, by the same rule the run applies.
+    /// The language a задание is translated into.
+    ///
+    /// The run's own answer once it has one, because that is the only place the toolbar's
+    /// override was known; the settings rule only as a guess for a задание that has not run.
     private func target(for job: FileJob) -> Language {
-        settings.targetLanguage(forDetected: LanguageDetector.detect(job.text))
+        job.resolvedTarget ?? settings.targetLanguage(forDetected: LanguageDetector.detect(job.text))
     }
 
     func add(_ new: [FileJob]) {
@@ -212,7 +231,11 @@ final class FileQueueModel {
     ///
     /// Started by «Перевести» and never by a drop: a drop that immediately began minutes
     /// of work would make a mis-aimed drag expensive to undo.
-    func run() async {
+    /// - Parameters describe the toolbar's three pickers. They are passed in per run rather
+    ///   than stored, because the toolbar belongs to the window and one owner for those
+    ///   values is what stops two models disagreeing about which language was chosen. Nil
+    ///   means «no override», and the settings rule applies — exactly as in the text pane.
+    func run(source: Language? = nil, target: Language? = nil, tone: Tone? = nil) async {
         guard !isRunning else { return }
         isRunning = true
         pausedAfterWarnings = false
@@ -233,7 +256,7 @@ final class FileQueueModel {
             // Looked up by id rather than carried as an index: `remove(_:)` is refused
             // while running, but nothing here should depend on that from a distance.
             guard let index = jobs.firstIndex(where: { $0.id == id }) else { continue }
-            if await translate(at: index) { return }
+            if await translate(at: index, source: source, target: target, tone: tone) { return }
         }
     }
 
@@ -261,7 +284,8 @@ final class FileQueueModel {
     }
 
     /// - Returns: whether the queue should stop here.
-    private func translate(at index: Int) async -> Bool {
+    private func translate(at index: Int, source: Language?, target overrideTarget: Language?,
+                           tone overrideTone: Tone?) async -> Bool {
         let job = jobs[index]
         // The selection is deliberately **not** moved here. Following the running file
         // would yank a finished translation out from under whoever is reading it, and the
@@ -271,7 +295,15 @@ final class FileQueueModel {
                                                          partsTotal: job.partsTotal,
                                                          documentTermCount: 0))
 
-        let target = target(for: job)
+        let detected = source ?? LanguageDetector.detect(job.text)
+        let target = overrideTarget ?? settings.targetLanguage(forDetected: detected)
+        // Recorded before the run rather than after it, so «Сохранить как…» suggests the
+        // right name even for a задание that was interrupted or failed.
+        jobs[index].resolvedTarget = target
+        // Resolved here, on the main actor, rather than inside the run's `Task`: reading
+        // `settings` from there is what Swift 6 flags as sending a non-Sendable value, and
+        // the value is a fact about the moment the run started anyway.
+        let tone = overrideTone ?? settings.defaultTone
         let options = ChatOptions(model: settings.resolvedBatchModel,
                                   temperature: settings.temperature,
                                   keepAlive: settings.keepAlive)
@@ -307,7 +339,7 @@ final class FileQueueModel {
 
         let run = Task { [translator, glossary, settings] in
             try await translator.translate(
-                text: job.text, target: target, tone: settings.defaultTone,
+                text: job.text, target: target, tone: tone,
                 userGlossary: glossary.glossary, options: options,
                 maxChunkCharacters: settings.chunkSize,
                 ignoredTerms: glossary.mutedSet,

@@ -32,6 +32,14 @@ struct FileJob: Identifiable {
     /// them, and one flag on `FileQueueModel` would report the last file's luck for all of
     /// them.
     var documentTermsUnavailable = false
+    /// The language this задание was actually translated into — the toolbar's override if
+    /// there was one, the settings rule otherwise.
+    ///
+    /// Stored for `TranslationViewModel.resolvedTarget`'s reason: the rule that produced it
+    /// is not re-derivable later. «Сохранить как…» suggests a name from it, and a file
+    /// translated into German must not be offered as `a.ru.md` because the settings say
+    /// Russian.
+    var resolvedTarget: Language?
 
     enum State: Equatable {
         case queued
