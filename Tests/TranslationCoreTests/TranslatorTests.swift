@@ -397,13 +397,21 @@ private final class TokenCollector: @unchecked Sendable {
     let tail = String(repeating: "x", count: 60)
     let fake = FakeLLMClient(responses: ["\(firstLine)\n\(tail)"], delayPerToken: .milliseconds(4))
     let translator = Translator(client: fake)
+    let clock = EmissionClock()
     let outcome = try await translator.translate(
         text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
-        options: ChatOptions(model: "test"), maxChunkCharacters: 900)
-    #expect(outcome.timeToFirstTokenMS != nil)
-    let ttft = outcome.timeToFirstTokenMS ?? .infinity
-    #expect(ttft > outcome.totalMS * 0.1)
-    #expect(ttft < outcome.totalMS * 0.5)
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900,
+        onToken: { _ in clock.stamp() })
+    let ttft = try #require(outcome.timeToFirstTokenMS)
+    // Compared against the moment a consumer of `onToken` actually saw the first character,
+    // measured by this test on the same run — which is the event the stamp is *defined* as,
+    // so the two must agree whatever the machine is doing. Both failure modes the comment
+    // above describes are still caught: the old wire-token stamp puts `ttft` near zero
+    // against a first emission after twenty tokens, and a stamp smeared out to chunk
+    // completion puts it at `totalMS`, several times the first emission.
+    let firstEmission = try #require(clock.firstEmissionMS)
+    #expect(ttft >= firstEmission * 0.5)
+    #expect(ttft <= firstEmission * 1.5)
 }
 
 // MARK: - Fix 1 refinement: flush on normalised length too, not only on "\n".
@@ -1058,6 +1066,36 @@ private final class DraftBox: @unchecked Sendable {
     #expect(!outcome.documentGlossaryAttempted)
 }
 
+/// Wall-clock milliseconds around a call, and the moment `onToken` first fired.
+///
+/// Every timing assertion in this file compares two measurements **of the same run** rather
+/// than one measurement against a constant. A constant measures the machine: the three tests
+/// below asserted «< 300» against a 300 ms sleep and «< totalMS * 0.5» against a fixed token
+/// delay, which held on this laptop and failed on a shared CI runner three times in eight
+/// runs — 386 against 300, 334 against 300, and a ratio of 0.57 against 0.5. Both sides of a
+/// comparison taken from one run grow together when the runner is loaded, so the arithmetic
+/// survives it while still failing on the behaviour each test names.
+final class EmissionClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private let start = Date()
+    private var first: Date?
+
+    /// Called from `onToken`; only the first call is kept.
+    func stamp() {
+        lock.lock(); defer { lock.unlock() }
+        if first == nil { first = Date() }
+    }
+
+    /// Milliseconds from construction to the first `onToken`, or nil if none ever came.
+    var firstEmissionMS: Double? {
+        lock.lock(); defer { lock.unlock() }
+        return first.map { $0.timeIntervalSince(start) * 1000 }
+    }
+
+    /// Milliseconds from construction to now.
+    var elapsedMS: Double { Date().timeIntervalSince(start) * 1000 }
+}
+
 @Test func timeSpentInTheReviewSheetIsNotCountedAsTranslationTime() async throws {
     // «Готово за N мс» and a queue row's «✓ готово за …» are read as how long the machine
     // took. With the gate on, a file the model translated in a moment while its reader
@@ -1068,6 +1106,7 @@ private final class DraftBox: @unchecked Sendable {
     ])
     let translator = Translator(client: fake)
 
+    let clock = EmissionClock()
     let outcome = try await translator.translate(
         text: multiChunkText, target: .ru, tone: .neutral, userGlossary: nil,
         options: ChatOptions(model: "test"), maxChunkCharacters: 200,
@@ -1076,8 +1115,12 @@ private final class DraftBox: @unchecked Sendable {
             return draft.documentEntries
         })
 
-    // The fake answers instantly, so everything but the deliberation is noise.
-    #expect(outcome.totalMS < 300)
+    // The deliberation really happened — it is in the wall clock — and really is not in
+    // `totalMS`. Stated as the gap between the two, which is what «not counted» means; the
+    // 250 is the 300 ms sleep less the slop a `Task.sleep` is allowed. Asserting
+    // «totalMS < 300» instead measured the runner: it says everything *except* the sleep
+    // must fit inside the sleep's own duration, which is a claim about the machine.
+    #expect(clock.elapsedMS - outcome.totalMS >= 250)
 }
 
 @Test func theTwoTimingsAreMeasuredOnOneClock() async throws {
@@ -1089,6 +1132,7 @@ private final class DraftBox: @unchecked Sendable {
         "resource => ресурс",
         "перевод один", "перевод два", "перевод три", "перевод четыре",
     ])
+    let clock = EmissionClock()
     let outcome = try await Translator(client: fake).translate(
         text: multiChunkText, target: .ru, tone: .neutral, userGlossary: nil,
         options: ChatOptions(model: "test"), maxChunkCharacters: 200,
@@ -1098,7 +1142,9 @@ private final class DraftBox: @unchecked Sendable {
         })
 
     let ttft = try #require(outcome.timeToFirstTokenMS)
-    #expect(ttft < 300)
+    // Same subtraction as above, on the other timing: the reader's deliberation lies between
+    // the start and the first token, so a TTFT that still carried it would leave no gap.
+    #expect(clock.elapsedMS - ttft >= 250)
     #expect(ttft <= outcome.totalMS)
 }
 
