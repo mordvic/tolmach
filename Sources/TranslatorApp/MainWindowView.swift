@@ -208,6 +208,17 @@ struct MainWindowView: View {
         }
         .frame(minWidth: 700, minHeight: 480)
         .toolbar { toolbar }
+        // The window's title is **not** drawn, and the drawing is deliberate about it: every
+        // settings pane in it has a centred title bar of its own, and the main window has
+        // none — the toolbar is full, and «Толмач» in the middle of it says nothing the menu
+        // bar's own glyph does not.
+        //
+        // Without this it is not merely present, it is *interleaved*: macOS lays the title
+        // out after the `.navigation` group, so «Толмач» appeared between the tone picker and
+        // «Перевести», reading as a fourth control. Adding the three labels above makes that
+        // row wider still, which is what turned this from a cosmetic difference into one
+        // worth reaching into AppKit for.
+        .background(WindowTitleHidden())
         // One sheet, three raisers: the window's own run, the queue's, and — through
         // `TranslatorApp` — the ⌥⌘T panel, which escalates here rather than editing text
         // fields inside a `.nonactivatingPanel`. Whichever model is asking, the surface is
@@ -271,6 +282,19 @@ struct MainWindowView: View {
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .navigation) {
+            // **The three labels are drawn, not declared.** A `Picker`'s own title is not
+            // rendered inside a toolbar — SwiftUI drops it and keeps it only as the
+            // accessibility label — so the row shipped as three unlabelled pop-ups reading
+            // «Определить», «По правилу», «По умолчанию», with nothing on screen saying
+            // which was the source, which the target and which the tone. The drawing has
+            // «Из», «В» and «Тон» beside them, and this is the one thing in the whole
+            // comparison that no reading of the source could catch: the code says
+            // `Picker("Из", …)`, and only a screenshot shows that «Из» never arrives.
+            //
+            // `.labelsHidden()` on each picker for the reason `GlossaryHeader` uses it: the
+            // title stays as the control's accessibility label, so VoiceOver still reads
+            // «Из» and does not meet the word twice.
+            Text("Из").foregroundStyle(.secondary)
             // `russianName`, not `shortCode`. The settings name these languages in words and
             // this window used to name them in codes — one vocabulary under two names, which
             // is exactly what `CONTEXT.md` exists to prevent.
@@ -278,6 +302,7 @@ struct MainWindowView: View {
                 Text("Определить").tag(Language?.none)
                 ForEach(Language.allCases, id: \.self) { Text($0.russianName).tag(Language?.some($0)) }
             }
+            .labelsHidden()
             Button {
                 action.swap()
             } label: {
@@ -285,14 +310,18 @@ struct MainWindowView: View {
             }
             .disabled(!action.canSwap)
             .help("Перевести в обратную сторону")
+            Text("В").foregroundStyle(.secondary)
             Picker("В", selection: $model.targetOverride) {
                 Text("По правилу").tag(Language?.none)
                 ForEach(Language.allCases, id: \.self) { Text($0.russianName).tag(Language?.some($0)) }
             }
+            .labelsHidden()
+            Text("Тон").foregroundStyle(.secondary)
             Picker("Тон", selection: $model.toneOverride) {
                 Text("По умолчанию").tag(Tone?.none)
                 ForEach(Tone.allCases, id: \.self) { Text($0.russianName).tag(Tone?.some($0)) }
             }
+            .labelsHidden()
         }
         // Neither button declares a keyboard shortcut any more, and that is the point of the
         // change rather than a side effect. ⌘↩ and ⌘. now live once, in the «Перевод» menu
@@ -397,6 +426,34 @@ struct MainWindowView: View {
         } catch {
             glossary.lastProblem = "Не удалось сохранить глоссарий, «\(term)» скрыт только до перезапуска: "
                 + error.localizedDescription
+        }
+    }
+}
+
+/// Hides the window's *displayed* title without emptying `NSWindow.title`.
+///
+/// `titleVisibility` and not `.navigationTitle("")`, and the difference is the whole reason
+/// this type exists rather than a one-line modifier. `navigationTitle` sets the title itself,
+/// and that same string is what the «Окно» menu lists the window under — so emptying it to
+/// clear the toolbar would leave a nameless row in a menu this app deliberately adds
+/// «Открыть окно перевода» to. `titleVisibility` governs only whether the title bar draws the
+/// string; the window keeps its name for the menu, for Mission Control and for VoiceOver.
+///
+/// `viewDidMoveToWindow` and not a `Task` scheduled from `makeNSView`: a view has no window at
+/// the moment it is made, so the assignment has to wait for one, and this is the callback that
+/// *is* that moment. Anything time-based would be a guess at how long SwiftUI takes to install
+/// the hierarchy, and would silently do nothing on the run where it guessed short.
+///
+/// It re-applies on every move rather than once, because a window is not the only thing a view
+/// can be moved into and back out of — a full-screen transition replaces it.
+private struct WindowTitleHidden: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { TitleHidingView() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class TitleHidingView: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            window?.titleVisibility = .hidden
         }
     }
 }

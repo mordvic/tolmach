@@ -222,6 +222,26 @@ failure makes a settings window swallow its first click. macOS 14 replaced unila
 activation with the cooperative `NSRunningApplication.activate(from:options:)`.
 → `activateThisApp()` in `Sources/TranslatorApp/TranslatorApp.swift`
 
+**A `Picker`'s title is not drawn inside a `.toolbar`.** SwiftUI keeps it as the control's
+accessibility label and renders nothing, so `Picker("Из", …)` in a toolbar ships as a bare
+pop-up. Nothing in the source says so — the title is right there in the call — and no test in
+this project can see it; it was found by putting a screenshot of the running app next to the
+drawing. Draw the label as its own `Text` and add `.labelsHidden()` to keep the accessibility
+label from being read twice. → the toolbar in `Sources/TranslatorApp/MainWindowView.swift`
+
+**Hiding a window's title is `titleVisibility`, not `.navigationTitle("")`.** The title string
+is also what the «Окно» menu lists the window under, so emptying it to clear a crowded toolbar
+leaves a nameless row in that menu. `NSWindow.titleVisibility = .hidden` stops the title bar
+drawing the string and keeps the name for the menu, Mission Control and VoiceOver. Apply it
+from `viewDidMoveToWindow` — a view has no window when it is made, and anything time-based is a
+guess at how long SwiftUI takes to install the hierarchy.
+→ `WindowTitleHidden` in `Sources/TranslatorApp/MainWindowView.swift`
+
+**Where SwiftUI puts the window title, relative to your toolbar items.** It lays the title out
+*after* the `.navigation` group, so a full navigation group leaves the title sitting between
+the last control and the trailing button, reading as a control itself.
+→ `Sources/TranslatorApp/MainWindowView.swift`
+
 **`.nonactivatingPanel` grants key status; `canBecomeKey` only permits it.** A `.titled`
 `NSPanel` answers `canBecomeKey` true with *and* without the style bit — the bit is what lets
 the panel take key without activating the app. → `Sources/TranslatorApp/TranslationPanel.swift`
