@@ -234,6 +234,23 @@ final class FileQueueModel {
         if pausedAfterWarnings, !hasWorkLeft { pausedAfterWarnings = false }
     }
 
+    /// The one-line instruction under the list, or nil when there is nothing to say.
+    ///
+    /// A rule on the model rather than a condition in the view, because it has to agree with
+    /// two other surfaces at once. It says «продолжить» rather than «начать» once anything
+    /// has been attempted — a queue holding a failed row was inviting the user to «начать» —
+    /// and it says nothing at all while `statusLine` is already instructing, which is how
+    /// «…чтобы начать» came to sit directly under «…чтобы продолжить».
+    ///
+    /// The *health* half of «is that button pressable» is deliberately not here: Ollama's
+    /// state belongs to the window, so the view pairs this with `PrimaryAction`'s answer.
+    var startHint: String? {
+        guard !isRunning, hasWorkLeft, !pausedAfterWarnings else { return nil }
+        let attempted = jobs.contains { $0.state != .queued && $0.state != .unreadable }
+        return attempted ? "Нажмите «Перевести», чтобы продолжить"
+                         : "Нажмите «Перевести», чтобы начать"
+    }
+
     /// Whether any задание is still waiting to be translated. The same question
     /// `PrimaryAction`'s `canStart` asks, so the pause above and that button cannot
     /// disagree about whether there is anything to continue.
@@ -364,24 +381,25 @@ final class FileQueueModel {
         cancelled = false
         defer { isRunning = false }
 
-        // **The work list is decided once, here.** `.interrupted` and `.failed` are in it
-        // on purpose — resuming retries what did not work, because a queue that steps over
-        // a file it failed to translate reports success for work it never performed — and
-        // `.unreadable` is not, because there is nothing to retry.
+        // The work list is re-asked after every pass, but never for a задание **this run**
+        // has already attempted. Both halves are load-bearing, and each closes the failure
+        // the other one opens.
         //
-        // Re-scanning instead of snapshotting is a hang, not a slowdown: `.failed` is not
-        // `.finished`, so a loop asking «what is unfinished?» after each задание would
-        // find the one it had just failed and translate it again, forever, on the main
-        // actor. `aFileThatFailsIsNotRetriedWithinTheSameRun` is the guard.
-        // Re-asked after each pass, but never for a задание this run has already attempted.
+        // `attempted` is what makes re-asking safe. `.failed` is not `.finished`, so a plain
+        // re-scan finds the задание it has just failed and translates it again, forever, on
+        // the main actor — `aFileThatFailsIsNotRetriedWithinTheSameRun` is that guard.
         //
-        // A single snapshot missed files dropped *while* the queue was going: a drop is
-        // accepted at once and its reading and planning finish on a detached task some
-        // hundreds of milliseconds later, so the rows arrived after the list was taken and
-        // the run walked straight past them — stopping with «в очереди» still on screen.
-        // Re-scanning *without* `attempted` is the other failure, and this file already
-        // guards against it once: `.failed` is not `.finished`, so a plain re-scan would
-        // find the задание it had just failed and translate it again, forever.
+        // Re-asking is what makes the list complete. A задание can appear *after* the run
+        // began, and the window is narrower than «dropped mid-run»: both doors into the
+        // queue are shut while it runs, but a drop accepted a moment **before** «Перевести»
+        // finishes reading and planning on a detached task hundreds of milliseconds later.
+        // With a single snapshot those rows arrived too late to be seen, and the run walked
+        // past them and stopped with «в очереди» on screen.
+        //
+        // `.interrupted` and `.failed` are in the list on purpose: resuming retries what did
+        // not work, because a queue that steps over a file it failed to translate reports
+        // success for work it never performed. `.unreadable` is not — there is nothing to
+        // retry.
         var attempted: Set<FileJob.ID> = []
         while true {
             let pending = jobs.filter {

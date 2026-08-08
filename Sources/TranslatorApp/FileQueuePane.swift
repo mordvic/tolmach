@@ -18,6 +18,11 @@ enum SourceMode: String, CaseIterable, Identifiable {
 /// The window's left half in «Файлы»: the queue.
 struct FileQueuePane: View {
     @Bindable var queue: FileQueueModel
+    /// Whether «Перевести» can actually be pressed — `PrimaryAction`'s answer, which
+    /// includes Ollama's health. Without it the hint below pointed at a greyed-out button
+    /// whenever the server was down: the same «instruction for a control that does nothing»
+    /// it was moved here to stop being.
+    let canStart: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -55,8 +60,8 @@ struct FileQueuePane: View {
                     }
                 }
                 .listStyle(.inset)
-                if !queue.isRunning, queue.hasWorkLeft {
-                    Text("Нажмите «Перевести», чтобы начать")
+                if canStart, let hint = queue.startHint {
+                    Text(hint)
                         .font(.caption).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)
                         .padding(.top, 6)

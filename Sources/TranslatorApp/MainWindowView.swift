@@ -175,7 +175,7 @@ struct MainWindowView: View {
                     if mode == .text {
                         SourceEditor(model: model)
                     } else {
-                        FileQueuePane(queue: queue)
+                        FileQueuePane(queue: queue, canStart: status.isHealthy && action.canStart)
                     }
                 }
                 // Dispatches on mode like the primary action does. Wiring this to the text

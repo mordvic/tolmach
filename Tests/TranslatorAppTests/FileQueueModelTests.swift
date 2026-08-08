@@ -1254,10 +1254,11 @@ private func savingModel(_ prefix: String,
 
 // MARK: - Review round 12
 
-@MainActor @Test func aFileAddedWhileTheQueueRunsIsPickedUpRatherThanLeftBehind() async {
-    // A drop is accepted at once and its reading finishes on a detached task some
-    // hundreds of milliseconds later. With a single snapshot the run walked past anything
-    // that arrived after it and stopped with «в очереди» still on screen.
+@MainActor @Test func aFileThatArrivesAfterTheRunBeganIsPickedUpRatherThanLeftBehind() async {
+    // Not «dropped mid-run» — both doors into the queue are shut while it runs. The window
+    // is a drop accepted a moment *before* «Перевести», whose reading and planning finish on
+    // a detached task hundreds of milliseconds later. With a single snapshot those rows
+    // arrived too late to be seen and the run stopped with «в очереди» on screen.
     let client = QueueClient(replies: ["один", "два"], paced: true)
     let model = makeQueueModel(client, prefix: "queue-added-midrun")
     model.add([queueJob("a.md", "first")])
@@ -1282,4 +1283,44 @@ private func savingModel(_ prefix: String,
 
     #expect(client.callCount == 2)
     #expect(model.jobs.allSatisfy { if case .failed = $0.state { true } else { false } })
+}
+
+// MARK: - Review round 13
+
+@MainActor @Test func theHintSaysStartOnlyBeforeAnythingHasBeenTried() async {
+    let client = QueueClient(replies: ["", "второй"])
+    let model = makeQueueModel(client, prefix: "queue-hint")
+    model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
+    #expect(model.startHint == "Нажмите «Перевести», чтобы начать")
+
+    await model.run()
+
+    // a.md failed and is still work; inviting the user to «начать» would be wrong.
+    #expect(model.hasWorkLeft)
+    #expect(model.startHint == "Нажмите «Перевести», чтобы продолжить")
+}
+
+@MainActor @Test func theHintSaysNothingWhenTheStatusBarIsAlreadyInstructing() async {
+    // Two instructions for one button, on screen at once: the bar reads «…чтобы
+    // продолжить» while the pane below it read «…чтобы начать».
+    let client = QueueClient(replies: [replyWithoutTheLink, "второй"])
+    let model = makeQueueModel(client, prefix: "queue-hint-paused") { $0.stopOnWarnings = true }
+    model.add([queueJob("a.md", sourceWithALink), queueJob("b.md", "second")])
+
+    await model.run()
+
+    #expect(model.pausedAfterWarnings)
+    #expect(model.statusLine != nil)
+    #expect(model.startHint == nil)
+}
+
+@MainActor @Test func theHintSaysNothingWithAnEmptyQueueOrOneThatIsDone() async {
+    let model = makeQueueModel(QueueClient(replies: ["перевод"]), prefix: "queue-hint-empty")
+    #expect(model.startHint == nil)          // nothing to start
+
+    model.add([queueJob("a.md", "first")])
+    #expect(model.startHint != nil)
+    await model.run()
+
+    #expect(model.startHint == nil)          // nothing left
 }
