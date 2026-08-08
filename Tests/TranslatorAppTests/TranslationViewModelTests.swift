@@ -269,7 +269,14 @@ private func makeModel(_ client: LLMClient, pasteboard: NSPasteboard? = nil) -> 
     // A second run that streams real content, then is cancelled mid-flight.
     model.sourceText = String(repeating: "x ", count: 40)
     let run = Task { await model.translate() }
-    try? await Task.sleep(for: .milliseconds(300))
+    // Waited on the **state**, not the clock. A fixed 300 ms race against a token stream is
+    // the shape `waitUntilRunning`'s own doc comment warns against, and it lost: measured 3
+    // failures in ~40 runs at 16× oversubscription, where the second run had not reached the
+    // pane when the cancel landed and both assertions below fired on the *first* run's text.
+    for _ in 0..<20_000 {
+        if !model.translatedText.isEmpty, model.translatedText != "Первый перевод." { break }
+        await Task.yield()
+    }
     model.cancel()
     await run.value
 

@@ -15,7 +15,7 @@ to disk.
 ```bash
 swift build                       # build everything
 swift build --build-tests         # must stay at zero warnings — this is a standing rule
-swift test                        # the whole suite, offline (fake LLMClient), about a second
+swift test                        # the whole suite, offline (fake LLMClient), ~1.5 s
 swift test --filter someTestName  # one test, by name (Swift Testing function names)
 swift test --filter TranslationCoreTests   # one test target
 
@@ -27,8 +27,15 @@ swift run acceptance              # live-Ollama corpus run; MUST run from the pa
 
 No count here on purpose: it went stale twice in one review cycle, and a number nothing
 checks is a contract nobody can keep. What is worth stating is what the line above already
-says — the suite is offline and finishes in about a second, so there is no reason not to
-run it.
+says — the suite is offline and finishes in about a second and a half, so there is no reason
+not to run it. That number has a floor and a reason: one test
+(`aFileInterruptedFromTheTermsSheetDoesNotReportTheReadersDeliberation`) sleeps a deliberate
+second, because the property it pins — that a reader's time in the terms sheet is not reported
+as the machine's — can only be seen by letting real time pass in the sheet. Its two runs go
+concurrently, so the floor is ~1.05 s rather than ~1.1 s, and everything else together is under
+a second. If the suite ever reads much above this, suspect the machine before the code: a
+leaked load generator from an earlier session made the same hardware measure 0.87 s and 3.0 s
+on the same commit.
 
 `swift test` never touches the network. `translate-cli` and `acceptance` do — `acceptance` is
 the deliberately-not-in-CI harness that measures TTFT, markup integrity and term consistency

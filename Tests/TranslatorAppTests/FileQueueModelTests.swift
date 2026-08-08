@@ -1273,8 +1273,25 @@ private final class SaveCall: @unchecked Sendable {
     #expect(model.runningID != model.jobs[1].id)
     sheet?.suppressForRun = true
     sheet?.proceed()
+
+    // Bounded, like its two neighbours. This is a **two-file** queue with the tick set, so
+    // under the defect `aQueueAsksOnceWhenTheUserSaysNotToAskAgain` exists to catch — the
+    // second file re-raising the sheet — a bare `await run.value` waits for a человек who is
+    // not there. Measured with the suppression short-circuit removed: `aQueueAsksOnce…`
+    // alone goes red in 0.10 s, and the **full suite never terminates**, killed at ten
+    // minutes with 565 of 602 done. One forever-suspended `@MainActor` test wedges about
+    // forty others, so a single unbounded wait costs CI the whole job's timeout rather than
+    // a red test. This was the last one in the file.
+    var reappeared: DocumentTermsRequest?
+    for _ in 0..<400 {
+        if model.jobs.allSatisfy({ $0.state == .finished }) { break }
+        if let request = model.pendingTermsRequest, request !== sheet { reappeared = request; break }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
+    reappeared?.proceed()
     await run.value
 
+    #expect(reappeared == nil, "the second файл must not raise a sheet of its own")
     #expect(model.runningID == nil)
 }
 
@@ -1695,7 +1712,8 @@ private final class SaveCall: @unchecked Sendable {
     // on as a ~150 ms sleep, which is exactly what `waitUntilRunning`'s doc comment warns
     // against, and left the test asserting against an **empty** stream.
     //
-    // Measured: with the newline the loop breaks at ~10 000 iterations with the **whole**
+    // Measured: with the newline the loop breaks at 7 500–9 400 yields run alone and ~3 400
+    // inside the full suite — never by exhaustion — with the **whole**
     // reply on the stream — `"второй\nстрока"`, not `"второй\n"`, as this comment first
     // claimed. The newline settles the *shape* of the reply, it does not flush a line:
     // `streamChunkTranslation` decides there is no preamble to strip and then emits the
@@ -1768,8 +1786,9 @@ private final class SaveCall: @unchecked Sendable {
     // and both were tried:
     //
     // - «`elapsedMS < 250`» is a constant, and the machine-work term it has to clear is not
-    //   small: measured 12–189 ms for this fixture, 189 under twelve busy loops, against a
-    //   mutated value of ≥ 300. A 1.3× margin is not a margin.
+    //   small: measured 2–6 ms warm inside the suite but up to 671 ms at 144×
+    //   oversubscription, against a mutated value of ≥ 300. There is no constant that
+    //   separates those.
     // - «`wallMS - elapsedMS >= 250`» compares two clocks, which was the previous shape and
     //   the reason this test passed under its own defect about half the time and *always*
     //   under load: the gap between the two brackets — task scheduling, the off-actor
