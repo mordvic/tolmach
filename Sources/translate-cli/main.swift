@@ -77,7 +77,16 @@ case .failure(let failure): fail(failure.message)
 guard let toRaw = parsed.to, let target = Language(rawValue: toRaw) else {
     fail(parsed.to == nil ? "--to is required" : "--to needs one of ru|en|de|fr|es|pt|it|zh|ja, got \"\(parsed.to!)\"")
 }
-let source = parsed.from.flatMap(Language.init(rawValue:))
+// Failed on loudly, exactly like `--to` above. `flatMap` alone turned a typo into
+// «detect it», so `--from ge` translated from whatever the detector guessed and said
+// nothing — a silent answer to a flag whose whole purpose is to overrule the detector.
+var source: Language?
+if let fromRaw = parsed.from {
+    guard let parsedSource = Language(rawValue: fromRaw) else {
+        fail("--from needs one of ru|en|de|fr|es|pt|it|zh|ja, got \"\(fromRaw)\"")
+    }
+    source = parsedSource
+}
 guard let tone = Tone(rawValue: parsed.tone) else {
     fail("--tone needs one of neutral|formal|casual|technical|literal, got \"\(parsed.tone)\"")
 }
@@ -102,6 +111,12 @@ let chatOptions = ChatOptions(model: model, temperature: 0.2, keepAlive: "30m")
 do {
     let outcome = try await translator.translate(
         text: text, target: target, tone: tone, userGlossary: nil,
+        // Passed. It was parsed at the top and then never read again, so `--from` was
+        // advertised in the usage string and did nothing at all: the prompt, the tagger
+        // `TermExtractor` parses with and the footer's detected language all came from the
+        // detector regardless. Before `translate(source:)` existed there was nowhere to put
+        // it; there is now, and CLAUDE.md says every caller states its language.
+        source: source,
         options: chatOptions, maxChunkCharacters: chunk,
         onToken: { FileHandle.standardOutput.write(Data($0.utf8)) })
     FileHandle.standardOutput.write(Data("\n".utf8))

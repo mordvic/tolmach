@@ -1448,24 +1448,52 @@ private final class SaveCall: @unchecked Sendable {
     #expect(model.jobs.allSatisfy { $0.state == .finished })
 }
 
-@MainActor @Test func theQueueCounterNeverRunsBackwardsWhenAFileFinishes() async {
-    // The finished rows contributed their drop-time estimate while the running one
-    // contributed the engine's real count, so the total shrank the instant a file finished:
-    // «12 частей из 16», then «4 частей из 16». `FileJob.parts` is the one rule both halves
-    // now read.
-    let client = QueueClient(replies: ["один", "два"], paced: true)
-    let model = makeQueueModel(client, prefix: "queue-counter")
-    model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
-    // The estimate every row starts with, before any run has corrected it.
-    let estimated = model.jobs.map(\.parts)
+@MainActor @Test func theQueueCounterNeverRunsBackwardsWhenAFileFinishes() {
+    // Read through `statusLine`, which **is** the queue counter. The first version of this
+    // test asserted only that `actualPartsTotal` had been set and never called `statusLine`
+    // at all — so reverting the fix itself (`$1.parts` back to `$1.partsTotal` in the two
+    // sums) left the whole suite green. TESTING.md's fifth shape, written by the person
+    // who had just fixed the defect.
+    //
+    // Hand-built rather than run, because the defect lives in the *transition*: the numbers
+    // a running задание shows against the numbers the same задание shows one instant after
+    // it finishes. A live run passes through that instant without stopping on it.
+    let model = makeQueueModel(QueueClient(replies: []), prefix: "queue-counter")
 
-    await model.run()
+    // Both estimated at 1 часть when they were dropped and really planned as 3: «размер
+    // части» changed between the drop and the turn, which is the only way the two numbers
+    // ever differ — and the reason `FileJob` keeps both.
+    var first = queueJob("a.md", "first")
+    first.actualPartsTotal = 3
+    var second = queueJob("b.md", "second")
 
-    // Both rows now answer from the run rather than from the drop, so a queue counter built
-    // on `parts` cannot mix the two.
-    #expect(model.jobs.allSatisfy { $0.actualPartsTotal != nil })
-    #expect(model.jobs.map(\.parts) == model.jobs.map { $0.actualPartsTotal ?? -1 })
-    #expect(estimated.count == 2)
+    // File 1 on its last часть, file 2 untouched — so file 2 still offers its estimate,
+    // which is the honest number for a задание that has not run.
+    first.state = .running(TranslationProgress(partsDone: 2, partsTotal: 3, documentTermCount: 0))
+    model.jobs = [first, second]
+    let whileRunning = model.statusLine
+    #expect(whileRunning == RussianCopy.queuePosition(fileIndex: 0, fileTotal: 2,
+                                                      partsDone: 2, partsTotal: 4))
+
+    // The instant it finishes and file 2 starts. Nothing has been undone, so neither number
+    // may fall: the 2 части already translated stay translated.
+    first.state = .finished
+    second.actualPartsTotal = 3
+    second.state = .running(TranslationProgress(partsDone: 0, partsTotal: 3, documentTermCount: 0))
+    model.jobs = [first, second]
+    #expect(model.statusLine == RussianCopy.queuePosition(fileIndex: 1, fileTotal: 2,
+                                                          partsDone: 3, partsTotal: 6))
+    // Spelled as an inequality too, because that is the property the name claims and the
+    // equalities above would still hold under a formula that broke it elsewhere.
+    #expect(partsDone(model.statusLine) >= partsDone(whileRunning))
+}
+
+/// The «N частей из M» number out of a queue status line, or -1 if there is none.
+/// Reads the rendered string on purpose: a test that recomputed it from the model would be
+/// pinning its own arithmetic rather than what the bar shows.
+@MainActor private func partsDone(_ line: String?) -> Int {
+    guard let line, let dash = line.range(of: " — ") else { return -1 }
+    return Int(line[dash.upperBound...].prefix { $0.isNumber }) ?? -1
 }
 
 @MainActor @Test func theHeaderCountAndTheStatusLineCountTheSameQueue() async {
@@ -1486,5 +1514,9 @@ private final class SaveCall: @unchecked Sendable {
     let line = model.statusLine
     await run.value
 
-    #expect(line?.contains("из 1") == true)
+    // The whole line, not `contains("из 1")`: `queuePosition` renders «…файл из 1 — 0
+    // частей из 1», so that substring is satisfied by the части clause whatever the file
+    // total is — it read as coverage of the header count and provided none.
+    #expect(line == RussianCopy.queuePosition(fileIndex: 0, fileTotal: 1,
+                                              partsDone: 0, partsTotal: 1))
 }

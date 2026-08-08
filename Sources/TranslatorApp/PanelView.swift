@@ -302,7 +302,7 @@ struct PanelView: View {
                     // with the failure and its «Повторить» underneath, instead of a labelled
                     // paragraph losing its annotations for a reason that has nothing to do with it.
                     if let outcome = model.outcome {
-                        // `problem:` and `onMute:` are deliberately not passed. Muting a term is a
+                        // `onMute:` is deliberately not passed. Muting a term is a
                         // decision about the glossary, and the glossary is not on screen here; the
                         // window is where that belongs.
                         // Gated on `hasContent`, not merely on `outcome` being present. A short clean

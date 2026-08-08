@@ -22,42 +22,6 @@ enum TranslatedFileWriter {
     /// *after* the write — the name is taken now, by that very write — and would be told
     /// the next number. Only whoever wrote the bytes knows where they went, so only this
     /// function answers.
-    /// Remove `.tolmach-*.partial` files this app abandoned in `folder`.
-    ///
-    /// The temporary is deleted on every failure path inside the `do` below, but not by a
-    /// process that dies between the write and the move — and a 2 MB write followed by up to
-    /// eight `moveItem` attempts is a real window. Nothing else ever cleans them up, so each
-    /// interrupted save left another hidden file beside the user's document, accumulating
-    /// with no owner.
-    ///
-    /// Swept on the way past rather than by a scheduled job: this is the only code that
-    /// creates these, so it is the only code that knows the shape, and the one moment it is
-    /// certainly looking at the right folder is just before writing there.
-    ///
-    /// One hour, and not «any that exist». A concurrent save — a second window, a second
-    /// launch — has its own temporary in flight in this folder under the same prefix, and
-    /// deleting it would break that save to tidy up after this one. Nothing here holds a
-    /// file open for an hour: the write is a single `Data.write` and the moves are renames.
-    ///
-    /// Failures are ignored, all of them. This is housekeeping on the way to the actual job,
-    /// and a folder that refuses a `removeItem` must not cost the user their translation.
-    private static func sweepAbandonedTemporaries(in folder: URL) {
-        let manager = FileManager.default
-        guard let entries = try? manager.contentsOfDirectory(
-            at: folder, includingPropertiesForKeys: [.contentModificationDateKey],
-            // No `.skipsHiddenFiles`: the temporary's name starts with a dot, so that
-            // option would make this sweep find nothing at all. Probed.
-            options: []) else { return }
-        let cutoff = Date().addingTimeInterval(-3600)
-        for entry in entries where entry.lastPathComponent.hasPrefix(".tolmach-")
-            && entry.pathExtension == "partial" {
-            let modified = try? entry.resourceValues(forKeys: [.contentModificationDateKey])
-                .contentModificationDate
-            guard let modified, modified < cutoff else { continue }
-            try? manager.removeItem(at: entry)
-        }
-    }
-
     static func write(_ text: String, beside source: URL, target: Language) -> SaveOutcome {
         let destination = OutputNaming.destination(
             for: source, target: target,
@@ -146,6 +110,42 @@ enum TranslatedFileWriter {
             Log.files.error("could not write a translation: \(nsError.domain, privacy: .public) \(nsError.code, privacy: .public)")
             return .refused("Не удалось сохранить перевод рядом с исходником. "
                 + "Воспользуйтесь кнопкой «Сохранить как…» — это заодно выдаст приложению право на запись.")
+        }
+    }
+
+    /// Remove `.tolmach-*.partial` files this app abandoned in `folder`.
+    ///
+    /// The temporary is deleted on every failure path inside the `do` below, but not by a
+    /// process that dies between the write and the move — and a 2 MB write followed by up to
+    /// eight `moveItem` attempts is a real window. Nothing else ever cleans them up, so each
+    /// interrupted save left another hidden file beside the user's document, accumulating
+    /// with no owner.
+    ///
+    /// Swept on the way past rather than by a scheduled job: this is the only code that
+    /// creates these, so it is the only code that knows the shape, and the one moment it is
+    /// certainly looking at the right folder is just before writing there.
+    ///
+    /// One hour, and not «any that exist». A concurrent save — a second window, a second
+    /// launch — has its own temporary in flight in this folder under the same prefix, and
+    /// deleting it would break that save to tidy up after this one. Nothing here holds a
+    /// file open for an hour: the write is a single `Data.write` and the moves are renames.
+    ///
+    /// Failures are ignored, all of them. This is housekeeping on the way to the actual job,
+    /// and a folder that refuses a `removeItem` must not cost the user their translation.
+    private static func sweepAbandonedTemporaries(in folder: URL) {
+        let manager = FileManager.default
+        guard let entries = try? manager.contentsOfDirectory(
+            at: folder, includingPropertiesForKeys: [.contentModificationDateKey],
+            // No `.skipsHiddenFiles`: the temporary's name starts with a dot, so that
+            // option would make this sweep find nothing at all. Probed.
+            options: []) else { return }
+        let cutoff = Date().addingTimeInterval(-3600)
+        for entry in entries where entry.lastPathComponent.hasPrefix(".tolmach-")
+            && entry.pathExtension == "partial" {
+            let modified = try? entry.resourceValues(forKeys: [.contentModificationDateKey])
+                .contentModificationDate
+            guard let modified, modified < cutoff else { continue }
+            try? manager.removeItem(at: entry)
         }
     }
 

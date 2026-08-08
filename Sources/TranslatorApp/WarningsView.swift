@@ -15,9 +15,14 @@ struct WarningsView: View {
     /// `GlossaryEntry.translations` is keyed by language and `TranslationOutcome` does not
     /// carry the target — see `TranslationViewModel.resolvedTarget`.
     var target: Language?
-    /// A glossary load or save failure, in Russian. Rendered here rather than logged:
-    /// a «не показывать» that silently failed to persist leaves the user believing the
-    /// term is muted forever when it is only muted until the app quits.
+    /// Called with a term the user no longer wants warned about.
+    ///
+    /// Whether that muting persisted is **not** reported here. It used to be, through a
+    /// `problem` property this view rendered — and that property is gone, because a
+    /// glossary that failed to save is the app's trouble and not this run's: it outlives
+    /// the run, it can be raised with no run at all behind it, and counting it here made
+    /// the status bar say «N+1 предупреждение» beside a file row saying «N».
+    /// `RunStatusBar` draws it as an always-visible row of its own instead.
     var onMute: (String) -> Void = { _ in }
 
     init(checks: [GlossaryCheck], markupDiffs: [MarkupDiff], documentGlossary: [GlossaryEntry],

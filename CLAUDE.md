@@ -126,7 +126,9 @@ Facts that will bite you if you "tidy" them:
   *target* and then dropped, so the toolbar's «Из» changed where the text went and nothing about
   how it was read: correcting a misdetection left the model told «translate from …» whatever the
   detector had guessed. It also removes a second full scan — the queue must detect before calling,
-  and `NLLanguageRecognizer` has no prefix cap against files up to 2 MB.
+  and `NLLanguageRecognizer` has no prefix cap against files up to 2 MB. All **three** callers
+  state it — the window, the queue and `translate-cli --from`, which parsed the flag and dropped
+  it on the floor for as long as there was nowhere to put it.
 - `timeToFirstTokenMS` is `nil` when nothing was ever emitted — that nil *is* the empty-reply
   signal. Do not substitute a sentinel; it makes an absent response read as a slow one.
 - `stats` covers the per-chunk translation calls only, never the term-list call.
