@@ -624,7 +624,7 @@ private func waitForSheet(_ model: FileQueueModel,
 
 @MainActor
 private func savingModel(_ prefix: String,
-                         besideSource: @escaping (URL, String, Language) -> SaveOutcome,
+                         besideSource: @escaping @Sendable (URL, String, Language) async -> SaveOutcome,
                          configure: (AppSettings) -> Void = { _ in }) -> FileQueueModel {
     let settings = AppSettings(defaults: InMemoryDefaults(prefix: prefix))
     configure(settings)
@@ -646,7 +646,7 @@ private func savingModel(_ prefix: String,
     #expect(model.jobs[0].result?.savedTo == nil)
     #expect(model.needsSaving(model.jobs[0]))
 
-    model.saveBesideSource(model.jobs[0].id)
+    await model.saveBesideSource(model.jobs[0].id)
 
     #expect(model.jobs[0].result?.savedTo?.lastPathComponent == "a.md.ru")
     #expect(!model.needsSaving(model.jobs[0]))
@@ -682,7 +682,7 @@ private func savingModel(_ prefix: String,
     await model.run()
 
     let chosen = URL(fileURLWithPath: "/tmp/куда-нибудь/a.ru.md")
-    model.save(model.jobs[0].id, to: chosen)
+    await model.save(model.jobs[0].id, to: chosen)
 
     #expect(model.jobs[0].result?.savedTo == chosen)
     // The problem goes with the failure it described: the file is saved now.
@@ -853,14 +853,19 @@ private func savingModel(_ prefix: String,
     model.add([queueJob("a.md", "The resource is published.")])
     await model.run(source: nil, target: .de, tone: nil)
 
-    model.saveBesideSource(model.jobs[0].id)
+    await model.saveBesideSource(model.jobs[0].id)
 
     #expect(seen.target == .de)
 }
 
-@MainActor private final class SaveCall {
-    private(set) var target: Language?
-    func record(_ language: Language) { target = language }
+/// The save closure now runs off the main actor, so what records from inside it cannot be
+/// main-actor-isolated. A lock is the smallest thing that is actually correct — the same
+/// choice `ProgressBox` makes in the engine's tests, for the same reason.
+private final class SaveCall: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: Language?
+    func record(_ language: Language) { lock.lock(); storage = language; lock.unlock() }
+    var target: Language? { lock.lock(); defer { lock.unlock() }; return storage }
 }
 
 /// Holds the model so a closure the model owns can call back into it. Needed because the
@@ -879,8 +884,11 @@ private func savingModel(_ prefix: String,
     let settings = AppSettings(defaults: InMemoryDefaults(prefix: "queue-cancel-between"))
     box.model = FileQueueModel(translator: Translator(client: client),
                                settings: settings, glossary: scratchGlossary(),
+                               // Hops to the main actor and *waits*, so the cancel has
+                               // landed before this returns — the run then finds it at the
+                               // top of the next iteration, which is the guard under test.
                                save: { source, _, _ in
-                                   box.model?.cancel()
+                                   await MainActor.run { box.model?.cancel() }
                                    return .saved(source)
                                },
                                saveAs: { _, url in .saved(url) })
@@ -903,7 +911,7 @@ private func savingModel(_ prefix: String,
     box.model = FileQueueModel(translator: Translator(client: client),
                                settings: settings, glossary: scratchGlossary(),
                                save: { source, _, _ in
-                                   if stopOnce.fire() { box.model?.cancel() }
+                                   await MainActor.run { if stopOnce.fire() { box.model?.cancel() } }
                                    return .saved(source)
                                },
                                saveAs: { _, url in .saved(url) })
@@ -1196,7 +1204,7 @@ private func savingModel(_ prefix: String,
     #expect(model.needsSaving(model.jobs[0]))
     #expect(model.canSaveElsewhere(model.jobs[0]))
 
-    model.saveBesideSource(model.jobs[0].id)
+    await model.saveBesideSource(model.jobs[0].id)
 
     #expect(!model.needsSaving(model.jobs[0]))
     #expect(!model.canSaveElsewhere(model.jobs[0]))

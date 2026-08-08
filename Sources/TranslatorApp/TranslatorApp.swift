@@ -99,10 +99,18 @@ struct TranslatorApp: App {
             // The target comes from the model, which knows what the run resolved. Working
             // it out here re-detected the text and applied the settings rule, so a toolbar
             // override was ignored and a German translation was written as «a.ru.md».
+            // Detached: this is where the file system is actually touched, and the model
+            // deliberately does not do it on the actor its rows are drawn from.
             save: { source, text, target in
-                TranslatedFileWriter.write(text, beside: source, target: target)
+                await Task.detached(priority: .userInitiated) {
+                    TranslatedFileWriter.write(text, beside: source, target: target)
+                }.value
             },
-            saveAs: { text, url in TranslatedFileWriter.write(text, to: url) })
+            saveAs: { text, url in
+                await Task.detached(priority: .userInitiated) {
+                    TranslatedFileWriter.write(text, to: url)
+                }.value
+            })
         _settings = State(initialValue: settings)
         _glossary = State(initialValue: glossary)
         _statusModel = State(initialValue: statusModel)
@@ -492,6 +500,13 @@ struct TranslatorApp: App {
             panel.hide()
         }
         panel.onEnter = {
+            // Cancelled first, like Esc and the ⨯ — this was the one dismissal that did not.
+            // With the terms gate on, ⏎ while the run is suspended on the escalated sheet
+            // copied whatever little had arrived, hid the panel, and left a modal demanding
+            // edits for a run whose only output surface was gone: answering it then streamed
+            // the finished translation into a hidden panel, where `autoCopy` is off by
+            // default and nothing else would ever show it.
+            coordinator.panelModel.cancel()
             // Hidden first, then copied. `copyResult()` suspends while the write goes through
             // `GeneralPasteboard`'s serialisation, and Enter means «copy and close» — leaving
             // the panel up for the length of that suspension would make the close look laggy

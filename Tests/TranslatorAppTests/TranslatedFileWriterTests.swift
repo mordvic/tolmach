@@ -89,3 +89,23 @@ private func scratchDirectory() -> URL {
     let leftovers = try FileManager.default.contentsOfDirectory(atPath: directory.path)
     #expect(leftovers.sorted() == ["doc.md", "doc.ru.md"])
 }
+
+@Test func aNameTakenBetweenTheCheckAndTheMoveCostsANumberAndNotTheDocument() throws {
+    // The whole point of the naming scheme, and it was not happening: `moveItem` threw on
+    // the occupied name and the user was told «воспользуйтесь "Сохранить как…"» — a
+    // permission answer to a collision.
+    let directory = scratchDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let source = directory.appendingPathComponent("doc.md")
+    try Data("source".utf8).write(to: source)
+    // Occupied *after* a caller would have chosen it, which is what the race produces.
+    try Data("занято".utf8).write(to: directory.appendingPathComponent("doc.ru.md"))
+
+    guard case let .saved(written) = TranslatedFileWriter.write("перевод", beside: source, target: .ru)
+    else { Issue.record("expected the write to succeed"); return }
+
+    #expect(written.lastPathComponent == "doc.ru 2.md")
+    #expect(try String(contentsOf: written, encoding: .utf8) == "перевод")
+    #expect(try String(contentsOf: directory.appendingPathComponent("doc.ru.md"),
+                       encoding: .utf8) == "занято")
+}

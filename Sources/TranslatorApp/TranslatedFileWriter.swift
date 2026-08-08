@@ -55,8 +55,27 @@ enum TranslatedFileWriter {
             .appendingPathComponent(".tolmach-\(UUID().uuidString).partial")
         do {
             try Data(text.utf8).write(to: temporary, options: .atomic)
-            try FileManager.default.moveItem(at: temporary, to: destination)
-            return .saved(destination)
+            // Retried on a taken name, because losing the race is supposed to cost a
+            // *number* and not the document. Without this the `moveItem` simply threw and
+            // the user was told «воспользуйтесь "Сохранить как…"» — a permission answer to a
+            // collision, misdiagnosing the one failure this whole naming scheme exists to
+            // handle. Bounded for `OutputNaming`'s reason: a directory that keeps producing
+            // the name a moment after it was checked is a hostile filesystem, not a race.
+            var next = destination
+            for _ in 0..<8 {
+                do {
+                    try FileManager.default.moveItem(at: temporary, to: next)
+                    return .saved(next)
+                } catch CocoaError.fileWriteFileExists {
+                    // No `draft:` — this path writes only finished translations
+                    // (`saveBesideSource` is gated on `needsSaving`, which is `.finished`).
+                    next = OutputNaming.destination(
+                        for: source, target: target,
+                        exists: { FileManager.default.fileExists(atPath: $0.path) })
+                }
+            }
+            try FileManager.default.moveItem(at: temporary, to: next)
+            return .saved(next)
         } catch {
             try? FileManager.default.removeItem(at: temporary)
             // The domain and the code, and **not** `localizedDescription`.

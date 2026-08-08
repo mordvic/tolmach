@@ -25,13 +25,15 @@ struct DocumentTermsView: View {
     var showsSuppress: Bool = false
     var onAddToGlossary: () -> Void = {}
 
-    /// Counts the rows this sheet actually shows, not the model's raw list.
+    /// Counts the документный глоссарий, which is what the title names — not every row in
+    /// the table.
     ///
-    /// `rows(for:)` drops a model term the user's glossary already covers, so counting
-    /// `documentEntries` titled the sheet «Термины документа — 12» over nine editable rows
-    /// and three read-only ones — a number the table underneath contradicts.
+    /// The user's rows are context, and counting them made this the odd one out among three
+    /// surfaces describing one glossary: the queue row says «9 терминов документа» and
+    /// `WarningsView` says «Термины документа (9)» while the sheet was titled «— 12». The
+    /// extra rows are explained by «откуда», not by the heading.
     static func headline(for draft: DocumentTermsDraft) -> String {
-        "Термины документа — \(rows(for: draft).count)"
+        "Термины документа — \(draft.documentEntries.count)"
     }
 
     static func explanation(for draft: DocumentTermsDraft) -> String {

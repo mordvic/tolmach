@@ -73,11 +73,14 @@ private func draft(document: [GlossaryEntry], user: [GlossaryEntry]) -> Document
     #expect(DocumentTermsView.origin(.document(0)) == "документ")
 }
 
-@MainActor @Test func theHeadlineCountsEveryRowTheSheetShows() {
+@MainActor @Test func theHeadlineCountsTheGlossaryItNamesAndNotEveryRow() {
+    // Three surfaces describe one документный глоссарий: this heading, the queue row's
+    // «N терминов документа» and WarningsView's «Термины документа (N)». Counting the
+    // user's context rows here made this the only one of the three saying something else.
     let d = draft(document: [GlossaryEntry(term: "profile"), GlossaryEntry(term: "slice")],
                   user: [GlossaryEntry(term: "PROFILE", doNotTranslate: true)])
     #expect(DocumentTermsView.rows(for: d).count == 3)
-    #expect(DocumentTermsView.headline(for: d) == "Термины документа — 3")
+    #expect(DocumentTermsView.headline(for: d) == "Термины документа — 2")
 }
 
 @MainActor @Test func theSheetsEscapeIsNamedForWhatItStops() {

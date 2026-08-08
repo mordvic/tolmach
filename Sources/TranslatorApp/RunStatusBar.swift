@@ -178,6 +178,11 @@ struct RunStatusBar: View {
                         .foregroundStyle(queue.pausedAfterWarnings ? AnyShapeStyle(.orange)
                                                                    : AnyShapeStyle(.secondary))
                 }
+            } else if let summary {
+                // Rendered, not merely computed. It was used only to gate `canDisclose`, so
+                // the chevron in «Файлы» stood over a count nothing spelled out — while the
+                // «Текст» branch has always spelled it.
+                Text(summary).font(.caption).foregroundStyle(.secondary)
             } else {
                 Text(self.status.label).font(.caption).foregroundStyle(.secondary)
             }

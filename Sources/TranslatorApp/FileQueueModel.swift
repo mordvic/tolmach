@@ -36,11 +36,11 @@ final class FileQueueModel {
     /// before `resolvedTarget` was assigned, so even reading that field would have found
     /// nil. Passing the language explicitly removes both: there is nothing to re-derive and
     /// no struct to go stale.
-    private let save: (_ source: URL, _ text: String, _ target: Language) -> SaveOutcome
+    private let save: @Sendable (_ source: URL, _ text: String, _ target: Language) async -> SaveOutcome
     /// Writing to a destination the user chose. Separate from `save` because the two differ
     /// on collisions: that one must never overwrite, this one must — the save panel has
     /// already asked.
-    private let saveAs: (String, URL) -> SaveOutcome
+    private let saveAs: @Sendable (String, URL) async -> SaveOutcome
     /// Injected so tests can write to a board of their own rather than the real clipboard —
     /// same reasoning and the same default as `TranslationViewModel.pasteboard`.
     private let pasteboard: NSPasteboard
@@ -94,8 +94,8 @@ final class FileQueueModel {
     private var termsWait: TimeInterval = 0
 
     init(translator: Translator, settings: AppSettings, glossary: GlossaryStore,
-         save: @escaping (URL, String, Language) -> SaveOutcome,
-         saveAs: @escaping (String, URL) -> SaveOutcome,
+         save: @escaping @Sendable (URL, String, Language) async -> SaveOutcome,
+         saveAs: @escaping @Sendable (String, URL) async -> SaveOutcome,
          pasteboard: NSPasteboard = .general) {
         self.translator = translator
         self.settings = settings
@@ -153,18 +153,24 @@ final class FileQueueModel {
     }
 
     /// «Сохранить рядом с исходником» on a finished row.
-    func saveBesideSource(_ id: FileJob.ID) {
+    func saveBesideSource(_ id: FileJob.ID) async {
         guard let index = jobs.firstIndex(where: { $0.id == id }),
               let text = jobs[index].result?.final,
               let target = target(for: jobs[index]) else { return }
-        apply(save(jobs[index].url, text, target), to: index)
+        let outcome = await save(jobs[index].url, text, target)
+        // Re-found by id: the await above is a suspension, and an index taken before it is
+        // a promise about an array nobody held still.
+        guard let now = jobs.firstIndex(where: { $0.id == id }) else { return }
+        apply(outcome, to: now)
     }
 
     /// «Сохранить как…», once the user has picked a destination.
-    func save(_ id: FileJob.ID, to url: URL) {
-        guard let index = jobs.firstIndex(where: { $0.id == id }),
-              let text = jobs[index].result?.final else { return }
-        apply(saveAs(text, url), to: index)
+    func save(_ id: FileJob.ID, to url: URL) async {
+        guard jobs.contains(where: { $0.id == id }),
+              let text = jobs.first(where: { $0.id == id })?.result?.final else { return }
+        let outcome = await saveAs(text, url)
+        guard let now = jobs.firstIndex(where: { $0.id == id }) else { return }
+        apply(outcome, to: now)
     }
 
     private func apply(_ outcome: SaveOutcome, to index: Int) {
@@ -611,7 +617,13 @@ final class FileQueueModel {
                 // ask the filesystem *after* the write, find the name taken by that very
                 // write, and answer with the next number — a «показать в Finder» link
                 // pointing at a file that does not exist.
-                switch save(job.url, outcome.final, target) {
+                // `async`, and the closure the app installs does its work off the main
+                // actor — like every other expensive thing here. `QueueDrop.read`,
+                // `Chunker.plan` and `LanguageDetector.detect` were each moved off it with a
+                // comment saying why; the write was the one that stayed, and it is the
+                // heaviest: `OutputNaming` can make up to 999 `fileExists` probes before a
+                // 2 MB atomic write and a move.
+                switch await save(job.url, outcome.final, target) {
                 case .saved(let url):
                     result.savedTo = url
                     jobs[index].saveProblem = nil

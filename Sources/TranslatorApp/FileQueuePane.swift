@@ -44,7 +44,7 @@ struct FileQueuePane: View {
                                      awaitingTerms: queue.isAwaitingTerms && job.id == queue.runningID,
                                      needsSaving: queue.needsSaving(job),
                                      canSaveElsewhere: queue.canSaveElsewhere(job),
-                                     onSaveBeside: { queue.saveBesideSource(job.id) },
+                                     onSaveBeside: { Task { await queue.saveBesideSource(job.id) } },
                                      onSaveAs: { saveAs(job) },
                                      onReveal: { reveal(job) })
                             .tag(job.id)
@@ -96,7 +96,7 @@ struct FileQueuePane: View {
         panel.prompt = "Сохранить"
         panel.message = "Куда сохранить перевод"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        queue.save(job.id, to: url)
+        Task { await queue.save(job.id, to: url) }
     }
 
     private func reveal(_ job: FileJob) {
