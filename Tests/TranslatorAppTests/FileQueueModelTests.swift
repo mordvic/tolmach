@@ -1688,7 +1688,15 @@ private final class SaveCall: @unchecked Sendable {
     // `if case .running = job.state` could be replaced by the queue-level `if isRunning`
     // with the suite still green. That substitution is the defect the doc comment
     // describes: the running file's stream under the selected file's name.
-    let client = QueueClient(replies: ["первый перевод", "второй"], paced: true, holdCallAtIndex: 1)
+    // The held reply carries a newline, and that is load-bearing rather than decorative:
+    // `streamChunkTranslation` buffers until the whole first line is settled, so a held
+    // reply with no `"\n"` in it never reaches `streamingText` at all. Written as
+    // `"второй"` the wait below could not succeed — it exhausted all 20 000 yields and ran
+    // on as a ~150 ms sleep, which is exactly what `waitUntilRunning`'s doc comment warns
+    // against, and left the test asserting against an **empty** stream. Measured: with the
+    // newline the loop breaks at ~10 041 iterations with `streamingText == "второй\n"`.
+    let client = QueueClient(replies: ["первый перевод", "второй\nстрока"],
+                             paced: true, holdCallAtIndex: 1)
     let model = makeQueueModel(client, prefix: "round30-selection")
     model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
 
@@ -1716,7 +1724,9 @@ private final class SaveCall: @unchecked Sendable {
     // `jobs` is mutated directly rather than through `remove`, which refuses while running.
     // That refusal is exactly the second of the two facts the doc comment says were holding
     // each other up — pinning the re-lookup through the guard would pin the guard instead.
-    let client = QueueClient(replies: ["один", "два"], paced: true, holdCallAtIndex: 1)
+    // Same newline, same reason as the test above: without it this wait is a sleep in
+    // disguise rather than a wait on the state it names.
+    let client = QueueClient(replies: ["один", "два\nстроки"], paced: true, holdCallAtIndex: 1)
     let model = makeQueueModel(client, prefix: "round30-row-removed")
     model.add([queueJob("a.md", "first"), queueJob("b.md", "second"), queueJob("c.md", "third")])
 
