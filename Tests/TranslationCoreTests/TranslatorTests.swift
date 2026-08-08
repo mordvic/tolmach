@@ -1101,3 +1101,30 @@ private final class DraftBox: @unchecked Sendable {
     #expect(ttft < 300)
     #expect(ttft <= outcome.totalMS)
 }
+
+@Test func aTermClearedWithASpaceNeverReachesAPrompt() async throws {
+    // The other door. `" "` is not empty, so it passed the filter and PromptBuilder emitted
+    // `- "resource" — translate as " ".` for every часть.
+    let fake = FakeLLMClient(responses: [
+        "resource => ресурс\nserver => сервер",
+        "перевод один", "перевод два", "перевод три", "перевод четыре",
+    ])
+    let translator = Translator(client: fake)
+
+    let outcome = try await translator.translate(
+        text: multiChunkText, target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 200,
+        reviewDocumentTerms: { draft in
+            draft.documentEntries.map { entry in
+                var cleared = entry
+                if entry.term.lowercased() == "resource" { cleared.translations["ru"] = "   " }
+                return cleared
+            }
+        })
+
+    #expect(!outcome.documentGlossary.contains { $0.term.lowercased() == "resource" })
+    let chunkPrompts = fake.receivedMessages.dropFirst()
+    #expect(!chunkPrompts.contains { messages in
+        messages.contains { $0.content.contains("\"resource\" — translate as") }
+    })
+}

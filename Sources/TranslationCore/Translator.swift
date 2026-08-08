@@ -394,7 +394,12 @@ public struct Translator: Sendable {
             let askedAt = Date()
             documentEntries = try await reviewDocumentTerms(draft).filter { entry in
                 guard let required = entry.requiredTranslation(for: target) else { return false }
-                return !required.isEmpty
+                // Trimmed, not merely non-empty. A field «cleared» by typing a space keeps
+                // `" "`, which passed the emptiness test and reached `PromptBuilder` as
+                // `- "API" — translate as " ".` in every часть, then `GlossaryVerifier` as a
+                // term that can never be honoured — the unfixable warning this rule exists
+                // to prevent, one keystroke away from the shape it already caught.
+                return !required.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }
             try Task.checkCancellation()
             // Subtracted from `totalMS` below. That number is what «Готово за N мс» and a

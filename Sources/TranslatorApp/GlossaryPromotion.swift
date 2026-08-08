@@ -35,7 +35,11 @@ enum GlossaryPromotion {
             // target's own value cleared passed here and was stored as
             // `translations[target] == ""` — the very shape this rule exists to drop, and
             // the one `PromptBuilder` gates on key-presence rather than value.
-            guard let required = entry.requiredTranslation(for: target), !required.isEmpty
+            // Trimmed on both doors, deliberately: a field «cleared» with a space keeps
+            // `" "`, which is not empty and is not a translation either. `GlossaryVerifier`
+            // could never satisfy it, so storing it would arm a warning nothing turns off.
+            guard let required = entry.requiredTranslation(for: target),
+                  !required.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             else { continue }
             seen.insert(key)
             out.append(entry)

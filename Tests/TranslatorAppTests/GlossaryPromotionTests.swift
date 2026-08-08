@@ -64,3 +64,14 @@ import TranslationCore
         to: Glossary(entries: []), target: .ru)
     #expect(promoted.map(\.term) == ["StructureDefinition"])
 }
+
+@Test func aFieldClearedWithASpaceIsNotATranslation() {
+    // The sheet writes the raw field into `translations[target]`, so «clearing» a row by
+    // typing a space leaves `" "` — not empty, and not something GlossaryVerifier can ever
+    // honour. Trimmed on both doors, this one and the engine's post-review filter.
+    let promoted = GlossaryPromotion.entries(
+        adding: [GlossaryEntry(term: "API", translations: ["ru": " "]),
+                 GlossaryEntry(term: "slice", translations: ["ru": "\n\t "])],
+        to: Glossary(entries: []), target: .ru)
+    #expect(promoted.isEmpty)
+}
