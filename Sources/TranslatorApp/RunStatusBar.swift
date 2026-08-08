@@ -13,6 +13,10 @@ import TranslationCore
 struct RunStatusBar: View {
     let model: TranslationViewModel
     let status: OllamaStatus
+    /// Non-nil when the window is showing «Файлы». The bar then reports the queue rather
+    /// than the text model — one row, two sources, chosen here so neither pane has to grow
+    /// a status bar of its own.
+    var queue: FileQueueModel?
     var glossaryProblem: String?
     var onMute: (String) -> Void = { _ in }
     var onRetry: () -> Void = {}
@@ -25,7 +29,7 @@ struct RunStatusBar: View {
                 // Not `if let summary`: the label never reads the string, only whether
                 // there is one, and binding a name for a value nobody uses is what the
                 // compiler's `#no-usage` warning is for.
-                if summary != nil, model.state == .finished {
+                if canDisclose {
                     Button {
                         expanded.toggle()
                     } label: {
@@ -37,16 +41,35 @@ struct RunStatusBar: View {
                 line
                 Spacer(minLength: 0)
             }
-            // `summary != nil` gates this branch too, not just `expanded`: `expanded` is
-            // `@State` and survives across runs, so without this a run that leaves
-            // warnings expanded, followed by a second, quiet run, would show no triangle
-            // to press — `summary` would be nil — while still drawing an empty
-            // `WarningsView` plus this stack's own spacing underneath. That is the exact
-            // failure `summary`'s own doc comment exists to prevent, reached through
-            // stale `@State` rather than through a disagreeing count.
-            if expanded, summary != nil, let outcome = model.outcome, model.state == .finished {
-                let warnings = WarningsView(outcome: outcome, target: model.resolvedTarget,
-                                            problem: glossaryProblem, onMute: onMute)
+            // §6.6's other half. The engine goes on swallowing a failed term-list call —
+            // right when nobody asked — but the user who turned the gate on is waiting for
+            // something that will never appear, and the run's terminology quietly differs
+            // from what they were promised.
+            // The glossary's own trouble, which belongs to no файл and to no run:
+            // `promoteToGlossary` writes its three save failures here, raised from the terms
+            // sheet that the queue **or the ⌥⌘T panel** opens, and they can land before any
+            // задание — or any text run — has finished. Always visible, and in both modes.
+            //
+            // «Файлы» only, it was invisible where it is least expected: the panel raises
+            // the sheet, the save is refused, this window's own text model has never run, so
+            // the only trace was a bare chevron over «1 предупреждение» that nothing invited
+            // anyone to press. Shown here it needs no disclosure at all, which is why
+            // nothing below folds it into a count any more.
+            if let problem = glossaryProblem {
+                Label(problem, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption).foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if queue == nil, model.documentTermsUnavailable, model.state == .finished {
+                Label("Термины документа не удалось подготовить, перевод шёл без них",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption).foregroundStyle(.orange)
+            }
+            // Gated on `canDisclose`, the same property the chevron reads. `expanded` is
+            // `@State` and survives across runs and across a change of selection, so a
+            // branch with a weaker condition than the chevron's draws an empty
+            // `WarningsView` plus this stack's own spacing with nothing left to collapse it.
+            if expanded, canDisclose, let warnings = warningsView {
                 // `ViewThatFits` and not a bare `ScrollView`, because a `ScrollView` is
                 // greedy in its scroll axis: it would sit at the full 200 under a two-line
                 // warning and leave the rest blank. This takes the plain stack's own height
@@ -70,17 +93,111 @@ struct RunStatusBar: View {
     }
 
     private var summary: String? {
-        Self.summary(outcome: model.outcome, problem: glossaryProblem)
+        if let queue {
+            // The **file's** count, the same `disclosureCount` its row shows. Counting
+            // through `WarningsView` instead folded `glossaryProblem` in, so the bar said
+            // «N+1 предупреждение» beside a row saying «N» for one file — the very
+            // two-counts-for-one-file failure `disclosureCount` exists to remove. The
+            // glossary problem is the app's trouble and not the file's, so it gets a line of
+            // its own below rather than a place in this number.
+            guard let count = queue.selectedResult?.disclosureCount, count > 0 else { return nil }
+            return RussianCopy.warningCount(count)
+        }
+        // Branched exactly as `warningsView` is, and that is the point. `TranslationViewModel`
+        // drops the previous `outcome` only when the first real token of the next run
+        // arrives, so during `.running` it is still the *last* run's, and a label reading it
+        // on a different condition than the body produced «4 предупреждения» over a
+        // disclosure containing one row. The label and the body answer from one condition.
+        guard let outcome = model.outcome, model.state == .finished else { return nil }
+        return Self.summary(outcome: outcome)
+    }
+
+    /// Whether the disclosure is offered at all. In «Текст» that is a finished run; in
+    /// «Файлы» it is a selected задание that finished, whatever the queue is doing now —
+    /// the warnings belong to the file the user is looking at, not to the run in flight.
+    /// Whether there is a disclosure at all — read by the chevron **and** by the body it
+    /// opens, so the two cannot disagree.
+    ///
+    /// One property and not two conditions, and that is the whole point. The chevron asked
+    /// `summary != nil` while the expanded branch asked something weaker, so a run that
+    /// left the warnings expanded followed by a clean one drew an empty `WarningsView` and
+    /// its 6 pt of spacing with **no chevron to collapse it** — `expanded` is `@State` and
+    /// survives across runs and across a change of selection. That is precisely the failure
+    /// the comment at the call site has always described, reintroduced by splitting the
+    /// condition in two.
+    private var canDisclose: Bool {
+        guard summary != nil, warningsView != nil else { return false }
+        // No `glossaryProblem` term any more: it is drawn as its own always-visible row
+        // above, so a disclosure that opened only to show it would be a chevron over a
+        // sentence already on screen.
+        return queue != nil || model.state == .finished
+    }
+
+    /// The warnings for whatever this bar is currently describing, or nil if there are none
+    /// to describe. Built once here rather than twice in the body, so the disclosure and its
+    /// contents cannot disagree about which run they belong to.
+    private var warningsView: WarningsView? {
+        if let queue {
+            guard let result = queue.selectedResult else { return nil }
+            // `problem` and `target` were both nil here, and neither was harmless.
+            // `glossaryProblem` is exactly where `promoteToGlossary` writes its three save
+            // failures — raised from the terms sheet, which the queue itself opens — so a
+            // refused save explained itself to a property no visible surface read. And a nil
+            // target makes the «Термины документа» disclosure render by lexicographic key
+            // instead of by the language the задание was translated into.
+            // No glossary problem here — it is rendered as its own row above instead, so
+            // it cannot be hidden under a chevron that a file with nothing to report never
+            // draws.
+            return WarningsView(checks: result.checks, markupDiffs: result.markupDiffs,
+                                documentGlossary: result.documentGlossary,
+                                target: queue.selectedTarget, onMute: onMute)
+        }
+        guard let outcome = model.outcome, model.state == .finished else { return nil }
+        return WarningsView(outcome: outcome, target: model.resolvedTarget, onMute: onMute)
     }
 
     @ViewBuilder private var line: some View {
+        // «Файлы» reports the queue: one row, and the text model behind it is not what the
+        // user is looking at.
+        if let queue {
+            // Same correction as the panel's: the sheet is up over this very window and the
+            // model is idle, so a spinner and «Перевожу…» would contradict it.
+            if queue.isAwaitingTerms {
+                Label("Жду ваших правок…", systemImage: "square.and.pencil")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else if let status = queue.statusLine {
+                HStack(spacing: 6) {
+                    if queue.isRunning { ProgressView().controlSize(.small) }
+                    Text(status).font(.caption)
+                        .foregroundStyle(queue.pausedAfterWarnings ? AnyShapeStyle(.orange)
+                                                                   : AnyShapeStyle(.secondary))
+                }
+            } else if let summary {
+                // Rendered, not merely computed. It was used only to gate `canDisclose`, so
+                // the chevron in «Файлы» stood over a count nothing spelled out — while the
+                // «Текст» branch has always spelled it.
+                Text(summary).font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text(self.status.label).font(.caption).foregroundStyle(.secondary)
+            }
+        } else {
+            textModeLine
+        }
+    }
+
+    @ViewBuilder private var textModeLine: some View {
         switch model.state {
         case .idle:
             Text(status.label).font(.caption).foregroundStyle(.secondary)
         case .running:
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.small)
-                Text("Перевожу…").font(.caption)
+            if model.isAwaitingTerms {
+                Label("Жду ваших правок…", systemImage: "square.and.pencil")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Перевожу…").font(.caption)
+                }
             }
         case .finished:
             if let outcome = model.outcome {
@@ -116,9 +233,12 @@ struct RunStatusBar: View {
     /// `> 0` of. There is one count in the program that says how many warnings an outcome
     /// carries, and both the disclosure's visibility and its label are read from it, so they
     /// cannot drift apart the way two independently-written conditions could.
-    static func summary(outcome: TranslationOutcome?, problem: String?) -> String? {
-        guard let outcome else { return problem.map { _ in "1 предупреждение" } }
-        let count = WarningsView(outcome: outcome, target: nil, problem: problem).warningCount
+    static func summary(outcome: TranslationOutcome?) -> String? {
+        // No outcome, nothing to summarise. It used to answer «1 предупреждение» for a
+        // glossary save failure with no run behind it; that sentence is drawn in full,
+        // undisclosed, by the bar itself now.
+        guard let outcome else { return nil }
+        let count = WarningsView(outcome: outcome, target: nil).warningCount
         guard count > 0 else { return nil }
         return "\(count) " + RussianCopy.plural(count, "предупреждение", "предупреждения",
                                                 "предупреждений")

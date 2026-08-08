@@ -1,18 +1,20 @@
-// Sources/TranslatorApp/SourcePane.swift
+// Sources/TranslatorApp/SourceEditor.swift
+//
+// Named for `SourceEditor` since the window's left half became two modes. `PaneHeader`
+// lives here rather than in a file of its own because both panes use it and it was already
+// shared before the split; `SourceFooter` is private to the editor.
 import SwiftUI
 
-/// The window's left half: what the user typed.
-struct SourcePane: View {
+/// The window's left half in «Текст»: what the user typed.
+///
+/// Header-less on purpose. The window draws one header for both of its left-hand modes —
+/// «Текст» and «Файлы» share the row that holds the switch — so a header here would be a
+/// second one under it.
+struct SourceEditor: View {
     @Bindable var model: TranslationViewModel
-    let onClear: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            PaneHeader(title: "Исходник") {
-                Button("Очистить", action: onClear)
-                    .buttonStyle(.link)
-                    .disabled(model.sourceText.isEmpty)
-            }
             ZStack(alignment: .topLeading) {
                 TextEditor(text: $model.sourceText)
                     .font(.body)
@@ -101,16 +103,37 @@ private struct SourceFooter: View {
 
 /// One row, one title, one action. Shared by both panes so they cannot drift apart.
 struct PaneHeader<Action: View>: View {
-    let title: String
+    /// Optional because the left pane's header is a mode switch rather than a caption,
+    /// while the right pane's is still a caption. One type, two contents.
+    let title: String?
     @ViewBuilder var action: () -> Action
+
+    /// Both panes' headers are pinned to this, and that is the point of the constant.
+    /// The row used to size itself from a caption plus 4 pt of padding; the left one now
+    /// holds a `.small` segmented control, which is taller. Two headers a few points
+    /// apart put a visible step in the divider between the panes.
+    ///
+    /// The number is **not** measured — nothing in this environment can see a screen. It
+    /// is the smallest value that should fit a `.small` segmented control with the
+    /// padding this row already had, and `docs/OPEN-ITEMS.md` carries it as owed to a
+    /// pair of eyes.
+    static var height: CGFloat { 28 }
 
     var body: some View {
         HStack {
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            Spacer()
+            // The spacer belongs to the *title*, and only to it: it is what pushes the
+            // action to the trailing edge. With no title — the left pane's header, which is
+            // a mode switch — two equally flexible spacers split the free width between
+            // them and the switch floated a quarter of the way in, instead of sitting where
+            // the caption it replaced used to be.
+            if let title {
+                Text(title).font(.caption).foregroundStyle(.secondary)
+                Spacer()
+            }
             action().font(.caption)
         }
-        .padding(.horizontal, 8).padding(.vertical, 4)
+        .padding(.horizontal, 8)
+        .frame(height: Self.height)
         .background(.quaternary.opacity(0.25))
         Divider()
     }

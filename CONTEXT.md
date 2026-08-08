@@ -51,6 +51,23 @@ rules out is ruled out for good reason — so the interface names the *effect* i
 source pane says «3 части», and the setting that governs the size is called «Длина одного
 запроса к модели» and never names the unit at all. Code, docs and this file keep «чанк».
 
+**Задание** — *job*
+One file in the queue, together with its state and whatever came back for it.
+→ `FileJob`, `FileQueueModel`
+_Avoid_: задача, работа, элемент
+_On screen_: named by its own filename, never by the word — a row says «techdoc-en.md», not
+«задание 1». The word exists so the code has one name for the thing; the interface has the
+file's own.
+
+**Очередь** — *queue*
+The whole list of заданий, translated one after another. Started by «Перевести» and never by a
+drop.
+→ `FileQueueModel`
+_Avoid_: пакет, партия, список файлов
+_On screen_: **Файлы** — the mode switch, the pane header and the settings tab all use that one
+word, because «пакетный» is an adjective with nothing to modify in a row of nouns. «Пакетный
+перевод» survives in prose, as a section caption, and never as a control's name.
+
 **Корректор** — *corrector*
 A second pass that fixes only outright errors from the first. It may not rephrase, shorten or
 restructure — which is what distinguishes it from an editor, which is what the second pass was
@@ -72,9 +89,12 @@ Translation by hotkey, where time to the first character matters more than prose
 _Avoid_: быстрый режим, режим хоткея
 
 **Фоновый путь** — *background path*
-Translation by button or in batch, where prose quality matters more than speed. **Not built.**
-Batch translation is v2; the policy exists, the path does not, and the settings control that
-used to imply otherwise was removed.
+Translation by button or in batch, where prose quality matters more than speed. **Built** — the
+file queue and the document-terms review gate both ship. `AppSettings.batchModel` selects the
+queue's model in Settings → «Файлы» and defaults to «the same one the hotkey uses»: one model
+lives in Ollama's memory, so two different ones make every ⌥⌘T during a queue run pay two cold
+loads. `ModelRole.background` stays what it always was — a recommendation in `ModelPolicy`, read
+by nothing.
 → `ModelRole.background`, `ModelPolicy.defaultModel(for: .background)`
 _Avoid_: медленный режим, качественный режим
 

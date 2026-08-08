@@ -5,16 +5,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 «Толмач» (`LocalTranslator`) — a macOS translator running entirely on local LLMs through
-Ollama at `http://127.0.0.1:11434`. Text never leaves the machine. Two surfaces ship in v1:
-a global hotkey that translates the current selection into a floating panel, and a main
-window. Batch file translation is v2.
+Ollama at `http://127.0.0.1:11434`. Text never leaves the machine. Three surfaces: a global
+hotkey that translates the current selection into a floating panel, a main window, and — in
+that window's «Файлы» mode — a queue of files translated one after another and written back
+to disk.
 
 ## Commands
 
 ```bash
 swift build                       # build everything
 swift build --build-tests         # must stay at zero warnings — this is a standing rule
-swift test                        # ~341 tests, all offline (fake LLMClient), a few seconds
+swift test                        # the whole suite, offline (fake LLMClient), about a second
 swift test --filter someTestName  # one test, by name (Swift Testing function names)
 swift test --filter TranslationCoreTests   # one test target
 
@@ -23,6 +24,11 @@ swift Scripts/make-icon.swift build/AppIcon.icns   # redraw the icon; make-app-b
 swift run translate-cli --to ru --tone technical "text"   # needs a live Ollama; reads stdin if no text
 swift run acceptance              # live-Ollama corpus run; MUST run from the package root (reads ./corpus)
 ```
+
+No count here on purpose: it went stale twice in one review cycle, and a number nothing
+checks is a contract nobody can keep. What is worth stating is what the line above already
+says — the suite is offline and finishes in about a second, so there is no reason not to
+run it.
 
 `swift test` never touches the network. `translate-cli` and `acceptance` do — `acceptance` is
 the deliberately-not-in-CI harness that measures TTFT, markup integrity and term consistency
@@ -67,8 +73,9 @@ TranslationCore  (pure domain; depends on nothing but Foundation/NaturalLanguage
 ### The translation pipeline (`Translator.translate`)
 
 Detect language → chunk → (if >1 chunk and the source language is *recognised*) one preparatory
-call that translates an extracted term list into a **document glossary** → per-chunk translation
-calls → clean → verify glossary + diff markup skeleton.
+call that translates an extracted term list into a **document glossary** → *(optional)* a review
+of that glossary by a human → per-chunk translation calls → clean → verify glossary + diff markup
+skeleton.
 
 Facts that will bite you if you "tidy" them:
 
@@ -76,6 +83,12 @@ Facts that will bite you if you "tidy" them:
   filtered by occurrence; the document glossary is injected whole into every chunk. See
   `docs/adr/0001-two-glossaries-opposite-injection-rules.md` — unifying them reintroduces
   terminology drift (measured: 64–68% → 88%).
+- **The review point is the one place `translate` may suspend on a human, and it sits outside
+  the `catch` that swallows a failed term-list call.** At that instant the term-list stream has
+  finished and no per-chunk request has been issued, so nothing is in flight. Inside that
+  `catch`, a throw from the hook would become an empty glossary and the run would carry on as
+  though the user had approved it. `reviewDocumentTerms` defaults to `nil`, and a test pins that
+  a hook returning its draft untouched produces the same run as no hook at all.
 - **Cancellation must be checked explicitly.** `AsyncThrowingStream` *finishes* on cancellation
   instead of throwing, so without `Task.checkCancellation()` before and after every network call
   a cancelled run returns a truncated document as a success. Cancellation must surface as
@@ -107,6 +120,20 @@ Facts that will bite you if you "tidy" them:
   only protected forms, indented text is prose and is translated, and its indentation survives
   because `Block.range` moves edge whitespace into the separators. See
   `docs/superpowers/specs/2026-08-07-lossless-chunking-design.md` and its correction note.
+- **`translate(source:)` is how a caller states the language, and every caller does** — the
+  window, the queue and `translate-cli --from`. Nil still
+  means «detect it», but a stated source governs everything downstream — the prompt, the tagger
+  `TermExtractor` parses with, and `detectedSource`. It used to be resolved in the app to pick a
+  *target* and then dropped, so the toolbar's «Из» changed where the text went and nothing about
+  how it was read: correcting a misdetection left the model told «translate from …» whatever the
+  detector had guessed. `translate-cli` was the worst of the three: it parsed `--from` into a
+  variable with one occurrence in the file, so the flag was advertised and did nothing at all.
+  It also removes a second full scan of a file up to 2 MB — but **only for a language the app
+  can name**. `detected` is `source ?? LanguageDetector.detect(text)`, and a caller passes nil
+  when its own detect returned nil, so a document in a language outside the supported nine is
+  still scanned twice. Measured: 2.06 MB of Ukrainian detects as nil in 48 ms (best of
+  three), so such a file pays ~96 ms of scanning instead of ~48. Both scans are off the main actor, which is why this is a note and
+  not a defect — but it is not «no second scan».
 - `timeToFirstTokenMS` is `nil` when nothing was ever emitted — that nil *is* the empty-reply
   signal. Do not substitute a sentinel; it makes an absent response read as a slow one.
 - `stats` covers the per-chunk translation calls only, never the term-list call.
@@ -121,10 +148,15 @@ Facts that will bite you if you "tidy" them:
   and `gpt-oss:20b` for the background path, and carries a blacklist with measured reasons. Those
   reasons are English and reach `translate-cli`; the settings pane renders
   `RussianCopy.blacklistReasons`, keyed by the same prefixes, and falls back to the English if a
-  prefix has no Russian counterpart. **The background role is policy only** — nothing reads it,
-  batch translation is v2, and the settings control that implied otherwise was removed.
+  prefix has no Russian counterpart. **`ModelRole.background` is still policy only** — the
+  file queue reads `AppSettings.batchModel` (see below), not `ModelPolicy.defaultModel(for:
+  .background)`, so the recommendation and the setting stay separate things.
   `keep_alive` (default `30m`) is load-bearing, not an optimisation: cold load ~2000 ms vs
-  ~155 ms warm.
+  ~155 ms warm. **That measurement is why `AppSettings.batchModel` has no fixed default**: one
+  model lives in memory, so a batch model differing from the interactive one costs two cold loads
+  on every ⌥⌘T pressed during a queue run. `nil` means «the same one the hotkey uses», and the
+  settings pane warns when the user picks otherwise. The property is stored under the old
+  `"backgroundModel"` key, as its removal comment promised.
 
 ### The app layer
 
@@ -140,9 +172,25 @@ Facts that will bite you if you "tidy" them:
   `["en"]` and a fully Russian app carries an English menu bar), and `make-app-bundle.sh` must copy
   that directory in **before** `codesign`, like the icon. `CommandGroup(replacing:)` empties a menu
   but does not remove it, so `pruneEmptyMenus()` takes away whatever is left with no items.
-- Two `TranslationViewModel` instances, one for the window and one owned by `HotkeyCoordinator`
-  for the panel, over one shared `OllamaClient`. They must not be merged: a hotkey translation
-  must never overwrite the window, and the re-entrancy guard is per instance.
+- **Three** models over one shared `OllamaClient`: two `TranslationViewModel` instances, one for
+  the window and one owned by `HotkeyCoordinator` for the panel, plus `FileQueueModel` for the
+  file queue. They must not be merged: a hotkey translation must never overwrite the window, and
+  the re-entrancy guard is per instance. All three are built in `TranslatorApp.init` — the app
+  owns the models, the scenes read them.
+- **The window's left pane has two modes and the primary action follows the visible one.**
+  `PrimaryAction.forMode` is that rule, and the toolbar button, ⌘↩ and ⌘. all read it. They used
+  to reach `TranslationViewModel` directly, which would have left «Файлы» with a button that ran
+  an empty text model and two dead shortcuts. `mode` therefore lives in `TranslatorApp`, not in
+  `MainWindowView`: a menu declared in the app's scene cannot read that view's `@State`. The ⌘.
+  argument still holds — a disabled menu item declines its equivalent so the panel gets it — but
+  its condition is now «the *visible mode* is running».
+- **The file queue writes to disk, and that is the only place this app does.** `QueueDrop` decides
+  what it accepts (a mixed drop is kept, with unreadable files shown as rows — refusing the whole
+  drop is the text pane's one-slot rule, which does not transfer to a queue with a slot per file);
+  `OutputNaming` decides the name and never overwrites; `TranslatedFileWriter` writes and returns
+  where. **Whether TCC permits a sibling write next to a dropped file is unverified** — the app is
+  not sandboxed, but a drag grants read, not write — so a refusal falls back to `NSSavePanel`,
+  which confers the right itself.
 - `HotkeyCoordinator` owns every decision of a press; `PanelView` is a readout. Ordering inside a
   press is measured, not preferred: hide the old panel → read the selection off the main actor →
   show the panel → translate. Showing the panel first breaks the capture, because a
@@ -175,16 +223,18 @@ Facts that will bite you if you "tidy" them:
   writes through `translations[editingLanguage.rawValue]`, so a column that moved mid-word would
   split one translation across two keys. `SettingsGlossaryView` computes it on appear and on
   re-read only, and holds it in `@State`.
-- `SourcePane` takes a dropped file. What it accepts is `DroppedDocument` — a closed extension
+- `SourceEditor` takes a dropped file. What it accepts is `DroppedDocument` — a closed extension
   list, a 256 KB ceiling, UTF-8 or nothing — and a refusal is `false` out of `dropDestination`,
   which makes the system spring the item back. That is the entire error channel and is
   deliberate: there is no error surface in that window, and inventing one to say «this is not
   text» would be worse than the feedback the platform already draws.
-- The main window is a toolbar plus `SourcePane` | `TranslationPane` over a collapsible
+- The main window is a toolbar plus `SourceEditor`/`FileQueuePane` | `TranslationPane` over a collapsible
   `RunStatusBar`; the translation side is a read-only `Text`, deliberately, because the
-  `TextEditor` it replaced took a caret and discarded typing. The settings are **three** tabs,
-  not four — «Дополнительно» was folded into «Модели» — and all three take one 560 × 480 frame
-  from `settingsPane()`, so adding a pane means checking it fits rather than sizing it itself.
+  `TextEditor` it replaced took a caret and discarded typing. The settings are **four** tabs —
+  «Основные», «Модели», «Глоссарий», «Файлы». They were three: «Дополнительно» was folded into
+  «Модели» and stayed folded, and «Файлы» is new with the queue. All four take one 560 × 480
+  frame from `settingsPane()`, so adding a pane means checking it fits rather than sizing it
+  itself.
 - Capture order is Accessibility first, synthetic ⌘C fallback second, and the fallback must restore
   the *whole* pasteboard. The only path allowed to write the user's clipboard unasked is `autoCopy`,
   off by default — and it is read only by `HotkeyCoordinator`, so it governs the panel and not
@@ -209,10 +259,15 @@ Facts that will bite you if you "tidy" them:
   recorded at the site it bit — `PermissionsGate.swift`, `HotkeyManager.swift`,
   `Tests/TranslatorAppTests/WarningsViewTests.swift`.
 - **No external dependencies.** Foundation, NaturalLanguage, SwiftUI, AppKit, Observation,
-  ApplicationServices, CoreGraphics, CoreText, ImageIO, Carbon, os, Swift Testing only. This list is
+  ApplicationServices, CoreGraphics, CoreText, ImageIO, Carbon, os, UniformTypeIdentifiers,
+  Swift Testing only. This list is
   a closed whitelist, not an illustration: adding a framework to it is a deliberate edit, not a
   formality. CoreText and ImageIO are here for `Scripts/make-icon.swift` alone — glyph layout and
-  PNG encoding for the icon — and nothing in the shipped targets uses them. `os` was added
+  PNG encoding for the icon — and nothing in the shipped targets uses them. `UniformTypeIdentifiers` was added for one
+  call: `MainWindowView.addFiles`'s `NSOpenPanel.allowedContentTypes`, which takes `UTType`
+  and has no string-based equivalent that is not deprecated — the extension list itself is
+  still `DroppedDocument.readableExtensions`, so the panel and the drop cannot come to
+  accept different things. `os` was added
   deliberately, for `Log` in `TranslatorApp` and nowhere else: it is what makes this app's four
   deliberate swallowed failures diagnosable on a user's machine. `TranslationCore` does **not** get
   it — the engine reports through `TranslationOutcome.documentGlossaryFailure` instead, so the
@@ -276,3 +331,8 @@ to the code. `docs/PLATFORM-TRAPS.md` has the same list with the facts attached.
 - App activation, scene order → `TranslatorApp/TranslatorApp.swift`
 - Recording a shortcut, `performKeyEquivalent` → `TranslatorApp/HotkeyRecorder.swift`
 - `UserDefaults` in tests → `Tests/TranslatorAppTests/InMemoryDefaults.swift`
+- Writing a file, naming an output, accepting a drop → `TranslatorApp/TranslatedFileWriter.swift`,
+  `OutputNaming.swift`, `QueueDrop.swift`
+- Suspending an engine run on a human → `TranslatorApp/DocumentTermsRequest.swift`
+- A static function on a `View` called from a test → make the test `@MainActor`;
+  `Tests/TranslatorAppTests/WarningsViewTests.swift` and `DocumentTermsViewTests.swift`

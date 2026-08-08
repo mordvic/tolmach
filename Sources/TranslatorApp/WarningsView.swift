@@ -3,26 +3,61 @@ import SwiftUI
 import TranslationCore
 
 struct WarningsView: View {
-    let outcome: TranslationOutcome
+    // The three things this view actually reads, rather than the whole outcome it used to
+    // take. The file queue keeps a reduced `JobResult` — an outcome carries `chunks` and
+    // `translatedChunks` too, roughly three copies of the document — and `TranslationOutcome`
+    // has no public initialiser, so it could not be reassembled even if that were wanted.
+    // A second copy of this view is how two surfaces come to describe one run differently.
+    let checks: [GlossaryCheck]
+    let markupDiffs: [MarkupDiff]
+    let documentGlossary: [GlossaryEntry]
     /// The target `TranslationViewModel` actually resolved for this run. Needed because
     /// `GlossaryEntry.translations` is keyed by language and `TranslationOutcome` does not
     /// carry the target — see `TranslationViewModel.resolvedTarget`.
     var target: Language?
-    /// A glossary load or save failure, in Russian. Rendered here rather than logged:
-    /// a «не показывать» that silently failed to persist leaves the user believing the
-    /// term is muted forever when it is only muted until the app quits.
-    var problem: String?
+    /// Called with a term the user no longer wants warned about.
+    ///
+    /// Whether that muting persisted is **not** reported here. It used to be, through a
+    /// `problem` property this view rendered — and that property is gone, because a
+    /// glossary that failed to save is the app's trouble and not this run's: it outlives
+    /// the run, it can be raised with no run at all behind it, and counting it here made
+    /// the status bar say «N+1 предупреждение» beside a file row saying «N».
+    /// `RunStatusBar` draws it as an always-visible row of its own instead.
     var onMute: (String) -> Void = { _ in }
 
+    init(checks: [GlossaryCheck], markupDiffs: [MarkupDiff], documentGlossary: [GlossaryEntry],
+         target: Language? = nil,
+         onMute: @escaping (String) -> Void = { _ in }) {
+        self.checks = checks
+        self.markupDiffs = markupDiffs
+        self.documentGlossary = documentGlossary
+        self.target = target
+        self.onMute = onMute
+    }
+
+    /// The window's and the panel's entry point, forwarding to the one above so that the
+    /// two callers cannot end up rendering warnings differently.
+    init(outcome: TranslationOutcome, target: Language? = nil,
+         onMute: @escaping (String) -> Void = { _ in }) {
+        self.init(checks: outcome.checks, markupDiffs: outcome.markupDiffs,
+                  documentGlossary: outcome.documentGlossary,
+                  target: target, onMute: onMute)
+    }
+
     private var glossaryWarnings: [(check: GlossaryCheck, text: String)] {
-        outcome.checks.compactMap { check in
+        checks.compactMap { check in
             DiffPresentation.describe(check).map { (check, $0) }
         }
     }
 
     /// How many separate things this view has to say: one per markup diff, one per missing
-    /// glossary term, one for `problem`, and one for the document glossary as a whole (its
-    /// own term count is shown in its disclosure title, not multiplied in here).
+    /// glossary term, and one for the document glossary as a whole (its own term count is
+    /// shown in its disclosure title, not multiplied in here).
+    ///
+    /// A refused glossary save is **not** among them. It used to be, and it does not belong:
+    /// it is the app's trouble rather than the run's, so it survives runs this view does not,
+    /// and counting it here made the bar say «N+1 предупреждение» beside a file row saying
+    /// «N». `RunStatusBar` draws it as a row of its own, always visible, in both modes.
     ///
     /// `hasContent` is defined in terms of this count rather than restating the same four
     /// conditions as a second boolean expression, and `RunStatusBar.summary` reads this same
@@ -31,10 +66,9 @@ struct WarningsView: View {
     /// the program that says how many warnings exist, and both the disclosure's visibility
     /// and its label read that one value.
     var warningCount: Int {
-        outcome.markupDiffs.count
+        markupDiffs.count
             + glossaryWarnings.count
-            + (outcome.documentGlossary.isEmpty ? 0 : 1)
-            + (problem != nil ? 1 : 0)
+            + (documentGlossary.isEmpty ? 0 : 1)
     }
 
     /// Whether this view would draw anything at all.
@@ -64,12 +98,9 @@ struct WarningsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let problem {
-                Text(problem).font(.caption).foregroundStyle(.red)
-            }
-            if !outcome.markupDiffs.isEmpty {
+            if !markupDiffs.isEmpty {
                 section("Разметка изменилась") {
-                    ForEach(Array(outcome.markupDiffs.enumerated()), id: \.offset) { _, diff in
+                    ForEach(Array(markupDiffs.enumerated()), id: \.offset) { _, diff in
                         Text("• " + DiffPresentation.describe(diff)).font(.caption)
                     }
                 }
@@ -92,9 +123,9 @@ struct WarningsView: View {
                     }
                 }
             }
-            if !outcome.documentGlossary.isEmpty {
-                DisclosureGroup("Термины документа (\(outcome.documentGlossary.count))") {
-                    ForEach(Array(outcome.documentGlossary.enumerated()), id: \.offset) { _, entry in
+            if !documentGlossary.isEmpty {
+                DisclosureGroup("Термины документа (\(documentGlossary.count))") {
+                    ForEach(Array(documentGlossary.enumerated()), id: \.offset) { _, entry in
                         Text("\(entry.term) → \(rendered(entry))")
                             .font(.caption).foregroundStyle(.secondary)
                     }

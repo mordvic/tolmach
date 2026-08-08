@@ -1,0 +1,184 @@
+// Sources/TranslatorApp/TranslatedFileWriter.swift
+import Foundation
+import TranslationCore
+
+/// Putting a finished translation on disk.
+///
+/// **Whether this is allowed is not knowable from a test.** The app is not sandboxed —
+/// `Scripts/make-app-bundle.sh` signs and does nothing else — but that removes only one of
+/// the two barriers. On macOS 14 a non-sandboxed app still meets TCC for `~/Documents`,
+/// `~/Desktop` and `~/Downloads`, and a drag grants the right to *read* what was dragged,
+/// not to place a sibling beside it. Whether the first write prompts, succeeds, or fails
+/// is an open probe — see the spec's §9.1 and `docs/OPEN-ITEMS.md`.
+///
+/// So this returns a problem instead of throwing, and the caller's recovery is a save
+/// panel rather than a message: `NSSavePanel` confers the write right itself, which makes
+/// it an actual way out of a refusal rather than an apology for one.
+enum TranslatedFileWriter {
+    /// Name it and write it, in one call.
+    ///
+    /// The two are inseparable on purpose. A caller that named the file, wrote it, and
+    /// then asked `OutputNaming` again for its «показать в Finder» link would be asking
+    /// *after* the write — the name is taken now, by that very write — and would be told
+    /// the next number. Only whoever wrote the bytes knows where they went, so only this
+    /// function answers.
+    static func write(_ text: String, beside source: URL, target: Language) -> SaveOutcome {
+        let destination = OutputNaming.destination(
+            for: source, target: target,
+            exists: { FileManager.default.fileExists(atPath: $0.path) })
+        // Written to a temporary sibling and moved into place, rather than straight to the
+        // destination. Two things have to hold at once and a single `write` cannot give both:
+        //
+        // - **Never clobber.** `OutputNaming` picks a free name and this writes, and another
+        //   process can create the file in between. Losing that race must cost a numbered
+        //   name, not a document — `moveItem` refuses an occupied destination, which is what
+        //   `aMoveIntoPlaceRefusesToClobberAnExistingFile` pins.
+        // - **Never leave half a document.** A plain write killed partway through a 2 MB
+        //   translation leaves a truncated file beside the source that looks finished and
+        //   that `OutputNaming` will thereafter treat as taken.
+        //
+        // `[.withoutOverwriting, .atomic]` is the obvious answer and is **not available**:
+        // measured — Foundation does not return an error for that pair, it traps with
+        // «withoutOverwriting is not supported with atomic», so taking it would have shipped
+        // a crash on every save. The temporary is a sibling so the move is a rename on the
+        // same volume, and it is removed if anything below fails.
+        // A fixed-length name, and deliberately not one built from the destination's.
+        //
+        // Embedding `lastPathComponent` added 46 bytes to a name that can already be near
+        // the 255-byte filesystem limit: a source with a ~100-character Cyrillic name is
+        // ~200 bytes, its destination ~211, and the temporary then overflowed — so the write
+        // failed with ENAMETOOLONG and the user was told to use «Сохранить как…», a
+        // TCC-flavoured answer to a failure the save panel does not fix, for a file a direct
+        // write would have saved. A UUID is unique on its own; it needs no help from the
+        // name it is standing in for.
+        let folder = destination.deletingLastPathComponent()
+        sweepAbandonedTemporaries(in: folder)
+        let temporary = folder.appendingPathComponent(".tolmach-\(UUID().uuidString).partial")
+        do {
+            try Data(text.utf8).write(to: temporary, options: .atomic)
+            // Retried on a taken name, because losing the race is supposed to cost a
+            // *number* and not the document. Without this the `moveItem` simply threw and
+            // the user was told «воспользуйтесь "Сохранить как…"» — a permission answer to a
+            // collision, misdiagnosing the one failure this whole naming scheme exists to
+            // handle. Bounded for `OutputNaming`'s reason: a directory that keeps producing
+            // the name a moment after it was checked is a hostile filesystem, not a race.
+            var next = destination
+            for _ in 0..<8 {
+                do {
+                    try FileManager.default.moveItem(at: temporary, to: next)
+                    return .saved(next)
+                } catch CocoaError.fileWriteFileExists {
+                    // No `draft:` — this path writes only finished translations
+                    // (`saveBesideSource` is gated on `needsSaving`, which is `.finished`).
+                    next = OutputNaming.destination(
+                        for: source, target: target,
+                        exists: { FileManager.default.fileExists(atPath: $0.path) })
+                }
+            }
+            // Every attempt lost the race. Reported as what it is: the outer `catch`'s
+            // sentence is about permission, and answering a collision with «воспользуйтесь
+            // "Сохранить как…"» is the misdiagnosis this loop exists to remove — falling
+            // through to it after eight tries would have reintroduced it at the end.
+            //
+            // **No test reaches this line**, and that is a fact about the filesystem rather
+            // than a gap: `OutputNaming` re-scans for a free name on every retry, so getting
+            // here needs a directory that claims each of eight freshly-chosen names in the
+            // moment between the check and the move. Pre-occupying names cannot produce it.
+            try? FileManager.default.removeItem(at: temporary)
+            Log.files.error("could not claim a free name after 8 attempts")
+            return .refused("Не удалось подобрать свободное имя рядом с исходником — "
+                + "файлы с такими именами появляются быстрее, чем перевод успевает сохраниться. "
+                + "Воспользуйтесь кнопкой «Сохранить как…».")
+        } catch {
+            try? FileManager.default.removeItem(at: temporary)
+            // The domain and the code, and **not** `localizedDescription`.
+            //
+            // That description names the document. Measured: a refused write to a path
+            // called `техдок-секретный.ru.md` produces «The folder
+            // "техдок-секретный.ru.md" doesn't exist.» — so logging it `.public` puts a
+            // user's file name, and often its folder, into the unified log, which any
+            // admin on the machine can read and which `sysdiagnose` collects. `Log`'s own
+            // rule forbids exactly that, and this line carried a comment claiming it was
+            // being obeyed.
+            //
+            // What remains is `.public` for the reason `Log` gives: `<private>` in
+            // `log show` makes an entry useless for the diagnosis it exists for. It is
+            // also the half that identifies the *failure* — 513 is «no permission», the
+            // TCC refusal this whole fallback exists for — while the half that identified
+            // the *user* is gone.
+            let nsError = error as NSError
+            Log.files.error("could not write a translation: \(nsError.domain, privacy: .public) \(nsError.code, privacy: .public)")
+            return .refused("Не удалось сохранить перевод рядом с исходником. "
+                + "Воспользуйтесь кнопкой «Сохранить как…» — это заодно выдаст приложению право на запись.")
+        }
+    }
+
+    /// Remove `.tolmach-*.partial` files this app abandoned in `folder`.
+    ///
+    /// The temporary is deleted on every failure path inside the `do` in
+    /// `write(_:beside:target:)` above, but not by a
+    /// process that dies between the write and the move — and a 2 MB write followed by up to
+    /// eight `moveItem` attempts is a real window. Nothing else ever cleans them up, so each
+    /// interrupted save left another hidden file beside the user's document, accumulating
+    /// with no owner.
+    ///
+    /// Swept on the way past rather than by a scheduled job: this is the only code that
+    /// creates these, so it is the only code that knows the shape, and the one moment it is
+    /// certainly looking at the right folder is just before writing there.
+    ///
+    /// One hour, and not «any that exist». A concurrent save — a second window, a second
+    /// launch — has its own temporary in flight in this folder under the same prefix, and
+    /// deleting it would break that save to tidy up after this one. Nothing here holds a
+    /// file open for an hour: the write is a single `Data.write` and the moves are renames.
+    ///
+    /// Failures are ignored, all of them. This is housekeeping on the way to the actual job,
+    /// and a folder that refuses a `removeItem` must not cost the user their translation.
+    private static func sweepAbandonedTemporaries(in folder: URL) {
+        let manager = FileManager.default
+        guard let entries = try? manager.contentsOfDirectory(
+            at: folder, includingPropertiesForKeys: [.contentModificationDateKey],
+            // No `.skipsHiddenFiles`: the temporary's name starts with a dot, so that
+            // option would make this sweep find nothing at all. Probed.
+            options: []) else { return }
+        let cutoff = Date().addingTimeInterval(-3600)
+        for entry in entries where entry.lastPathComponent.hasPrefix(".tolmach-")
+            && entry.pathExtension == "partial" {
+            let modified = try? entry.resourceValues(forKeys: [.contentModificationDateKey])
+                .contentModificationDate
+            guard let modified, modified < cutoff else { continue }
+            try? manager.removeItem(at: entry)
+        }
+    }
+
+    /// Write to a destination the user chose in an `NSSavePanel`.
+    ///
+    /// **Overwrites, unlike the function above, and that difference is the point.** There
+    /// the name was picked by `OutputNaming` and an existing file is somebody else's
+    /// document; here the panel has already shown the name, already asked about a
+    /// collision, and already got an answer. Refusing at this stage would override a
+    /// decision the user has just made — and the panel's own grant is what makes the write
+    /// possible in the first place.
+    static func write(_ text: String, to destination: URL) -> SaveOutcome {
+        do {
+            // `.atomic` first, because a torn write is worth avoiding — but not at the cost
+            // of this path, which is the **only** way out of a refused write. `.atomic`
+            // creates a sibling temporary and renames it, so it needs the *directory*, while
+            // the save panel's grant is for the *file* the user named. If those differ, the
+            // atomic form fails where a direct write would have succeeded, and the user is
+            // left with no route at all. Whether they differ is unverified — it is part of
+            // the same TCC probe `docs/OPEN-ITEMS.md` carries — so this does not depend on
+            // the answer: try the safer form, fall back to the one that needs less.
+            do {
+                try Data(text.utf8).write(to: destination, options: .atomic)
+            } catch {
+                try Data(text.utf8).write(to: destination)
+            }
+            return .saved(destination)
+        } catch {
+            // Same reasoning as above: the description names the file the user chose.
+            let nsError = error as NSError
+            Log.files.error("could not write to a chosen destination: \(nsError.domain, privacy: .public) \(nsError.code, privacy: .public)")
+            return .refused("Не удалось сохранить перевод в выбранное место.")
+        }
+    }
+}

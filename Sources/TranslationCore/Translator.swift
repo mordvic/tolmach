@@ -34,7 +34,16 @@ public struct TranslationOutcome: Sendable {
     /// read as roughly equal to `totalMS`, which blamed latency for what was
     /// actually an absent response. `totalMS` still covers wall-clock time
     /// regardless, so no information is lost by making this optional.
+    /// Measured on the same clock as `totalMS`: both exclude any time the review hook spent
+    /// waiting for a human, which lies between the start and the first token.
     public let timeToFirstTokenMS: Double?
+    /// Wall-clock time for the whole call — **minus** any time the review hook spent
+    /// waiting for a human.
+    ///
+    /// The subtraction is what keeps this number meaning «how long the machine took», which
+    /// is how both «Готово за N мс» and a queue row's «✓ готово за …» are read. With the
+    /// terms gate on, a file the model translated in 8 s while its reader deliberated for
+    /// four minutes reported 248 000 ms, which says nothing about anything.
     public let totalMS: Double
     /// Why the document-glossary call was abandoned, or nil if it was not — either because it
     /// succeeded or because this run never needed one.
@@ -53,6 +62,16 @@ public struct TranslationOutcome: Sendable {
     /// `translate-cli` prints it, and the acceptance harness can read it. Nothing renders it
     /// to the user: it is a diagnostic about an enhancement, not a warning about the result.
     public let documentGlossaryFailure: String?
+    /// Whether this run actually asked the model for a term list.
+    ///
+    /// False when there was nothing to ask about: a single-часть run, a source language the
+    /// detector could not name, or a document `TermExtractor` found no candidates in.
+    ///
+    /// It exists because «the review sheet never appeared» has two causes and only one of
+    /// them is a failure. Without this the app told a user who had turned the gate on that
+    /// terms «не удалось подготовить» for every prose document whose tagger yielded no
+    /// candidates — asserting a failure that never happened.
+    public let documentGlossaryAttempted: Bool
 }
 
 // Every other public value type in this API is already Sendable; the entry point
@@ -61,21 +80,96 @@ public struct TranslationOutcome: Sendable {
 // which owns a Translator from a @MainActor view model) fails to compile with
 // "sending 'self.translator' risks causing data races". The package still pins
 // Swift 5 language mode, which hides this today.
+/// What a long-running consumer needs to draw a progress row, reported from inside the
+/// run because that is the only place all three numbers exist at once.
+///
+/// `documentTermCount` travels here rather than being read off `TranslationOutcome`
+/// because a queue row says «12 терминов документа» *while* the run is going, and the
+/// outcome does not exist until it is over.
+public struct TranslationProgress: Sendable, Equatable {
+    /// Parts whose translation has been received in full.
+    public let partsDone: Int
+    /// Fixed for the whole run: chunking depends on the input alone.
+    public let partsTotal: Int
+    /// Terms the документный глоссарий is holding constant. Zero when there is none —
+    /// a single-part run, an unrecognised source language, or an empty term list.
+    public let documentTermCount: Int
+
+    public init(partsDone: Int, partsTotal: Int, documentTermCount: Int) {
+        self.partsDone = partsDone
+        self.partsTotal = partsTotal
+        self.documentTermCount = documentTermCount
+    }
+}
+
+/// What a human is shown before the translation that will use it.
+///
+/// Carries the user's own matching entries as well as the model's, because the review
+/// draws a «откуда» column and cannot distinguish the two sources by looking at a
+/// `GlossaryEntry`. The user's are context only: `GlossaryMerge.merge(user:document:)`
+/// lets a user entry win over a document one, so an edit to a user row would be discarded
+/// by the very next thing the engine does.
+public struct DocumentTermsDraft: Sendable {
+    /// The term-list call's result, parsed. This is what the review edits.
+    public let documentEntries: [GlossaryEntry]
+    /// `Glossary.relevantEntries(for:)` — the user's entries that occur in this text.
+    public let userEntries: [GlossaryEntry]
+    /// How many частей these terms will be held constant across. The review says this
+    /// number out loud, so it comes from the engine that planned them.
+    public let chunkCount: Int
+    /// The language `documentEntries` is keyed by, and the one an edit must be written to.
+    ///
+    /// Carried rather than re-derived, because the view has no honest way to work it out:
+    /// the run that raised this sheet may belong to the queue or to the hotkey panel, and a
+    /// window re-deriving it from *its own* last outcome answers about a different
+    /// document. `GlossaryEntry.translations` is keyed by language, so a wrong answer there
+    /// is not a cosmetic one — every field renders blank and every correction is written to
+    /// a key the engine never looks up. The same failure the glossary pane's language
+    /// column already cost this project once.
+    public let target: Language
+
+    public init(documentEntries: [GlossaryEntry], userEntries: [GlossaryEntry],
+                chunkCount: Int, target: Language) {
+        self.documentEntries = documentEntries
+        self.userEntries = userEntries
+        self.chunkCount = chunkCount
+        self.target = target
+    }
+}
+
 public struct Translator: Sendable {
     let client: LLMClient
     public init(client: LLMClient) { self.client = client }
 
+    /// - Parameter source: the language to translate *from*, when the caller already knows.
+    ///
+    ///   Nil means «detect it», which is what every call did until now — and that was a
+    ///   half-applied override: the app resolved the user's «Из» picker to choose the
+    ///   *target* and then handed the text over without it, so the prompt still said
+    ///   «translate from …» whatever the detector guessed, `TermExtractor` still parsed with
+    ///   that language's tagger, and `detectedSource` still reported it. A user correcting a
+    ///   misdetection changed the target and nothing else.
+    ///
+    ///   It also removes a second full scan: the queue must detect to choose a target
+    ///   before calling, so every file without an override was read end to end twice by
+    ///   `NLLanguageRecognizer`, which has no prefix cap and accepts 2 MB here. Only for a
+    ///   language the app can name, though — a caller whose own detect returned nil passes
+    ///   nil, and the line below then scans again. Measured: 2.06 MB of Ukrainian — a language outside
+    ///   `Language` — detects as nil in 48 ms, and is then read again.
     public func translate(
         text: String, target: Language, tone: Tone, userGlossary: Glossary?,
+        source: Language? = nil,
         options: ChatOptions, maxChunkCharacters: Int,
         ignoredTerms: Set<String> = [],
-        onToken: @escaping @Sendable (String) -> Void = { _ in }
+        onToken: @escaping @Sendable (String) -> Void = { _ in },
+        onProgress: @escaping @Sendable (TranslationProgress) -> Void = { _ in },
+        reviewDocumentTerms: (@Sendable (DocumentTermsDraft) async throws -> [GlossaryEntry])? = nil
     ) async throws -> TranslationOutcome {
         let started = Date()
         var firstTokenAt: Date? = nil
         var stats: [ChatStats] = []
 
-        let detected = LanguageDetector.detect(text)
+        let detected = source ?? LanguageDetector.detect(text)
         let plan = Chunker.plan(text, maxCharacters: maxChunkCharacters)
         let chunks = plan.chunks
 
@@ -218,15 +312,31 @@ public struct Translator: Sendable {
             return collected
         }
 
+        // The part count as soon as it is known, before anything is asked of the model.
+        //
+        // The report below waits for the term-list call and, with the gate on, for a human
+        // — seconds or minutes during which a consumer had nothing but whatever it seeded
+        // its row with. For the queue that seed is the drop-time estimate, so a user who
+        // changed «размер части» between dropping and running saw the stale number for the
+        // whole of that wait: exactly the mismatch the running row takes its count from the
+        // run to avoid.
+        onProgress(TranslationProgress(partsDone: 0, partsTotal: chunks.count,
+                                       documentTermCount: 0))
+
         // Document glossary. Needs more than one chunk to be worth anything, and a known
         // source language — parsing the source with the target's tagger yields garbage
         // terms that would then be forced into every chunk.
         var documentEntries: [GlossaryEntry] = []
         /// Set only on the swallowed path below. See `TranslationOutcome.documentGlossaryFailure`.
         var documentGlossaryFailure: String?
+        /// See `TranslationOutcome.documentGlossaryAttempted`.
+        var documentGlossaryAttempted = false
+        /// Seconds spent waiting for a human in the review hook. See where it is subtracted.
+        var reviewWait: TimeInterval = 0
         if chunks.count > 1, let source = detected {
             let terms = TermExtractor.extract(from: text, language: source)
             if !terms.isEmpty {
+                documentGlossaryAttempted = true
                 do {
                     try Task.checkCancellation()
                     let raw = try await streamTermList(PromptBuilder.termListMessages(terms: terms, target: target))
@@ -256,6 +366,75 @@ public struct Translator: Sendable {
                     documentGlossaryFailure = error.localizedDescription
                 }
             }
+        }
+
+        // The review point, and the only correct one: the term-list stream has finished
+        // and no per-часть request has been issued, so **no HTTP request is in flight**
+        // while this waits for a human. Any earlier and there is nothing to show; any
+        // later and the terms have already reached a prompt.
+        //
+        // Deliberately **outside** the `do`/`catch` above. That block turns any
+        // non-cancellation error into an empty glossary and a recorded
+        // `documentGlossaryFailure` — correct for a failed *model* call, wrong for a hook
+        // the app supplied: a throw from the review would be swallowed and the run would
+        // carry on as though the user had approved it.
+        // `anErrorFromTheReviewFailsTheRunRatherThanBeingSwallowed` is the guard.
+        //
+        // Skipped when there is nothing to review — no документный глоссарий was built, or
+        // the term-list call failed. An empty table reads as a failure, and the app is what
+        // has to speak up about the failed call.
+        if let reviewDocumentTerms, !documentEntries.isEmpty {
+            let draft = DocumentTermsDraft(
+                documentEntries: documentEntries,
+                // Filtered over code-stripped text, exactly as the per-часть filter and the
+                // final verification below are, and for the same reason. Over the raw source
+                // a user term occurring only inside a fenced or inline code span counts as
+                // «covered by the glossary» — and the sheet drops the model's row for it,
+                // so a term the engine will *not* inject for those части becomes silently
+                // unreviewable.
+                userEntries: userGlossary?.relevantEntries(for: TermExtractor.strippingCode(text)) ?? [],
+                chunkCount: chunks.count,
+                target: target)
+            // A refusal is `CancellationError`, thrown by the hook and propagating from
+            // here — the contract the engine already has, rather than a second refusal
+            // path. The check after it covers a cancellation that landed while the human
+            // was deciding but did not surface as a throw.
+            // Filtered, and not taken as given. `DocumentGlossary.parse` refuses an empty
+            // translation on the way in; the hook is a second door into the same data and
+            // has to uphold the same invariant. A user who clears a field in the sheet means
+            // «do not force this term», but an entry that survives with `translations[target]
+            // == ""` reaches `PromptBuilder`, which gates on the key being present rather
+            // than on it having a value — so every часть would be told to translate the term
+            // as the empty string, and the warnings panel would list it as `API → `.
+            // `GlossaryPromotion` already drops exactly this shape for the same reason.
+            let askedAt = Date()
+            documentEntries = try await reviewDocumentTerms(draft).filter { entry in
+                guard let required = entry.requiredTranslation(for: target) else { return false }
+                // Trimmed, not merely non-empty. A field «cleared» by typing a space keeps
+                // `" "`, which passed the emptiness test and reached `PromptBuilder` as
+                // `- "API" — translate as " ".` in every часть, then `GlossaryVerifier` as a
+                // term that can never be honoured — the unfixable warning this rule exists
+                // to prevent, one keystroke away from the shape it already caught.
+                return !required.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            try Task.checkCancellation()
+            // Subtracted from `totalMS` below. That number is what «Готово за N мс» and a
+            // queue row's «✓ готово за …» render, and a reader takes it for how long the
+            // machine took — including four minutes of their own deliberation over the terms
+            // sheet makes it say nothing at all.
+            reviewWait = Date().timeIntervalSince(askedAt)
+        }
+
+        // The term count, once the review (if any) has settled it — so this reports what the
+        // run will actually hold constant, not what the model first proposed.
+        //
+        // Sent only when there is something new to say: for a run with no документный
+        // глоссарий this would repeat the report above word for word, and a duplicate is a
+        // consumer's cue to redraw for nothing.
+        let documentTermCount = documentEntries.count
+        if documentTermCount > 0 {
+            onProgress(TranslationProgress(partsDone: 0, partsTotal: chunks.count,
+                                           documentTermCount: documentTermCount))
         }
 
         // Per-chunk translation. The user glossary is filtered by occurrence; the document
@@ -309,6 +488,9 @@ public struct Translator: Sendable {
             // in-flight incremental output.
             try Task.checkCancellation()
             translatedChunks.append(cleaned)
+            onProgress(TranslationProgress(partsDone: translatedChunks.count,
+                                           partsTotal: chunks.count,
+                                           documentTermCount: documentTermCount))
         }
         // `ChunkPlan.assembled` owns the reassembly formula — this used to restate it,
         // and so did the test that pins losslessness, which is how a restatement can
@@ -346,8 +528,14 @@ public struct Translator: Sendable {
             // and the source on disk are the same document again.
             markupDiffs: MarkupSkeleton.diff(source: text, translation: final),
             stats: stats,
-            timeToFirstTokenMS: firstTokenAt.map { $0.timeIntervalSince(started) * 1000 },
-            totalMS: Date().timeIntervalSince(started) * 1000,
-            documentGlossaryFailure: documentGlossaryFailure)
+            // `reviewWait` comes off this too, and it has to: the review point is before the
+            // per-часть loop, so every millisecond a reader spent in the sheet sits between
+            // `started` and the first token. Subtracting it from `totalMS` alone left the
+            // two measuring different clocks — TTFT of 248 000 ms against a total of 8 000,
+            // which inverts the relationship the outcome documents.
+            timeToFirstTokenMS: firstTokenAt.map { ($0.timeIntervalSince(started) - reviewWait) * 1000 },
+            totalMS: (Date().timeIntervalSince(started) - reviewWait) * 1000,
+            documentGlossaryFailure: documentGlossaryFailure,
+            documentGlossaryAttempted: documentGlossaryAttempted)
     }
 }

@@ -20,6 +20,13 @@ struct TranslatorApp: App {
     @State private var glossary: GlossaryStore
     @State private var statusModel: OllamaStatusModel
     @State private var translation: TranslationViewModel
+    /// The file queue — the window's third model, beside its own `translation` and the
+    /// panel's inside `coordinator`.
+    ///
+    /// Owned here for the reason the other two are: the app owns the models and the scenes
+    /// read them. One run per model with a per-instance guard is what keeps the three from
+    /// overwriting each other, and it only holds while nobody builds a second copy.
+    @State private var queue: FileQueueModel
     /// Owned here rather than created inside the settings pane so the installed list and a
     /// download in progress survive the settings window being closed and reopened.
     @State private var models: ModelsViewModel
@@ -37,6 +44,12 @@ struct TranslatorApp: App {
     /// Built here rather than on first press so that a press never pays for an `NSPanel` and
     /// an `NSHostingView` before it can show anything.
     @State private var panel: PanelController
+    /// Which half of the window's left pane is showing.
+    ///
+    /// Owned here rather than inside `MainWindowView`, and that is not tidying: the
+    /// «Перевод» menu's ⌘↩ and ⌘. must drive whichever mode is visible, and a menu built in
+    /// this scene cannot read a `@State` declared in that view. The window binds to it.
+    @State private var mode: SourceMode = .text
 
     init() {
         let settings = AppSettings()
@@ -77,10 +90,32 @@ struct TranslatorApp: App {
         // sharing the client is what matters, because it is what holds the `URLSession`.
         let coordinator = HotkeyCoordinator(settings: settings, glossary: glossary,
                                             translator: Translator(client: client))
+        // A third `Translator` over the same client, for the same reason as the second.
+        // The save closure is where the queue meets the filesystem, and it is injected
+        // rather than reached for inside the runner so a test can run a whole queue
+        // without writing anything.
+        let queue = FileQueueModel(
+            translator: Translator(client: client), settings: settings, glossary: glossary,
+            // The target comes from the model, which knows what the run resolved. Working
+            // it out here re-detected the text and applied the settings rule, so a toolbar
+            // override was ignored and a German translation was written as «a.ru.md».
+            // Detached: this is where the file system is actually touched, and the model
+            // deliberately does not do it on the actor its rows are drawn from.
+            save: { source, text, target in
+                await Task.detached(priority: .userInitiated) {
+                    TranslatedFileWriter.write(text, beside: source, target: target)
+                }.value
+            },
+            saveAs: { text, url in
+                await Task.detached(priority: .userInitiated) {
+                    TranslatedFileWriter.write(text, to: url)
+                }.value
+            })
         _settings = State(initialValue: settings)
         _glossary = State(initialValue: glossary)
         _statusModel = State(initialValue: statusModel)
         _translation = State(initialValue: translation)
+        _queue = State(initialValue: queue)
         // Both halves of this take the shared client: the probe behind the installed and
         // resident lists, and the puller behind «Скачать». `OllamaClient` is a `Sendable`
         // struct — `LLMClient` requires it — so the closure may capture it.
@@ -124,14 +159,10 @@ struct TranslatorApp: App {
         Window("Толмач", id: TranslatorApp.mainWindowID) {
             MainWindowView(model: translation,
                            glossary: glossary, status: statusModel.status,
-                           // Same shape as the panel's own `onCopy` below: the write
-                           // itself is `TranslationViewModel.copyToPasteboard()`, which
-                           // shares `GeneralPasteboard.write` with `HotkeyCoordinator`'s,
-                           // so there is one write to test rather than two to keep in sync.
-                           onCopy: { Task { await translation.copyToPasteboard() } },
                            onRunFinished: {
                                await statusModel.refresh(interactiveModel: settings.interactiveModel)
-                           })
+                           },
+                           queue: queue, panelModel: coordinator.panelModel, mode: $mode)
                 .task { await statusModel.refresh(interactiveModel: settings.interactiveModel) }
         }
         // The app had no commands at all, and SwiftUI's defaults for this scene combination
@@ -159,32 +190,47 @@ struct TranslatorApp: App {
                 // this window sits idle reaches the panel, not this. That the fall-through
                 // happens in that order is the one part of this block a physical key press
                 // still has to confirm; `docs/OPEN-ITEMS.md` §1 carries it.
-                Button("Перевести") { Task { await translation.translate() } }
+                //
+                // Both items read `PrimaryAction`, the same value the toolbar button reads,
+                // so the three cannot disagree about which model they drive. Before this,
+                // all three called `translation` directly and «Файлы» had no way to start
+                // or stop a queue at all.
+                //
+                // The ⌘. argument above still holds and its condition is unchanged in
+                // spirit: the item is disabled unless the **visible mode** is running, so a
+                // window sitting idle in either mode still declines ⌘. and lets the panel
+                // have it. What changed is that «running» now means the visible mode's run
+                // rather than the text model's.
+                let action = PrimaryAction.forMode(mode, text: translation, queue: queue)
+                Button("Перевести") { Task { await action.start() } }
                     .keyboardShortcut(.return, modifiers: .command)
-                    .disabled(translation.state == .running || !statusModel.status.isHealthy)
-                Button("Отмена") { translation.cancel() }
+                    .disabled(action.isRunning || !action.canStart || !statusModel.status.isHealthy)
+                Button("Отмена") { action.cancel() }
                     .keyboardShortcut(".", modifiers: .command)
-                    .disabled(translation.state != .running)
+                    .disabled(!action.isRunning)
 
                 Divider()
 
                 // ⌃⌘S rather than anything with ⌥: the toolbar's ⇄ is the discoverable half
                 // and this is the shortcut for it, and ⌥-combinations are where the system's
                 // own reserved space is thickest.
-                Button("Поменять языки местами") { translation.swapLanguages() }
+                Button("Поменять языки местами") { action.swap() }
                     .keyboardShortcut("s", modifiers: [.command, .control])
-                    .disabled(!translation.canSwapLanguages)
+                    .disabled(!action.canSwap)
 
                 Divider()
 
                 // ⇧⌘C, not ⌘C: plain ⌘C belongs to «Правка» → «Скопировать» and must keep
                 // working on a selection inside the source editor. This copies the whole
                 // translation, which is a different action and deserves a different key.
-                Button("Скопировать перевод") { Task { await translation.copyToPasteboard() } }
+                // Both read the same `PrimaryAction` the toolbar does. Before this ⇧⌘C was
+                // disabled by the *text* model's emptiness while a file's translation sat on
+                // screen, and «Очистить исходник» acted on a pane that was not visible.
+                Button("Скопировать перевод") { Task { await action.copy() } }
                     .keyboardShortcut("c", modifiers: [.command, .shift])
-                    .disabled(translation.translatedText.isEmpty)
-                Button("Очистить исходник") { translation.sourceText = "" }
-                    .disabled(translation.sourceText.isEmpty || translation.state == .running)
+                    .disabled(!action.canCopy)
+                Button("Очистить исходник", action: action.clear)
+                    .disabled(!action.canClear)
             }
 
             // In «Окно», beside the window list, because that is what it does. It duplicates
@@ -227,6 +273,8 @@ struct TranslatorApp: App {
                     .tabItem { Label("Модели", systemImage: "shippingbox") }
                 SettingsGlossaryView(glossary: glossary, settings: settings)
                     .tabItem { Label("Глоссарий", systemImage: "book.closed") }
+                SettingsFilesView(settings: settings, models: models)
+                    .tabItem { Label("Файлы", systemImage: "doc.on.doc") }
             }
             // «Модели» now shows Ollama's health line, which this scene's own `Window` also
             // shows independently — so the pane needs its own initial check rather than
@@ -247,6 +295,17 @@ struct TranslatorApp: App {
     /// is synchronous and takes no I/O, so there is nothing to gain by deferring it.
     private func launch() async {
         configurePanel()
+        // Whoever raises a terms sheet needs the window that presents it. Set here, from a
+        // scene that is always alive, rather than observed from the window's own content —
+        // that content does not exist while the window is closed, which is the app's normal
+        // state, and the sheet would then appear nowhere at all.
+        //
+        // All three raisers get it: the window's own model too, because ⌘W during a run
+        // leaves it in the same position as the other two.
+        let present = { openWindow(id: TranslatorApp.mainWindowID); activateThisApp() }
+        translation.onTermsRequested = present
+        queue.onTermsRequested = present
+        coordinator.panelModel.onTermsRequested = present
         pruneEmptyMenus()
         // The refusal still raises nothing on screen, and that part is unchanged: a
         // user-visible message needs UI that does not exist yet. What it no longer does is
@@ -441,6 +500,13 @@ struct TranslatorApp: App {
             panel.hide()
         }
         panel.onEnter = {
+            // Cancelled first, like Esc and the ⨯ — this was the one dismissal that did not.
+            // With the terms gate on, ⏎ while the run is suspended on the escalated sheet
+            // copied whatever little had arrived, hid the panel, and left a modal demanding
+            // edits for a run whose only output surface was gone: answering it then streamed
+            // the finished translation into a hidden panel, where `autoCopy` is off by
+            // default and nothing else would ever show it.
+            coordinator.panelModel.cancel()
             // Hidden first, then copied. `copyResult()` suspends while the write goes through
             // `GeneralPasteboard`'s serialisation, and Enter means «copy and close» — leaving
             // the panel up for the length of that suspension would make the close look laggy
@@ -467,6 +533,14 @@ struct TranslatorApp: App {
             activateThisApp()
             return
         }
+        // Only now that something has actually been handed over. Set before the guard, it
+        // was a side effect of a path that returns without doing its job: a refused hand-off
+        // yanked the window out of «Файлы» and left it there having moved nothing.
+        //
+        // The window must be *showing* the pane it was given. Without this the translation
+        // landed in «Текст» while the window sat in «Файлы» — not drawn, and formerly not
+        // even reachable, because the switch stayed disabled until the queue finished.
+        mode = .text
         panel.hide()
         openWindow(id: TranslatorApp.mainWindowID)
         // The app is an `LSUIElement` and the panel is non-activating, so nothing so far has

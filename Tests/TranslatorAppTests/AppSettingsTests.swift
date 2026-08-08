@@ -200,3 +200,67 @@ private final class FiredFlag: @unchecked Sendable {
     settings.hotkey = HotkeyCombo(keyCode: 0x23, modifiers: NSEvent.ModifierFlags.control.rawValue)
     #expect(fired.value)
 }
+
+@Test func anUnsetBatchModelFollowsTheInteractiveOne() {
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "batch-model-unset"))
+    #expect(settings.batchModel == nil)
+    #expect(settings.resolvedBatchModel == settings.interactiveModel)
+
+    settings.interactiveModel = "some-other-model:7b"
+    // Still following, not frozen at whatever the interactive model was when first read.
+    #expect(settings.resolvedBatchModel == "some-other-model:7b")
+}
+
+@Test func aChosenBatchModelStopsFollowingTheInteractiveOne() {
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "batch-model-set"))
+    settings.batchModel = "gpt-oss:20b"
+    settings.interactiveModel = "aya-expanse:8b"
+    #expect(settings.resolvedBatchModel == "gpt-oss:20b")
+}
+
+@Test func theBatchModelReadsTheKeyTheRemovedBackgroundModelWroteTo() {
+    // AppSettings' own removal comment promises this: a value a user stored before the
+    // property was deleted stays under "backgroundModel" and v2 finds it again.
+    let defaults = InMemoryDefaults(prefix: "batch-model-legacy")
+    defaults.set("gpt-oss:20b", forKey: "backgroundModel")
+    let settings = AppSettings(defaults: defaults)
+    #expect(settings.batchModel == "gpt-oss:20b")
+}
+
+@Test func clearingTheBatchModelReturnsItToFollowingTheInteractiveOne() {
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "batch-model-cleared"))
+    settings.batchModel = "gpt-oss:20b"
+    settings.batchModel = nil
+    #expect(settings.batchModel == nil)
+    #expect(settings.resolvedBatchModel == settings.interactiveModel)
+}
+
+@Test func choosingABatchModelThatDiffersFromTheHotkeysIsWorthWarningAbout() {
+    // Ollama holds one model: cold load ~2000 ms against ~155 ms warm. A batch model
+    // that differs costs two of those on every hotkey press during a queue run, and the
+    // pane has to say so rather than leaving the user to discover it.
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "batch-warning"))
+    #expect(!settings.batchModelDiffersFromInteractive)
+
+    settings.batchModel = "gpt-oss:20b"
+    settings.interactiveModel = "aya-expanse:8b"
+    #expect(settings.batchModelDiffersFromInteractive)
+
+    settings.batchModel = "aya-expanse:8b"
+    #expect(!settings.batchModelDiffersFromInteractive)
+}
+
+@Test func theQueueSavesBesideTheSourceUnlessToldOtherwise() {
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "queue-saving"))
+    #expect(settings.saveNextToSource)
+    settings.saveNextToSource = false
+    #expect(!settings.saveNextToSource)
+}
+
+@Test func theQueueRunsToTheEndAndTheTermsGateIsOffUntilAskedFor() {
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "queue-defaults"))
+    #expect(!settings.stopOnWarnings)
+    // Ships off even though the design draws it on: the drawing assumed the gate lived
+    // in the batch path only, and it reaches ⌥⌘T too.
+    #expect(!settings.reviewDocumentTerms)
+}

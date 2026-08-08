@@ -48,4 +48,14 @@ enum Log {
     static let engine = Logger(subsystem: subsystem, category: "engine")
     /// Settings and the glossary file.
     static let settings = Logger(subsystem: subsystem, category: "settings")
+    /// The file queue: what it could not read and what it could not write.
+    ///
+    /// A category of its own because these are the failures a user reports as «оно ничего
+    /// не сохранило», and finding them in the `engine` stream among per-часть diagnostics
+    /// is the difference between a diagnosis and a search.
+    ///
+    /// **A file name is user data.** Nothing here logs one: a path names a document, a
+    /// project and often an employer, and this file's own rule is that nothing derived
+    /// from the user's text reaches the unified log.
+    static let files = Logger(subsystem: subsystem, category: "files")
 }

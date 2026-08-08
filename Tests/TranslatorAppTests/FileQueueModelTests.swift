@@ -1,0 +1,1597 @@
+import Foundation
+import AppKit
+import Testing
+import TranslationCore
+@testable import TranslatorApp
+
+/// One scripted reply per model call, in order. `TranslationViewModelTests` has a
+/// `ScriptedClient` of its own; this is a separate one on purpose, because that one is
+/// `private` to its file and sharing it would couple two suites' fixtures.
+final class QueueClient: LLMClient, @unchecked Sendable {
+    private let lock = NSLock()
+    private var replies: [String]
+    private var _callCount = 0
+    /// Blocks each reply behind a sleep, so a cancellation has a window in which to land. A
+    /// fully synchronous fake never suspends, and a test against it would pin nothing about
+    /// cancellation at all.
+    private let paced: Bool
+    /// Which call, by zero-based index, waits long enough that a cancellation cannot lose
+    /// the race to it.
+    ///
+    /// 60 ms of pacing is enough for a test that only *observes* a run in flight. It is not
+    /// enough for one that means to cancel it: under the full suite the test's own task can
+    /// wait longer than that to be scheduled, and the reply lands first — measured, one run
+    /// in six. Ten seconds cannot be lost, and costs nothing, because cancelling aborts the
+    /// sleep.
+    ///
+    /// Targeted at one call rather than applied to all of them, and that is not tidiness:
+    /// making every reply wait ten seconds took the suite from 0.9 s to 20 s, because the
+    /// files a cancellation test *does not* cancel then pay it in full.
+    private let holdCallAtIndex: Int?
+
+    /// Which call, by zero-based index, fails instead of answering. The term-list call is
+    /// call 0 for a multi-часть file, which is what the gate's failure test needs to break.
+    private let failCallAtIndex: Int?
+
+    init(replies: [String], paced: Bool = false, holdCallAtIndex: Int? = nil,
+         failCallAtIndex: Int? = nil) {
+        self.replies = replies; self.paced = paced
+        self.holdCallAtIndex = holdCallAtIndex
+        self.failCallAtIndex = failCallAtIndex
+    }
+
+    var callCount: Int { lock.lock(); defer { lock.unlock() }; return _callCount }
+
+    /// Every prompt this client was handed, in order.
+    ///
+    /// Recorded so a test can pin the *wiring* and not just the engine: the app resolving
+    /// «Из» and then failing to pass it was a defect that lived entirely between the toolbar
+    /// and `translate`, where a `TranslationCore` test cannot see it.
+    var receivedMessages: [[ChatMessage]] { lock.lock(); defer { lock.unlock() }; return _received }
+    private var _received: [[ChatMessage]] = []
+
+    func chat(messages: [ChatMessage], options: ChatOptions) -> AsyncThrowingStream<ChatEvent, Error> {
+        lock.lock()
+        let index = _callCount
+        _callCount += 1
+        _received.append(messages)
+        // Deliberately does **not** run out: a queue that re-scanned its work list would
+        // loop forever here, and a fixture that exhausted itself would turn that hang
+        // into a different, misleading failure. The call count is what the test asserts.
+        let reply = replies.isEmpty ? "перевод" : replies.removeFirst()
+        lock.unlock()
+        let paced = self.paced
+        let hold = index == holdCallAtIndex
+        if index == failCallAtIndex {
+            return AsyncThrowingStream { $0.finish(throwing: ScriptedFailure()) }
+        }
+        return AsyncThrowingStream { continuation in
+            let producer = Task {
+                // A held call delivers its content **first** and then waits, so a cancel
+                // landing in the wait leaves a genuine partial translation behind. Waiting
+                // first would leave nothing, which is a different case — and the one the
+                // engine reports as an empty reply rather than as interrupted text.
+                if hold {
+                    if !reply.isEmpty { continuation.yield(.token(reply)) }
+                    try? await Task.sleep(for: .seconds(10))
+                } else {
+                    if paced { try? await Task.sleep(for: .milliseconds(60)) }
+                    if !reply.isEmpty { continuation.yield(.token(reply)) }
+                }
+                continuation.yield(.done(ChatStats(loadDurationMS: 1, promptEvalCount: 1,
+                    promptEvalDurationMS: 1, evalCount: reply.count, evalDurationMS: 1)))
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in producer.cancel() }
+        }
+    }
+}
+
+/// Never `GlossaryStore()`: its default URL is the developer's real
+/// ~/Library/Application Support/LocalTranslator/glossary.json, and a suite that reads a
+/// person's own file is the failure `InMemoryDefaults` exists to prevent, one directory
+/// over.
+@MainActor
+func scratchGlossary() -> GlossaryStore {
+    GlossaryStore(url: FileManager.default.temporaryDirectory
+        .appendingPathComponent("glossary-\(UUID().uuidString).json"))
+}
+
+@MainActor
+func makeQueueModel(_ client: LLMClient,
+                    prefix: String,
+                    configure: (AppSettings) -> Void = { _ in }) -> FileQueueModel {
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: prefix))
+    configure(settings)
+    return FileQueueModel(translator: Translator(client: client),
+                          settings: settings,
+                          glossary: scratchGlossary(),
+                          // Saving is TranslatedFileWriter's; here it always succeeds and
+                          // reports where, so these tests never touch a filesystem.
+                          save: { source, _, _ in .saved(source.appendingPathExtension("ru")) },
+                          saveAs: { _, url in .saved(url) },
+                          pasteboard: NSPasteboard(name: .init("queue-\(prefix)")))
+}
+
+func queueJob(_ name: String, _ text: String) -> FileJob {
+    FileJob(url: URL(fileURLWithPath: "/tmp/\(name)"), text: text, partsTotal: 1)
+}
+
+/// Waits until the model has actually been asked for something.
+///
+/// Stronger than `waitUntilRunning`, which returns as soon as the row's state flips —
+/// before `chat` has been entered. A cancel sent in that window is a different test from
+/// the one intended.
+@MainActor
+private func waitUntilCalled(_ client: QueueClient, _ count: Int = 1) async {
+    for _ in 0..<20_000 {
+        if client.callCount >= count { return }
+        await Task.yield()
+    }
+    Issue.record("the model was never asked")
+}
+
+/// Waits until some translated text has actually reached the pane.
+///
+/// The strongest of the three waits, and the one a «cancel a *partial*» test needs.
+/// `waitUntilCalled` counts entries into `chat`, which happen before the producer yields
+/// anything — measured, one run in ten: the cancel landed first and the задание came back
+/// interrupted with nothing in it, which is a different case entirely.
+@MainActor
+private func waitUntilStreaming(_ model: FileQueueModel) async {
+    for _ in 0..<20_000 {
+        if !model.streamingText.isEmpty { return }
+        await Task.yield()
+    }
+    Issue.record("no text ever reached the pane")
+}
+
+/// Waits until a задание's row reports it is running.
+///
+/// Weaker than `waitUntilCalled` on purpose, and only for tests that *observe* a run —
+/// the row's state flips before `chat` is entered. A cancellation test that used this
+/// cancelled before the model had been asked anything, which is a different test, and it
+/// hid a 10 s hold behind the wrong call: the suite went from 0.9 s to 11 s.
+///
+/// **State, not a sleep.** These tests used `try? await Task.sleep(for: .milliseconds(10))`
+/// and cancelled afterwards, on the assumption that a 60 ms paced reply would still be in
+/// the air. Under a full 510-test run that sleep overshoots — measured: roughly one run in
+/// five, `cancel()` arrived after the whole three-file queue had finished and every
+/// assertion about `.interrupted` failed. `FakeLLMClient.onCallStart` carries the same
+/// lesson in its own doc comment: racing a cancellation against a guessed duration only
+/// ever pins the timing on one machine.
+///
+/// The gap between observing `.running` and the caller's `cancel()` is a single yield on
+/// the main actor, so the paced reply cannot have landed in it.
+@MainActor
+private func waitUntilRunning(_ model: FileQueueModel, _ index: Int,
+                              _ comment: Comment = "the задание never started") async {
+    for _ in 0..<20_000 {
+        if case .running = model.jobs[index].state { return }
+        await Task.yield()
+    }
+    Issue.record(comment)
+}
+
+@MainActor @Test func theQueueTranslatesItsFilesInOrder() async {
+    let client = QueueClient(replies: ["один", "два", "три"])
+    let model = makeQueueModel(client, prefix: "queue-order")
+    model.add([queueJob("a.md", "first"), queueJob("b.md", "second"), queueJob("c.md", "third")])
+
+    await model.run()
+
+    #expect(model.jobs.allSatisfy { $0.state == .finished })
+    #expect(model.jobs.map { $0.result?.final } == ["один", "два", "три"])
+    #expect(client.callCount == 3)
+}
+
+@MainActor @Test func cancelStopsTheRunningFileAndLeavesTheRestQueued() async {
+    let client = QueueClient(replies: ["один", "два", "три"], paced: true, holdCallAtIndex: 0)
+    let model = makeQueueModel(client, prefix: "queue-cancel")
+    model.add([queueJob("a.md", "first"), queueJob("b.md", "second"), queueJob("c.md", "third")])
+
+    let run = Task { await model.run() }
+    await waitUntilCalled(client)
+    model.cancel()
+    await run.value
+
+    #expect(model.jobs[0].state == .interrupted)
+    #expect(model.jobs[1].state == .queued)
+    #expect(model.jobs[2].state == .queued)
+    #expect(!model.isRunning)
+}
+
+@MainActor @Test func runningAgainRetriesWhatDidNotFinishRatherThanSkippingIt() async {
+    let client = QueueClient(replies: ["один", "два"], paced: true, holdCallAtIndex: 0)
+    let model = makeQueueModel(client, prefix: "queue-resume")
+    model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
+
+    let first = Task { await model.run() }
+    await waitUntilCalled(client)
+    model.cancel()
+    await first.value
+    #expect(model.jobs[0].state == .interrupted)
+
+    await model.run()
+
+    // The interrupted файл is retried, not stepped over: a queue that silently skips
+    // what it failed to do reports success for work it never performed.
+    #expect(model.jobs.allSatisfy { $0.state == .finished })
+}
+
+@MainActor @Test func aFileThatFailsIsNotRetriedWithinTheSameRun() async {
+    // The test that catches a re-scanning loop. `run()` must decide its work list once:
+    // a loop that re-asked «what is not finished?» after each задание would find the one
+    // it had just marked .failed and translate it again, forever, on the main actor.
+    //
+    // QueueClient answers every call, so a re-scanning implementation hangs rather than
+    // failing — which is why the assertion is on the call count. A test that wedges the
+    // suite instead of naming the defect is worse than no test.
+    let client = QueueClient(replies: ["", "второй"])
+    let model = makeQueueModel(client, prefix: "queue-failure")
+    model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
+
+    await model.run()
+
+    if case .failed = model.jobs[0].state {} else { Issue.record("expected the first file to fail") }
+    #expect(model.jobs[1].state == .finished)
+    #expect(client.callCount == 2)   // one attempt each, not one-and-forever
+}
+
+@MainActor @Test func anUnreadableFileIsShownButNeverTranslated() async {
+    let client = QueueClient(replies: ["перевод"])
+    let model = makeQueueModel(client, prefix: "queue-unreadable")
+    var refused = queueJob("broken.pdf", "")
+    refused.state = .unreadable
+    model.add([refused, queueJob("b.md", "second")])
+
+    await model.run()
+
+    // It stays on screen naming the file the drop could not take, and the queue neither
+    // translates it nor retries it on a later run.
+    #expect(model.jobs[0].state == .unreadable)
+    #expect(model.jobs[1].state == .finished)
+    #expect(client.callCount == 1)
+}
+
+@MainActor @Test func theSelectionStaysWhereTheUserPutIt() async {
+    // The queue must not follow the running file: a user reading a finished translation
+    // would have it pulled out from under them, and the status bar already says which
+    // file is running.
+    let client = QueueClient(replies: ["один", "два"], paced: true)
+    let model = makeQueueModel(client, prefix: "queue-selection")
+    model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
+    model.selection = model.jobs[1].id
+
+    await model.run()
+
+    #expect(model.selection == model.jobs[1].id)
+}
+
+@MainActor @Test func aSecondRunIsRefusedWhileOneIsAlreadyGoing() async {
+    let client = QueueClient(replies: ["один", "два"], paced: true)
+    let model = makeQueueModel(client, prefix: "queue-reentrancy")
+    model.add([queueJob("a.md", "first")])
+
+    let first = Task { await model.run() }
+    await waitUntilRunning(model, 0)
+    await model.run()   // must return immediately, not start a second pass
+    await first.value
+
+    #expect(client.callCount == 1)
+}
+
+@MainActor @Test func aFinishedFileRecordsWhereItWasSaved() async {
+    let client = QueueClient(replies: ["перевод"])
+    let model = makeQueueModel(client, prefix: "queue-saved")
+    model.add([queueJob("a.md", "first")])
+
+    await model.run()
+
+    #expect(model.jobs[0].saveProblem == nil)
+    #expect(model.jobs[0].result?.savedTo?.lastPathComponent == "a.md.ru")
+}
+
+@MainActor @Test func aWriteThatFailsLeavesTheTranslationFinishedAndSaysSoSeparately() async {
+    // The задание finished; the bytes did not land. Reporting it as a failed translation
+    // would be a lie about text that is in memory and copyable.
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "queue-save-problem"))
+    let model = FileQueueModel(translator: Translator(client: QueueClient(replies: ["перевод"])),
+                               settings: settings, glossary: scratchGlossary(),
+                               save: { _, _, _ in .refused("Не удалось сохранить перевод.") },
+                               saveAs: { _, url in .saved(url) })
+    model.add([queueJob("a.md", "first")])
+
+    await model.run()
+
+    #expect(model.jobs[0].state == .finished)
+    #expect(model.jobs[0].result?.final == "перевод")
+    #expect(model.jobs[0].saveProblem == "Не удалось сохранить перевод.")
+    #expect(model.jobs[0].result?.savedTo == nil)
+}
+
+/// A source whose markup the reply drops, so `MarkupSkeleton` reports a diff. Checked
+/// against the engine rather than assumed — see `theWarningFixtureActuallyProducesAWarning`.
+private let sourceWithALink = "See the [guide](https://example.org/g) for more."
+private let replyWithoutTheLink = "Смотрите руководство."
+/// Long enough for a документный глоссарий to be built — the gate needs more than one часть
+/// — and carrying a link, so a reply that drops it is a markup warning `stopOnWarnings` can
+/// pause on. The two conditions have to hold in one файл to pin their interaction.
+private let longSourceWithALink = sourceWithALink + "\n\n" + longEnoughForTwoParts
+
+@MainActor @Test func theWarningFixtureActuallyProducesAWarning() async {
+    // Pins the fixture itself. Without this, a change in MarkupSkeleton could make the
+    // three stopOnWarnings tests below pass for the wrong reason — a queue that never
+    // pauses looks identical to a queue with nothing to pause on.
+    let model = makeQueueModel(QueueClient(replies: [replyWithoutTheLink]), prefix: "queue-fixture")
+    model.add([queueJob("a.md", sourceWithALink)])
+
+    await model.run()
+
+    #expect(model.jobs[0].result?.hasWarnings == true)
+}
+
+@MainActor @Test func stopOnWarningsHaltsTheQueueButStillFinishesTheFileThatEarnedIt() async {
+    let client = QueueClient(replies: [replyWithoutTheLink, "второй"])
+    let model = makeQueueModel(client, prefix: "queue-stop") { $0.stopOnWarnings = true }
+    model.add([queueJob("a.md", sourceWithALink), queueJob("b.md", "second")])
+
+    await model.run()
+
+    #expect(model.jobs[0].state == .finished)   // it finished; the pause is not a rollback
+    #expect(model.jobs[1].state == .queued)
+    #expect(model.pausedAfterWarnings)
+    #expect(!model.isRunning)
+}
+
+@MainActor @Test func clearingThePauseLetsTheQueueCarryOn() async {
+    let client = QueueClient(replies: [replyWithoutTheLink, "второй"])
+    let model = makeQueueModel(client, prefix: "queue-unpause") { $0.stopOnWarnings = true }
+    model.add([queueJob("a.md", sourceWithALink), queueJob("b.md", "second")])
+    await model.run()
+    #expect(model.pausedAfterWarnings)
+
+    await model.run()
+
+    #expect(!model.pausedAfterWarnings)
+    #expect(model.jobs[1].state == .finished)
+}
+
+@MainActor @Test func aCleanFileDoesNotPauseAQueueThatStopsOnWarnings() async {
+    let client = QueueClient(replies: ["первый", "второй"])
+    let model = makeQueueModel(client, prefix: "queue-clean") { $0.stopOnWarnings = true }
+    model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
+
+    await model.run()
+
+    #expect(!model.pausedAfterWarnings)
+    #expect(model.jobs.allSatisfy { $0.state == .finished })
+}
+
+@MainActor @Test func theModeSwitchIsLockedWhileTheQueueRuns() async {
+    // One window, one primary button. If the mode could change mid-run the user could
+    // switch to «Текст» and press «Перевести», putting two runs behind one toolbar.
+    let client = QueueClient(replies: ["один"], paced: true)
+    let model = makeQueueModel(client, prefix: "queue-mode-lock")
+    model.add([queueJob("a.md", "first")])
+    #expect(model.canChangeMode)
+
+    let run = Task { await model.run() }
+    await waitUntilRunning(model, 0)
+    #expect(!model.canChangeMode)
+    await run.value
+
+    #expect(model.canChangeMode)
+}
+
+@MainActor @Test func aDroppedFileIsPlannedWithTheUsersChunkSizeAndNotThe900Default() async {
+    // The queued row promises «N частей» before anything runs. Planning with the 900 that
+    // happens to be the default would promise four to a user who set 500 and serve seven.
+    let model = makeQueueModel(QueueClient(replies: []), prefix: "queue-chunk-size") {
+        $0.chunkSize = 120
+    }
+    let text = String(repeating: "Одно предложение про ресурс и сервер. ", count: 20)
+
+    await model.add(dropped: [QueueDrop.Item(url: URL(fileURLWithPath: "/tmp/a.md"), text: text)])
+
+    let expected = Chunker.plan(text, maxCharacters: 120).chunks.count
+    #expect(expected > 1)                       // the fixture actually exercises the split
+    #expect(model.jobs[0].partsTotal == expected)
+}
+
+@MainActor @Test func anUnreadableItemBecomesARowRatherThanBeingDropped() async {
+    let model = makeQueueModel(QueueClient(replies: []), prefix: "queue-unreadable-row")
+
+    await model.add(dropped: [
+        QueueDrop.Item(url: URL(fileURLWithPath: "/tmp/a.md"), text: "текст"),
+        QueueDrop.Item(url: URL(fileURLWithPath: "/tmp/b.pdf"), text: nil),
+    ])
+
+    #expect(model.jobs.map(\.state) == [.queued, .unreadable])
+    #expect(model.jobs[1].partsTotal == 0)
+}
+
+@MainActor
+private func makeTextModel(_ prefix: String) -> TranslationViewModel {
+    TranslationViewModel(translator: Translator(client: QueueClient(replies: [])),
+                         settings: AppSettings(defaults: InMemoryDefaults(prefix: prefix)),
+                         glossary: scratchGlossary(),
+                         pasteboard: NSPasteboard(name: .init("primary-\(prefix)")))
+}
+
+@MainActor @Test func thePrimaryActionInFilesModeDrivesTheQueueAndNotTheTextModel() async {
+    let client = QueueClient(replies: ["один"])
+    let queue = makeQueueModel(client, prefix: "primary-files")
+    queue.add([queueJob("a.md", "first")])
+    let text = makeTextModel("primary-files-text")
+
+    let action = PrimaryAction.forMode(.files, text: text, queue: queue)
+    #expect(action.canStart)
+    await action.start()
+
+    #expect(queue.jobs[0].state == .finished)
+    #expect(text.state == .idle)   // the text model was never touched
+}
+
+@MainActor @Test func thePrimaryActionSaysThereIsNothingToStartWhenTheQueueIsEmpty() {
+    let queue = makeQueueModel(QueueClient(replies: []), prefix: "primary-empty")
+    let text = makeTextModel("primary-empty-text")
+
+    // An empty queue and an empty source pane are the same statement to the user: there is
+    // nothing to translate. The button says so in both modes rather than only one.
+    #expect(!PrimaryAction.forMode(.files, text: text, queue: queue).canStart)
+    #expect(!PrimaryAction.forMode(.text, text: text, queue: queue).canStart)
+}
+
+@MainActor @Test func anUnreadableFileAloneDoesNotLightThePrimaryButton() {
+    let queue = makeQueueModel(QueueClient(replies: []), prefix: "primary-unreadable")
+    var refused = queueJob("broken.pdf", "")
+    refused.state = .unreadable
+    queue.add([refused])
+
+    // There is nothing to translate: the queue would skip it, so offering to start is a
+    // button that does nothing when pressed.
+    #expect(!PrimaryAction.forMode(.files, text: makeTextModel("primary-unreadable-text"),
+                                   queue: queue).canStart)
+}
+
+@MainActor @Test func cancellingInFilesModeStopsTheQueueAndNotTheTextModel() async {
+    let client = QueueClient(replies: ["один", "два"], paced: true, holdCallAtIndex: 0)
+    let queue = makeQueueModel(client, prefix: "primary-cancel")
+    queue.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
+    let text = makeTextModel("primary-cancel-text")
+    let action = PrimaryAction.forMode(.files, text: text, queue: queue)
+
+    let run = Task { await action.start() }
+    await waitUntilCalled(client)
+    action.cancel()
+    await run.value
+
+    #expect(queue.jobs[0].state == .interrupted)
+}
+
+@MainActor @Test func thePrimaryActionReportsWhicheverModelIsRunning() async {
+    let client = QueueClient(replies: ["один"], paced: true)
+    let queue = makeQueueModel(client, prefix: "primary-running")
+    queue.add([queueJob("a.md", "first")])
+    let text = makeTextModel("primary-running-text")
+
+    #expect(!PrimaryAction.forMode(.files, text: text, queue: queue).isRunning)
+    let run = Task { await queue.run() }
+    await waitUntilRunning(queue, 0)
+    #expect(PrimaryAction.forMode(.files, text: text, queue: queue).isRunning)
+    // ...and the text mode is unaffected, which is what stops one toolbar showing
+    // «Отмена» for a run the visible pane knows nothing about.
+    #expect(!PrimaryAction.forMode(.text, text: text, queue: queue).isRunning)
+    await run.value
+}
+
+@MainActor @Test func theRightPaneShowsTheSelectedFileAndNotWhicheverIsStreaming() async {
+    // Wiring the pane straight to the running file's stream means selecting a finished
+    // задание shows somebody else's document under its name — visible the moment it is
+    // wrong, and invisible in any test that only ever selects the running file.
+    let client = QueueClient(replies: ["первый перевод", "второй перевод"])
+    let model = makeQueueModel(client, prefix: "queue-right-pane")
+    model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
+    await model.run()
+
+    model.selection = model.jobs[0].id
+    #expect(model.selectedText == "первый перевод")
+    #expect(model.selectedTitle == "Перевод · a.md")
+
+    model.selection = model.jobs[1].id
+    #expect(model.selectedText == "второй перевод")
+    #expect(model.selectedTitle == "Перевод · b.md")
+}
+
+@MainActor @Test func theRightPaneFallsBackToTheHeaderWithNothingSelected() {
+    let model = makeQueueModel(QueueClient(replies: []), prefix: "queue-right-pane-empty")
+    #expect(model.selectedText.isEmpty)
+    #expect(model.selectedTitle == "Перевод")
+}
+
+@MainActor @Test func theStatusLineCountsFilesAndPartsAcrossTheWholeQueue() async {
+    let client = QueueClient(replies: ["один", "два"], paced: true)
+    let model = makeQueueModel(client, prefix: "queue-status")
+    model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
+    // Nothing has run: there is nothing to say, and an empty row is better than a «0 из 2»
+    // that implies work is under way.
+    #expect(model.statusLine == nil)
+
+    let run = Task { await model.run() }
+    await waitUntilRunning(model, 0)
+    let line = model.statusLine
+    await run.value
+
+    #expect(line?.contains("Перевожу 1-й файл из 2") == true)
+}
+
+@MainActor @Test func thePauseSaysWhyTheQueueStopped() async {
+    let client = QueueClient(replies: [replyWithoutTheLink, "второй"])
+    let model = makeQueueModel(client, prefix: "queue-status-paused") { $0.stopOnWarnings = true }
+    model.add([queueJob("a.md", sourceWithALink), queueJob("b.md", "second")])
+    await model.run()
+
+    #expect(model.statusLine == "Очередь остановлена на предупреждениях — нажмите «Перевести», чтобы продолжить")
+}
+
+// MARK: - The document-terms gate
+
+/// Long enough for `Chunker` to split at the default size, so a документный глоссарий is
+/// actually built and there is something to review.
+private let longEnoughForTwoParts = String(
+    repeating: "The resource is published by the server and the resource is validated. ", count: 20)
+
+/// Waits for the sheet, with a ceiling.
+///
+/// An unbounded `while model.pendingTermsRequest == nil { await Task.yield() }` turns «the
+/// sheet never appeared» into a hung suite instead of a failed test — which is exactly what
+/// happened when this file's fixtures were first written, and is the same rule
+/// `aFileThatFailsIsNotRetriedWithinTheSameRun` exists to keep.
+@MainActor
+private func waitForSheet(_ model: FileQueueModel,
+                          _ comment: Comment = "the terms sheet never appeared") async -> DocumentTermsRequest? {
+    for _ in 0..<400 {
+        if let request = model.pendingTermsRequest { return request }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
+    Issue.record(comment)
+    return nil
+}
+
+@MainActor @Test func aQueueAsksOnceWhenTheUserSaysNotToAskAgain() async {
+    // Thirteen files would otherwise mean thirteen sheets, in exactly the scenario the gate
+    // was designed for.
+    // Each file is one term-list call plus its части, so the second file's term list is
+    // call 3. It is a parseable list too — with the default reply the gate would have
+    // nothing to open on and the wait below would fail rather than the assertion.
+    let client = QueueClient(replies: ["resource => ресурс", "первый", "первый-2",
+                                       "resource => ресурс", "второй", "второй-2"])
+    let model = makeQueueModel(client, prefix: "queue-gate-once") { $0.reviewDocumentTerms = true }
+    model.add([queueJob("a.md", longEnoughForTwoParts), queueJob("b.md", longEnoughForTwoParts)])
+
+    let run = Task { await model.run() }
+    let sheet = await waitForSheet(model)
+    sheet?.suppressForRun = true
+    sheet?.proceed()
+    await run.value
+
+    #expect(model.jobs.allSatisfy { $0.state == .finished })
+    #expect(model.pendingTermsRequest == nil)
+}
+
+@MainActor @Test func theSuppressionIsForgottenWhenTheNextRunStarts() async {
+    // A statement about this sitting, not a preference.
+    let client = QueueClient(replies: ["resource => ресурс", "первый", "первый-2",
+                                       "resource => ресурс", "второй", "второй-2"])
+    let model = makeQueueModel(client, prefix: "queue-gate-forget") { $0.reviewDocumentTerms = true }
+    model.add([queueJob("a.md", longEnoughForTwoParts)])
+
+    let first = Task { await model.run() }
+    let sheet = await waitForSheet(model)
+    sheet?.suppressForRun = true
+    sheet?.proceed()
+    await first.value
+
+    model.add([queueJob("b.md", longEnoughForTwoParts)])
+    let second = Task { await model.run() }
+    // It asks again: the suppression was about that sitting, not a preference.
+    let again = await waitForSheet(model, "the gate did not come back for the next run")
+    again?.proceed()
+    await second.value
+
+    #expect(model.jobs.allSatisfy { $0.state == .finished })
+}
+
+@MainActor @Test func cancellingTheQueueReachesASheetItIsWaitingOn() async {
+    let client = QueueClient(replies: ["resource => ресурс", "первый", "первый-2"])
+    let model = makeQueueModel(client, prefix: "queue-gate-cancel") { $0.reviewDocumentTerms = true }
+    model.add([queueJob("a.md", longEnoughForTwoParts)])
+
+    let run = Task { await model.run() }
+    _ = await waitForSheet(model)
+    model.cancel()
+    await run.value
+
+    #expect(model.jobs[0].state == .interrupted)
+    #expect(model.pendingTermsRequest == nil)
+}
+
+@MainActor @Test func theQueueSaysWhenTheTermsItPromisedCouldNotBePrepared() async {
+    // §6.6, the queue's half. The flag is per задание and not per queue: thirteen files can
+    // hit the failure on three of them, and one flag on the model would report the last
+    // file's luck for all of them.
+    let client = QueueClient(replies: ["", "перевод"], failCallAtIndex: 0)
+    let model = makeQueueModel(client, prefix: "queue-gate-unavailable") {
+        $0.reviewDocumentTerms = true
+    }
+    model.add([queueJob("a.md", longEnoughForTwoParts)])
+
+    await model.run()
+
+    #expect(model.jobs[0].state == .finished)
+    #expect(model.jobs[0].documentTermsUnavailable)
+}
+
+// MARK: - Saving on demand
+
+@MainActor
+private func savingModel(_ prefix: String,
+                         besideSource: @escaping @Sendable (URL, String, Language) async -> SaveOutcome,
+                         configure: (AppSettings) -> Void = { _ in }) -> FileQueueModel {
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: prefix))
+    configure(settings)
+    return FileQueueModel(translator: Translator(client: QueueClient(replies: ["перевод"])),
+                          settings: settings, glossary: scratchGlossary(),
+                          save: besideSource,
+                          saveAs: { _, url in .saved(url) })
+}
+
+@MainActor @Test func aFinishedFileThatWasNotSavedIsOfferedForSaving() async {
+    // With «Рядом с исходником» off, nothing is written automatically — so every finished
+    // задание has to offer it, or the queue produces translations that can only be copied.
+    let model = savingModel("save-on-demand", besideSource: { source, _, _ in
+        .saved(source.appendingPathExtension("ru"))
+    }) { $0.saveNextToSource = false }
+    model.add([queueJob("a.md", "first")])
+    await model.run()
+
+    #expect(model.jobs[0].result?.savedTo == nil)
+    #expect(model.needsSaving(model.jobs[0]))
+
+    await model.saveBesideSource(model.jobs[0].id)
+
+    #expect(model.jobs[0].result?.savedTo?.lastPathComponent == "a.md.ru")
+    #expect(!model.needsSaving(model.jobs[0]))
+    #expect(model.jobs[0].saveProblem == nil)
+}
+
+@MainActor @Test func aSavedFileIsNotOfferedForSavingAgain() async {
+    let model = savingModel("save-already", besideSource: { source, _, _ in
+        .saved(source.appendingPathExtension("ru"))
+    })
+    model.add([queueJob("a.md", "first")])
+    await model.run()
+
+    #expect(model.jobs[0].result?.savedTo != nil)
+    #expect(!model.needsSaving(model.jobs[0]))
+}
+
+@MainActor @Test func aRefusedWriteLeavesTheFileOfferedForSavingWithItsProblemShown() async {
+    let model = savingModel("save-refused", besideSource: { _, _, _ in .refused("Нет доступа.") })
+    model.add([queueJob("a.md", "first")])
+    await model.run()
+
+    #expect(model.jobs[0].state == .finished)
+    #expect(model.jobs[0].saveProblem == "Нет доступа.")
+    // Still offered: the refusal is what «Сохранить как…» exists to get past, and a retry
+    // beside the source is legitimate once the user has granted access.
+    #expect(model.needsSaving(model.jobs[0]))
+}
+
+@MainActor @Test func savingSomewhereElseRecordsWhereItActuallyWent() async {
+    let model = savingModel("save-as", besideSource: { _, _, _ in .refused("Нет доступа.") })
+    model.add([queueJob("a.md", "first")])
+    await model.run()
+
+    let chosen = URL(fileURLWithPath: "/tmp/куда-нибудь/a.ru.md")
+    await model.save(model.jobs[0].id, to: chosen)
+
+    #expect(model.jobs[0].result?.savedTo == chosen)
+    // The problem goes with the failure it described: the file is saved now.
+    #expect(model.jobs[0].saveProblem == nil)
+    #expect(!model.needsSaving(model.jobs[0]))
+}
+
+@MainActor @Test func theSuggestedNameIsTheOneTheAutomaticSaveWouldHaveUsed() async {
+    let model = savingModel("save-suggested", besideSource: { _, _, _ in .refused("Нет доступа.") })
+    model.add([queueJob("a.md", "first")])
+    await model.run()
+
+    // «а.md» is English text translated into Russian by the default rule, so «.ru».
+    #expect(model.suggestedName(for: model.jobs[0].id) == "a.ru.md")
+}
+
+@MainActor @Test func nothingUnfinishedIsOfferedForSaving() {
+    let model = savingModel("save-unfinished", besideSource: { _, _, _ in .refused("x") })
+    var refused = queueJob("broken.pdf", "")
+    refused.state = .unreadable
+    model.add([queueJob("a.md", "first"), refused])
+
+    #expect(!model.needsSaving(model.jobs[0]))   // queued
+    #expect(!model.needsSaving(model.jobs[1]))   // unreadable
+}
+
+@MainActor @Test func aQueueHeldOnTheSheetSaysItIsWaitingAndNotTranslating() async {
+    let client = QueueClient(replies: ["resource => ресурс", "первый", "первый-2"])
+    let model = makeQueueModel(client, prefix: "queue-awaiting") { $0.reviewDocumentTerms = true }
+    model.add([queueJob("a.md", longEnoughForTwoParts)])
+
+    let run = Task { await model.run() }
+    let sheet = await waitForSheet(model)
+    #expect(model.isAwaitingTerms)
+    sheet?.proceed()
+    await run.value
+
+    #expect(!model.isAwaitingTerms)
+}
+
+// MARK: - The controls that were blind to the mode
+
+@MainActor @Test func theQueueTranslatesIntoTheToolbarsTargetAndNotTheSettingsRule() async {
+    // Three pickers are drawn on the batch screen. Before this they configured nothing: the
+    // queue read settings.targetLanguage(forDetected:) and settings.defaultTone, so a user
+    // who chose «В: немецкий» got Russian and had no way to find out why.
+    let client = QueueClient(replies: ["перевод"])
+    let model = makeQueueModel(client, prefix: "queue-override-target")
+    model.add([queueJob("a.md", "The resource is published.")])
+
+    await model.run(source: nil, target: .de, tone: .technical)
+
+    #expect(model.jobs[0].resolvedTarget == .de)
+}
+
+@MainActor @Test func withNoOverrideTheQueueStillFollowsTheSettingsRule() async {
+    let client = QueueClient(replies: ["перевод"])
+    let model = makeQueueModel(client, prefix: "queue-override-none")
+    model.add([queueJob("a.md", "The resource is published.")])
+
+    await model.run()
+
+    // English text, default settings: into the primary language.
+    #expect(model.jobs[0].resolvedTarget == .ru)
+}
+
+@MainActor @Test func theNameASavedFileGetsFollowsTheTargetTheRunActuallyUsed() async {
+    // Otherwise «Сохранить как…» would suggest «a.ru.md» for a file translated into German.
+    let client = QueueClient(replies: ["перевод"])
+    let model = makeQueueModel(client, prefix: "queue-override-name")
+    model.add([queueJob("a.md", "The resource is published.")])
+
+    await model.run(source: nil, target: .de, tone: nil)
+
+    #expect(model.suggestedName(for: model.jobs[0].id) == "a.de.md")
+}
+
+@MainActor @Test func copyingInFilesModePutsTheSelectedFilesTranslationOnTheBoard() async {
+    let board = NSPasteboard(name: .init("queue-copy-\(UUID().uuidString)"))
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "queue-copy"))
+    let model = FileQueueModel(translator: Translator(client: QueueClient(replies: ["первый", "второй"])),
+                               settings: settings, glossary: scratchGlossary(),
+                               save: { source, _, _ in .saved(source) },
+                               saveAs: { _, url in .saved(url) },
+                               pasteboard: board)
+    model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
+    await model.run()
+
+    model.selection = model.jobs[1].id
+    await model.copySelection()
+
+    #expect(board.string(forType: .string) == "второй")
+}
+
+@MainActor @Test func thePrimaryActionCopiesWhateverTheVisibleModeIsShowing() async {
+    let client = QueueClient(replies: ["перевод файла"])
+    let queue = makeQueueModel(client, prefix: "primary-copy")
+    queue.add([queueJob("a.md", "first")])
+    await queue.run()
+    let text = makeTextModel("primary-copy-text")
+
+    // The text pane is empty and the queue has a translation on screen: «Скопировать» must
+    // be lit in «Файлы» and dark in «Текст». It used to be lit in both and act on the text
+    // model in both, so pressing it in «Файлы» was a silent no-op.
+    #expect(PrimaryAction.forMode(.files, text: text, queue: queue).canCopy)
+    #expect(!PrimaryAction.forMode(.text, text: text, queue: queue).canCopy)
+}
+
+@MainActor @Test func clearingTheSourceIsOfferedOnlyWhereThereIsASourceToClear() async {
+    let queue = makeQueueModel(QueueClient(replies: []), prefix: "primary-clear")
+    let text = makeTextModel("primary-clear-text")
+    text.sourceText = "что-то"
+
+    #expect(PrimaryAction.forMode(.text, text: text, queue: queue).canClear)
+    // «Очистить исходник» names the text pane. In «Файлы» that pane is not on screen, and
+    // repurposing the item to empty the queue would throw away translations that may not
+    // be saved yet — without a visible control saying so.
+    #expect(!PrimaryAction.forMode(.files, text: text, queue: queue).canClear)
+}
+
+@MainActor @Test func aRowCanBeTakenOutOfTheQueue() async {
+    let model = makeQueueModel(QueueClient(replies: []), prefix: "queue-remove")
+    var refused = queueJob("broken.pdf", "")
+    refused.state = .unreadable
+    model.add([queueJob("a.md", "first"), refused])
+
+    // The spec promises an unreadable file «can be removed», and until now nothing could
+    // remove anything: `remove(_:)` existed and no view called it.
+    model.remove(model.jobs[1].id)
+
+    #expect(model.jobs.map { $0.url.lastPathComponent } == ["a.md"])
+}
+
+// MARK: - Review round 1
+
+@MainActor @Test func theAutomaticSaveUsesTheTargetTheRunActuallyUsed() async {
+    // The defect this pins: the app's save closure re-detected the language and consulted
+    // the settings rule, so a file translated into German under a toolbar override was
+    // written as «a.ru.md». `suggestedName` did it right, so the two save paths disagreed
+    // about one file's name — and the test that existed only checked the suggestion.
+    let seen = SaveCall()
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "save-target"))
+    let model = FileQueueModel(translator: Translator(client: QueueClient(replies: ["перевод"])),
+                               settings: settings, glossary: scratchGlossary(),
+                               save: { url, _, target in
+                                   seen.record(target)
+                                   return .saved(url)
+                               },
+                               saveAs: { _, url in .saved(url) })
+    model.add([queueJob("a.md", "The resource is published.")])
+
+    await model.run(source: nil, target: .de, tone: nil)
+
+    #expect(seen.target == .de)
+}
+
+@MainActor @Test func savingOnDemandAlsoUsesTheTargetTheRunUsed() async {
+    let seen = SaveCall()
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "save-target-later"))
+    settings.saveNextToSource = false
+    let model = FileQueueModel(translator: Translator(client: QueueClient(replies: ["перевод"])),
+                               settings: settings, glossary: scratchGlossary(),
+                               save: { url, _, target in
+                                   seen.record(target)
+                                   return .saved(url)
+                               },
+                               saveAs: { _, url in .saved(url) })
+    model.add([queueJob("a.md", "The resource is published.")])
+    await model.run(source: nil, target: .de, tone: nil)
+
+    await model.saveBesideSource(model.jobs[0].id)
+
+    #expect(seen.target == .de)
+}
+
+/// The save closure now runs off the main actor, so what records from inside it cannot be
+/// main-actor-isolated. A lock is the smallest thing that is actually correct — the same
+/// choice `ProgressBox` makes in the engine's tests, for the same reason.
+private final class SaveCall: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: Language?
+    func record(_ language: Language) { lock.lock(); storage = language; lock.unlock() }
+    var target: Language? { lock.lock(); defer { lock.unlock() }; return storage }
+}
+
+/// Holds the model so a closure the model owns can call back into it. Needed because the
+/// closure has to exist before the model does.
+@MainActor private final class ModelBox { var model: FileQueueModel? }
+
+@MainActor @Test func cancellingBetweenTwoFilesStopsTheQueueRatherThanStartingTheNextOne() async {
+    // The gap `cancel()` did not cover: `translate(at:)` reports «carry on» for a файл that
+    // finished normally, so a cancel landing after it and before the next one starts has no
+    // task to reach and nothing else stopped the loop.
+    //
+    // The save closure runs at exactly that instant, on the main actor, which makes the
+    // window reproducible instead of a race against a sleep.
+    let box = ModelBox()
+    let client = QueueClient(replies: ["один", "два"])
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "queue-cancel-between"))
+    box.model = FileQueueModel(translator: Translator(client: client),
+                               settings: settings, glossary: scratchGlossary(),
+                               // Hops to the main actor and *waits*, so the cancel has
+                               // landed before this returns — the run then finds it at the
+                               // top of the next iteration, which is the guard under test.
+                               save: { source, _, _ in
+                                   await MainActor.run { box.model?.cancel() }
+                                   return .saved(source)
+                               },
+                               saveAs: { _, url in .saved(url) })
+    let model = box.model!
+    model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
+
+    await model.run()
+
+    #expect(model.jobs[0].state == .finished)
+    #expect(model.jobs[1].state == .queued)   // never started
+    #expect(client.callCount == 1)
+}
+
+@MainActor @Test func aQueueStoppedBetweenFilesCarriesOnWhenAskedAgain() async {
+    // The flag is about *this* run: pressing «Перевести» again must not find it still set.
+    let box = ModelBox()
+    let client = QueueClient(replies: ["один", "два"])
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "queue-cancel-between-resume"))
+    let stopOnce = CancelOnce()
+    box.model = FileQueueModel(translator: Translator(client: client),
+                               settings: settings, glossary: scratchGlossary(),
+                               save: { source, _, _ in
+                                   await MainActor.run { if stopOnce.fire() { box.model?.cancel() } }
+                                   return .saved(source)
+                               },
+                               saveAs: { _, url in .saved(url) })
+    let model = box.model!
+    model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
+    await model.run()
+    #expect(model.jobs[1].state == .queued)
+
+    await model.run()
+
+    #expect(model.jobs.allSatisfy { $0.state == .finished })
+}
+
+@MainActor private final class CancelOnce {
+    private var fired = false
+    func fire() -> Bool { defer { fired = true }; return !fired }
+}
+
+// MARK: - Review round 2
+
+@MainActor @Test func aPauseEarnedByTheLastFileDoesNotStickWithNoWayToDismissIt() async {
+    // «Нажмите "Перевести", чтобы продолжить» over a disabled button. `canStart` is false
+    // once nothing is unfinished, so the sentence could never be cleared.
+    let client = QueueClient(replies: [replyWithoutTheLink])
+    let model = makeQueueModel(client, prefix: "queue-pause-last") { $0.stopOnWarnings = true }
+    model.add([queueJob("a.md", sourceWithALink)])
+
+    await model.run()
+
+    #expect(model.jobs[0].result?.hasWarnings == true)   // it really did warn
+    #expect(!model.hasWorkLeft)
+    #expect(!model.pausedAfterWarnings)
+    #expect(model.statusLine == nil)
+}
+
+@MainActor @Test func aPauseWithFilesStillWaitingIsKept() async {
+    let client = QueueClient(replies: [replyWithoutTheLink, "второй"])
+    let model = makeQueueModel(client, prefix: "queue-pause-more") { $0.stopOnWarnings = true }
+    model.add([queueJob("a.md", sourceWithALink), queueJob("b.md", "second")])
+
+    await model.run()
+
+    #expect(model.hasWorkLeft)
+    #expect(model.pausedAfterWarnings)
+}
+
+@MainActor @Test func aFailedRetryDoesNotLeaveThePreviousAttemptsTextOnScreen() async {
+    // The row would read «Модель вернула пустой ответ.» while the right pane still showed
+    // the partial text of the attempt before it, as though it belonged to the failed one.
+    let client = QueueClient(replies: ["частичный перевод", ""], paced: true, holdCallAtIndex: 0)
+    let model = makeQueueModel(client, prefix: "queue-stale-result")
+    model.add([queueJob("a.md", "first")])
+
+    let run = Task { await model.run() }
+    await waitUntilCalled(client)
+    model.cancel()
+    await run.value
+    #expect(model.jobs[0].state == .interrupted)
+    #expect(model.jobs[0].result != nil)          // the partial text is kept, deliberately
+
+    await model.run()                              // retried; this attempt returns nothing
+
+    if case .failed = model.jobs[0].state {} else { Issue.record("expected the retry to fail") }
+    #expect(model.jobs[0].result == nil)
+    model.selection = model.jobs[0].id
+    #expect(model.selectedText.isEmpty)
+}
+
+@MainActor @Test func aGateThatNeverOpensSaysSoWhateverTheReason() async {
+    // documentGlossaryFailure is nil when the term-list call *succeeds* and parses to
+    // nothing — so keying the notice on it left the user waiting for a table that never
+    // came, with nothing on screen to say why.
+    let client = QueueClient(replies: ["ничего похожего на список", "перевод", "перевод"])
+    let model = makeQueueModel(client, prefix: "queue-gate-empty") { $0.reviewDocumentTerms = true }
+    model.add([queueJob("a.md", longEnoughForTwoParts)])
+
+    await model.run()
+
+    #expect(model.jobs[0].state == .finished)
+    #expect(model.jobs[0].documentTermsUnavailable)
+}
+
+@MainActor @Test func aRunThatOpenedItsGateSaysNothingAboutIt() async {
+    let client = QueueClient(replies: ["resource => ресурс", "перевод", "перевод"])
+    let model = makeQueueModel(client, prefix: "queue-gate-fine") { $0.reviewDocumentTerms = true }
+    model.add([queueJob("a.md", longEnoughForTwoParts)])
+
+    let run = Task { await model.run() }
+    await waitForSheet(model)?.proceed()
+    await run.value
+
+    #expect(!model.jobs[0].documentTermsUnavailable)
+}
+
+@MainActor @Test func aSingleParagraphNeverPromisesAGateAndNeverApologisesForOne() async {
+    // One часть builds no документный глоссарий at all, so there was never a table to show
+    // and saying «не удалось подготовить» would be noise.
+    let client = QueueClient(replies: ["перевод"])
+    let model = makeQueueModel(client, prefix: "queue-gate-short") { $0.reviewDocumentTerms = true }
+    model.add([queueJob("a.md", "Short.")])
+
+    await model.run()
+
+    #expect(!model.jobs[0].documentTermsUnavailable)
+}
+
+// MARK: - Review round 5
+
+@MainActor @Test func removingTheLastUnfinishedFileClearsAPauseItCanNoLongerDismiss() async {
+    let client = QueueClient(replies: [replyWithoutTheLink, "второй"])
+    let model = makeQueueModel(client, prefix: "queue-remove-pause") { $0.stopOnWarnings = true }
+    model.add([queueJob("a.md", sourceWithALink), queueJob("b.md", "second")])
+    await model.run()
+    #expect(model.pausedAfterWarnings)
+
+    model.remove(model.jobs[1].id)
+
+    // «Нажмите "Перевести", чтобы продолжить» over a button `canStart` has just disabled.
+    #expect(!model.hasWorkLeft)
+    #expect(!model.pausedAfterWarnings)
+    #expect(model.statusLine == nil)
+}
+
+@MainActor @Test func aRetryDropsEverythingThePreviousAttemptSaid() async {
+    // `documentTermsUnavailable` is only recomputed on the success path, so without a reset
+    // at the start of an attempt a retry that fails keeps an orange «термины документа не
+    // удалось подготовить» describing a run that never reached the review point.
+    //
+    // No timing in this test: the first run's replies make the gate fail to open, the
+    // second's are empty, which is the engine's «модель вернула пустой ответ».
+    let client = QueueClient(replies: ["ничего похожего на список", "перевод", "перевод",
+                                       "", "", ""])
+    let model = makeQueueModel(client, prefix: "queue-retry-clears") { $0.reviewDocumentTerms = true }
+    model.add([queueJob("a.md", longEnoughForTwoParts)])
+    await model.run()
+    #expect(model.jobs[0].documentTermsUnavailable)   // the gate never opened
+    #expect(model.jobs[0].result != nil)
+
+    model.jobs[0].state = .interrupted                // as a cancel would have left it
+    await model.run()
+
+    if case .failed = model.jobs[0].state {} else { Issue.record("expected the retry to fail") }
+    #expect(!model.jobs[0].documentTermsUnavailable)
+    #expect(model.jobs[0].result == nil)
+}
+
+// MARK: - Review round 6
+
+@MainActor @Test func theStatusLineCountsOnlyWhatActuallyHappened() async {
+    // Crediting every preceding row regardless of state counted a failed file's parts as
+    // translated, over-reporting the queue's progress by exactly the work that did not
+    // happen. `.unreadable` rows are not counted at all: run() skips them, so including
+    // them promised work the queue will never do.
+    let client = QueueClient(replies: ["", "второй"], paced: true)
+    let model = makeQueueModel(client, prefix: "queue-status-honest")
+    var refused = queueJob("broken.pdf", "")
+    refused.state = .unreadable
+    model.add([queueJob("a.md", "first"), refused, queueJob("b.md", "second")])
+
+    let run = Task { await model.run() }
+    await waitUntilCalled(client, 2)          // the first file has failed; the second is up
+    let line = model.statusLine
+    await run.value
+
+    if case .failed = model.jobs[0].state {} else { Issue.record("expected the first file to fail") }
+    // Two countable files, not three; the second of them, and none of the first's parts.
+    #expect(line == "Перевожу 2-й файл из 2 — 0 частей из 2")
+}
+
+@MainActor @Test func theUnavailableNoticeMovesWithTheRunItDescribes() async {
+    // `adopt(from:)` moves the five values that make up a run; leaving this one behind put
+    // the window's orange «не удалось подготовить» under an adopted translation it had
+    // nothing to do with, and lost it from a panel run that really had gone without terms.
+    let source = gateModelForAdoption("adopt-source", unavailable: true)
+    let target = gateModelForAdoption("adopt-target", unavailable: false)
+
+    #expect(target.adopt(from: source))
+
+    #expect(target.documentTermsUnavailable)
+}
+
+@MainActor private func gateModelForAdoption(_ prefix: String,
+                                             unavailable: Bool) -> TranslationViewModel {
+    let model = TranslationViewModel(
+        translator: Translator(client: QueueClient(replies: [])),
+        settings: AppSettings(defaults: InMemoryDefaults(prefix: prefix)),
+        glossary: scratchGlossary(),
+        pasteboard: NSPasteboard(name: .init("adopt-\(prefix)")))
+    model.setDocumentTermsUnavailableForTesting(unavailable)
+    return model
+}
+
+// MARK: - Review round 8
+
+@MainActor @Test func aResumeCountsWorkThatIsAlreadyOnDisk() async {
+    // `done` used to credit only the rows *before* the running one. A resume starts at the
+    // first unfinished задание, which can sit before files that already finished — «0 частей
+    // из 20» with half the queue translated.
+    let client = QueueClient(replies: ["", "второй", "перевод", "перевод"], paced: true)
+    let model = makeQueueModel(client, prefix: "queue-resume-count")
+    model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
+    await model.run()
+    if case .failed = model.jobs[0].state {} else { Issue.record("expected the first file to fail") }
+    #expect(model.jobs[1].state == .finished)
+
+    let run = Task { await model.run() }          // retries a.md only
+    await waitUntilCalled(client, 3)
+    let line = model.statusLine
+    await run.value
+
+    // b.md's part is done and says so, and the file count keeps both rows.
+    #expect(line == "Перевожу 1-й файл из 2 — 1 часть из 2")
+}
+
+@MainActor @Test func theRightPaneIsIdleWhenTheSelectedFileIsNotTheRunningOne() async {
+    // `isRunning` used to answer about the queue, so clicking a still-queued row while
+    // another file translated gave the pane empty text *and* «running» — a blank scroll
+    // view where the «здесь появится перевод» placeholder belongs.
+    let client = QueueClient(replies: ["один", "два"], paced: true, holdCallAtIndex: 0)
+    let model = makeQueueModel(client, prefix: "queue-selected-running")
+    model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
+
+    let run = Task { await model.run() }
+    await waitUntilCalled(client)
+    model.selection = model.jobs[1].id            // the one still waiting
+    #expect(model.isRunning)
+    #expect(!model.selectedIsRunning)
+    model.selection = model.jobs[0].id            // the one in flight
+    #expect(model.selectedIsRunning)
+    model.cancel()
+    await run.value
+}
+
+@MainActor @Test func swappingInFilesModeTouchesThePickersAndNotTheHiddenPanes() {
+    // `swapLanguages()` moves the translation into the source pane, which is right in
+    // «Текст» and destructive in «Файлы»: that pane is off screen, so the move happens
+    // unseen and nothing undoes it.
+    let text = makeTextModel("swap-files")
+    text.sourceText = "исходник"
+    text.translatedText = "перевод"
+    text.sourceOverride = .en
+    text.targetOverride = .ru
+
+    text.swapOverrides()
+
+    #expect(text.sourceOverride == .ru)
+    #expect(text.targetOverride == .en)
+    #expect(text.sourceText == "исходник")
+    #expect(text.translatedText == "перевод")
+}
+
+@MainActor @Test func swappingIsOfferedInFilesModeOnlyWhenBothPickersAreSet() {
+    let queue = makeQueueModel(QueueClient(replies: []), prefix: "swap-offer")
+    let text = makeTextModel("swap-offer-text")
+    #expect(!PrimaryAction.forMode(.files, text: text, queue: queue).canSwap)
+
+    text.sourceOverride = .en
+    text.targetOverride = .de
+    #expect(PrimaryAction.forMode(.files, text: text, queue: queue).canSwap)
+}
+
+// MARK: - Review round 9
+
+@MainActor @Test func anInterruptedFileCanStillBeSavedButOnlyUnderAChosenName() async {
+    // `FileJob.State.interrupted` promises the partial text is kept, and the row offered no
+    // way to get it onto disk at all. It goes out through «Сохранить как…» only: «Сохранить
+    // рядом с исходником» writes the canonical name, and half a document under it is
+    // indistinguishable from a whole one.
+    let client = QueueClient(replies: ["частичный\nперевод"], paced: true, holdCallAtIndex: 0)
+    let model = makeQueueModel(client, prefix: "queue-partial-save")
+    model.add([queueJob("a.md", "first")])
+
+    let run = Task { await model.run() }
+    await waitUntilStreaming(model)
+    model.cancel()
+    await run.value
+
+    #expect(model.jobs[0].state == .interrupted)
+    #expect(!model.needsSaving(model.jobs[0]))       // no canonical-name link
+    #expect(model.canSaveElsewhere(model.jobs[0]))   // but «Сохранить как…» is offered
+}
+
+@MainActor @Test func aFinishedFileIsOfferedBothWaysAndASavedOneNeither() async {
+    let model = savingModel("queue-save-both", besideSource: { source, _, _ in .saved(source) }) {
+        $0.saveNextToSource = false
+    }
+    model.add([queueJob("a.md", "first")])
+    await model.run()
+
+    #expect(model.needsSaving(model.jobs[0]))
+    #expect(model.canSaveElsewhere(model.jobs[0]))
+
+    await model.saveBesideSource(model.jobs[0].id)
+
+    #expect(!model.needsSaving(model.jobs[0]))
+    #expect(!model.canSaveElsewhere(model.jobs[0]))
+}
+
+@MainActor @Test func anInterruptedFileWithNothingInItIsNotOfferedForSaving() async {
+    let client = QueueClient(replies: [""], paced: true, holdCallAtIndex: 0)
+    let model = makeQueueModel(client, prefix: "queue-partial-empty")
+    model.add([queueJob("a.md", "first")])
+
+    let run = Task { await model.run() }
+    await waitUntilCalled(client)
+    model.cancel()
+    await run.value
+
+    #expect(model.jobs[0].state == .interrupted)
+    #expect(!model.canSaveElsewhere(model.jobs[0]))
+}
+
+// MARK: - Review round 10
+
+@MainActor @Test func onlyTheFileWaitingOnTheSheetIsTheOneHeldUp() async {
+    // The row is the third surface that could claim work while the model sits idle. The
+    // panel and the status bar were corrected; without `runningID` the row could not tell
+    // «I am the file waiting» from «I am merely in a queue that is».
+    let client = QueueClient(replies: ["resource => ресурс", "первый", "первый-2",
+                                       "resource => ресурс", "второй", "второй-2"])
+    let model = makeQueueModel(client, prefix: "queue-row-awaiting") { $0.reviewDocumentTerms = true }
+    model.add([queueJob("a.md", longEnoughForTwoParts), queueJob("b.md", longEnoughForTwoParts)])
+
+    let run = Task { await model.run() }
+    let sheet = await waitForSheet(model)
+    #expect(model.isAwaitingTerms)
+    #expect(model.runningID == model.jobs[0].id)   // the first file, not the queued one
+    #expect(model.runningID != model.jobs[1].id)
+    sheet?.suppressForRun = true
+    sheet?.proceed()
+    await run.value
+
+    #expect(model.runningID == nil)
+}
+
+@MainActor @Test func aFileWithNoTermsToReviewIsNotToldTheGateFailed() async {
+    // Nothing was attempted and nothing went wrong: claiming «не удалось подготовить» here
+    // asserts a failure that never happened.
+    let client = QueueClient(replies: ["перевод", "перевод"])
+    let model = makeQueueModel(client, prefix: "queue-no-terms") { $0.reviewDocumentTerms = true }
+    model.add([queueJob("a.md", "1 2 3 4 5 6 7 8 9 10.\n\n11 12 13 14 15 16 17 18 19 20.")])
+
+    await model.run()
+
+    #expect(model.jobs[0].state == .finished)
+    #expect(!model.jobs[0].documentTermsUnavailable)
+}
+
+// MARK: - Review round 12
+
+@MainActor @Test func aFileThatArrivesAfterTheRunBeganIsPickedUpRatherThanLeftBehind() async {
+    // Not «dropped mid-run» — both doors into the queue are shut while it runs. The window
+    // is a drop accepted a moment *before* «Перевести», whose reading and planning finish on
+    // a detached task hundreds of milliseconds later. With a single snapshot those rows
+    // arrived too late to be seen and the run stopped with «в очереди» on screen.
+    let client = QueueClient(replies: ["один", "два"], paced: true)
+    let model = makeQueueModel(client, prefix: "queue-added-midrun")
+    model.add([queueJob("a.md", "first")])
+
+    let run = Task { await model.run() }
+    await waitUntilCalled(client)
+    model.add([queueJob("b.md", "second")])
+    await run.value
+
+    #expect(model.jobs.allSatisfy { $0.state == .finished })
+    #expect(!model.hasWorkLeft)
+}
+
+@MainActor @Test func aFileThatKeepsFailingIsStillAttemptedOnlyOncePerRun() async {
+    // The other half of the same rule. Re-asking «what is unfinished?» without remembering
+    // what this run already tried is the infinite loop the snapshot was introduced to stop.
+    let client = QueueClient(replies: ["", ""])
+    let model = makeQueueModel(client, prefix: "queue-added-noloop")
+    model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
+
+    await model.run()
+
+    #expect(client.callCount == 2)
+    #expect(model.jobs.allSatisfy { if case .failed = $0.state { true } else { false } })
+}
+
+// MARK: - Review round 13
+
+@MainActor @Test func theHintSaysStartOnlyBeforeAnythingHasBeenTried() async {
+    let client = QueueClient(replies: ["", "второй"])
+    let model = makeQueueModel(client, prefix: "queue-hint")
+    model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
+    #expect(model.startHint == "Нажмите «Перевести», чтобы начать")
+
+    await model.run()
+
+    // a.md failed and is still work; inviting the user to «начать» would be wrong.
+    #expect(model.hasWorkLeft)
+    #expect(model.startHint == "Нажмите «Перевести», чтобы продолжить")
+}
+
+@MainActor @Test func theHintSaysNothingWhenTheStatusBarIsAlreadyInstructing() async {
+    // Two instructions for one button, on screen at once: the bar reads «…чтобы
+    // продолжить» while the pane below it read «…чтобы начать».
+    let client = QueueClient(replies: [replyWithoutTheLink, "второй"])
+    let model = makeQueueModel(client, prefix: "queue-hint-paused") { $0.stopOnWarnings = true }
+    model.add([queueJob("a.md", sourceWithALink), queueJob("b.md", "second")])
+
+    await model.run()
+
+    #expect(model.pausedAfterWarnings)
+    #expect(model.statusLine != nil)
+    #expect(model.startHint == nil)
+}
+
+@MainActor @Test func theHintSaysNothingWithAnEmptyQueueOrOneThatIsDone() async {
+    let model = makeQueueModel(QueueClient(replies: ["перевод"]), prefix: "queue-hint-empty")
+    #expect(model.startHint == nil)          // nothing to start
+
+    model.add([queueJob("a.md", "first")])
+    #expect(model.startHint != nil)
+    await model.run()
+
+    #expect(model.startHint == nil)          // nothing left
+}
+
+// MARK: - Review round 14
+
+@MainActor @Test func turningTheGateOnMidRunDoesNotAccuseTheRunOfLosingItsTerms() async {
+    // The setting was read twice — once to build the hook, once to judge the outcome. A
+    // user who turned it on while a queue was running made every file already in flight
+    // report «термины документа не удалось подготовить» for a run that never asked.
+    let client = QueueClient(replies: ["resource => ресурс", "перевод", "перевод"], paced: true)
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "queue-gate-midrun"))
+    let model = FileQueueModel(translator: Translator(client: client),
+                               settings: settings, glossary: scratchGlossary(),
+                               save: { source, _, _ in .saved(source) },
+                               saveAs: { _, url in .saved(url) })
+    model.add([queueJob("a.md", longEnoughForTwoParts)])
+    #expect(!settings.reviewDocumentTerms)
+
+    let run = Task { await model.run() }
+    await waitUntilCalled(client)
+    settings.reviewDocumentTerms = true          // mid-flight
+    await run.value
+
+    #expect(model.jobs[0].state == .finished)
+    #expect(!model.jobs[0].documentTermsUnavailable)
+}
+
+// MARK: - Review round 24
+
+@MainActor @Test func neitherModeCanStartWhileTheOtherIsRunning() async {
+    // The mode switch used to be what stopped a second run, which trapped the user on
+    // whichever side was busy. Looking is free now; starting is what stays single.
+    let client = QueueClient(replies: ["один"], paced: true, holdCallAtIndex: 0)
+    let queue = makeQueueModel(client, prefix: "primary-exclusive")
+    queue.add([queueJob("a.md", "first")])
+    let text = makeTextModel("primary-exclusive-text")
+    text.sourceText = "что-то"
+
+    #expect(PrimaryAction.forMode(.text, text: text, queue: queue).canStart)
+
+    let run = Task { await queue.run() }
+    await waitUntilCalled(client)
+    #expect(!PrimaryAction.forMode(.text, text: text, queue: queue).canStart)
+    queue.cancel()
+    await run.value
+
+    #expect(PrimaryAction.forMode(.text, text: text, queue: queue).canStart)
+}
+
+@MainActor @Test func aRowRemovedFromUnderARunDoesNotTakeAnotherFilesResult() async {
+    // The run held an `Int` index across suspensions that with the terms gate last minutes,
+    // safe only because `remove` refuses while running and `add` appends — two facts held
+    // together by nothing but themselves. Writes go through a re-lookup by id now, so the
+    // guarantee survives the pair being changed.
+    let client = QueueClient(replies: ["один", "два"])
+    let model = makeQueueModel(client, prefix: "queue-row-identity")
+    model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
+
+    await model.run()
+
+    // Each result landed on its own row, not on a neighbour's.
+    #expect(model.jobs[0].result?.final == "один")
+    #expect(model.jobs[1].result?.final == "два")
+}
+
+@MainActor @Test func aPauseOnWarningsDoesNotUndoTheUsersDecisionNotToBeAskedAgain() async {
+    // «Больше не спрашивать в этом прогоне» is the user's; a `stopOnWarnings` pause is the
+    // queue's. A pause ends `run()`, so pressing «Перевести» to continue the *same* queue
+    // re-entered it and cleared the box — thirteen files, the tick made on the first, the
+    // queue pausing on the third, and the sheet back on the fourth for someone who had
+    // explicitly said no more. From the user's side that is one sitting and one queue.
+    //
+    // Every reply is the same string, and that is the fixture rather than laziness: read as
+    // a term list it parses, so the gate has something to open on; read as a translation it
+    // drops the source's link, so every файл ends with a markup warning and the queue
+    // pauses. One string covers both roles at every position, so the fixture does not depend
+    // on how many части `Chunker` happens to make.
+    let client = QueueClient(replies: Array(repeating: "resource => ресурс", count: 12))
+    let model = makeQueueModel(client, prefix: "queue-gate-pause") {
+        $0.reviewDocumentTerms = true
+        $0.stopOnWarnings = true
+    }
+    model.add([queueJob("a.md", longSourceWithALink),
+               queueJob("b.md", longSourceWithALink)])
+
+    let first = Task { await model.run() }
+    let sheet = await waitForSheet(model)
+    sheet?.suppressForRun = true
+    sheet?.proceed()
+    await first.value
+    #expect(model.pausedAfterWarnings, "the fixture must actually pause, or this pins nothing")
+
+    // Continuing the same queue. No sheet may appear for the second file.
+    //
+    // Bounded, and that is not belt-and-braces: under the defect the sheet **does** come
+    // back, and a bare `await second.value` then waits for a человек who is not there — the
+    // test hangs instead of failing, which is the failure `waitForSheet`'s own comment
+    // exists to prevent. Measured: reverting the fix took this test from a failure to a
+    // 120-second timeout. So the sheet is watched for, and whatever happens the run is
+    // released rather than left waiting.
+    let second = Task { await model.run() }
+    var reappeared: DocumentTermsRequest?
+    for _ in 0..<400 {
+        if second.isCancelled || model.jobs.allSatisfy({ $0.state == .finished }) { break }
+        if let request = model.pendingTermsRequest { reappeared = request; break }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
+    if let reappeared { reappeared.proceed() }
+    await second.value
+
+    #expect(reappeared == nil, "a pause may not undo «больше не спрашивать в этом прогоне»")
+    #expect(model.jobs.allSatisfy { $0.state == .finished })
+}
+
+@MainActor @Test func theQueueCounterNeverRunsBackwardsWhenAFileFinishes() {
+    // Read through `statusLine`, which **is** the queue counter. The first version of this
+    // test asserted only that `actualPartsTotal` had been set and never called `statusLine`
+    // at all — so reverting the fix itself (`$1.parts` back to `$1.partsTotal` in the two
+    // sums) left the whole suite green. TESTING.md's fifth shape, written by the person
+    // who had just fixed the defect.
+    //
+    // Hand-built rather than run, because the defect lives in the *transition*: the numbers
+    // a running задание shows against the numbers the same задание shows one instant after
+    // it finishes. A live run passes through that instant without stopping on it.
+    let model = makeQueueModel(QueueClient(replies: []), prefix: "queue-counter")
+
+    // Both estimated at 1 часть when they were dropped and really planned as 3: «размер
+    // части» changed between the drop and the turn, which is the only way the two numbers
+    // ever differ — and the reason `FileJob` keeps both.
+    var first = queueJob("a.md", "first")
+    first.actualPartsTotal = 3
+    var second = queueJob("b.md", "second")
+
+    // File 1 on its last часть, file 2 untouched — so file 2 still offers its estimate,
+    // which is the honest number for a задание that has not run.
+    first.state = .running(TranslationProgress(partsDone: 2, partsTotal: 3, documentTermCount: 0))
+    model.jobs = [first, second]
+    let whileRunning = model.statusLine
+    #expect(whileRunning == RussianCopy.queuePosition(fileIndex: 0, fileTotal: 2,
+                                                      partsDone: 2, partsTotal: 4))
+
+    // The instant it finishes and file 2 starts. Nothing has been undone, so neither number
+    // may fall: the 2 части already translated stay translated.
+    first.state = .finished
+    second.actualPartsTotal = 3
+    second.state = .running(TranslationProgress(partsDone: 0, partsTotal: 3, documentTermCount: 0))
+    model.jobs = [first, second]
+    #expect(model.statusLine == RussianCopy.queuePosition(fileIndex: 1, fileTotal: 2,
+                                                          partsDone: 3, partsTotal: 6))
+    // Spelled as an inequality too, because that is the property the name claims and the
+    // equalities above would still hold under a formula that broke it elsewhere.
+    #expect(partsDone(model.statusLine) >= partsDone(whileRunning))
+}
+
+/// The «N частей из M» number out of a queue status line, or -1 if there is none.
+/// Reads the rendered string on purpose: a test that recomputed it from the model would be
+/// pinning its own arithmetic rather than what the bar shows.
+@MainActor private func partsDone(_ line: String?) -> Int {
+    guard let line, let dash = line.range(of: " — ") else { return -1 }
+    return Int(line[dash.upperBound...].prefix { $0.isNumber }) ?? -1
+}
+
+@MainActor @Test func theHeaderCountAndTheStatusLineCountTheSameQueue() async {
+    // «Файлы · 5» sat directly above «Перевожу 1-й файл из 3»: the header counted every
+    // dropped row, the bar counted only the ones the queue will translate. Two counts for
+    // one queue, on screen at once.
+    let client = QueueClient(replies: ["один"], paced: true)
+    let model = makeQueueModel(client, prefix: "queue-header-count")
+    var refused = queueJob("broken.md", "")
+    refused.state = .unreadable
+    model.add([queueJob("a.md", "first"), refused])
+
+    #expect(model.jobs.count == 2)
+    #expect(model.translatableCount == 1)
+
+    let run = Task { await model.run() }
+    await waitUntilRunning(model, 0)
+    let line = model.statusLine
+    await run.value
+
+    // The whole line, not `contains("из 1")`: `queuePosition` renders «…файл из 1 — 0
+    // частей из 1», so that substring is satisfied by the части clause whatever the file
+    // total is — it read as coverage of the header count and provided none.
+    #expect(line == RussianCopy.queuePosition(fileIndex: 0, fileTotal: 1,
+                                              partsDone: 0, partsTotal: 1))
+}
+
+@MainActor @Test func aRunRecordsTheEnginesOwnPartCountOverTheDropTimeEstimate() async {
+    // The other half of `theQueueCounterNeverRunsBackwards…`, which builds its state by hand
+    // and therefore cannot see whether anything in production ever *records* the engine's
+    // count. Deleting that one line left the whole suite green — the same gap the hand-built
+    // test was written to close, mirrored onto the other half of the fix.
+    let client = QueueClient(replies: ["первый", "первый-2"])
+    let model = makeQueueModel(client, prefix: "queue-records-parts")
+    // `queueJob` estimates 1 часть; this text really plans as more. That is the shape the
+    // whole mechanism exists for: «размер части» changed between the drop and the turn.
+    let job = queueJob("a.md", longEnoughForTwoParts)
+    #expect(job.parts == 1, "the estimate must actually be wrong, or this pins nothing")
+    model.add([job])
+
+    await model.run()
+
+    #expect(model.jobs[0].actualPartsTotal == 2)
+    #expect(model.jobs[0].parts == 2)
+}
+
+@MainActor @Test func theToolbarsSourceLanguageReachesTheModelAndNotJustTheTarget() async {
+    // The wiring, which is where the defect lived: the app resolved «Из» to choose a target
+    // and dropped it, so `translate` detected the language again for the prompt, for the
+    // tagger and for `detectedSource`. A TranslationCore test pins the parameter; only this
+    // pins that anything passes it.
+    let client = QueueClient(replies: ["перевод"])
+    let model = makeQueueModel(client, prefix: "queue-source-wiring")
+    model.add([queueJob("a.md", "The server validates the request.")])
+
+    await model.run()
+
+    // Stated German over text the detector reads as English.
+    let prompts = client.receivedMessages.flatMap { $0 }.map(\.content)
+    #expect(prompts.contains { $0.contains("English") })
+
+    let second = QueueClient(replies: ["перевод"])
+    let stated = makeQueueModel(second, prefix: "queue-source-wiring-de")
+    stated.add([queueJob("b.md", "The server validates the request.")])
+
+    await stated.run(source: .de)
+
+    let statedPrompts = second.receivedMessages.flatMap { $0 }.map(\.content)
+    #expect(statedPrompts.contains { $0.contains("German") })
+    #expect(statedPrompts.contains { $0.contains("English") } == false)
+}
+
+@MainActor @Test func aRetriedJobIsSeededWithTheEnginesCountAndNotTheDropTimeEstimate() async {
+    // The row a run *starts* with. Every other reader of the two numbers goes through
+    // `FileJob.parts`; this one call site still took the estimate, so a задание the engine
+    // had already planned — one interrupted by a cancel — went back on screen with its
+    // drop-time guess, and the queue total fell until the first `onProgress` arrived. That
+    // window is real: the off-actor detect of up to 2 MB runs before it.
+    let client = QueueClient(replies: ["перевод"], paced: true)
+    let model = makeQueueModel(client, prefix: "queue-retry-seed")
+    var job = queueJob("a.md", "text")            // estimated at 1 часть when dropped
+    job.actualPartsTotal = 3                       // and planned as 3 by an earlier attempt
+    model.jobs = [job]
+
+    let run = Task { await model.run() }
+    await waitUntilRunning(model, 0)
+    let seeded = model.statusLine
+    await run.value
+
+    #expect(seeded == RussianCopy.queuePosition(fileIndex: 0, fileTotal: 1,
+                                                partsDone: 0, partsTotal: 3))
+}

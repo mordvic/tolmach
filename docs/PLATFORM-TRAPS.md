@@ -11,6 +11,43 @@ edit. When they disagree, the code comment is right.
 
 ---
 
+## Suspending on a human
+
+**A checked continuation nobody resumes is a hang with no symptom.** `Translator.translate`
+takes an optional review hook and suspends there while a person answers a sheet. The answer
+arrives from the main actor; cancellation arrives from somewhere else entirely — ⌘., the
+toolbar's «Отмена», the queue being cleared, the window closing. If none of them resumes the
+continuation, the run is suspended *forever*: it is not a crash, not an error, and
+`Task.checkCancellation()` cannot reach it because it is not running. Resumed twice, it traps
+the process instead.
+
+This is the same shape as the `AsyncThrowingStream` trap below — cancellation *finishes*
+instead of throwing, so «not resumed» looks like nothing happening — and that one already cost
+this project a truncated document reported as a success.
+
+Owned by `TranslatorApp/DocumentTermsRequest.swift`, whose entire job is «exactly once»,
+driven through all four orders by `DocumentTermsRequestTests`. Both `cancel()` implementations
+that can reach it — `TranslationViewModel`'s and `FileQueueModel`'s — cancel the request
+*before* the task, because a run waiting on a human has no network call to interrupt.
+
+**The probe that was deliberately not run.** The ⌥⌘T path escalates to the main window rather
+than putting editable text fields inside the `.nonactivatingPanel`. How focus, the focus ring,
+⌘V through the menu and Cyrillic input behave in a panel that is key while its app is *not*
+active is unverified — and unverified is where it stays, because the escalation removes the
+need. If that decision is ever revisited, this probe comes first.
+
+## A static function on a `View`, called from a test
+
+`View` is `@MainActor @preconcurrency`, so a closure written inside any of its members —
+including a `static func` — inherits main-actor isolation, and under
+`.swiftLanguageMode(.v6)` that isolation is checked at **run time** with a trap rather than
+at compile time with a diagnostic. A test that calls such a function off the main actor
+builds cleanly and dies with signal 5.
+
+Measured twice: `WarningsViewTests` records the original investigation and the four fixes
+that were tried and rejected; `DocumentTermsViewTests` hit it again the day it was written,
+on `rows(for:)`'s `filter` and `map`. The fix both times is `@MainActor` on the tests.
+
 ## Concurrency that aborts the process
 
 Two Apple frameworks respond to concurrent use by killing the process with an uncaught

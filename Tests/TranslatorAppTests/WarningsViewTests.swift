@@ -54,7 +54,8 @@ private func quietOutcome(documentGlossary: [GlossaryEntry] = [],
                        stats: [],
                        timeToFirstTokenMS: 12,
                        totalMS: 34,
-                       documentGlossaryFailure: nil)
+                       documentGlossaryFailure: nil,
+                       documentGlossaryAttempted: false)
 }
 
 @MainActor @Test func anOutcomeWithNothingToWarnAboutDrawsNothing() {
@@ -81,10 +82,10 @@ private func quietOutcome(documentGlossary: [GlossaryEntry] = [],
         GlossaryEntry(term: "endpoint", translations: ["ru": "конечная точка"]),
     ])).hasContent)
 
-    // `problem` is a glossary load or save failure and has nothing to do with the outcome,
-    // so an otherwise silent run must still make room for it.
-    #expect(WarningsView(outcome: quietOutcome(), problem: "Не удалось сохранить глоссарий.")
-        .hasContent)
+    // A glossary load or save failure is deliberately **not** among them: it belongs to the
+    // app and not to the run, it outlives the run, and `RunStatusBar` draws it as a row of
+    // its own. Counted here it made the bar say «N+1» beside a file row saying «N».
+    #expect(WarningsView(outcome: quietOutcome()).hasContent == false)
 }
 
 @MainActor @Test func aSatisfiedCheckIsNotSomethingToShow() {
@@ -102,16 +103,13 @@ private func quietOutcome(documentGlossary: [GlossaryEntry] = [],
     // A disclosure triangle with no summary is a triangle the user has no reason to press.
     // The summary must agree with `WarningsView.hasContent` exactly: a bar that offered «0
     // предупреждений» would be a control that expands to nothing.
-    #expect(RunStatusBar.summary(outcome: quietOutcome(), problem: nil) == nil)
+    #expect(RunStatusBar.summary(outcome: quietOutcome()) == nil)
 
     let dropped = MarkupDiff(expected: .paragraphBreak, actual: nil,
                              note: "dropped in translation")
     let added = MarkupDiff(expected: nil, actual: .hardLineBreak, note: "added in translation")
 
-    #expect(RunStatusBar.summary(outcome: quietOutcome(markupDiffs: [dropped]),
-                                 problem: nil) == "1 предупреждение")
-    #expect(RunStatusBar.summary(outcome: quietOutcome(markupDiffs: [dropped, added]),
-                                 problem: nil) == "2 предупреждения")
-    #expect(RunStatusBar.summary(outcome: quietOutcome(),
-                                 problem: "не сохранён") == "1 предупреждение")
+    #expect(RunStatusBar.summary(outcome: quietOutcome(markupDiffs: [dropped])) == "1 предупреждение")
+    #expect(RunStatusBar.summary(
+        outcome: quietOutcome(markupDiffs: [dropped, added])) == "2 предупреждения")
 }

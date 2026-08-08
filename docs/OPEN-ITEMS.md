@@ -56,6 +56,9 @@ These changed after the acceptance pass and no one has looked at them.
 
 | What to check | Why it needs eyes | Code |
 |---|---|---|
+| A drop of **only** unreadable files | «Файлы · N» counts `translatable`, so a drop where every file is refused now shows no count at all where it used to show one — the rows are still listed, and the pane says why each was refused. Whether the bare «Файлы» over three red rows reads as right is a judgement about the drawing, not about the rule | `MainWindowView.swift` |
+| A refused glossary save shown in **«Текст»** | `promoteToGlossary`'s three failures are raised from the terms sheet, which the ⌥⌘T panel opens over a window whose own text model may never have run. The sentence is now an always-visible orange row in both modes rather than a count under a chevron; what needs eyes is that it does not push the status bar's own line out of shape when it wraps | `RunStatusBar.swift` |
+| «Файлы · N» beside a queue containing **unreadable** rows | Both the header and the status line now count `translatable`, so a drop of five files of which two are unreadable should read «Файлы · 3» over «…из 3». Only the model half is testable — the header is SwiftUI | `MainWindowView.swift`, `FileQueueModel.translatable` |
 | A finished translation with **no** warnings fills the panel | The empty warnings slot used to eat 86 pt of a fixed 260; the fix gates the slot on `WarningsView.hasContent`. The panel is no longer 260 pt tall, so the original arithmetic no longer applies — what is owed now is simply that a finished result with no warnings looks whole | `PanelView.swift`, `WarningsView.swift` |
 | «Открыть в окне» with a **finished** translation already in the window | The hand-off moves `outcome`, `resolvedTarget` and `state` together; the failure it fixes was the window showing the previous run's elapsed time and warnings under the new text. The window it hands to has since been rebuilt | `TranslationViewModel.adopt(from:)` |
 | «Открыть в окне» while the window is **busy** | The button should be disabled with «Окно занято своим переводом» beneath it, and re-enable itself when the window finishes | `PanelView.swift`, `AdoptionRefusal` |
@@ -102,7 +105,7 @@ toolbar, two panes and a collapsible status bar. Nothing in it has been rendered
 | ⇄ enabled and disabled at the right moments, and swapping what it says it swaps | `canSwapLanguages` and `swapLanguages()` are unit-tested; the button's own disabled state and the pickers updating under it are not | `TranslationViewModel.swapLanguages`, `MainWindowView` |
 | The status bar collapsing and expanding, and its disclosure triangle appearing only when there is something to disclose | The triangle's condition and the warning count are tested as values. Whether the row reads as one line of status, and whether the expanded warnings stop at the 200 pt cap instead of eating the window, is a thing you have to see | `RunStatusBar.swift` |
 | «Скопировать» in the window putting the translation on the real pasteboard | The write now goes through `GeneralPasteboard.write(_:to:)` and is tested against a scratch board, never against `NSPasteboard.general` | `TranslationViewModel.copyToPasteboard`, `GeneralPasteboard.swift` |
-| The two pane headers, the source placeholder and the empty translation state | Placeholder position and its padding, the empty state's centring, and whether `PaneHeader`'s divider and tint read correctly side by side — all five were listed as unobserved when they were written | `SourcePane.swift`, `TranslationPane.swift` |
+| The two pane headers, the source placeholder and the empty translation state | Placeholder position and its padding, the empty state's centring, and whether `PaneHeader`'s divider and tint read correctly side by side — all five were listed as unobserved when they were written | `SourceEditor.swift`, `TranslationPane.swift` |
 
 **Owed by the UI redesign, Tasks 9, 10 and 12 — the settings.** All three panes now share one
 `settingsPane()` frame, and two of them grew sections while that frame stayed fixed.
@@ -134,16 +137,60 @@ compile check) and none of it has been *looked at*.
 | **Whether an `LSUIElement` app draws a menu bar at all** | The open question underneath the two rows above. Everything here rests on the menu being *installed*, which is measured; whether the user ever sees it is not, and it decides how much of this wave is visible rather than merely correct | — |
 | The panel with «Уменьшение прозрачности» on | The material becomes an opaque `windowBackgroundColor` clipped to the same rounded rectangle. Whether the corner still reads correctly against a dark desktop, and whether the panel still looks like a panel rather than a plain box, is exactly what no test sees | `PanelView.background` |
 | The two new glyphs in the panel's status row | `exclamationmark.triangle.fill` for an interrupted run, `xmark.octagon.fill` for a failure, in the row's own colour. The table is unit-tested; the row has never been rendered | `PanelStatus.Kind.symbol`, `PanelView.statusLine` |
-| «Скопировать перевод» ⇧⌘C not shadowing ⌘C in the source editor | They are different equivalents, so this should be free — but the source pane is a `TextEditor` and ⌘C on a selection inside it is the one thing that must keep working | `.commands`, `SourcePane` |
+| «Скопировать перевод» ⇧⌘C not shadowing ⌘C in the source editor | They are different equivalents, so this should be free — but the source pane is a `TextEditor` and ⌘C on a selection inside it is the one thing that must keep working | `.commands`, `SourceEditor` |
+
+**Owed by the file queue.** The queue, its mode switch and the fourth settings tab were built
+with the suite green and **nothing rendered**. The bundle assembles and signs; no one has looked
+at it.
+
+| What to check | Why it needs eyes | Code |
+|---|---|---|
+| **The «Текст / Файлы» switch in the pane header, and both headers reading as one row** | The one control this implementation adds that the design document does not draw. `PaneHeader.height` is pinned at 28 pt to fit a `.small` segmented control beside the right pane's caption — **that number is chosen, not measured**, and if it is wrong the divider between the panes has a visible step in it | `PaneHeader`, `MainWindowView` |
+| **The toolbar button and both menu items following the mode** | Nothing here can press a key. Look for: «Перевести» starting the queue in «Файлы» and the text run in «Текст», ⌘↩ and ⌘. doing the same, and ⌘. still reaching the panel while the window is idle. That last one rests on a disabled menu item declining its equivalent, and this change altered *when* the item is disabled | `PrimaryAction.forMode`, `TranslatorApp.body`'s `.commands` |
+| **The warnings disclosure across two runs** | Expand the warnings on a file that has some, then select a clean one. The chevron and the region it opens read one property, so they cannot disagree — but `expanded` is `@State` and survives the change, and only a screen shows whether the region actually goes away | `RunStatusBar.canDisclose` |
+| A queue of three files end to end | Rows updating, the bar moving, the right pane streaming, the status bar counting «2-й файл из 3 — 9 частей из 13» | `FileQueuePane`, `RunStatusBar` |
+| **A mixed drop** | Ten `.md` and one `.pdf` should leave eleven rows, the last saying «не удалось прочитать». The rule is tested; the row has never been drawn | `QueueDrop.accept`, `FileQueueRow` |
+| Selecting a finished file while another streams | The pane must show the selected file, not the running one. Tested as a value; never seen | `FileQueueModel.selectedText` |
+| **A translation actually appearing beside its source in Finder** | And the numbered name when one is taken. `OutputNaming` is tested against an injected existence check, not against a real directory a user chose | `TranslatedFileWriter`, `OutputNaming` |
+| **Whether TCC permits the write at all** | Spec §9.1, and the reason the fallback exists. The app is not sandboxed, but a drag grants read, not write, and macOS 14 gates `~/Documents`, `~/Desktop` and `~/Downloads` separately. Nothing here can raise a TCC prompt or see one. Drop a file from `~/Documents`, run the queue, and record what actually happened — a prompt, a silent success, or a refusal | `TranslatedFileWriter.write` |
+| **The `NSSavePanel` fallback after a refused write** | The recovery path for the row above, and the only one. Press «Сохранить как…» on a row whose write was refused and check that the panel appears, that the suggested name is the one the automatic save would have used, and that the file lands where it was pointed | `FileQueuePane.saveAs`, `TranslatedFileWriter.write(_:to:)` |
+| «Сохранить рядом с исходником» with the toggle **off** | The only way a translation reaches disk in that configuration. Turn it off, run a file, press the link | `FileQueueModel.saveBesideSource` |
+| «сохранено как …» revealing the file in Finder | Names the file rather than saying «сохранено», because a taken name gets a number — so this is also how a user finds out the name changed | `FileQueuePane.reveal` |
+| **The fourth settings tab at 560 × 480** | Spec §9.2. `.formStyle(.grouped)` scrolls, so the question is whether it *should have to*, and whether four tab items still fit the row | `SettingsFilesView`, `settingsPane()` |
+| The orange caption when the batch model differs from the interactive one | The condition is tested; the sentence has never been rendered | `SettingsFilesView`, `AppSettings.batchModelDiffersFromInteractive` |
+| All of the above in dark mode | Every new surface | — |
+| VoiceOver on the queue | A row should announce its file, its state and its progress, and not re-read on every token. `.accessibilityElement(children: .combine)` is the intent; nothing has listened | `FileQueueRow` |
+
+**Owed by the document-terms review.** Same story: built with tests green, nothing rendered.
+The toggle ships **off**, so none of this is on a default install's path.
+
+| What to check | Why it needs eyes | Code |
+|---|---|---|
+| **«Жду ваших правок…» in the panel and in the status bar** | Turn the gate on, press ⌥⌘T on a long selection, and look at what is *behind* the sheet. The panel used to say «Перевожу…» with a spinner while the model sat idle. Check the new row has no spinner, and that `square.and.pencil` actually renders — an unresolved SF Symbol name draws an empty image rather than failing | `PanelStatus.Kind.awaitingUser`, `RunStatusBar` |
+| **«Перевести» in the sheet drawn as the primary button** | The drawing gives it the same blue fill the window's «Перевести» has. `.borderedProminent` is set explicitly rather than left to `.defaultAction` to imply, because nothing here can render the difference — look at the two side by side and check they match | `DocumentTermsView` |
+| The sheet at a dozen terms | Three columns, an editable «перевод» cell that actually takes typing, and the table scrolling at its 260 pt cap without the buttons going with it — the same failure the panel's `ScrollView` once had | `DocumentTermsView` |
+| **Esc cancelling the run from the sheet** | The whole escape, and the sharpest thing on this list. The sheet has no cancel button by design, `.interactiveDismissDisabled()` is applied, and it is window-modal — so the toolbar's «Отмена» is behind it and unreachable. If Esc does not route to `onExitCommand`, the run sits on `DocumentTermsRequest.answer()` forever under a sheet that cannot be dismissed: the «suspended forever» failure that type prevents, moved one layer up. A `request.cancel()` on `onDisappear` is the insurance if the sheet ever goes away unanswered, but nothing here can press a key to find out whether it does | `DocumentTermsView.onExitCommand`, `MainWindowView`'s `.sheet` |
+| **⌘W while a terms sheet is up, then reopening the window** | The sheet no longer cancels the run when it disappears — that turned an ordinary action into a silent kill of the whole queue. The request lives on its model, and `presented` is `@State` that dies with the view, so a reopened window should find the request waiting and present it again. Nothing here can close a window and look | `MainWindowView`'s `.sheet`, `TranslatorApp.launch()` |
+| **A sheet dismissed with the window still open** | The insurance that used to cover this was removed with the ⌘W kill. `termsRequest`'s getter keeps returning the pending request, so SwiftUI should re-present it — but «should» is the word that needs a screen. If it does not, the run waits on a continuation with no sheet, which is the failure `DocumentTermsRequest` exists to prevent | `MainWindowView`'s `.sheet` |
+| **«Сохранить как…» when the write is refused** | Its `.atomic` form needs the destination's *directory*; the panel's grant is for the *file*. The code tries atomic and falls back to a direct write, so it does not depend on which the grant covers — but only a real refusal shows whether the fallback is ever reached, and it belongs with the TCC probe above | `TranslatedFileWriter.write(_:to:)` |
+| **The second and third terms sheet of one queue run, with the window already open** | The escalation's `openWindow` + `activateThisApp()` force a presentation update for the first sheet and change nothing for the ones after it. `termsRequest` is read inside `body` so the observation registers there rather than inside a binding getter SwiftUI invokes when it likes — but whether that is enough is a presentation-update detail nothing here can render. If it is not, the run sits on a continuation with no sheet on screen | `MainWindowView`'s `.sheet`, `DocumentTermsRequest` |
+| **«Открыть в окне» with the window sitting in «Файлы»** | It switches the window back to «Текст» so the handed-over translation is on screen. Nothing here can press that button; what to look for is the pane actually changing, and the queue continuing behind it | `handOffToWindow`, `MainWindowView`'s mode picker |
+| **Switching modes while one side is running** | Now allowed — the mode switch is no longer what stops a second run, `PrimaryAction.canStart` is. Look for: «Перевести» greyed out in «Текст» while a queue runs and in «Файлы» while a text run does, and the switch itself never locked | `PrimaryAction.forMode`, `MainWindowView` |
+| ⇄ in «Файлы» exchanging the pickers and leaving the text panes alone | It is routed through `PrimaryAction` now and unit-tested as a value; that the toolbar button reaches that path, and that the hidden panes really are untouched, has not been seen | `PrimaryAction.swap`, `TranslationViewModel.swapOverrides` |
+| **The ⌥⌘T escalation** | Press the shortcut on a >900-character selection in another app with the toggle on. The main window should come forward — opening if closed — and show the sheet, with the panel still behind it. `activateThisApp()` is cooperative activation that no one has watched work, and this is a second caller for it | `TranslatorApp.body`'s `.onChange`, `activateThisApp()` |
+| ⌘. while the sheet is open | Should interrupt the run rather than doing nothing. The ordering is unit-tested through `cancel()`; the key press is not | `TranslationViewModel.cancel`, `FileQueueModel.cancel` |
+| «Больше не спрашивать в этом прогоне» appearing only in a queue run | `showsSuppress` is passed from the window; nothing has rendered either state | `MainWindowView`'s `.sheet`, `DocumentTermsView` |
+| «Добавить в пользовательский глоссарий» and then the «Глоссарий» tab | The promotion rule is tested; that the terms actually appear in the pane, and that the file on disk gains them, is not | `GlossaryPromotion`, `GlossaryStore.replaceEntries` |
+| The «термины не удалось подготовить» notice | Only reachable with the toggle on and a term-list call that fails, which needs a live Ollama misbehaving | `TranslationViewModel.documentTermsUnavailable`, `FileJob.documentTermsUnavailable` |
 
 **Owed by the settings/accessibility/CI wave.**
 
 | What to check | Why it needs eyes | Code |
 |---|---|---|
 | **VoiceOver on the panel, end to end** | The only way to know whether any of the new accessibility work reaches a user. Press the shortcut with VoiceOver running and listen for: the panel announcing itself, «Перевод готов» once the run settles, and the translation *not* being re-read on every token. The announcement's wording is unit-tested; that it is spoken at all is not, and cannot be from here — see §2 | `PanelView.announcement(for:)`, `configurePanel`'s `onRunFinished` |
-| Dropping a `.md` file on the source pane | The decision — which files, how large, what counts as text — is `DroppedDocument` and is tested against real temp files. What no test can do is drag something: whether the pane shows a drop target, whether the refusal springs back the way the platform draws it, and whether dropping onto the *translation* side does nothing | `SourcePane`, `DroppedDocument` |
+| Dropping a `.md` file on the source pane | The decision — which files, how large, what counts as text — is `DroppedDocument` and is tested against real temp files. What no test can do is drag something: whether the pane shows a drop target, whether the refusal springs back the way the platform draws it, and whether dropping onto the *translation* side does nothing | `SourceEditor`, `DroppedDocument` |
 | **The CI workflow's first run** | Written but never executed. Two things could be wrong and neither is knowable from here: whether `macos-15` ships an Xcode new enough for `swift-tools-version: 6.0` and `.swiftLanguageMode(.v6)`, and whether `ls -d /Applications/Xcode*.app \| sort -V \| tail -1` picks the right one on that image. If it fails, the fix is a pinned `xcode-version`, not a change to the package | `.github/workflows/ci.yml` |
-| ⇧⌘C and the drop target not fighting the `TextEditor` | Both are new on a pane that already owns the keyboard | `SourcePane`, `.commands` |
+| ⇧⌘C and the drop target not fighting the `TextEditor` | Both are new on a pane that already owns the keyboard | `SourceEditor`, `.commands` |
 
 **Owed by the UI redesign, Task 13 — the menu bar glyph and status row.** The whole visible
 result of this task is unobserved: it is a menu-bar icon and a new first row of menu text, and
@@ -158,6 +205,25 @@ nothing in this environment can see either.
 ---
 
 ## 2. Known and accepted
+
+- **Esc in the «Термины документа» sheet ends the whole queue, not just that file.**
+  *Flagged by three separate reviews, which is why it stopped being defended and got a
+  control instead.* The scope is unchanged and deliberate — «Перевести» already **is** «skip
+  the review for this file», so «stop» is the only other thing the sheet can mean — but Esc
+  is no longer the only way to say it: the sheet carries a button labelled «Остановить
+  очередь» in a queue run and «Отмена» otherwise, with Esc as its shortcut. What is owed to
+  a human is whether that label makes the effect readable *before* it is pressed, which is
+  the whole point of adding it.
+
+  `askAboutTerms` throws `CancellationError`, which is the engine's «abort this run», and
+  `run()` returns. It is the same contract `queue.cancel()` has and the same one the spec
+  gives the sheet — a refusal is a refusal of the run — but it is the one place a gesture
+  made about a single file stops all the others, with nothing on screen warning of it
+  first. Left as it is because the alternative is worse in a way that is easy to miss:
+  «skip this file and carry on» would leave the queue running under a user who has just
+  said no, and the файл it skipped would look interrupted for a reason it did not have.
+  What is owed is a human's judgement of whether that reads as expected in practice, not
+  a change made from here.
 
 Deliberate, with the reason. Do not "fix" these without reading the reason first.
 
