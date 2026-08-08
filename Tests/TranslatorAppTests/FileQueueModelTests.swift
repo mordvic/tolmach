@@ -82,6 +82,20 @@ func queueJob(_ name: String, _ text: String) -> FileJob {
     FileJob(url: URL(fileURLWithPath: "/tmp/\(name)"), text: text, partsTotal: 1)
 }
 
+/// Waits until the model has actually been asked for something.
+///
+/// Stronger than `waitUntilRunning`, which returns as soon as the row's state flips —
+/// before `chat` has been entered. A cancel sent in that window is a different test from
+/// the one intended.
+@MainActor
+private func waitUntilCalled(_ client: QueueClient, _ count: Int = 1) async {
+    for _ in 0..<20_000 {
+        if client.callCount >= count { return }
+        await Task.yield()
+    }
+    Issue.record("the model was never asked")
+}
+
 /// Waits until a задание is actually in flight, then returns.
 ///
 /// **State, not a sleep.** These tests used `try? await Task.sleep(for: .milliseconds(10))`
@@ -860,4 +874,92 @@ private func savingModel(_ prefix: String,
 @MainActor private final class CancelOnce {
     private var fired = false
     func fire() -> Bool { defer { fired = true }; return !fired }
+}
+
+// MARK: - Review round 2
+
+@MainActor @Test func aPauseEarnedByTheLastFileDoesNotStickWithNoWayToDismissIt() async {
+    // «Нажмите "Перевести", чтобы продолжить» over a disabled button. `canStart` is false
+    // once nothing is unfinished, so the sentence could never be cleared.
+    let client = QueueClient(replies: [replyWithoutTheLink])
+    let model = makeQueueModel(client, prefix: "queue-pause-last") { $0.stopOnWarnings = true }
+    model.add([queueJob("a.md", sourceWithALink)])
+
+    await model.run()
+
+    #expect(model.jobs[0].result?.hasWarnings == true)   // it really did warn
+    #expect(!model.hasWorkLeft)
+    #expect(!model.pausedAfterWarnings)
+    #expect(model.statusLine == nil)
+}
+
+@MainActor @Test func aPauseWithFilesStillWaitingIsKept() async {
+    let client = QueueClient(replies: [replyWithoutTheLink, "второй"])
+    let model = makeQueueModel(client, prefix: "queue-pause-more") { $0.stopOnWarnings = true }
+    model.add([queueJob("a.md", sourceWithALink), queueJob("b.md", "second")])
+
+    await model.run()
+
+    #expect(model.hasWorkLeft)
+    #expect(model.pausedAfterWarnings)
+}
+
+@MainActor @Test func aFailedRetryDoesNotLeaveThePreviousAttemptsTextOnScreen() async {
+    // The row would read «Модель вернула пустой ответ.» while the right pane still showed
+    // the partial text of the attempt before it, as though it belonged to the failed one.
+    let client = QueueClient(replies: ["частичный перевод", ""], paced: true)
+    let model = makeQueueModel(client, prefix: "queue-stale-result")
+    model.add([queueJob("a.md", "first")])
+
+    let run = Task { await model.run() }
+    await waitUntilCalled(client)
+    model.cancel()
+    await run.value
+    #expect(model.jobs[0].state == .interrupted)
+    #expect(model.jobs[0].result != nil)          // the partial text is kept, deliberately
+
+    await model.run()                              // retried; this attempt returns nothing
+
+    if case .failed = model.jobs[0].state {} else { Issue.record("expected the retry to fail") }
+    #expect(model.jobs[0].result == nil)
+    model.selection = model.jobs[0].id
+    #expect(model.selectedText.isEmpty)
+}
+
+@MainActor @Test func aGateThatNeverOpensSaysSoWhateverTheReason() async {
+    // documentGlossaryFailure is nil when the term-list call *succeeds* and parses to
+    // nothing — so keying the notice on it left the user waiting for a table that never
+    // came, with nothing on screen to say why.
+    let client = QueueClient(replies: ["ничего похожего на список", "перевод", "перевод"])
+    let model = makeQueueModel(client, prefix: "queue-gate-empty") { $0.reviewDocumentTerms = true }
+    model.add([queueJob("a.md", longEnoughForTwoParts)])
+
+    await model.run()
+
+    #expect(model.jobs[0].state == .finished)
+    #expect(model.jobs[0].documentTermsUnavailable)
+}
+
+@MainActor @Test func aRunThatOpenedItsGateSaysNothingAboutIt() async {
+    let client = QueueClient(replies: ["resource => ресурс", "перевод", "перевод"])
+    let model = makeQueueModel(client, prefix: "queue-gate-fine") { $0.reviewDocumentTerms = true }
+    model.add([queueJob("a.md", longEnoughForTwoParts)])
+
+    let run = Task { await model.run() }
+    await waitForSheet(model)?.proceed()
+    await run.value
+
+    #expect(!model.jobs[0].documentTermsUnavailable)
+}
+
+@MainActor @Test func aSingleParagraphNeverPromisesAGateAndNeverApologisesForOne() async {
+    // One часть builds no документный глоссарий at all, so there was never a table to show
+    // and saying «не удалось подготовить» would be noise.
+    let client = QueueClient(replies: ["перевод"])
+    let model = makeQueueModel(client, prefix: "queue-gate-short") { $0.reviewDocumentTerms = true }
+    model.add([queueJob("a.md", "Short.")])
+
+    await model.run()
+
+    #expect(!model.jobs[0].documentTermsUnavailable)
 }

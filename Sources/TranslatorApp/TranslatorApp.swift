@@ -150,7 +150,7 @@ struct TranslatorApp: App {
 
         Window("Толмач", id: TranslatorApp.mainWindowID) {
             MainWindowView(model: translation,
-                           glossary: glossary, settings: settings, status: statusModel.status,
+                           glossary: glossary, status: statusModel.status,
                            // Same shape as the panel's own `onCopy` below: the write
                            // itself is `TranslationViewModel.copyToPasteboard()`, which
                            // shares `GeneralPasteboard.write` with `HotkeyCoordinator`'s,

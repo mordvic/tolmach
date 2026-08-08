@@ -61,6 +61,13 @@ final class DocumentTermsRequest: Identifiable {
         }
     }
 
+    /// Whether this question has already been answered.
+    ///
+    /// Read by the window to keep a presented sheet presented: with three raisers and one
+    /// sheet, a second request arriving mid-answer must queue behind the first rather than
+    /// replace it on screen.
+    var isAnswered: Bool { decided != nil }
+
     func proceed() { finish(.proceed(entries)) }
 
     func cancel() { finish(.cancel) }

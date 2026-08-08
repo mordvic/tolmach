@@ -68,3 +68,12 @@ private func draft(document: [GlossaryEntry], user: [GlossaryEntry]) -> Document
     #expect(DocumentTermsView.origin(.user(GlossaryEntry(term: "x"))) == "глоссарий")
     #expect(DocumentTermsView.origin(.document(0)) == "документ")
 }
+
+@MainActor @Test func theHeadlineCountsTheRowsTheSheetActuallyShows() {
+    // `rows(for:)` drops a model term the user's glossary already covers, so counting the
+    // raw list titled the sheet «— 3» over two rows.
+    let d = draft(document: [GlossaryEntry(term: "profile"), GlossaryEntry(term: "slice")],
+                  user: [GlossaryEntry(term: "PROFILE", doNotTranslate: true)])
+    #expect(DocumentTermsView.rows(for: d).count == 2)
+    #expect(DocumentTermsView.headline(for: d) == "Термины документа — 2")
+}

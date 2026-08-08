@@ -25,8 +25,13 @@ struct DocumentTermsView: View {
     var showsSuppress: Bool = false
     var onAddToGlossary: () -> Void = {}
 
+    /// Counts the rows this sheet actually shows, not the model's raw list.
+    ///
+    /// `rows(for:)` drops a model term the user's glossary already covers, so counting
+    /// `documentEntries` titled the sheet «Термины документа — 12» over nine editable rows
+    /// and three read-only ones — a number the table underneath contradicts.
     static func headline(for draft: DocumentTermsDraft) -> String {
-        "Термины документа — \(draft.documentEntries.count)"
+        "Термины документа — \(rows(for: draft).count)"
     }
 
     static func explanation(for draft: DocumentTermsDraft) -> String {

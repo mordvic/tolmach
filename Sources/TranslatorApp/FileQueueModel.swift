@@ -87,6 +87,8 @@ final class FileQueueModel {
     /// Set when a sheet came back with «Больше не спрашивать в этом прогоне» ticked. A
     /// statement about this sitting and not a preference, so `run()` clears it.
     private var suppressTermsForThisRun = false
+    /// Whether this задание's run reached the review point at all. See where it is read.
+    private var raisedTermsSheet = false
 
     init(translator: Translator, settings: AppSettings, glossary: GlossaryStore,
          save: @escaping (URL, String, Language) -> SaveOutcome,
@@ -208,6 +210,13 @@ final class FileQueueModel {
         if selection == id { selection = jobs.first?.id }
     }
 
+    /// Whether any задание is still waiting to be translated. The same question
+    /// `PrimaryAction`'s `canStart` asks, so the pause above and that button cannot
+    /// disagree about whether there is anything to continue.
+    var hasWorkLeft: Bool {
+        jobs.contains { $0.state != .finished && $0.state != .unreadable }
+    }
+
     /// Whether the window may switch between «Текст» and «Файлы» right now.
     ///
     /// A property of the model and not a condition restated in the view, for
@@ -297,7 +306,13 @@ final class FileQueueModel {
             // while running, but nothing here should depend on that from a distance.
             guard !cancelled else { return }
             guard let index = jobs.firstIndex(where: { $0.id == id }) else { continue }
-            if await translate(at: index, source: source, target: target, tone: tone) { return }
+            if await translate(at: index, source: source, target: target, tone: tone) {
+                // «Нажмите "Перевести", чтобы продолжить» over a disabled button is a
+                // sentence with no way out: `canStart` is false once nothing is unfinished,
+                // so a pause earned by the *last* задание could never be dismissed.
+                if pausedAfterWarnings, !hasWorkLeft { pausedAfterWarnings = false }
+                return
+            }
         }
     }
 
@@ -314,6 +329,7 @@ final class FileQueueModel {
 
     /// Raise the sheet and wait, unless this run has already been told not to ask again.
     private func askAboutTerms(_ draft: DocumentTermsDraft) async throws -> [GlossaryEntry] {
+        raisedTermsSheet = true
         guard !suppressTermsForThisRun else { return draft.documentEntries }
         let request = DocumentTermsRequest(draft: draft)
         pendingTermsRequest = request
@@ -334,6 +350,12 @@ final class FileQueueModel {
         // would yank a finished translation out from under whoever is reading it, and the
         // status bar already says which file is running.
         streamingText = ""
+        // Dropped at the instant the attempt starts, the same pairing `translate()` keeps in
+        // `TranslationViewModel`: a result that outlives its attempt is rendered under the
+        // next one. A задание retried after being interrupted carries the partial text of
+        // the first try, and a second try that fails would have shown it under «Модель
+        // вернула пустой ответ.» as though it belonged there.
+        jobs[index].result = nil
         jobs[index].state = .running(TranslationProgress(partsDone: 0,
                                                          partsTotal: job.partsTotal,
                                                          documentTermCount: 0))
@@ -351,6 +373,7 @@ final class FileQueueModel {
                                   temperature: settings.temperature,
                                   keepAlive: settings.keepAlive)
         let started = Date()
+        raisedTermsSheet = false
 
         // Pieces travel through a stream rather than a Task-per-token, for
         // `TranslationViewModel.translate`'s reason: `onToken` is called serially by the
@@ -391,6 +414,10 @@ final class FileQueueModel {
                 reviewDocumentTerms: review)
         }
         current = run
+        // A cancel that landed between creating the task and storing it here had nothing to
+        // reach: `current` was still the previous run's. The task then finished normally
+        // and the user's «Отмена» did nothing to the file it was pressed on.
+        if cancelled { run.cancel() }
 
         func drain() async {
             continuation.finish()
@@ -425,8 +452,13 @@ final class FileQueueModel {
                     jobs[index].saveProblem = problem
                 }
             }
+            // «The gate was asked for and never opened», whatever the reason. Keyed on
+            // whether a sheet was actually raised rather than on `documentGlossaryFailure`,
+            // which is nil when the term-list call *succeeded* and parsed to nothing, and
+            // when the source language was not recognised — both of which leave the user
+            // waiting for a table that never comes, with nothing on screen to say why.
             jobs[index].documentTermsUnavailable = settings.reviewDocumentTerms
-                && outcome.documentGlossaryFailure != nil
+                && outcome.chunks.count > 1 && !raisedTermsSheet
             jobs[index].result = result
             jobs[index].state = .finished
             if settings.stopOnWarnings, result.hasWarnings {

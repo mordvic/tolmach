@@ -41,6 +41,8 @@ final class TranslationViewModel {
     private let pasteboard: NSPasteboard
     private var task: Task<TranslationOutcome, Error>?
     private var clearedPrevious = false
+    /// Whether this run reached the review point at all. See `documentTermsUnavailable`.
+    private var raisedTermsSheet = false
 
     var sourceText = ""
     var translatedText = ""
@@ -232,6 +234,7 @@ final class TranslationViewModel {
         // Reset beside the other per-run state: a notice that outlived its run would say
         // this translation went without its terms when the previous one did.
         documentTermsUnavailable = false
+        raisedTermsSheet = false
 
         // Reset before the consumer exists, not after. Today the ordering could not
         // actually be observed the other way round — `translate()` is @MainActor and
@@ -343,8 +346,12 @@ final class TranslationViewModel {
             // The gate was asked for and could not be prepared. Recorded here rather than
             // logged, unlike the swallowed failure itself: the user is waiting for
             // something that will never appear.
+            // Keyed on whether a sheet was actually raised, not on `documentGlossaryFailure`
+            // — which is nil when the term-list call succeeded and parsed to nothing, and
+            // when the source language was not recognised. Both leave a user who asked for
+            // the gate waiting for a table that never comes.
             documentTermsUnavailable = settings.reviewDocumentTerms
-                && result.documentGlossaryFailure != nil
+                && result.chunks.count > 1 && !raisedTermsSheet
             resolvedTarget = target
             outcome = result
             translatedText = result.final
@@ -396,6 +403,7 @@ final class TranslationViewModel {
     /// guarantees exactly one resume whichever way this ends, and clearing the property
     /// here is what stops a cancelled run leaving a modal on screen.
     private func askAboutTerms(_ draft: DocumentTermsDraft) async throws -> [GlossaryEntry] {
+        raisedTermsSheet = true
         let request = DocumentTermsRequest(draft: draft)
         pendingTermsRequest = request
         onTermsRequested?()

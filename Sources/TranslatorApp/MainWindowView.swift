@@ -76,10 +76,6 @@ struct MainWindowView: View {
     /// Plain `let`, not `@Bindable`: nothing here binds to the store, it is only read
     /// (`lastProblem`) and messaged (`mute`/`save`). Observation still tracks the reads.
     let glossary: GlossaryStore
-    /// Read for the terms sheet's target language and for nothing else. The window's own
-    /// run resolves its target inside `TranslationViewModel`; the sheet opens mid-run, when
-    /// `resolvedTarget` is still nil.
-    let settings: AppSettings
     /// The value, not the `OllamaStatusModel`. The window only reads the status; the app
     /// owns the model and the refresh schedule.
     let status: OllamaStatus
@@ -110,6 +106,8 @@ struct MainWindowView: View {
     /// in this view. `TranslatorApp` owns it. Not a setting either — it is where the user is
     /// looking right now, not a preference to survive a relaunch.
     @Binding var mode: SourceMode
+    /// The request the sheet is actually showing. See `termsRequest`.
+    @State private var presented: DocumentTermsRequest?
 
     /// Every mode-sensitive control in this window reads this one value.
     private var action: PrimaryAction { .forMode(mode, text: model, queue: queue) }
@@ -177,10 +175,19 @@ struct MainWindowView: View {
         // fields inside a `.nonactivatingPanel`. Whichever model is asking, the surface is
         // this one; a second sheet is how two paths come to ask the same question
         // differently.
-        .sheet(item: Binding(get: { termsRequest }, set: { if $0 == nil { termsRequest?.cancel() } })) { request in
+        // The setter does nothing on purpose, and `.interactiveDismissDisabled` is why it
+        // can. It used to cancel `termsRequest` — re-evaluating the priority chain, which by
+        // then could resolve to a *different* model's request, so a dismissal stopped a
+        // translation the user never asked to stop. Now the only ways out are the sheet's
+        // own button and its Esc, both of which hold the specific request they were built
+        // with.
+        .sheet(item: Binding(get: { termsRequest }, set: { _ in })) { request in
             DocumentTermsView(request: request,
                               showsSuppress: queue.pendingTermsRequest === request,
                               onAddToGlossary: { promoteToGlossary(request) })
+                .interactiveDismissDisabled()
+                .onAppear { presented = request }
+                .onDisappear { if presented === request { presented = nil } }
         }
         .onChange(of: model.state) { _, new in
             // Same condition `PanelHost` uses for the hotkey path: a state that is no longer
@@ -236,11 +243,16 @@ struct MainWindowView: View {
         }
     }
 
-    /// Whichever model is currently asking. The window's own run wins a tie only because
-    /// one cannot be started while the other is going — the mode switch is locked during a
-    /// queue run, and `PrimaryAction` drives one model at a time.
+    /// Whichever model is currently asking — but a sheet already up stays up.
+    ///
+    /// Three models can raise a request and there is one sheet. Without the first clause a
+    /// second raiser replaces the first on screen: the panel's run would keep waiting on a
+    /// continuation, with «Жду ваших правок…» showing and its sheet gone. Pinning the
+    /// presented request until it is answered makes the second one queue behind it instead,
+    /// and the chain picks it up as soon as the first is done.
     private var termsRequest: DocumentTermsRequest? {
-        model.pendingTermsRequest ?? queue.pendingTermsRequest ?? panelModel?.pendingTermsRequest
+        if let presented, !presented.isAnswered { return presented }
+        return model.pendingTermsRequest ?? queue.pendingTermsRequest ?? panelModel?.pendingTermsRequest
     }
 
     /// «Добавить в пользовательский глоссарий».
@@ -257,7 +269,12 @@ struct MainWindowView: View {
         }
         panel.prompt = "Добавить"
         panel.message = "Выберите текстовые файлы для перевода"
-        guard panel.runModal() == .OK, QueueDrop.acceptable(panel.urls) else { return }
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+        // No `acceptable` guard here, unlike the drop. A drop that is refused springs back —
+        // that is the platform's own feedback and the whole error channel the design names.
+        // A file chosen in an open panel has no spring-back, so refusing it silently would
+        // be a click that does nothing; it becomes a named `.unreadable` row instead,
+        // exactly as an unreadable file in a mixed drop already does.
         Task { await queue.add(droppedURLs: panel.urls) }
     }
 

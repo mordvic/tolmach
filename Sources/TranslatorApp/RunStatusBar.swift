@@ -29,7 +29,7 @@ struct RunStatusBar: View {
                 // Not `if let summary`: the label never reads the string, only whether
                 // there is one, and binding a name for a value nobody uses is what the
                 // compiler's `#no-usage` warning is for.
-                if summary != nil, canDisclose {
+                if canDisclose, summary != nil {
                     Button {
                         expanded.toggle()
                     } label: {
@@ -57,7 +57,7 @@ struct RunStatusBar: View {
             // `WarningsView` plus this stack's own spacing underneath. That is the exact
             // failure `summary`'s own doc comment exists to prevent, reached through
             // stale `@State` rather than through a disagreeing count.
-            if expanded, summary != nil, canDisclose, let warnings = warningsView {
+            if expanded, canDisclose, let warnings = warningsView {
                 // `ViewThatFits` and not a bare `ScrollView`, because a `ScrollView` is
                 // greedy in its scroll axis: it would sit at the full 200 under a two-line
                 // warning and leave the rest blank. This takes the plain stack's own height
@@ -81,12 +81,15 @@ struct RunStatusBar: View {
     }
 
     private var summary: String? {
-        if let queue {
-            // The glossary problem counts as something to disclose here too, exactly as it
-            // does in the text mode's summary below.
-            guard let result = queue.selectedResult else { return glossaryProblem.map { _ in "1 предупреждение" } }
-            let count = result.warningCount + (glossaryProblem == nil ? 0 : 1)
-            guard count > 0 else { return nil }
+        if queue != nil {
+            // Counted by asking the very view this disclosure opens, exactly as the text
+            // mode's `summary(outcome:problem:)` does. It used to add up `JobResult`'s own
+            // count instead, and the two answer different questions: that one is «is there
+            // something wrong with this file», which `stopOnWarnings` needs and which a
+            // document glossary is not — so a clean multi-часть file with twelve terms
+            // produced no chevron here and a "1 предупреждение" chevron in «Текст», and its
+            // «Термины документа (12)» list was unreachable.
+            guard let count = warningsView?.warningCount, count > 0 else { return nil }
             return RussianCopy.warningCount(count)
         }
         return Self.summary(outcome: model.outcome, problem: glossaryProblem)
@@ -95,9 +98,14 @@ struct RunStatusBar: View {
     /// Whether the disclosure is offered at all. In «Текст» that is a finished run; in
     /// «Файлы» it is a selected задание that finished, whatever the queue is doing now —
     /// the warnings belong to the file the user is looking at, not to the run in flight.
+    /// Whether the disclosure is offered at all.
+    ///
+    /// Defined as «there is something to show», by asking the same `warningsView` the
+    /// chevron opens. Stating it as a second condition is what put a chevron over an empty
+    /// disclosure: `selectedResult != nil || glossaryProblem != nil` was true with a
+    /// glossary problem and no finished задание, and the view returned nil.
     private var canDisclose: Bool {
-        queue == nil ? model.state == .finished
-                     : (queue?.selectedResult != nil || glossaryProblem != nil)
+        queue == nil ? model.state == .finished : warningsView != nil
     }
 
     /// The warnings for whatever this bar is currently describing, or nil if there are none
@@ -105,15 +113,20 @@ struct RunStatusBar: View {
     /// contents cannot disagree about which run they belong to.
     private var warningsView: WarningsView? {
         if let queue {
-            guard let result = queue.selectedResult else { return nil }
+            // Built even with no finished задание, because `glossaryProblem` alone is worth
+            // showing: `promoteToGlossary` writes its three save failures there, raised from
+            // the terms sheet the queue itself opens, and they can land before any file has
+            // finished.
+            guard queue.selectedResult != nil || glossaryProblem != nil else { return nil }
+            let result = queue.selectedResult
             // `problem` and `target` were both nil here, and neither was harmless.
             // `glossaryProblem` is exactly where `promoteToGlossary` writes its three save
             // failures — raised from the terms sheet, which the queue itself opens — so a
             // refused save explained itself to a property no visible surface read. And a nil
             // target makes the «Термины документа» disclosure render by lexicographic key
             // instead of by the language the задание was translated into.
-            return WarningsView(checks: result.checks, markupDiffs: result.markupDiffs,
-                                documentGlossary: result.documentGlossary,
+            return WarningsView(checks: result?.checks ?? [], markupDiffs: result?.markupDiffs ?? [],
+                                documentGlossary: result?.documentGlossary ?? [],
                                 target: queue.selectedTarget, problem: glossaryProblem,
                                 onMute: onMute)
         }
