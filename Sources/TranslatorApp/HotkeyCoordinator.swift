@@ -183,6 +183,24 @@ final class HotkeyCoordinator {
         // up, the system-wide focused element is «Толмач», role `AXWindow`, and
         // `kAXSelectedTextAttribute` answers -25205; with it gone, the same query returns
         // TextEdit's `AXTextArea` and the selected sentence.
+        // The panel is about to be shown for a run that has not started, and it must not be
+        // shown wearing the last one's clothes. Cleared *before* `afterCapture()` because
+        // `PanelController.show(at:)` measures in that call: `PanelView` reserves room for the
+        // reply and says «Перевожу…» while the model is `.idle` with an empty pane, and this
+        // is what puts it in that shape. Pressing ⌥⌘T twice over one paragraph used to find a
+        // `.finished` model holding the previous reply, so the second press reserved nothing
+        // and opened showing the first press's status — after a failure, «Ollama не запущена…»
+        // and a «Повторить» button, under a run already in flight.
+        //
+        // Only a press does this. `retry()` goes straight to `runTranslation()`, so the
+        // partial text spec 8 asks it to keep is kept: `translate()`'s own rule — drop the
+        // previous reply at the first token of the next one — is untouched and still governs
+        // everything that is not a fresh press.
+        if case .text = captured {
+            panelModel.translatedText = ""
+            panelModel.outcome = nil
+            panelModel.state = .idle
+        }
         afterCapture()
         guard case .text(let text) = captured else { return }
         panelModel.sourceText = text

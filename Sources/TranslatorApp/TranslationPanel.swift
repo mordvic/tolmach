@@ -77,6 +77,16 @@ final class TranslationPanel: NSPanel {
         // Follows the user across desktops and sits over full-screen apps, because the
         // selection it is translating came from one.
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
+        // The same floors `PanelSizer` enforces, told to AppKit so the drag stops at them
+        // rather than being pulled back from beyond them.
+        //
+        // Without this the two disagreed while the mouse was still down: `PanelSizer.fit`'s
+        // `userSized` branch answers `max(previous, floor)`, so dragging past 300 × 120 made
+        // it return a size that was *not* the panel's, and `applyFit` reframed and re-anchored
+        // underneath the drag ten times a second. Stating the minimum here removes the
+        // disagreement at its source — there is no size below the floor for the two to
+        // disagree about.
+        contentMinSize = NSSize(width: PanelSizer.minWidth, height: PanelSizer.minHeight)
     }
 
     /// Belt and braces again, now that `.titled` is back — and worth stating rather than
@@ -421,9 +431,22 @@ final class PanelController: NSObject, NSWindowDelegate {
         // change is not a reason to leave the width unsettled.
         if settling { frozenWidth = fit.size.width }
         setScrolling(fit.scrolls)
+        // The variant may change while the user drags; the frame may not. `contentMinSize`
+        // above is what should make the two agree, and this is the guarantee that does not
+        // depend on it holding — a frame written while the mouse is down fights the hand
+        // moving it, and no size is worth that.
+        guard !panel.inLiveResize else { return }
         guard fit.size != panel.frame.size else { return }
+        // A shrink holds the top whatever corner the panel was anchored by. Growth keeps the
+        // corner nearest the pointer — that is what stops the panel expanding over the text
+        // being read — but a bottom-anchored panel that *shrinks* brings its top edge down,
+        // and with top-aligned content every line already on screen comes down with it. The
+        // settle is the only fit that can shrink, and it is exactly the moment a reader is
+        // most likely to be part-way through.
+        let shrinking = fit.size.height < panel.frame.height
         let frame = PanelPlacement.reframe(current: panel.frame, newSize: fit.size,
-                                           anchor: anchor, screen: visible)
+                                           anchor: shrinking ? anchor.holdingTheTop : anchor,
+                                           screen: visible)
         // Unanimated while a run streams, and that is not an omission. The steps are a line
         // of text at a time and arrive up to ten times a second; animating each one puts a
         // 150ms tween on top of a 100ms interval, so the animations overlap and the panel
@@ -538,9 +561,15 @@ final class PanelController: NSObject, NSWindowDelegate {
     /// sizing for the rest of the presentation — after the very first fit.
     ///
     /// Re-fitting here rather than only on release is what keeps the content inside the window
-    /// *while* the edge moves. `applyFit` cannot fight the drag: with `userSized` set,
-    /// `PanelSizer.fit` returns the size the panel already has, so the frame never changes and
-    /// only the scrolling variant does.
+    /// *while* the edge moves.
+    ///
+    /// **`applyFit` cannot fight the drag, and the reason is not the one first written here.**
+    /// That said «with `userSized` set, `PanelSizer.fit` returns the size the panel already
+    /// has» — true only above the floors. The `userSized` branch answers
+    /// `max(previous, floor)`, so a drag past 300 × 120 produced a size that was *not* the
+    /// panel's and reframed it under the hand still moving it. Two things hold it now:
+    /// `contentMinSize` stops the drag reaching below the floors at all, and `applyFit`
+    /// declines to write a frame during a live resize whatever the sizer says.
     func windowDidResize(_ notification: Notification) {
         guard panel.inLiveResize else { return }
         userSized = true

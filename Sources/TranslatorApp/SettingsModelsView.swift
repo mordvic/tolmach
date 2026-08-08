@@ -33,7 +33,13 @@ struct SettingsModelsView: View {
                 LabeledContent("Состояние") {
                     Label(status.label, systemImage: status.isHealthy
                           ? "checkmark.circle" : "exclamationmark.triangle.fill")
-                        .foregroundStyle(status.isHealthy ? .green : .orange)
+                        // `StatusColour`, like every other status hue in the app. This row
+                        // was missed when the three colours were spelled: on a white grouped
+                        // form `systemOrange` is 2.31:1 and `systemGreen` 2.22:1, and this is
+                        // the most prominent status string in Settings — the one a user with
+                        // Ollama stopped comes here to read.
+                        .foregroundStyle(status.isHealthy ? StatusColour.success
+                                                          : StatusColour.warning)
                         .labelStyle(.titleAndIcon)
                 }
                 // Spec §5.3 asks this section for three things: whether Ollama is running,

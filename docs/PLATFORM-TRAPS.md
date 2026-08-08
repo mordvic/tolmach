@@ -287,13 +287,6 @@ size, which is what the plain `Button` items in the same toolbar already have. F
 label into a `Menu`'s title gets there: 124 × 36 host holding a 124 × 36 control.
 → the toolbar in `Sources/TranslatorApp/MainWindowView.swift`
 
-**A `Picker`'s title is not drawn inside a `.toolbar`, and that is a hint rather than a gap.**
-SwiftUI keeps it as the accessibility label and renders nothing, so `Picker("Из", …)` ships as a
-bare pop-up. Nothing in the source says so and no test here can see it. Drawing the label as a
-sibling `Text` is the trap above; the framework is saying a toolbar is a row of controls and not
-a form, so the label belongs *in* the control.
-→ `Sources/TranslatorApp/MainWindowView.swift`
-
 **A `ToolbarItemGroup`'s children are separate toolbar items.** Measured through
 `NSToolbar.items`: a group holding three labels, three pickers and a button reports 7 items, not
 1. macOS spaces them apart and overflows them one at a time, so a label written beside the

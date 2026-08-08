@@ -142,27 +142,61 @@ struct PanelView: View {
         .accessibilityLabel("Толмач — перевод выделенного текста")
     }
 
-    /// Whether the reply to this selection is still to come — the window during which the
-    /// room above is reserved.
+    /// As much of the selection as can still change the answer, and no more.
     ///
-    /// **`sourceText`, not `state`, and that is the whole point.** Gating on `.running` looked
-    /// right and was measured wrong: `HotkeyCoordinator.handlePress` assigns `sourceText` and
-    /// calls `translate()` *after* the `afterCapture()` that shows the panel, so at the moment
-    /// `PanelController.show(at:)` takes its measurement the run has not started and the
-    /// reservation was not in force. The panel therefore opened at 300 × 120 — the floor on
-    /// both axes — and needed 134, 198, 294 and 486 pt at one, three, six and twelve sentences
-    /// of selection. Short by up to 366 pt, with the button row hanging below the bottom edge
-    /// until the next `applyFit`.
+    /// **Measured on the running panel**, showing it with a selection of each length and
+    /// timing `show(at:)`. The height stops moving long before the cost does:
     ///
-    /// `sourceText` is the one signal that is already true at that moment: it still holds the
-    /// *previous* press's text, so «the model has not been given this selection yet» is exactly
-    /// «a reply for it cannot have arrived». The `.running` arm keeps it reserved for the rest
-    /// of the run, after `sourceText` has caught up.
+    ///        500 chars → 560 × 214,  15.7 ms
+    ///      2 000 chars → 560 × 582,  11.6 ms
+    ///      8 000 chars → 560 × 998,  29.3 ms   ← already the 0.6-of-screen ceiling (997)
+    ///     16 000 chars → 560 × 998,  43.1 ms
+    ///    200 000 chars → 560 × 998, 419.3 ms
     ///
-    /// A finished run leaves `sourceText == source` and a state that is not `.running`, so the
-    /// reservation lifts and the panel settles onto its own content.
-    private func awaitingReply(for source: String) -> Bool {
-        model.sourceText != source || model.state == .running
+    /// Past the ceiling every further character is laid out to produce the same number, and
+    /// pays for it on the main actor at the one moment the panel is supposed to appear: 419 ms
+    /// for a selection of a few pages, which is most of half a second of nothing on screen
+    /// after the shortcut. The cap is what makes the cost of reserving bounded while leaving
+    /// the answer identical — 16 000 is twice the length that already reached this display's
+    /// ceiling, so it holds on a much taller one too.
+    ///
+    /// A cut mid-word does not matter: this copy is never drawn, only measured.
+    static func reservation(for source: String) -> String {
+        String(source.prefix(reservationLimit))
+    }
+
+    /// See `reservation(for:)` for the measurements behind it.
+    static let reservationLimit = 16_000
+
+    /// The selection whose reply is still to come, or nil — the single gate two things read.
+    ///
+    /// Both the reserved room and the «Перевожу…» row must open and close together: the row is
+    /// 24 pt of what the reservation measures, so a change applied to one copy of the
+    /// condition and not the other reintroduces exactly the shortfall the reservation was
+    /// written to remove. They asked the same question in two places until this existed.
+    private var selectionAwaitingReply: String? {
+        guard case let .text(source) = selection, awaitingReply else { return nil }
+        return source
+    }
+
+    /// Whether the reply this presentation is waiting for is still to come — the window
+    /// during which room is reserved and the row says «Перевожу…».
+    ///
+    /// **A state, not a comparison of texts.** This first asked
+    /// `model.sourceText != source || model.state == .running`, on the reasoning that a stale
+    /// `sourceText` proves no reply can have arrived. True for a *different* selection and
+    /// false for the same one: press ⌥⌘T twice over one paragraph and the second press found
+    /// `sourceText` already equal to it and the state `.finished`, so it reserved nothing and
+    /// showed the finished run's own status — or, after a failure, «Ollama не запущена…» with
+    /// a «Повторить» button, under a press that was already running.
+    ///
+    /// `.idle` with nothing in the pane is what «a run is coming and has produced nothing»
+    /// actually looks like, and `HotkeyCoordinator` puts the model into exactly that shape
+    /// before it shows the panel. It is narrow on purpose: a finished run with an empty reply
+    /// leaves `.finished`, and a failed one leaves `.failed`, so neither is mistaken for a run
+    /// still to come and neither loses its own row.
+    private var awaitingReply: Bool {
+        model.state == .running || (model.state == .idle && model.translatedText.isEmpty)
     }
 
     private var background: AnyShapeStyle {
@@ -204,9 +238,18 @@ struct PanelView: View {
     /// «Отмена»: a run at the ceiling pushed its own stop button further out of reach with
     /// every arriving token.
     ///
-    /// Pinning the row answers the same observation outright instead. A document glossary of
-    /// any length cannot push the buttons anywhere, because the buttons are no longer in the
-    /// flow the glossary grows in.
+    /// Pinning the row answers the same observation outright instead. The buttons are no
+    /// longer in the flow the glossary grows in.
+    ///
+    /// **That is now a claim about the buttons only, and it used to say more than it should.**
+    /// It read «a document glossary of any length cannot push the buttons anywhere», which was
+    /// true while this region held the warnings too. Since the panel became three sections it
+    /// holds the translation alone, and the warnings sit in the pinned flow beside the
+    /// buttons — where an unbounded list starves the flexible region instead of pushing the
+    /// buttons out of it. Measured on a 560 × 540 stack: the translation's clip view came out
+    /// 438, 365, 215 and 0 pt tall at 0, 5, 15 and 30 warning rows. The warnings carry their
+    /// own ceiling now, at the site where they are drawn; this comment no longer promises
+    /// anything about them.
     ///
     /// The two variants do **not** produce the same ideal height, and it would be wrong to
     /// require that they did: measured, the flat one answers 368 at a 400pt width and the
@@ -323,8 +366,8 @@ struct PanelView: View {
                     // VoiceOver reading the source back inside the translation panel would be
                     // the same text twice.
                     ZStack(alignment: .topLeading) {
-                        if case let .text(source) = selection, awaitingReply(for: source) {
-                            Text(source)
+                        if let source = selectionAwaitingReply {
+                            Text(Self.reservation(for: source))
                                 .hidden()
                                 .accessibilityHidden(true)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -392,7 +435,29 @@ struct PanelView: View {
                     // stack does not pad a measured height.
                     let warnings = WarningsView(outcome: outcome, target: model.resolvedTarget)
                     if warnings.hasContent {
-                        warnings
+                        // **Bounded, because this is the one part of the static bottom block
+                        // with no length of its own.** The warnings left the scrolling middle
+                        // when the panel became three sections, and unbounded content in a
+                        // pinned flow starves the flexible section beside it: measured on a
+                        // 560 × 540 stack — the 0.6-of-screen cap on a 900 pt display — the
+                        // translation's clip view came out 438, 365, 215 and **0** pt tall at
+                        // 0, 5, 15 and 30 warning rows. At 30 the translation is not merely
+                        // small, it is unreachable: it has no height and the region that
+                        // scrolls is the one it is inside.
+                        //
+                        // The same shape `RunStatusBar` already uses for the same reason, and
+                        // its comment carries the argument: `ViewThatFits` and not a bare
+                        // `ScrollView`, because a `ScrollView` is greedy in its scroll axis
+                        // and would claim the whole cap under a two-line warning.
+                        //
+                        // 160 rather than the window's 200: this panel's ceiling is 0.6 of the
+                        // screen, not a window the user sized, and 160 leaves the translation
+                        // at least 280 pt at that ceiling on a 900 pt display.
+                        ViewThatFits(in: .vertical) {
+                            warnings
+                            ScrollView { warnings }
+                        }
+                        .frame(maxHeight: 160)
                     }
                 }
 
@@ -481,7 +546,7 @@ struct PanelView: View {
     /// state; this answers about a presentation, and only the caller knows which selection the
     /// state belongs to.
     private var status: PanelStatus? {
-        if case let .text(source) = selection, awaitingReply(for: source) {
+        if selectionAwaitingReply != nil {
             return Self.status(for: .running, awaitingTerms: model.isAwaitingTerms)
         }
         return Self.status(for: model.state, awaitingTerms: model.isAwaitingTerms)

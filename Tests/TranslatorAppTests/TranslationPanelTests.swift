@@ -829,3 +829,165 @@ private func resizablePanel(text: String)
 
     #expect(controller.panel.frame.height > opened)
 }
+
+/// A long warning list must not take the translation's height away from it.
+///
+/// The warnings left `scrollingMiddle` when the panel became three sections, and unbounded
+/// content in a pinned flow starves the flexible section beside it rather than pushing the
+/// buttons out of it. Measured on a bare 560 × 540 stack before the fix — the 0.6-of-screen
+/// cap on a 900 pt display — the middle's clip view came out 438, 365, 215 and **0** pt tall
+/// at 0, 5, 15 and 30 warning rows. At zero the translation is not small, it is unreachable.
+///
+/// Asserted against the installed hierarchy rather than the ideal size, because the starving
+/// happens in layout: the sizer is content, and the clip view is where it shows.
+@MainActor
+@Test func aLongWarningListDoesNotStarveTheTranslation() {
+    let text = String(repeating: sentence, count: 12)
+    let model = TranslationViewModel(
+        translator: Translator(client: ScriptedClient(responses: ["x"])),
+        settings: AppSettings(defaults: InMemoryDefaults(prefix: "starve")),
+        glossary: GlossaryStore(url: FileManager.default.temporaryDirectory
+            .appendingPathComponent("g-\(UUID().uuidString).json")))
+    model.sourceText = text
+    model.translatedText = text
+    model.state = .finished
+    model.outcome = TranslationOutcome(
+        final: text, chunks: [], translatedChunks: [text], documentGlossary: [],
+        detectedSource: .en,
+        checks: [],
+        markupDiffs: (0..<30).map { _ in
+            MarkupDiff(expected: nil, actual: nil, note: "потеряно: граница абзаца")
+        },
+        stats: [], timeToFirstTokenMS: 12, totalMS: 34,
+        documentGlossaryFailure: nil, documentGlossaryAttempted: false)
+
+    let controller = PanelController { variant in
+        AnyView(PanelView(model: model, selection: .text(text),
+                          scrolls: variant == .installed(scrolls: true),
+                          fillsPanel: variant != .measured))
+    }
+    controller.show(at: CGPoint(x: 600, y: 600))
+    defer { controller.hide() }
+    controller.panel.contentView?.layoutSubtreeIfNeeded()
+
+    var clipHeights: [CGFloat] = []
+    func walk(_ v: NSView) {
+        if v is NSClipView { clipHeights.append(v.frame.height) }
+        for s in v.subviews { walk(s) }
+    }
+    if let content = controller.panel.contentView { walk(content) }
+    // Every scrolling region in the panel must have somewhere to put its content.
+    #expect(!clipHeights.isEmpty)
+    #expect(clipHeights.allSatisfy { $0 > 0 })
+}
+
+/// The window's own minimum and the sizer's floors are the same two numbers, and they have to
+/// be: `PanelSizer.fit`'s `userSized` branch answers `max(previous, floor)`, so any size AppKit
+/// lets the user reach below a floor is a size the sizer will disagree with — and it disagrees
+/// by writing a frame, under a hand that is still moving the edge.
+@Test @MainActor func theWindowRefusesTheSizesTheSizerWouldOverrule() {
+    let controller = PanelController { _ in AnyView(Text("перевод")) }
+    #expect(controller.panel.contentMinSize.width == PanelSizer.minWidth)
+    #expect(controller.panel.contentMinSize.height == PanelSizer.minHeight)
+}
+
+/// A selection of a few pages must not cost half a second before the panel appears.
+///
+/// The reservation lays a hidden copy of the selection out to decide the panel's opening size.
+/// Measured showing the real panel at each length: 500 chars → 214 pt in 15.7 ms, 8 000 →
+/// 998 pt (this display's 0.6-of-screen ceiling, 997) in 29.3 ms, 200 000 → the same 998 pt in
+/// **419 ms**. Every character past the ceiling is laid out to produce a number that has
+/// already stopped changing, on the main actor, at the moment the panel is meant to appear.
+/// `@MainActor` because it calls statics on a `View` — the trap `CLAUDE.md` records.
+@MainActor
+@Test func theReservationStopsAtTheLengthThatStopsChangingTheAnswer() {
+    let long = String(repeating: "слово ", count: 20_000)
+    #expect(long.count > PanelView.reservationLimit)
+    #expect(PanelView.reservation(for: long).count == PanelView.reservationLimit)
+    // Short selections are reserved whole — the cap must not truncate the ordinary case.
+    let short = "Каждый профиль обязан ссылаться на тип."
+    #expect(PanelView.reservation(for: short) == short)
+}
+
+/// Pressing ⌥⌘T twice over the same paragraph must be the same as pressing it once.
+///
+/// The reservation used to key on `model.sourceText != source`, which is false the second
+/// time: the panel reserved nothing and opened showing the first run's own status — after a
+/// failure, «Ollama не запущена…» with a «Повторить» button, under a run already in flight.
+/// `HotkeyCoordinator` now clears the previous reply before the panel is shown, and the panel
+/// asks about the run's state rather than comparing two strings.
+@MainActor
+@Test func aSecondPressOverTheSameSelectionReservesAsMuchAsTheFirst() {
+    let text = String(repeating: sentence, count: 6)
+
+    func opening(afterPreviousRun previous: Bool) -> CGFloat {
+        let model = TranslationViewModel(
+            translator: Translator(client: ScriptedClient(responses: ["x"])),
+            settings: AppSettings(defaults: InMemoryDefaults(prefix: "repeat")),
+            glossary: GlossaryStore(url: FileManager.default.temporaryDirectory
+                .appendingPathComponent("g-\(UUID().uuidString).json")))
+        if previous {
+            // What the model looks like after a run over this very selection has finished…
+            model.sourceText = text
+            model.translatedText = text
+            model.state = .finished
+        }
+        // …and what `handlePress` does to it before showing the panel for the next press.
+        model.translatedText = ""
+        model.outcome = nil
+        model.state = .idle
+
+        let controller = PanelController { variant in
+            AnyView(PanelView(model: model, selection: .text(text),
+                              scrolls: variant == .installed(scrolls: true),
+                              fillsPanel: variant != .measured))
+        }
+        controller.show(at: CGPoint(x: 600, y: 600))
+        defer { controller.hide() }
+        return controller.panel.frame.height
+    }
+
+    #expect(opening(afterPreviousRun: true) == opening(afterPreviousRun: false))
+}
+
+/// The reservation must *lift*, and nothing pinned that until this test.
+///
+/// The three tests that measure the panel's opening all build it while the reply is still to
+/// come, so every one of them passes when the reservation is made unconditional — checked,
+/// all three green with `awaitingReply` hard-wired to `true`. What that would ship is a panel
+/// that keeps room for the source's whole length after the run has ended: a hole between a
+/// short translation and the button row, for the rest of the presentation.
+///
+/// Measured through `sizeThatFits` rather than a panel, so no animation and no clock: the
+/// settle is the one resize `PanelController` animates, and a frame read after it is only
+/// sometimes there.
+@MainActor
+@Test func aFinishedShortReplyDoesNotKeepTheRoomReservedForItsSource() {
+    let source = String(repeating: sentence, count: 12)
+    let model = TranslationViewModel(
+        translator: Translator(client: ScriptedClient(responses: ["x"])),
+        settings: AppSettings(defaults: InMemoryDefaults(prefix: "lift")),
+        glossary: GlossaryStore(url: FileManager.default.temporaryDirectory
+            .appendingPathComponent("g-\(UUID().uuidString).json")))
+    model.sourceText = source
+
+    func idealHeight() -> CGFloat {
+        let host = NSHostingController(
+            rootView: PanelView(model: model, selection: .text(source),
+                                scrolls: false, fillsPanel: false))
+        host.view.layoutSubtreeIfNeeded()
+        return host.sizeThatFits(in: CGSize(width: 560, height: CGFloat.greatestFiniteMagnitude)).height
+    }
+
+    // Waiting for the reply: the room is the source's.
+    model.translatedText = ""
+    model.state = .idle
+    let awaiting = idealHeight()
+
+    // The reply arrives and is short. The room must go back.
+    model.translatedText = "Короткий ответ."
+    model.state = .finished
+    let settled = idealHeight()
+
+    #expect(settled < awaiting / 2)
+}

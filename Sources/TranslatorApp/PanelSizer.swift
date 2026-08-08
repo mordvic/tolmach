@@ -127,9 +127,14 @@ enum PanelSizer {
         // `PanelView` holds the panel at the height the reply was expected to need, and the
         // «Перевожу…» row is 24 pt of that; when the run ends both go, and a strictly
         // monotonic height would keep the space as a hole between the text and the buttons.
-        // Shrinking there costs one movement, at one moment, in the direction of less — and
-        // the rule it bends exists to stop the panel moving *while the reader reads*, which
-        // the settle is not: it is the instant reading begins.
+        // Shrinking there costs one movement, at one moment, in the direction of less. The
+        // rule it bends exists to stop the panel moving while the reader reads — and the
+        // settle is **not** reliably before reading starts: a long reply has been on screen
+        // for seconds by then. What makes the exception safe is not timing but direction.
+        // `PanelController` reframes a shrink by `PanelAnchor.holdingTheTop`, so the top edge
+        // never comes down and no line already on screen moves; what moves is the bottom edge
+        // and the button row pinned to it. That was not true when this exception was written:
+        // a bottom-anchored panel brought its top edge down and took every read line with it.
         //
         // Growth at the settle still goes through the same expression, because `fitted` is
         // simply used as-is: a run that ends with warnings is taller, not shorter.

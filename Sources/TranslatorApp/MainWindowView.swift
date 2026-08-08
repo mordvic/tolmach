@@ -307,17 +307,8 @@ struct MainWindowView: View {
         // The selection itself is still a `Picker`, inline, so the menu keeps its check mark
         // and the binding stays exactly what it was.
         ToolbarItem(placement: .navigation) {
-            directionMenu(label: "Из", value: model.sourceOverride?.russianName ?? "Определить",
-                          help: "С какого языка переводить") {
-                Picker("Из", selection: $model.sourceOverride) {
-                    Text("Определить").tag(Language?.none)
-                    ForEach(Language.allCases, id: \.self) {
-                        Text($0.russianName).tag(Language?.some($0))
-                    }
-                }
-                .pickerStyle(.inline)
-                .labelsHidden()
-            }
+            languageMenu(label: "Из", selection: $model.sourceOverride,
+                         placeholder: "Определить", help: "С какого языка переводить")
         }
         ToolbarItem(placement: .navigation) {
             Button {
@@ -329,23 +320,18 @@ struct MainWindowView: View {
             .help("Перевести в обратную сторону")
         }
         ToolbarItem(placement: .navigation) {
-            directionMenu(label: "В", value: model.targetOverride?.russianName ?? "По правилу",
-                          help: "На какой язык переводить") {
-                Picker("В", selection: $model.targetOverride) {
-                    Text("По правилу").tag(Language?.none)
-                    ForEach(Language.allCases, id: \.self) {
-                        Text($0.russianName).tag(Language?.some($0))
-                    }
-                }
-                .pickerStyle(.inline)
-                .labelsHidden()
-            }
+            languageMenu(label: "В", selection: $model.targetOverride,
+                         placeholder: "По правилу", help: "На какой язык переводить")
         }
         ToolbarItem(placement: .navigation) {
-            directionMenu(label: "Тон", value: model.toneOverride?.russianName ?? "По умолчанию",
+            // The tone picker is not a language picker: its rows are `Tone`, and folding the
+            // two into one generic helper would buy a type parameter and cost the reader the
+            // one line that says which enum this control chooses from.
+            directionMenu(label: "Тон",
+                          value: model.toneOverride?.russianName ?? Self.toneDefault,
                           help: "Насколько вольно переводить") {
                 Picker("Тон", selection: $model.toneOverride) {
-                    Text("По умолчанию").tag(Tone?.none)
+                    Text(Self.toneDefault).tag(Tone?.none)
                     ForEach(Tone.allCases, id: \.self) {
                         Text($0.russianName).tag(Tone?.some($0))
                     }
@@ -354,6 +340,7 @@ struct MainWindowView: View {
                 .labelsHidden()
             }
         }
+
         // Neither button declares a keyboard shortcut any more, and that is the point of the
         // change rather than a side effect. ⌘↩ and ⌘. now live once, in the «Перевод» menu
         // `TranslatorApp` installs — which is where a Mac user looks for them, and which keeps
@@ -370,6 +357,39 @@ struct MainWindowView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(!status.isHealthy || !action.canStart)
             }
+        }
+    }
+
+    /// «По умолчанию» — written once, read by the button's title and by the row it selects.
+    ///
+    /// The two used to be separate literals a few lines apart, which is the shape where a
+    /// reworded placeholder reaches the menu row and not the button above it.
+    private static let toneDefault = "По умолчанию"
+
+    /// The two language controls, which differed only in their label, their binding and their
+    /// «no override» word — and were otherwise the same twenty lines twice.
+    ///
+    /// The placeholder is passed once and used for both the button's title and the row that
+    /// clears the override, so the toolbar cannot come to show one word while the menu under
+    /// it offers another.
+    @ViewBuilder private func languageMenu(label: String,
+                                           selection: Binding<Language?>,
+                                           placeholder: String,
+                                           help: String) -> some View {
+        directionMenu(label: label,
+                      value: selection.wrappedValue?.russianName ?? placeholder,
+                      help: help) {
+            Picker(label, selection: selection) {
+                Text(placeholder).tag(Language?.none)
+                // `russianName`, not `shortCode`. The settings name these languages in words
+                // and this window used to name them in codes — one vocabulary under two names,
+                // which is exactly what `CONTEXT.md` exists to prevent.
+                ForEach(Language.allCases, id: \.self) {
+                    Text($0.russianName).tag(Language?.some($0))
+                }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
         }
     }
 
