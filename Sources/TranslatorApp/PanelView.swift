@@ -409,7 +409,12 @@ struct PanelView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
                 if status.offersRetry {
-                    Button("Повторить", action: onRetry).font(.caption)
+                    // Small for the same reason the window's «Повторить» is, and it has to
+                    // stay in step with it: the drawing gives both 19 pt against the 22 of
+                    // «Скопировать» and «Открыть в окне» directly below, and here that
+                    // difference is doing work — it is what keeps the failure's own retry
+                    // from reading as a third button of the panel's action row.
+                    Button("Повторить", action: onRetry).font(.caption).controlSize(.small)
                 }
             }
         }

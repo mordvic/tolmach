@@ -225,7 +225,19 @@ struct RunStatusBar: View {
             HStack(spacing: 8) {
                 Text(message).font(.caption).foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
-                Button("Повторить", action: onRetry).font(.caption)
+                // Small, not standard. The drawing gives this button 19 pt and an 11 pt
+                // label against the 22 and 12 every other button in the app gets, because
+                // it is the only one that sits *inside* a caption-sized line rather than in
+                // a row of its own — a full-height bezel beside «Ollama не запущена…» makes
+                // the sentence look like a caption under a control instead of the message
+                // the control answers.
+                //
+                // `.font` alone was the whole of it and only ever addressed the label:
+                // `controlSize` is what the bezel is measured from, and it is the modifier
+                // this codebase already reaches for when a control has to be drawn smaller
+                // (the mode switch, and the spinner three lines above). Both are set, so the
+                // label does not depend on `.small` choosing the font as well as the height.
+                Button("Повторить", action: onRetry).font(.caption).controlSize(.small)
             }
         }
     }
