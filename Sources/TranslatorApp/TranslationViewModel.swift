@@ -202,6 +202,22 @@ final class TranslationViewModel {
     /// directions — left in place it would be a translation of text that is no longer in the
     /// source pane, and cleared without being moved it would throw away the only thing the
     /// user has to translate back.
+    func swapLanguages() {
+        guard canSwapLanguages, let source = knownSource, let target = knownTarget else { return }
+        sourceOverride = target
+        targetOverride = source
+        if !translatedText.isEmpty {
+            sourceText = translatedText
+            translatedText = ""
+        }
+        // Dropped with the text it described, the same pairing `translate()` maintains: an
+        // outcome that outlives its text renders the previous run's markup diffs and
+        // glossary checks under whatever is on screen now.
+        outcome = nil
+        resolvedTarget = nil
+        state = .idle
+    }
+
     /// Whether the two toolbar pickers hold explicit languages to exchange.
     ///
     /// Separate from `canSwapLanguages`, which also consults the last run's detected source
@@ -218,22 +234,6 @@ final class TranslationViewModel {
         guard let source = sourceOverride, let target = targetOverride else { return }
         sourceOverride = target
         targetOverride = source
-    }
-
-    func swapLanguages() {
-        guard canSwapLanguages, let source = knownSource, let target = knownTarget else { return }
-        sourceOverride = target
-        targetOverride = source
-        if !translatedText.isEmpty {
-            sourceText = translatedText
-            translatedText = ""
-        }
-        // Dropped with the text it described, the same pairing `translate()` maintains: an
-        // outcome that outlives its text renders the previous run's markup diffs and
-        // glossary checks under whatever is on screen now.
-        outcome = nil
-        resolvedTarget = nil
-        state = .idle
     }
 
     func translate() async {

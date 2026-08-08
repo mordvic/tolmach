@@ -50,13 +50,23 @@ enum TranslatedFileWriter {
             return .saved(destination)
         } catch {
             try? FileManager.default.removeItem(at: temporary)
-            // The error's own `localizedDescription` is English and names
-            // NSCocoaErrorDomain; neither belongs on a Russian screen. The description is
-            // logged for diagnosis — `.public`, deliberately, because `<private>` in
-            // `log show` would make the entry useless for the diagnosis it exists for —
-            // and the sentence says what to do instead. The path is **not** logged: a
-            // file name is user data.
-            Log.files.error("could not write a translation: \(error.localizedDescription, privacy: .public)")
+            // The domain and the code, and **not** `localizedDescription`.
+            //
+            // That description names the document. Measured: a refused write to a path
+            // called `техдок-секретный.ru.md` produces «The folder
+            // "техдок-секретный.ru.md" doesn't exist.» — so logging it `.public` puts a
+            // user's file name, and often its folder, into the unified log, which any
+            // admin on the machine can read and which `sysdiagnose` collects. `Log`'s own
+            // rule forbids exactly that, and this line carried a comment claiming it was
+            // being obeyed.
+            //
+            // What remains is `.public` for the reason `Log` gives: `<private>` in
+            // `log show` makes an entry useless for the diagnosis it exists for. It is
+            // also the half that identifies the *failure* — 513 is «no permission», the
+            // TCC refusal this whole fallback exists for — while the half that identified
+            // the *user* is gone.
+            let nsError = error as NSError
+            Log.files.error("could not write a translation: \(nsError.domain, privacy: .public) \(nsError.code, privacy: .public)")
             return .refused("Не удалось сохранить перевод рядом с исходником. "
                 + "Воспользуйтесь кнопкой «Сохранить как…» — это заодно выдаст приложению право на запись.")
         }
@@ -75,7 +85,9 @@ enum TranslatedFileWriter {
             try Data(text.utf8).write(to: destination, options: .atomic)
             return .saved(destination)
         } catch {
-            Log.files.error("could not write a translation to a chosen destination: \(error.localizedDescription, privacy: .public)")
+            // Same reasoning as above: the description names the file the user chose.
+            let nsError = error as NSError
+            Log.files.error("could not write to a chosen destination: \(nsError.domain, privacy: .public) \(nsError.code, privacy: .public)")
             return .refused("Не удалось сохранить перевод в выбранное место.")
         }
     }

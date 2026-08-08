@@ -143,11 +143,11 @@ final class FileQueueModel {
 
     /// The name the automatic save would have used, for the save panel's default.
     func suggestedName(for id: FileJob.ID) -> String {
-        guard let job = jobs.first(where: { $0.id == id }) else { return "" }
+        guard let job = jobs.first(where: { $0.id == id }), target(for: job) != nil else { return "" }
         // A partial is offered as a draft, never under the canonical name — the panel
         // overwrites what it is pointed at, so suggesting that name and letting the user
         // press Return is how a truncated file lands over a complete translation.
-        return OutputNaming.destination(for: job.url, target: target(for: job),
+        return OutputNaming.destination(for: job.url, target: target(for: job) ?? .ru,
                                         draft: job.state == .interrupted,
                                         exists: { _ in false }).lastPathComponent
     }
@@ -155,8 +155,9 @@ final class FileQueueModel {
     /// «Сохранить рядом с исходником» on a finished row.
     func saveBesideSource(_ id: FileJob.ID) {
         guard let index = jobs.firstIndex(where: { $0.id == id }),
-              let text = jobs[index].result?.final else { return }
-        apply(save(jobs[index].url, text, target(for: jobs[index])), to: index)
+              let text = jobs[index].result?.final,
+              let target = target(for: jobs[index]) else { return }
+        apply(save(jobs[index].url, text, target), to: index)
     }
 
     /// «Сохранить как…», once the user has picked a destination.
@@ -178,13 +179,15 @@ final class FileQueueModel {
         }
     }
 
-    /// The language a задание is translated into.
+    /// The language a задание was translated into, or nil if it has not run.
     ///
-    /// The run's own answer once it has one, because that is the only place the toolbar's
-    /// override was known; the settings rule only as a guess for a задание that has not run.
-    private func target(for job: FileJob) -> Language {
-        job.resolvedTarget ?? settings.targetLanguage(forDetected: LanguageDetector.detect(job.text))
-    }
+    /// The run's own answer and nothing else. It used to fall back to re-detecting the text
+    /// and applying the settings rule, which was two mistakes: the run is the only place the
+    /// toolbar's override was ever known, and the detection ran on the main actor over a
+    /// file this queue lets be 2 MB. Both callers — the save panel's suggested name and the
+    /// on-demand save — are offered only for a задание that has a result, so the fallback
+    /// was unreachable as well as wrong.
+    private func target(for job: FileJob) -> Language? { job.resolvedTarget }
 
     func add(_ new: [FileJob]) {
         jobs.append(contentsOf: new)
@@ -501,7 +504,20 @@ final class FileQueueModel {
                                                          partsTotal: job.partsTotal,
                                                          documentTermCount: 0))
 
-        let detected = source ?? LanguageDetector.detect(job.text)
+        // Detected off the main actor, for the reason `add(dropped:)` plans off it:
+        // `NLLanguageRecognizer.processString` reads the whole string with no prefix cap,
+        // and this queue deliberately accepts 2 MB files. On the actor it beat the window at
+        // the start of every файл — which is exactly when the user is watching the queue
+        // advance. Skipped entirely when the toolbar named a source.
+        let detected: Language?
+        if let source {
+            detected = source
+        } else {
+            let text = job.text
+            detected = await Task.detached(priority: .userInitiated) {
+                LanguageDetector.detect(text)
+            }.value
+        }
         let target = overrideTarget ?? settings.targetLanguage(forDetected: detected)
         // Recorded before the run rather than after it, so «Сохранить как…» suggests the
         // right name even for a задание that was interrupted or failed.
