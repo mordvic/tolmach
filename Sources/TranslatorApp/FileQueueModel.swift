@@ -489,6 +489,15 @@ final class FileQueueModel {
     private func translate(at index: Int, source: Language?, target overrideTarget: Language?,
                            tone overrideTone: Tone?) async -> Bool {
         let job = jobs[index]
+        /// Where every write after a suspension goes.
+        ///
+        /// The bare `index` is safe only because `remove(_:)` refuses while running and
+        /// `add` appends — a pair of facts held together by nothing but themselves, across
+        /// suspensions that with the terms gate can last minutes. `saveBesideSource` was
+        /// already changed to re-find by id for this reason; the run itself was still
+        /// trusting the number, and any later «убрать завершённые» would write one file's
+        /// result onto another file's row.
+        func row() -> Int? { jobs.firstIndex(where: { $0.id == job.id }) }
         // The selection is deliberately **not** moved here. Following the running file
         // would yank a finished translation out from under whoever is reading it, and the
         // status bar already says which file is running.
@@ -598,10 +607,11 @@ final class FileQueueModel {
         do {
             let outcome = try await run.value
             await drain()
+            guard let at = row() else { return false }
             guard outcome.timeToFirstTokenMS != nil else {
                 // The engine's «nothing was ever emitted» signal. Reporting success would
                 // write an empty file beside the source.
-                jobs[index].state = .failed("Модель вернула пустой ответ.")
+                jobs[at].state = .failed("Модель вернула пустой ответ.")
                 return false
             }
             var result = JobResult(final: outcome.final, checks: outcome.checks,
@@ -626,9 +636,9 @@ final class FileQueueModel {
                 switch await save(job.url, outcome.final, target) {
                 case .saved(let url):
                     result.savedTo = url
-                    jobs[index].saveProblem = nil
+                    jobs[at].saveProblem = nil
                 case .refused(let problem):
-                    jobs[index].saveProblem = problem
+                    jobs[at].saveProblem = problem
                 }
             }
             // «The gate was asked for, terms were actually sought, and no sheet appeared».
@@ -638,10 +648,10 @@ final class FileQueueModel {
             // «more than one часть» either — that claimed a failure for every prose document
             // `TermExtractor` found no candidates in, where nothing was attempted and
             // nothing went wrong.
-            jobs[index].documentTermsUnavailable = gateRequested
+            jobs[at].documentTermsUnavailable = gateRequested
                 && outcome.documentGlossaryAttempted && !raisedTermsSheet
-            jobs[index].result = result
-            jobs[index].state = .finished
+            jobs[at].result = result
+            jobs[at].state = .finished
             if settings.stopOnWarnings, result.hasWarnings {
                 pausedAfterWarnings = true
                 return true
@@ -649,7 +659,8 @@ final class FileQueueModel {
             return false
         } catch is CancellationError {
             await drain()
-            markInterrupted(index, started: started)
+            guard let at = row() else { return true }
+            markInterrupted(at, started: started)
             return true
         } catch {
             await drain()
@@ -657,6 +668,7 @@ final class FileQueueModel {
             // that finishes inside `onTermination`'s window surfaces a URLError(.cancelled)
             // rather than a CancellationError, and reporting that as a failure would show
             // English right after the user pressed Cancel.
+            guard let at = row() else { return true }
             if run.isCancelled {
                 // The same treatment as the `CancellationError` branch above, and it has to
                 // be: this branch exists because an identical cancellation can surface as
@@ -665,10 +677,10 @@ final class FileQueueModel {
                 // true on one of the two paths and false on the other, so the partial
                 // translation the user was watching vanished from the pane depending on
                 // which error the stream happened to produce.
-                markInterrupted(index, started: started)
+                markInterrupted(at, started: started)
                 return true
             }
-            jobs[index].state = .failed(TranslationViewModel.message(for: error))
+            jobs[at].state = .failed(TranslationViewModel.message(for: error))
             return false
         }
     }

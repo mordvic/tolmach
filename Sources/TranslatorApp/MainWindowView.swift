@@ -48,7 +48,10 @@ struct PrimaryAction {
         case .text:
             PrimaryAction(
                 isRunning: text.state == .running,
-                canStart: !text.sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                // Not while the queue is running: one model lives in Ollama's memory, and
+                // the mode switch no longer stands between the user and a second run.
+                canStart: !text.sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    && !queue.isRunning,
                 start: { await text.translate() },
                 cancel: { text.cancel() },
                 canCopy: !text.translatedText.isEmpty,
@@ -65,7 +68,7 @@ struct PrimaryAction {
                 // promises this button and the stop-on-warnings pause cannot disagree, and
                 // a copy of the condition is how a seventh `FileJob.State` gets remembered
                 // in one place and forgotten in the other.
-                canStart: queue.hasWorkLeft,
+                canStart: queue.hasWorkLeft && text.state != .running,
                 // The toolbar's three pickers are drawn on this screen and must configure
                 // this run. They are read from the text model because that is what the
                 // toolbar binds to — one owner for those values, passed in per run.
@@ -125,17 +128,19 @@ struct MainWindowView: View {
     /// Every mode-sensitive control in this window reads this one value.
     private var action: PrimaryAction { .forMode(mode, text: model, queue: queue) }
 
-    /// Whether the left pane may change what it is showing.
+    /// Looking is always allowed. **Starting** is what must not happen twice.
     ///
-    /// **Both models, not just the queue.** `FileQueueModel.canChangeMode` answers for the
-    /// queue alone, and the switch was gated on that only — so a long *text* run could be
-    /// left behind by switching to «Файлы», where «Перевести» then started a queue run
-    /// beside it. Two runs against one Ollama, which is exactly what the guard exists to
-    /// prevent, and worse: ⌘. and «Отмена» resolve to the visible mode, so the text run
-    /// became uncancellable and landed its result in a pane nobody could see.
-    private var canChangeMode: Bool {
-        model.state != .running && queue.canChangeMode
-    }
+    /// This used to require both models idle, so that switching away from a run could not be
+    /// followed by «Перевести» starting a second one against the one model Ollama holds.
+    /// That prevented the right thing in the wrong place, and it made a trap in each
+    /// direction: a running queue locked the user out of «Текст» — including the pane
+    /// «Открыть в окне» had just handed a translation to — and a running text translation
+    /// locked them out of watching the queue.
+    ///
+    /// The rule belongs on the action, not on the view: `PrimaryAction.canStart` now refuses
+    /// while *either* model is running, so switching is free and starting is still single.
+    /// «Добавить…» keeps its own guard, because adding to a queue mid-run is a different
+    /// question and `FileQueueModel.canChangeMode` is the one that answers it.
 
     var body: some View {
         VStack(spacing: 0) {
@@ -152,7 +157,6 @@ struct MainWindowView: View {
                         .labelsHidden()
                         .controlSize(.small)
                         .fixedSize()
-                        .disabled(!canChangeMode)
                         .help("Что переводить: набранный текст или очередь файлов")
                         // The drawing's «Файлы · 3». Only in that mode and only when there
                         // is something to count: «Файлы · 0» beside an empty pane says
@@ -174,7 +178,7 @@ struct MainWindowView: View {
                         } else {
                             Button("Добавить…", action: addFiles)
                                 .buttonStyle(.link)
-                                .disabled(!canChangeMode)
+                                .disabled(!queue.canChangeMode)
                         }
                     }
                     if mode == .text {

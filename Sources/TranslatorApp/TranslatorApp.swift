@@ -528,6 +528,10 @@ struct TranslatorApp: App {
         // The panel stays up when the window refuses. It refuses only while it is running a
         // translation of its own, and hiding the panel then would throw away a result the
         // user asked to keep in exchange for nothing.
+        // The window must be *showing* the pane it was handed. Without this the translation
+        // landed in «Текст» while the window sat in «Файлы» — invisible, and with a queue
+        // running formerly unreachable, because the switch was disabled until it finished.
+        mode = .text
         guard translation.adopt(from: coordinator.panelModel) else {
             openWindow(id: TranslatorApp.mainWindowID)
             activateThisApp()

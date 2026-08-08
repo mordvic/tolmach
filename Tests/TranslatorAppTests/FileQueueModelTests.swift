@@ -1356,3 +1356,41 @@ private final class SaveCall: @unchecked Sendable {
     #expect(model.jobs[0].state == .finished)
     #expect(!model.jobs[0].documentTermsUnavailable)
 }
+
+// MARK: - Review round 24
+
+@MainActor @Test func neitherModeCanStartWhileTheOtherIsRunning() async {
+    // The mode switch used to be what stopped a second run, which trapped the user on
+    // whichever side was busy. Looking is free now; starting is what stays single.
+    let client = QueueClient(replies: ["один"], paced: true, holdCallAtIndex: 0)
+    let queue = makeQueueModel(client, prefix: "primary-exclusive")
+    queue.add([queueJob("a.md", "first")])
+    let text = makeTextModel("primary-exclusive-text")
+    text.sourceText = "что-то"
+
+    #expect(PrimaryAction.forMode(.text, text: text, queue: queue).canStart)
+
+    let run = Task { await queue.run() }
+    await waitUntilCalled(client)
+    #expect(!PrimaryAction.forMode(.text, text: text, queue: queue).canStart)
+    queue.cancel()
+    await run.value
+
+    #expect(PrimaryAction.forMode(.text, text: text, queue: queue).canStart)
+}
+
+@MainActor @Test func aRowRemovedFromUnderARunDoesNotTakeAnotherFilesResult() async {
+    // The run held an `Int` index across suspensions that with the terms gate last minutes,
+    // safe only because `remove` refuses while running and `add` appends — two facts held
+    // together by nothing but themselves. Writes go through a re-lookup by id now, so the
+    // guarantee survives the pair being changed.
+    let client = QueueClient(replies: ["один", "два"])
+    let model = makeQueueModel(client, prefix: "queue-row-identity")
+    model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
+
+    await model.run()
+
+    // Each result landed on its own row, not on a neighbour's.
+    #expect(model.jobs[0].result?.final == "один")
+    #expect(model.jobs[1].result?.final == "два")
+}

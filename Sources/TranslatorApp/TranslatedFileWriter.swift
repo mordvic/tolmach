@@ -74,8 +74,20 @@ enum TranslatedFileWriter {
                         exists: { FileManager.default.fileExists(atPath: $0.path) })
                 }
             }
-            try FileManager.default.moveItem(at: temporary, to: next)
-            return .saved(next)
+            // Every attempt lost the race. Reported as what it is: the outer `catch`'s
+            // sentence is about permission, and answering a collision with «воспользуйтесь
+            // "Сохранить как…"» is the misdiagnosis this loop exists to remove — falling
+            // through to it after eight tries would have reintroduced it at the end.
+            //
+            // **No test reaches this line**, and that is a fact about the filesystem rather
+            // than a gap: `OutputNaming` re-scans for a free name on every retry, so getting
+            // here needs a directory that claims each of eight freshly-chosen names in the
+            // moment between the check and the move. Pre-occupying names cannot produce it.
+            try? FileManager.default.removeItem(at: temporary)
+            Log.files.error("could not claim a free name after 8 attempts")
+            return .refused("Не удалось подобрать свободное имя рядом с исходником — "
+                + "файлы с такими именами появляются быстрее, чем перевод успевает сохраниться. "
+                + "Воспользуйтесь кнопкой «Сохранить как…».")
         } catch {
             try? FileManager.default.removeItem(at: temporary)
             // The domain and the code, and **not** `localizedDescription`.
