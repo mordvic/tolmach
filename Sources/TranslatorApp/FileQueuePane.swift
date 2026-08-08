@@ -48,6 +48,13 @@ struct FileQueuePane: View {
                                      onSaveAs: { saveAs(job) },
                                      onReveal: { reveal(job) })
                             .tag(job.id)
+                            // The drawing's gaps, and the two modifiers are one statement:
+                            // the rows are cards with 6 pt of air between them, so the
+                            // separator `List` draws between every pair would be a second
+                            // divider in that air. 3 + 3 top and bottom makes the 6; 8 at the
+                            // sides is the padding the drawing gives the white list area.
+                            .listRowSeparator(.hidden)
+                            .listRowInsets(EdgeInsets(top: 3, leading: 8, bottom: 3, trailing: 8))
                             // The one way a row leaves the queue. The spec promises an
                             // unreadable file «can be removed», and until now nothing
                             // could remove anything — `remove(_:)` existed and no view
@@ -197,11 +204,28 @@ private struct FileQueueRow: View {
                 .font(.caption)
             }
         }
-        .padding(.vertical, 2)
-        // The running file is tinted, as the drawing has it. Not the *selected* one —
-        // `List` draws its own selection, and two highlights competing for one row is how
-        // a user loses track of which is which.
-        .listRowBackground(isRunning ? Color.accentColor.opacity(0.08) : nil)
+        // The drawing draws every задание as a card — 1 pt border, radius 6, 9 × 8 inside —
+        // rather than as a line in a list. It is worth the chrome here and nowhere else in
+        // this window: a row is four to six stacked fragments (name, счётчик, полоса,
+        // «Перевожу часть 4 из 7», предупреждения, «Сохранить рядом с исходником»), and with
+        // nothing enclosing them the fragments of two neighbouring файлы read as one column.
+        .padding(.horizontal, 9)
+        .padding(.vertical, 8)
+        // The running file is tinted, as the drawing has it. Not the *selected* one — `List`
+        // draws its own selection, and two highlights competing for one row is how a user
+        // loses track of which is which.
+        //
+        // The tint moved **into** the card and out of `.listRowBackground`, and that is what
+        // keeps the sentence above true. `.listRowBackground` replaces the row's background,
+        // which is where `List` draws that selection: tinting the running row through it hid
+        // the selection whenever the two coincided — and the selection is what decides whose
+        // translation the right-hand pane is showing. A fill inside the card leaves the row's
+        // own background to `List`, so both are visible at once.
+        .background(RoundedRectangle(cornerRadius: 6)
+            .fill(isRunning ? Color.accentColor.opacity(0.08) : .clear))
+        .overlay(RoundedRectangle(cornerRadius: 6)
+            .strokeBorder(isRunning ? AnyShapeStyle(Color.accentColor.opacity(0.35))
+                                    : AnyShapeStyle(.quaternary)))
         // One announcement per row rather than four unlabelled fragments, so VoiceOver
         // reads «techdoc-en.md, перевожу часть 4 из 7» instead of spelling the layout.
         .accessibilityElement(children: .combine)
