@@ -89,6 +89,9 @@ final class FileQueueModel {
     private var suppressTermsForThisRun = false
     /// Whether this задание's run reached the review point at all. See where it is read.
     private var raisedTermsSheet = false
+    /// Seconds this attempt spent waiting for a human in the terms sheet. See
+    /// `markInterrupted`, which is the one path with no `TranslationOutcome` to ask.
+    private var termsWait: TimeInterval = 0
 
     init(translator: Translator, settings: AppSettings, glossary: GlossaryStore,
          save: @escaping (URL, String, Language) -> SaveOutcome,
@@ -447,7 +450,11 @@ final class FileQueueModel {
         let request = DocumentTermsRequest(draft: draft)
         pendingTermsRequest = request
         onTermsRequested?()
-        defer { pendingTermsRequest = nil }
+        let askedAt = Date()
+        defer {
+            pendingTermsRequest = nil
+            termsWait += Date().timeIntervalSince(askedAt)
+        }
         let answer = try await request.answer()
         // Read after the answer, not before: the tick and the button are one decision, and
         // reading it earlier would take a value the user had not finished making.
@@ -461,7 +468,12 @@ final class FileQueueModel {
         jobs[index].state = .interrupted
         jobs[index].result = JobResult(final: streamingText, checks: [], markupDiffs: [],
                                        documentGlossary: [],
-                                       elapsedMS: Int(Date().timeIntervalSince(started) * 1000))
+                                       // Minus the reader's deliberation, exactly as the
+                                       // success path gets it for free from `totalMS`. There
+                                       // is no outcome on this path to take it from, so the
+                                       // wait is measured here — one name must not mean two
+                                       // different things depending on which branch set it.
+                                       elapsedMS: Int((Date().timeIntervalSince(started) - termsWait) * 1000))
     }
 
     /// - Returns: whether the queue should stop here.
@@ -503,6 +515,7 @@ final class FileQueueModel {
                                   keepAlive: settings.keepAlive)
         let started = Date()
         raisedTermsSheet = false
+        termsWait = 0
 
         // Pieces travel through a stream rather than a Task-per-token, for
         // `TranslationViewModel.translate`'s reason: `onToken` is called serially by the

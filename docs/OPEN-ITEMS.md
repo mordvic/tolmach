@@ -198,6 +198,17 @@ nothing in this environment can see either.
 
 ## 2. Known and accepted
 
+- **Esc in the «Термины документа» sheet ends the whole queue, not just that file.**
+  `askAboutTerms` throws `CancellationError`, which is the engine's «abort this run», and
+  `run()` returns. It is the same contract `queue.cancel()` has and the same one the spec
+  gives the sheet — a refusal is a refusal of the run — but it is the one place a gesture
+  made about a single file stops all the others, with nothing on screen warning of it
+  first. Left as it is because the alternative is worse in a way that is easy to miss:
+  «skip this file and carry on» would leave the queue running under a user who has just
+  said no, and the файл it skipped would look interrupted for a reason it did not have.
+  What is owed is a human's judgement of whether that reads as expected in practice, not
+  a change made from here.
+
 Deliberate, with the reason. Do not "fix" these without reading the reason first.
 
 - **The panel is sized to its content, within bounds it will not leave.** This entry used to

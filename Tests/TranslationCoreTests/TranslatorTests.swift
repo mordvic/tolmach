@@ -738,8 +738,15 @@ func aPerfectEchoReproducesTheSourceByteForByte(_ text: String) async throws {
     #expect(outcome.timeToFirstTokenMS != nil)
 }
 
-@Test func progressIsReportedOncePerPartPlusOnceBeforeTheFirst() async throws {
-    // response 0 = the term list, then one per chunk
+@Test func progressIsReportedAsSoonAsThePartCountIsKnownAndAgainWhenTheTermsAre() async throws {
+    // Two reports before the first часть, and they say different things.
+    //
+    // The first goes out the moment `Chunker` has planned, before anything is asked of the
+    // model — a consumer waiting for the term-list call (seconds, or minutes with the terms
+    // gate on) otherwise has nothing but whatever it seeded its row with, which for the
+    // queue is the drop-time estimate. The second carries the term count once the review has
+    // settled it, and is skipped when there is no документный глоссарий, because it would
+    // then repeat the first word for word.
     let fake = FakeLLMClient(responses: [
         "resource => ресурс\nserver => сервер",
         "перевод один", "перевод два", "перевод три", "перевод четыре",
@@ -752,15 +759,13 @@ func aPerfectEchoReproducesTheSourceByteForByte(_ text: String) async throws {
         onProgress: { box.append($0) })
 
     let seen = box.values
-    // One report before the first part, so a queue row can draw an empty bar instead
-    // of nothing while the term-list call is still in flight.
-    #expect(seen.count == outcome.chunks.count + 1)
-    #expect(seen.map(\.partsDone) == Array(0...outcome.chunks.count))
+    #expect(seen.count == outcome.chunks.count + 2)
+    #expect(seen.map(\.partsDone) == [0] + Array(0...outcome.chunks.count))
     #expect(seen.allSatisfy { $0.partsTotal == outcome.chunks.count })
-    // The term count is known from the very first report, which is the whole reason
-    // it travels here rather than being read off the finished outcome.
-    #expect(seen.allSatisfy { $0.documentTermCount == outcome.documentGlossary.count })
-    #expect(seen.first?.documentTermCount == 2)
+    // Zero until the terms are known, then the real count for the rest of the run.
+    #expect(seen.first?.documentTermCount == 0)
+    #expect(seen.dropFirst().allSatisfy { $0.documentTermCount == outcome.documentGlossary.count })
+    #expect(outcome.documentGlossary.count == 2)
 }
 
 @Test func aSingleChunkRunStillReportsProgressWithNoDocumentTerms() async throws {

@@ -296,6 +296,17 @@ public struct Translator: Sendable {
             return collected
         }
 
+        // The part count as soon as it is known, before anything is asked of the model.
+        //
+        // The report below waits for the term-list call and, with the gate on, for a human
+        // — seconds or minutes during which a consumer had nothing but whatever it seeded
+        // its row with. For the queue that seed is the drop-time estimate, so a user who
+        // changed «размер части» between dropping and running saw the stale number for the
+        // whole of that wait: exactly the mismatch the running row takes its count from the
+        // run to avoid.
+        onProgress(TranslationProgress(partsDone: 0, partsTotal: chunks.count,
+                                       documentTermCount: 0))
+
         // Document glossary. Needs more than one chunk to be worth anything, and a known
         // source language — parsing the source with the target's tagger yields garbage
         // terms that would then be forced into every chunk.
@@ -393,14 +404,17 @@ public struct Translator: Sendable {
             reviewWait = Date().timeIntervalSince(askedAt)
         }
 
-        // Reported before the first request, not after it, so a consumer drawing a
-        // progress row has a row to draw while the first part is in flight rather than
-        // a blank that fills in only once something has already finished.
+        // The term count, once the review (if any) has settled it — so this reports what the
+        // run will actually hold constant, not what the model first proposed.
         //
-        // Counted after the review, so it reports what the run will actually hold constant.
+        // Sent only when there is something new to say: for a run with no документный
+        // глоссарий this would repeat the report above word for word, and a duplicate is a
+        // consumer's cue to redraw for nothing.
         let documentTermCount = documentEntries.count
-        onProgress(TranslationProgress(partsDone: 0, partsTotal: chunks.count,
-                                       documentTermCount: documentTermCount))
+        if documentTermCount > 0 {
+            onProgress(TranslationProgress(partsDone: 0, partsTotal: chunks.count,
+                                           documentTermCount: documentTermCount))
+        }
 
         // Per-chunk translation. The user glossary is filtered by occurrence; the document
         // glossary is not — see the task notes for why the two rules differ.
