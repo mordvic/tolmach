@@ -338,7 +338,7 @@ final class FileQueueModel {
         // `.unreadable` заданиям are not counted at all: `run()` skips them, so including
         // them promised work the queue will never do — «2-й файл из 5» over a queue that
         // will translate three.
-        let counted = jobs.filter { $0.state != .unreadable }
+        let counted = translatable
         guard let index = counted.firstIndex(where: { if case .running = $0.state { true } else { false } }),
               case let .running(progress) = counted[index].state
         else { return nil }
@@ -364,14 +364,24 @@ final class FileQueueModel {
         // unlike the `.unreadable` rows above: those the queue will never translate, while
         // these it already has, and dropping them would make «N-й файл из M» shrink under
         // the reader as the queue advanced.
-        let done = counted.reduce(0) { $0 + ($1.state == .finished ? $1.partsTotal : 0) }
+        // Every row offers the best number it has: the engine's if it ever ran, the
+        // estimate if it has not. Mixing the two *within one sum* is what made the total
+        // shrink as the queue advanced — see `FileJob.actualPartsTotal`.
+        let done = counted.reduce(0) { $0 + ($1.state == .finished ? $1.parts : 0) }
             + progress.partsDone
         let total = counted.enumerated().reduce(0) { sum, pair in
-            sum + (pair.offset == index ? progress.partsTotal : pair.element.partsTotal)
+            sum + (pair.offset == index ? progress.partsTotal : pair.element.parts)
         }
         return RussianCopy.queuePosition(fileIndex: index, fileTotal: counted.count,
                                          partsDone: done, partsTotal: total)
     }
+
+    /// The заданиям the queue will actually translate.
+    ///
+    /// One spelling of «not `.unreadable`», because `statusLine` and the window header both
+    /// need it: the header counted raw `jobs` and put «Файлы · 5» above the bar's «из 3».
+    var translatable: [FileJob] { jobs.filter { $0.state != .unreadable } }
+    var translatableCount: Int { translatable.count }
 
     /// Translate every задание that is not already finished, one at a time.
     ///
@@ -388,8 +398,17 @@ final class FileQueueModel {
     func run(source: Language? = nil, target: Language? = nil, tone: Tone? = nil) async {
         guard !isRunning else { return }
         isRunning = true
+        // Read before it is cleared: continuing a queue that paused itself is the *same*
+        // sitting, and the tick below must survive it.
+        let resuming = pausedAfterWarnings
         pausedAfterWarnings = false
-        suppressTermsForThisRun = false
+        // «Больше не спрашивать в этом прогоне» is the user's, and a `stopOnWarnings` pause
+        // is the queue's — so a pause may not undo it. It did: a pause ends `run()`, and
+        // pressing «Перевести» to continue re-entered here and cleared the box. Thirteen
+        // files with the gate on, the tick made on the first and the queue pausing on the
+        // third, put the sheet back on the fourth for a user who had explicitly said no
+        // more. Cancelling *is* an end — that one clears it, as a fresh press should.
+        if !resuming { suppressTermsForThisRun = false }
         cancelled = false
         defer { isRunning = false }
 
@@ -564,6 +583,10 @@ final class FileQueueModel {
         let progressConsumer = Task { @MainActor [weak self] in
             for await value in progress {
                 guard let self, let at = self.jobs.firstIndex(where: { $0.id == jobID }) else { return }
+                // Stored beside the state, not only in it: `.finished` carries no
+                // progress, and the queue counter needs this number after the задание
+                // stops running or it falls back to the drop-time estimate mid-queue.
+                self.jobs[at].actualPartsTotal = value.partsTotal
                 if case .running = self.jobs[at].state { self.jobs[at].state = .running(value) }
             }
         }
@@ -587,7 +610,12 @@ final class FileQueueModel {
         let run = Task { [translator, glossary, settings] in
             try await translator.translate(
                 text: job.text, target: target, tone: tone,
-                userGlossary: glossary.glossary, options: options,
+                userGlossary: glossary.glossary,
+                // Detected once, above, and handed over — so the engine does not read a
+                // 2 MB file end to end a second time, and the toolbar's «Из» governs what
+                // the model is told rather than only where the text goes.
+                source: detected,
+                options: options,
                 maxChunkCharacters: settings.chunkSize,
                 ignoredTerms: glossary.mutedSet,
                 onToken: { continuation.yield($0) },

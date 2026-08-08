@@ -161,8 +161,12 @@ struct MainWindowView: View {
                         // The drawing's «Файлы · 3». Only in that mode and only when there
                         // is something to count: «Файлы · 0» beside an empty pane says
                         // nothing the pane is not already saying louder.
-                        if mode == .files, !queue.jobs.isEmpty {
-                            Text("· \(queue.jobs.count)")
+                        // `translatable`, not `jobs`: `statusLine` right below counts the
+                        // same way, and counting `.unreadable` rows here put «Файлы · 5»
+                        // directly above «Перевожу 1-й файл из 3» — two counts for one
+                        // queue, on screen at once.
+                        if mode == .files, queue.translatableCount > 0 {
+                            Text("· \(queue.translatableCount)")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()

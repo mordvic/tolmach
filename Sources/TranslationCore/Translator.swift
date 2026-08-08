@@ -141,8 +141,21 @@ public struct Translator: Sendable {
     let client: LLMClient
     public init(client: LLMClient) { self.client = client }
 
+    /// - Parameter source: the language to translate *from*, when the caller already knows.
+    ///
+    ///   Nil means «detect it», which is what every call did until now — and that was a
+    ///   half-applied override: the app resolved the user's «Из» picker to choose the
+    ///   *target* and then handed the text over without it, so the prompt still said
+    ///   «translate from …» whatever the detector guessed, `TermExtractor` still parsed with
+    ///   that language's tagger, and `detectedSource` still reported it. A user correcting a
+    ///   misdetection changed the target and nothing else.
+    ///
+    ///   It also removes a second full scan: the queue must detect to choose a target
+    ///   before calling, so every file without an override was read end to end twice by
+    ///   `NLLanguageRecognizer`, which has no prefix cap and accepts 2 MB here.
     public func translate(
         text: String, target: Language, tone: Tone, userGlossary: Glossary?,
+        source: Language? = nil,
         options: ChatOptions, maxChunkCharacters: Int,
         ignoredTerms: Set<String> = [],
         onToken: @escaping @Sendable (String) -> Void = { _ in },
@@ -153,7 +166,7 @@ public struct Translator: Sendable {
         var firstTokenAt: Date? = nil
         var stats: [ChatStats] = []
 
-        let detected = LanguageDetector.detect(text)
+        let detected = source ?? LanguageDetector.detect(text)
         let plan = Chunker.plan(text, maxCharacters: maxChunkCharacters)
         let chunks = plan.chunks
 

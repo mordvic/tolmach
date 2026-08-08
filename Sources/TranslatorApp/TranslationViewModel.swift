@@ -344,7 +344,12 @@ final class TranslationViewModel {
         let run = Task { [translator, glossary, settings] in
             try await translator.translate(
                 text: text, target: target, tone: tone,
-                userGlossary: glossary.glossary, options: options,
+                userGlossary: glossary.glossary,
+                // The picker reaches the engine now. It used to pick the target and stop
+                // there, so a user correcting a misdetection changed where the text was
+                // going and not what it was read as.
+                source: detected,
+                options: options,
                 maxChunkCharacters: settings.chunkSize,
                 ignoredTerms: glossary.mutedSet,
                 onToken: { continuation.yield($0) },

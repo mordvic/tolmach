@@ -305,6 +305,10 @@ private func waitUntilRunning(_ model: FileQueueModel, _ index: Int,
 /// against the engine rather than assumed — see `theWarningFixtureActuallyProducesAWarning`.
 private let sourceWithALink = "See the [guide](https://example.org/g) for more."
 private let replyWithoutTheLink = "Смотрите руководство."
+/// Long enough for a документный глоссарий to be built — the gate needs more than one часть
+/// — and carrying a link, so a reply that drops it is a markup warning `stopOnWarnings` can
+/// pause on. The two conditions have to hold in one файл to pin their interaction.
+private let longSourceWithALink = sourceWithALink + "\n\n" + longEnoughForTwoParts
 
 @MainActor @Test func theWarningFixtureActuallyProducesAWarning() async {
     // Pins the fixture itself. Without this, a change in MarkupSkeleton could make the
@@ -1393,4 +1397,94 @@ private final class SaveCall: @unchecked Sendable {
     // Each result landed on its own row, not on a neighbour's.
     #expect(model.jobs[0].result?.final == "один")
     #expect(model.jobs[1].result?.final == "два")
+}
+
+@MainActor @Test func aPauseOnWarningsDoesNotUndoTheUsersDecisionNotToBeAskedAgain() async {
+    // «Больше не спрашивать в этом прогоне» is the user's; a `stopOnWarnings` pause is the
+    // queue's. A pause ends `run()`, so pressing «Перевести» to continue the *same* queue
+    // re-entered it and cleared the box — thirteen files, the tick made on the first, the
+    // queue pausing on the third, and the sheet back on the fourth for someone who had
+    // explicitly said no more. From the user's side that is one sitting and one queue.
+    //
+    // Every reply is the same string, and that is the fixture rather than laziness: read as
+    // a term list it parses, so the gate has something to open on; read as a translation it
+    // drops the source's link, so every файл ends with a markup warning and the queue
+    // pauses. One string covers both roles at every position, so the fixture does not depend
+    // on how many части `Chunker` happens to make.
+    let client = QueueClient(replies: Array(repeating: "resource => ресурс", count: 12))
+    let model = makeQueueModel(client, prefix: "queue-gate-pause") {
+        $0.reviewDocumentTerms = true
+        $0.stopOnWarnings = true
+    }
+    model.add([queueJob("a.md", longSourceWithALink),
+               queueJob("b.md", longSourceWithALink)])
+
+    let first = Task { await model.run() }
+    let sheet = await waitForSheet(model)
+    sheet?.suppressForRun = true
+    sheet?.proceed()
+    await first.value
+    #expect(model.pausedAfterWarnings, "the fixture must actually pause, or this pins nothing")
+
+    // Continuing the same queue. No sheet may appear for the second file.
+    //
+    // Bounded, and that is not belt-and-braces: under the defect the sheet **does** come
+    // back, and a bare `await second.value` then waits for a человек who is not there — the
+    // test hangs instead of failing, which is the failure `waitForSheet`'s own comment
+    // exists to prevent. Measured: reverting the fix took this test from a failure to a
+    // 120-second timeout. So the sheet is watched for, and whatever happens the run is
+    // released rather than left waiting.
+    let second = Task { await model.run() }
+    var reappeared: DocumentTermsRequest?
+    for _ in 0..<400 {
+        if second.isCancelled || model.jobs.allSatisfy({ $0.state == .finished }) { break }
+        if let request = model.pendingTermsRequest { reappeared = request; break }
+        try? await Task.sleep(for: .milliseconds(5))
+    }
+    if let reappeared { reappeared.proceed() }
+    await second.value
+
+    #expect(reappeared == nil, "a pause may not undo «больше не спрашивать в этом прогоне»")
+    #expect(model.jobs.allSatisfy { $0.state == .finished })
+}
+
+@MainActor @Test func theQueueCounterNeverRunsBackwardsWhenAFileFinishes() async {
+    // The finished rows contributed their drop-time estimate while the running one
+    // contributed the engine's real count, so the total shrank the instant a file finished:
+    // «12 частей из 16», then «4 частей из 16». `FileJob.parts` is the one rule both halves
+    // now read.
+    let client = QueueClient(replies: ["один", "два"], paced: true)
+    let model = makeQueueModel(client, prefix: "queue-counter")
+    model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
+    // The estimate every row starts with, before any run has corrected it.
+    let estimated = model.jobs.map(\.parts)
+
+    await model.run()
+
+    // Both rows now answer from the run rather than from the drop, so a queue counter built
+    // on `parts` cannot mix the two.
+    #expect(model.jobs.allSatisfy { $0.actualPartsTotal != nil })
+    #expect(model.jobs.map(\.parts) == model.jobs.map { $0.actualPartsTotal ?? -1 })
+    #expect(estimated.count == 2)
+}
+
+@MainActor @Test func theHeaderCountAndTheStatusLineCountTheSameQueue() async {
+    // «Файлы · 5» sat directly above «Перевожу 1-й файл из 3»: the header counted every
+    // dropped row, the bar counted only the ones the queue will translate. Two counts for
+    // one queue, on screen at once.
+    let client = QueueClient(replies: ["один"], paced: true)
+    let model = makeQueueModel(client, prefix: "queue-header-count")
+    var refused = queueJob("broken.md", "")
+    refused.state = .unreadable
+    model.add([queueJob("a.md", "first"), refused])
+
+    #expect(model.jobs.count == 2)
+    #expect(model.translatableCount == 1)
+
+    let run = Task { await model.run() }
+    await waitUntilRunning(model, 0)
+    let line = model.statusLine
+    await run.value
+
+    #expect(line?.contains("из 1") == true)
 }

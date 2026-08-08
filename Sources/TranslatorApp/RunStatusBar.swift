@@ -45,11 +45,17 @@ struct RunStatusBar: View {
             // right when nobody asked — but the user who turned the gate on is waiting for
             // something that will never appear, and the run's terminology quietly differs
             // from what they were promised.
-            // The glossary's own trouble, which belongs to no файл: `promoteToGlossary`
-            // writes its three save failures here, raised from the terms sheet the queue
-            // opens, and they can land before any задание has finished. Always visible in
-            // «Файлы» rather than folded into a count or hidden under a disclosure.
-            if queue != nil, let problem = glossaryProblem {
+            // The glossary's own trouble, which belongs to no файл and to no run:
+            // `promoteToGlossary` writes its three save failures here, raised from the terms
+            // sheet that the queue **or the ⌥⌘T panel** opens, and they can land before any
+            // задание — or any text run — has finished. Always visible, and in both modes.
+            //
+            // «Файлы» only, it was invisible where it is least expected: the panel raises
+            // the sheet, the save is refused, this window's own text model has never run, so
+            // the only trace was a bare chevron over «1 предупреждение» that nothing invited
+            // anyone to press. Shown here it needs no disclosure at all, which is why
+            // nothing below folds it into a count any more.
+            if let problem = glossaryProblem {
                 Label(problem, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption).foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
@@ -99,13 +105,11 @@ struct RunStatusBar: View {
         }
         // Branched exactly as `warningsView` is, and that is the point. `TranslationViewModel`
         // drops the previous `outcome` only when the first real token of the next run
-        // arrives, so during `.running` it is still the *last* run's — and reading it here
-        // while `warningsView` took its problem-only branch produced «4 предупреждения» over
-        // a disclosure containing one row. The label and the body answer from one condition.
-        guard let outcome = model.outcome, model.state == .finished else {
-            return glossaryProblem.map { _ in RussianCopy.warningCount(1) }
-        }
-        return Self.summary(outcome: outcome, problem: glossaryProblem)
+        // arrives, so during `.running` it is still the *last* run's, and a label reading it
+        // on a different condition than the body produced «4 предупреждения» over a
+        // disclosure containing one row. The label and the body answer from one condition.
+        guard let outcome = model.outcome, model.state == .finished else { return nil }
+        return Self.summary(outcome: outcome)
     }
 
     /// Whether the disclosure is offered at all. In «Текст» that is a finished run; in
@@ -123,10 +127,10 @@ struct RunStatusBar: View {
     /// condition in two.
     private var canDisclose: Bool {
         guard summary != nil, warningsView != nil else { return false }
-        // A glossary problem is worth disclosing whatever the run is doing — it is the app's
-        // trouble, not the run's, and gating it on `.finished` hid it behind a state it has
-        // nothing to do with.
-        return queue != nil || model.state == .finished || glossaryProblem != nil
+        // No `glossaryProblem` term any more: it is drawn as its own always-visible row
+        // above, so a disclosure that opened only to show it would be a chevron over a
+        // sentence already on screen.
+        return queue != nil || model.state == .finished
     }
 
     /// The warnings for whatever this bar is currently describing, or nil if there are none
@@ -141,25 +145,15 @@ struct RunStatusBar: View {
             // refused save explained itself to a property no visible surface read. And a nil
             // target makes the «Термины документа» disclosure render by lexicographic key
             // instead of by the language the задание was translated into.
-            // `problem: nil` — it is rendered as its own row below instead, so it cannot be
-            // hidden under a chevron that a file with nothing to report never draws.
+            // No glossary problem here — it is rendered as its own row above instead, so
+            // it cannot be hidden under a chevron that a file with nothing to report never
+            // draws.
             return WarningsView(checks: result.checks, markupDiffs: result.markupDiffs,
                                 documentGlossary: result.documentGlossary,
-                                target: queue.selectedTarget, problem: nil,
-                                onMute: onMute)
+                                target: queue.selectedTarget, onMute: onMute)
         }
-        guard let outcome = model.outcome, model.state == .finished else {
-            // `promoteToGlossary` is a new writer of `glossaryProblem` and it can fire with
-            // no outcome at all — the terms sheet is raised by the queue or the panel while
-            // this window's own text model has never run. Without this the Russian
-            // explanation of a refused save was written to a property nothing rendered.
-            return glossaryProblem.map {
-                WarningsView(checks: [], markupDiffs: [], documentGlossary: [],
-                             target: nil, problem: $0, onMute: onMute)
-            }
-        }
-        return WarningsView(outcome: outcome, target: model.resolvedTarget,
-                            problem: glossaryProblem, onMute: onMute)
+        guard let outcome = model.outcome, model.state == .finished else { return nil }
+        return WarningsView(outcome: outcome, target: model.resolvedTarget, onMute: onMute)
     }
 
     @ViewBuilder private var line: some View {
@@ -239,9 +233,12 @@ struct RunStatusBar: View {
     /// `> 0` of. There is one count in the program that says how many warnings an outcome
     /// carries, and both the disclosure's visibility and its label are read from it, so they
     /// cannot drift apart the way two independently-written conditions could.
-    static func summary(outcome: TranslationOutcome?, problem: String?) -> String? {
-        guard let outcome else { return problem.map { _ in "1 предупреждение" } }
-        let count = WarningsView(outcome: outcome, target: nil, problem: problem).warningCount
+    static func summary(outcome: TranslationOutcome?) -> String? {
+        // No outcome, nothing to summarise. It used to answer «1 предупреждение» for a
+        // glossary save failure with no run behind it; that sentence is drawn in full,
+        // undisclosed, by the bar itself now.
+        guard let outcome else { return nil }
+        let count = WarningsView(outcome: outcome, target: nil).warningCount
         guard count > 0 else { return nil }
         return "\(count) " + RussianCopy.plural(count, "предупреждение", "предупреждения",
                                                 "предупреждений")

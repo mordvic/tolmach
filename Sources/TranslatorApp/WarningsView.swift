@@ -18,27 +18,25 @@ struct WarningsView: View {
     /// A glossary load or save failure, in Russian. Rendered here rather than logged:
     /// a «не показывать» that silently failed to persist leaves the user believing the
     /// term is muted forever when it is only muted until the app quits.
-    var problem: String?
     var onMute: (String) -> Void = { _ in }
 
     init(checks: [GlossaryCheck], markupDiffs: [MarkupDiff], documentGlossary: [GlossaryEntry],
-         target: Language? = nil, problem: String? = nil,
+         target: Language? = nil,
          onMute: @escaping (String) -> Void = { _ in }) {
         self.checks = checks
         self.markupDiffs = markupDiffs
         self.documentGlossary = documentGlossary
         self.target = target
-        self.problem = problem
         self.onMute = onMute
     }
 
     /// The window's and the panel's entry point, forwarding to the one above so that the
     /// two callers cannot end up rendering warnings differently.
-    init(outcome: TranslationOutcome, target: Language? = nil, problem: String? = nil,
+    init(outcome: TranslationOutcome, target: Language? = nil,
          onMute: @escaping (String) -> Void = { _ in }) {
         self.init(checks: outcome.checks, markupDiffs: outcome.markupDiffs,
                   documentGlossary: outcome.documentGlossary,
-                  target: target, problem: problem, onMute: onMute)
+                  target: target, onMute: onMute)
     }
 
     private var glossaryWarnings: [(check: GlossaryCheck, text: String)] {
@@ -48,8 +46,13 @@ struct WarningsView: View {
     }
 
     /// How many separate things this view has to say: one per markup diff, one per missing
-    /// glossary term, one for `problem`, and one for the document glossary as a whole (its
-    /// own term count is shown in its disclosure title, not multiplied in here).
+    /// glossary term, and one for the document glossary as a whole (its own term count is
+    /// shown in its disclosure title, not multiplied in here).
+    ///
+    /// A refused glossary save is **not** among them. It used to be, and it does not belong:
+    /// it is the app's trouble rather than the run's, so it survives runs this view does not,
+    /// and counting it here made the bar say «N+1 предупреждение» beside a file row saying
+    /// «N». `RunStatusBar` draws it as a row of its own, always visible, in both modes.
     ///
     /// `hasContent` is defined in terms of this count rather than restating the same four
     /// conditions as a second boolean expression, and `RunStatusBar.summary` reads this same
@@ -61,7 +64,6 @@ struct WarningsView: View {
         markupDiffs.count
             + glossaryWarnings.count
             + (documentGlossary.isEmpty ? 0 : 1)
-            + (problem != nil ? 1 : 0)
     }
 
     /// Whether this view would draw anything at all.
@@ -91,9 +93,6 @@ struct WarningsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let problem {
-                Text(problem).font(.caption).foregroundStyle(.red)
-            }
             if !markupDiffs.isEmpty {
                 section("Разметка изменилась") {
                     ForEach(Array(markupDiffs.enumerated()), id: \.offset) { _, diff in

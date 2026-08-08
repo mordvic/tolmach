@@ -20,6 +20,20 @@ struct FileJob: Identifiable {
     /// turn, so the *running* row draws from `TranslationProgress.partsTotal`, which the
     /// engine computed for the run actually happening.
     let partsTotal: Int
+    /// What the engine actually planned for this задание, kept after it stops running.
+    ///
+    /// The estimate above and this number can differ — `chunkSize` changes between the
+    /// drop and the turn — and without somewhere to keep the real one the queue counter
+    /// ran **backwards**: the running row contributed the engine's count while every
+    /// finished row contributed its own estimate, so the moment a file finished, the total
+    /// it had been counted into shrank. Measured on paper: two files estimated at 4 parts
+    /// each and really 12, the bar reads «12 частей из 16» and then «4 частей из 16» one
+    /// instant later.
+    var actualPartsTotal: Int?
+    /// The number to *show* — the engine's if this задание has run, the estimate if not.
+    /// One accessor because two call sites read it and a counter built from two spellings
+    /// of the same rule is exactly what went wrong.
+    var parts: Int { actualPartsTotal ?? partsTotal }
     var state: State = .queued
     var result: JobResult?
     /// Set when the translation could not be written. Deliberately separate from `state`:

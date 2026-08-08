@@ -109,3 +109,47 @@ private func scratchDirectory() -> URL {
     #expect(try String(contentsOf: directory.appendingPathComponent("doc.ru.md"),
                        encoding: .utf8) == "занято")
 }
+
+@Test func aTemporaryAbandonedByAKilledProcessIsSweptUpByTheNextWrite() throws {
+    // The temporary is removed on every failure path inside the write, but not by a process
+    // that dies between `Data.write` and `moveItem`. Nothing else cleans them up, so each
+    // interrupted save left another hidden file beside the user's document for ever.
+    let directory = scratchDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let source = directory.appendingPathComponent("doc.md")
+    try Data("source".utf8).write(to: source)
+
+    let abandoned = directory.appendingPathComponent(".tolmach-\(UUID().uuidString).partial")
+    try Data("half a translation".utf8).write(to: abandoned)
+    // Backdated past the hour: a temporary younger than that may belong to a save in flight
+    // in another window, and sweeping it would break that save to tidy up after this one.
+    try FileManager.default.setAttributes(
+        [.modificationDate: Date().addingTimeInterval(-7200)], ofItemAtPath: abandoned.path)
+
+    guard case .saved = TranslatedFileWriter.write("перевод", beside: source, target: .ru)
+    else { Issue.record("expected the write to succeed"); return }
+
+    #expect(FileManager.default.fileExists(atPath: abandoned.path) == false)
+}
+
+@Test func aTemporaryThatCouldStillBelongToASaveInFlightIsLeftAlone() throws {
+    let directory = scratchDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let source = directory.appendingPathComponent("doc.md")
+    try Data("source".utf8).write(to: source)
+
+    // Just written, i.e. exactly the shape of another window's temporary mid-move.
+    let inFlight = directory.appendingPathComponent(".tolmach-\(UUID().uuidString).partial")
+    try Data("someone else's bytes".utf8).write(to: inFlight)
+    // And an unrelated dotfile, which is none of this sweep's business whatever its age.
+    let unrelated = directory.appendingPathComponent(".DS_Store")
+    try Data("x".utf8).write(to: unrelated)
+    try FileManager.default.setAttributes(
+        [.modificationDate: Date().addingTimeInterval(-7200)], ofItemAtPath: unrelated.path)
+
+    guard case .saved = TranslatedFileWriter.write("перевод", beside: source, target: .ru)
+    else { Issue.record("expected the write to succeed"); return }
+
+    #expect(FileManager.default.fileExists(atPath: inFlight.path))
+    #expect(FileManager.default.fileExists(atPath: unrelated.path))
+}

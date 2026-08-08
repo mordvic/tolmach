@@ -266,13 +266,14 @@ private func model() -> TranslationViewModel {
 }
 
 @MainActor @Test func theStatusSummaryAndItsDisclosureAnswerFromOneRun() {
-    // The label read the *previous* run's outcome while the body took its problem-only
-    // branch: «4 предупреждения» over a disclosure containing one row. TranslationViewModel
-    // drops `outcome` only when the next run's first real token arrives, so during
-    // `.running` the stale one is still there.
+    // The label read the *previous* run's outcome while the body took a branch of its own:
+    // «4 предупреждения» over a disclosure containing one row. TranslationViewModel drops
+    // `outcome` only when the next run's first real token arrives, so during `.running` the
+    // stale one is still there.
     //
     // Pinned through the static half of the rule, which is the part a test can reach: with
-    // no finished outcome the count is the problem's alone, whatever `outcome` still holds.
-    #expect(RunStatusBar.summary(outcome: nil, problem: "не сохранилось") == "1 предупреждение")
-    #expect(RunStatusBar.summary(outcome: nil, problem: nil) == nil)
+    // no finished outcome there is nothing to summarise at all. A refused glossary save no
+    // longer answers here — it is drawn as its own always-visible row, in both modes, so a
+    // summary of «1 предупреждение» would be a chevron over a sentence already on screen.
+    #expect(RunStatusBar.summary(outcome: nil) == nil)
 }

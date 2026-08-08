@@ -1128,3 +1128,26 @@ private final class DraftBox: @unchecked Sendable {
         messages.contains { $0.content.contains("\"resource\" — translate as") }
     })
 }
+
+@Test func aStatedSourceLanguageGovernsThePromptAndTheTermsAndNotJustTheTarget() async throws {
+    // It used to be resolved in the app to choose a target and then dropped: the engine
+    // detected the language again for the prompt, for TermExtractor's tagger and for
+    // `detectedSource`. A user correcting a misdetection changed where the text went and
+    // nothing about how it was read.
+    let fake = FakeLLMClient(responses: ["перевод"])
+    let outcome = try await Translator(client: fake).translate(
+        text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
+        source: .de,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900)
+
+    #expect(outcome.detectedSource == .de)
+    #expect(fake.receivedMessages.first?.contains { $0.content.contains("German") } == true)
+}
+
+@Test func withNoStatedSourceTheEngineStillDetectsItsOwn() async throws {
+    let fake = FakeLLMClient(responses: ["перевод"])
+    let outcome = try await Translator(client: fake).translate(
+        text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900)
+    #expect(outcome.detectedSource == .en)
+}
