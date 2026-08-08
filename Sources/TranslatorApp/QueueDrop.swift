@@ -30,41 +30,57 @@ enum QueueDrop {
         let text: String?
     }
 
-    /// Everything this drop contributes to the queue, or `nil` if none of it is readable
-    /// and the drop should be refused outright.
+    /// Whether this drop is worth taking at all, decided **without reading a byte**.
     ///
-    /// **A mixed drop is accepted and its refusals are named.** Ten `.md` files and one
-    /// `.pdf` yields eleven items, one of them textless. An earlier version refused the
-    /// whole drop on `SourcePane`'s rule that «taking the acceptable ones is a guess
-    /// about which was meant» — but that rule is about *one slot and many candidates*,
-    /// and a queue has a slot per file and no ambiguity at all. What the transplant cost
-    /// is the part that decided it: `dropDestination`'s `Bool` is the entire error
-    /// channel here, and a spring-back is legible feedback for one file and a riddle for
-    /// ten — everything returns and nothing says which one was the problem.
-    ///
-    /// `nil` is still `false` at the call site, and still the whole channel, for the one
-    /// case where a row would explain nothing: a drop with nothing readable in it.
-    static func accept(_ urls: [URL]) -> [Item]? {
-        guard !urls.isEmpty else { return nil }
-        let items = urls.map { Item(url: $0, text: readable($0)) }
-        guard items.contains(where: { $0.text != nil }) else { return nil }
-        return items
+    /// `dropDestination` must answer synchronously on the main actor, and the full check
+    /// cannot: it loads and UTF-8-decodes every file, up to 2 MB each and any number of
+    /// them, which froze the window before the drop animation had finished. So the
+    /// synchronous half asks only what the filesystem can answer from an attribute — the
+    /// extension and the size — and everything that needs the bytes happens in `read`, off
+    /// the actor, where a file that turns out not to be text becomes a visible row saying so
+    /// rather than a spring-back.
+    static func acceptable(_ urls: [URL]) -> Bool {
+        !urls.isEmpty && urls.contains(where: plausible)
     }
+
+    /// The full check, including the bytes. Never call this on the main actor.
+    static func read(_ urls: [URL]) -> [Item] {
+        urls.map { Item(url: $0, text: readable($0)) }
+    }
+
+    /// **A mixed drop is accepted and its refusals are named.** Ten `.md` files and one
+    /// `.pdf` yields eleven items, one of them textless. An earlier version refused the whole
+    /// drop on `SourcePane`'s rule that «taking the acceptable ones is a guess about which was
+    /// meant» — but that rule is about *one slot and many candidates*, and a queue has a slot
+    /// per file and no ambiguity at all. What the transplant cost is the part that decided it:
+    /// `dropDestination`'s `Bool` is the entire error channel here, and a spring-back is
+    /// legible feedback for one file and a riddle for ten — everything returns and nothing
+    /// says which one was the problem.
+    ///
+    /// The spring-back survives for the one case where a row would explain nothing: a drop
+    /// with nothing plausible in it at all.
 
     /// Same extension list, same UTF-8-or-nothing and same blank-file rule as
     /// `DroppedDocument`; only the ceiling differs. The size is read from the file's
     /// attributes before the bytes are, so a 40 MB file is refused without ever being
     /// loaded.
     private static func readable(_ url: URL) -> String? {
-        guard DroppedDocument.readableExtensions.contains(url.pathExtension.lowercased())
-        else { return nil }
-        guard let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int,
-              size <= maximumBytes
-        else { return nil }
+        guard plausible(url) else { return nil }
         guard let data = try? Data(contentsOf: url),
               let text = String(data: data, encoding: .utf8),
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return nil }
         return text
+    }
+
+    /// The half of the check that costs nothing: the extension, and the size read from the
+    /// file's attributes rather than by loading it. A 40 MB file is refused without ever
+    /// being opened.
+    private static func plausible(_ url: URL) -> Bool {
+        guard DroppedDocument.readableExtensions.contains(url.pathExtension.lowercased())
+        else { return false }
+        guard let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int
+        else { return false }
+        return size <= maximumBytes
     }
 }

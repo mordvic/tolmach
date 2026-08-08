@@ -96,10 +96,11 @@ struct TranslatorApp: App {
         // without writing anything.
         let queue = FileQueueModel(
             translator: Translator(client: client), settings: settings, glossary: glossary,
-            save: { job, text in
-                TranslatedFileWriter.write(
-                    text, beside: job.url,
-                    target: settings.targetLanguage(forDetected: LanguageDetector.detect(job.text)))
+            // The target comes from the model, which knows what the run resolved. Working
+            // it out here re-detected the text and applied the settings rule, so a toolbar
+            // override was ignored and a German translation was written as «a.ru.md».
+            save: { source, text, target in
+                TranslatedFileWriter.write(text, beside: source, target: target)
             },
             saveAs: { text, url in TranslatedFileWriter.write(text, to: url) })
         _settings = State(initialValue: settings)
@@ -160,18 +161,6 @@ struct TranslatorApp: App {
                            },
                            queue: queue, panelModel: coordinator.panelModel, mode: $mode)
                 .task { await statusModel.refresh(interactiveModel: settings.interactiveModel) }
-                // The ⌥⌘T path escalates here rather than editing text fields inside a
-                // `.nonactivatingPanel`, whose focus, focus ring, ⌘V-through-the-menu and
-                // Cyrillic input behaviour are unverified — and that path is the rarest of
-                // the three, because the toggle ships off. A window that comes forward to
-                // ask a question is a Mac idiom; a half-working editable table beside the
-                // cursor is not. The panel stays on screen behind it holding whatever it
-                // had: it is not the thing being answered.
-                .onChange(of: coordinator.panelModel.pendingTermsRequest == nil) { _, isNil in
-                    guard !isNil else { return }
-                    openWindow(id: TranslatorApp.mainWindowID)
-                    activateThisApp()
-                }
         }
         // The app had no commands at all, and SwiftUI's defaults for this scene combination
         // are not a menu bar anyone would design. Measured on a copy of these three scenes at
@@ -303,6 +292,17 @@ struct TranslatorApp: App {
     /// is synchronous and takes no I/O, so there is nothing to gain by deferring it.
     private func launch() async {
         configurePanel()
+        // Whoever raises a terms sheet needs the window that presents it. Set here, from a
+        // scene that is always alive, rather than observed from the window's own content —
+        // that content does not exist while the window is closed, which is the app's normal
+        // state, and the sheet would then appear nowhere at all.
+        //
+        // All three raisers get it: the window's own model too, because ⌘W during a run
+        // leaves it in the same position as the other two.
+        let present = { openWindow(id: TranslatorApp.mainWindowID); activateThisApp() }
+        translation.onTermsRequested = present
+        queue.onTermsRequested = present
+        coordinator.panelModel.onTermsRequested = present
         pruneEmptyMenus()
         // The refusal still raises nothing on screen, and that part is unchanged: a
         // user-visible message needs UI that does not exist yet. What it no longer does is

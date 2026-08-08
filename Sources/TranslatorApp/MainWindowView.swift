@@ -179,7 +179,6 @@ struct MainWindowView: View {
         // differently.
         .sheet(item: Binding(get: { termsRequest }, set: { if $0 == nil { termsRequest?.cancel() } })) { request in
             DocumentTermsView(request: request,
-                              target: termsTarget,
                               showsSuppress: queue.pendingTermsRequest === request,
                               onAddToGlossary: { promoteToGlossary(request) })
         }
@@ -244,15 +243,6 @@ struct MainWindowView: View {
         model.pendingTermsRequest ?? queue.pendingTermsRequest ?? panelModel?.pendingTermsRequest
     }
 
-    /// The language the sheet's «перевод» column is keyed by.
-    ///
-    /// `resolvedTarget` is nil until a run finishes, and the sheet opens mid-run, so it
-    /// cannot be used. The rule is the one the run itself applied: the override if there is
-    /// one, the settings rule otherwise.
-    private var termsTarget: Language {
-        model.targetOverride ?? settings.targetLanguage(forDetected: model.outcome?.detectedSource)
-    }
-
     /// «Добавить в пользовательский глоссарий».
     ///
     /// The panel's result goes through `QueueDrop.accept` exactly as a drop does, so the
@@ -267,8 +257,8 @@ struct MainWindowView: View {
         }
         panel.prompt = "Добавить"
         panel.message = "Выберите текстовые файлы для перевода"
-        guard panel.runModal() == .OK, let items = QueueDrop.accept(panel.urls) else { return }
-        Task { await queue.add(dropped: items) }
+        guard panel.runModal() == .OK, QueueDrop.acceptable(panel.urls) else { return }
+        Task { await queue.add(droppedURLs: panel.urls) }
     }
 
     /// «Добавить в пользовательский глоссарий» — promote the reviewed terms.

@@ -11,7 +11,7 @@ import TranslationCore
 // before this line was added — the build was clean either way.
 
 private func draft(document: [GlossaryEntry], user: [GlossaryEntry]) -> DocumentTermsDraft {
-    DocumentTermsDraft(documentEntries: document, userEntries: user, chunkCount: 7)
+    DocumentTermsDraft(documentEntries: document, userEntries: user, chunkCount: 7, target: .ru)
 }
 
 @MainActor @Test func theUsersOwnTermsComeFirstAndAreNotEditable() {
@@ -57,7 +57,7 @@ private func draft(document: [GlossaryEntry], user: [GlossaryEntry]) -> Document
 @MainActor @Test func theExplanationTakesTheRightRussianPluralForItsPartCount() {
     func explanation(chunks: Int) -> String {
         DocumentTermsView.explanation(for: DocumentTermsDraft(
-            documentEntries: [], userEntries: [], chunkCount: chunks))
+            documentEntries: [], userEntries: [], chunkCount: chunks, target: .ru))
     }
     #expect(explanation(chunks: 2).contains("во всех 2 частях"))
     #expect(explanation(chunks: 5).contains("во всех 5 частях"))

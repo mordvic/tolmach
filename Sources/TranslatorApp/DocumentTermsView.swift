@@ -20,7 +20,6 @@ enum DocumentTermsRow: Equatable {
 /// `body` only arranges them.
 struct DocumentTermsView: View {
     @Bindable var request: DocumentTermsRequest
-    let target: Language
     /// True only in a queue run, which is the only place «больше не спрашивать» means
     /// anything.
     var showsSuppress: Bool = false
@@ -147,6 +146,12 @@ struct DocumentTermsView: View {
         .font(.callout)
         .padding(.horizontal, 16).padding(.vertical, 5)
     }
+
+    /// The language every «перевод» cell is keyed by — the engine's answer, carried on the
+    /// draft. Never the window's own last target: this sheet may belong to the queue or to
+    /// the hotkey panel, and re-deriving it from the window's last outcome answers about a
+    /// different document.
+    private var target: Language { request.draft.target }
 
     /// Writes through into the request's own entries, keyed by the target language, the
     /// same way `SettingsGlossaryView.entryBinding` writes into a glossary row.

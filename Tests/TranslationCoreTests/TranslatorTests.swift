@@ -810,6 +810,11 @@ private final class ProgressBox: @unchecked Sendable {
     // and cannot tell the two apart without being told.
     #expect(draft.userEntries.map(\.term) == ["server"])
     #expect(draft.chunkCount == outcome.chunks.count)
+    // The language the «перевод» column is keyed by. The view used to re-derive it from
+    // the *window's* last outcome, which for a queue- or panel-raised sheet belongs to an
+    // unrelated document — every field blank, and every correction written to a key the
+    // engine never looks up. The engine is the only place that knows.
+    #expect(draft.target == .ru)
 }
 
 @Test func editsMadeInTheReviewReachThePrompt() async throws {

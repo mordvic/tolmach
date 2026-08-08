@@ -41,6 +41,15 @@ struct RunStatusBar: View {
                 line
                 Spacer(minLength: 0)
             }
+            // §6.6's other half. The engine goes on swallowing a failed term-list call —
+            // right when nobody asked — but the user who turned the gate on is waiting for
+            // something that will never appear, and the run's terminology quietly differs
+            // from what they were promised.
+            if queue == nil, model.documentTermsUnavailable, model.state == .finished {
+                Label("Термины документа не удалось подготовить, перевод шёл без них",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption).foregroundStyle(.orange)
+            }
             // `summary != nil` gates this branch too, not just `expanded`: `expanded` is
             // `@State` and survives across runs, so without this a run that leaves
             // warnings expanded, followed by a second, quiet run, would show no triangle
@@ -73,8 +82,12 @@ struct RunStatusBar: View {
 
     private var summary: String? {
         if let queue {
-            guard let result = queue.selectedResult, result.hasWarnings else { return nil }
-            return RussianCopy.warningCount(result.warningCount)
+            // The glossary problem counts as something to disclose here too, exactly as it
+            // does in the text mode's summary below.
+            guard let result = queue.selectedResult else { return glossaryProblem.map { _ in "1 предупреждение" } }
+            let count = result.warningCount + (glossaryProblem == nil ? 0 : 1)
+            guard count > 0 else { return nil }
+            return RussianCopy.warningCount(count)
         }
         return Self.summary(outcome: model.outcome, problem: glossaryProblem)
     }
@@ -83,7 +96,8 @@ struct RunStatusBar: View {
     /// «Файлы» it is a selected задание that finished, whatever the queue is doing now —
     /// the warnings belong to the file the user is looking at, not to the run in flight.
     private var canDisclose: Bool {
-        queue == nil ? model.state == .finished : queue?.selectedResult != nil
+        queue == nil ? model.state == .finished
+                     : (queue?.selectedResult != nil || glossaryProblem != nil)
     }
 
     /// The warnings for whatever this bar is currently describing, or nil if there are none
@@ -92,9 +106,16 @@ struct RunStatusBar: View {
     private var warningsView: WarningsView? {
         if let queue {
             guard let result = queue.selectedResult else { return nil }
+            // `problem` and `target` were both nil here, and neither was harmless.
+            // `glossaryProblem` is exactly where `promoteToGlossary` writes its three save
+            // failures — raised from the terms sheet, which the queue itself opens — so a
+            // refused save explained itself to a property no visible surface read. And a nil
+            // target makes the «Термины документа» disclosure render by lexicographic key
+            // instead of by the language the задание was translated into.
             return WarningsView(checks: result.checks, markupDiffs: result.markupDiffs,
                                 documentGlossary: result.documentGlossary,
-                                target: nil, problem: nil, onMute: onMute)
+                                target: queue.selectedTarget, problem: glossaryProblem,
+                                onMute: onMute)
         }
         guard let outcome = model.outcome, model.state == .finished else { return nil }
         return WarningsView(outcome: outcome, target: model.resolvedTarget,

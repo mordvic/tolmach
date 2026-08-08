@@ -98,11 +98,23 @@ public struct DocumentTermsDraft: Sendable {
     /// How many частей these terms will be held constant across. The review says this
     /// number out loud, so it comes from the engine that planned them.
     public let chunkCount: Int
+    /// The language `documentEntries` is keyed by, and the one an edit must be written to.
+    ///
+    /// Carried rather than re-derived, because the view has no honest way to work it out:
+    /// the run that raised this sheet may belong to the queue or to the hotkey panel, and a
+    /// window re-deriving it from *its own* last outcome answers about a different
+    /// document. `GlossaryEntry.translations` is keyed by language, so a wrong answer there
+    /// is not a cosmetic one — every field renders blank and every correction is written to
+    /// a key the engine never looks up. The same failure the glossary pane's language
+    /// column already cost this project once.
+    public let target: Language
 
-    public init(documentEntries: [GlossaryEntry], userEntries: [GlossaryEntry], chunkCount: Int) {
+    public init(documentEntries: [GlossaryEntry], userEntries: [GlossaryEntry],
+                chunkCount: Int, target: Language) {
         self.documentEntries = documentEntries
         self.userEntries = userEntries
         self.chunkCount = chunkCount
+        self.target = target
     }
 }
 
@@ -324,7 +336,8 @@ public struct Translator: Sendable {
             let draft = DocumentTermsDraft(
                 documentEntries: documentEntries,
                 userEntries: userGlossary?.relevantEntries(for: text) ?? [],
-                chunkCount: chunks.count)
+                chunkCount: chunks.count,
+                target: target)
             // A refusal is `CancellationError`, thrown by the hook and propagating from
             // here — the contract the engine already has, rather than a second refusal
             // path. The check after it covers a cancellation that landed while the human

@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import Testing
 import TranslationCore
 @testable import TranslatorApp
@@ -8,7 +9,7 @@ private func makeRequest() -> DocumentTermsRequest {
     DocumentTermsRequest(draft: DocumentTermsDraft(
         documentEntries: [GlossaryEntry(term: "resource", translations: ["ru": "ресурс"])],
         userEntries: [],
-        chunkCount: 7))
+        chunkCount: 7, target: .ru))
 }
 
 @MainActor @Test func proceedingHandsBackWhateverTheUserEdited() async throws {
@@ -82,4 +83,33 @@ private func makeRequest() -> DocumentTermsRequest {
     let request = makeRequest()
     #expect(request.entries.map(\.term) == ["resource"])
     #expect(request.draft.chunkCount == 7)
+}
+
+@MainActor @Test func raisingASheetAnnouncesItRatherThanWaitingToBeNoticed() async {
+    // The escalation used to be an `.onChange` on the Window scene's content. This app is
+    // LSUIElement with MenuBarExtra first, so that window is normally closed — the view did
+    // not exist, the observer never ran, and a sheet raised by ⌥⌘T appeared nowhere while
+    // the run sat waiting for an answer nobody could give.
+    let announced = Announcement()
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "terms-announce"))
+    settings.reviewDocumentTerms = true
+    let model = TranslationViewModel(
+        translator: Translator(client: ScriptedClient(responses: ["resource => ресурс", "п", "п"])),
+        settings: settings,
+        glossary: GlossaryStore(url: FileManager.default.temporaryDirectory
+            .appendingPathComponent("g-\(UUID().uuidString).json")),
+        pasteboard: NSPasteboard(name: .init("terms-announce")))
+    model.onTermsRequested = { announced.fire() }
+    model.sourceText = String(repeating: "The resource is published by the server. ", count: 30)
+
+    let run = Task { await model.translate() }
+    while model.pendingTermsRequest == nil { await Task.yield() }
+    #expect(announced.count == 1)
+    model.pendingTermsRequest?.cancel()
+    await run.value
+}
+
+@MainActor private final class Announcement {
+    private(set) var count = 0
+    func fire() { count += 1 }
 }

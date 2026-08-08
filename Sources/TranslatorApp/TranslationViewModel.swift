@@ -60,6 +60,16 @@ final class TranslationViewModel {
     /// Cleared in the same `defer` that ends the wait, so a cancelled or failed run cannot
     /// leave a modal over a window that has already finished.
     private(set) var pendingTermsRequest: DocumentTermsRequest?
+    /// Called the moment a terms sheet is raised, so whoever can present it is told rather
+    /// than left to notice.
+    ///
+    /// **Not an `.onChange` in a view.** The escalation used to be one, attached to the
+    /// `Window` scene's content — and this app is `LSUIElement` with `MenuBarExtra` first
+    /// precisely so that window is *not* open at launch. With it closed the view does not
+    /// exist, the observer never runs, and the sheet appears nowhere at all while the run
+    /// sits waiting on an answer nobody can give. A closure set once from `launch()` does
+    /// not depend on any view being alive.
+    var onTermsRequested: (() -> Void)?
     /// Whether this run is suspended on the terms sheet rather than on the model.
     ///
     /// A named property and not `pendingTermsRequest != nil` written at each view, for
@@ -388,6 +398,7 @@ final class TranslationViewModel {
     private func askAboutTerms(_ draft: DocumentTermsDraft) async throws -> [GlossaryEntry] {
         let request = DocumentTermsRequest(draft: draft)
         pendingTermsRequest = request
+        onTermsRequested?()
         defer { pendingTermsRequest = nil }
         return try await request.answer()
     }

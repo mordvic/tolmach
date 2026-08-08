@@ -73,7 +73,7 @@ func makeQueueModel(_ client: LLMClient,
                           glossary: scratchGlossary(),
                           // Saving is TranslatedFileWriter's; here it always succeeds and
                           // reports where, so these tests never touch a filesystem.
-                          save: { job, _ in .saved(job.url.appendingPathExtension("ru")) },
+                          save: { source, _, _ in .saved(source.appendingPathExtension("ru")) },
                           saveAs: { _, url in .saved(url) },
                           pasteboard: NSPasteboard(name: .init("queue-\(prefix)")))
 }
@@ -229,7 +229,7 @@ private func waitUntilRunning(_ model: FileQueueModel, _ index: Int,
     let settings = AppSettings(defaults: InMemoryDefaults(prefix: "queue-save-problem"))
     let model = FileQueueModel(translator: Translator(client: QueueClient(replies: ["перевод"])),
                                settings: settings, glossary: scratchGlossary(),
-                               save: { _, _ in .refused("Не удалось сохранить перевод.") },
+                               save: { _, _, _ in .refused("Не удалось сохранить перевод.") },
                                saveAs: { _, url in .saved(url) })
     model.add([queueJob("a.md", "first")])
 
@@ -564,7 +564,7 @@ private func waitForSheet(_ model: FileQueueModel,
 
 @MainActor
 private func savingModel(_ prefix: String,
-                         besideSource: @escaping (FileJob, String) -> SaveOutcome,
+                         besideSource: @escaping (URL, String, Language) -> SaveOutcome,
                          configure: (AppSettings) -> Void = { _ in }) -> FileQueueModel {
     let settings = AppSettings(defaults: InMemoryDefaults(prefix: prefix))
     configure(settings)
@@ -577,8 +577,8 @@ private func savingModel(_ prefix: String,
 @MainActor @Test func aFinishedFileThatWasNotSavedIsOfferedForSaving() async {
     // With «Рядом с исходником» off, nothing is written automatically — so every finished
     // задание has to offer it, or the queue produces translations that can only be copied.
-    let model = savingModel("save-on-demand", besideSource: { job, _ in
-        .saved(job.url.appendingPathExtension("ru"))
+    let model = savingModel("save-on-demand", besideSource: { source, _, _ in
+        .saved(source.appendingPathExtension("ru"))
     }) { $0.saveNextToSource = false }
     model.add([queueJob("a.md", "first")])
     await model.run()
@@ -594,8 +594,8 @@ private func savingModel(_ prefix: String,
 }
 
 @MainActor @Test func aSavedFileIsNotOfferedForSavingAgain() async {
-    let model = savingModel("save-already", besideSource: { job, _ in
-        .saved(job.url.appendingPathExtension("ru"))
+    let model = savingModel("save-already", besideSource: { source, _, _ in
+        .saved(source.appendingPathExtension("ru"))
     })
     model.add([queueJob("a.md", "first")])
     await model.run()
@@ -605,7 +605,7 @@ private func savingModel(_ prefix: String,
 }
 
 @MainActor @Test func aRefusedWriteLeavesTheFileOfferedForSavingWithItsProblemShown() async {
-    let model = savingModel("save-refused", besideSource: { _, _ in .refused("Нет доступа.") })
+    let model = savingModel("save-refused", besideSource: { _, _, _ in .refused("Нет доступа.") })
     model.add([queueJob("a.md", "first")])
     await model.run()
 
@@ -617,7 +617,7 @@ private func savingModel(_ prefix: String,
 }
 
 @MainActor @Test func savingSomewhereElseRecordsWhereItActuallyWent() async {
-    let model = savingModel("save-as", besideSource: { _, _ in .refused("Нет доступа.") })
+    let model = savingModel("save-as", besideSource: { _, _, _ in .refused("Нет доступа.") })
     model.add([queueJob("a.md", "first")])
     await model.run()
 
@@ -631,7 +631,7 @@ private func savingModel(_ prefix: String,
 }
 
 @MainActor @Test func theSuggestedNameIsTheOneTheAutomaticSaveWouldHaveUsed() async {
-    let model = savingModel("save-suggested", besideSource: { _, _ in .refused("Нет доступа.") })
+    let model = savingModel("save-suggested", besideSource: { _, _, _ in .refused("Нет доступа.") })
     model.add([queueJob("a.md", "first")])
     await model.run()
 
@@ -640,7 +640,7 @@ private func savingModel(_ prefix: String,
 }
 
 @MainActor @Test func nothingUnfinishedIsOfferedForSaving() {
-    let model = savingModel("save-unfinished", besideSource: { _, _ in .refused("x") })
+    let model = savingModel("save-unfinished", besideSource: { _, _, _ in .refused("x") })
     var refused = queueJob("broken.pdf", "")
     refused.state = .unreadable
     model.add([queueJob("a.md", "first"), refused])
@@ -705,7 +705,7 @@ private func savingModel(_ prefix: String,
     let settings = AppSettings(defaults: InMemoryDefaults(prefix: "queue-copy"))
     let model = FileQueueModel(translator: Translator(client: QueueClient(replies: ["первый", "второй"])),
                                settings: settings, glossary: scratchGlossary(),
-                               save: { job, _ in .saved(job.url) },
+                               save: { source, _, _ in .saved(source) },
                                saveAs: { _, url in .saved(url) },
                                pasteboard: board)
     model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
@@ -754,4 +754,110 @@ private func savingModel(_ prefix: String,
     model.remove(model.jobs[1].id)
 
     #expect(model.jobs.map { $0.url.lastPathComponent } == ["a.md"])
+}
+
+// MARK: - Review round 1
+
+@MainActor @Test func theAutomaticSaveUsesTheTargetTheRunActuallyUsed() async {
+    // The defect this pins: the app's save closure re-detected the language and consulted
+    // the settings rule, so a file translated into German under a toolbar override was
+    // written as «a.ru.md». `suggestedName` did it right, so the two save paths disagreed
+    // about one file's name — and the test that existed only checked the suggestion.
+    let seen = SaveCall()
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "save-target"))
+    let model = FileQueueModel(translator: Translator(client: QueueClient(replies: ["перевод"])),
+                               settings: settings, glossary: scratchGlossary(),
+                               save: { url, _, target in
+                                   seen.record(target)
+                                   return .saved(url)
+                               },
+                               saveAs: { _, url in .saved(url) })
+    model.add([queueJob("a.md", "The resource is published.")])
+
+    await model.run(source: nil, target: .de, tone: nil)
+
+    #expect(seen.target == .de)
+}
+
+@MainActor @Test func savingOnDemandAlsoUsesTheTargetTheRunUsed() async {
+    let seen = SaveCall()
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "save-target-later"))
+    settings.saveNextToSource = false
+    let model = FileQueueModel(translator: Translator(client: QueueClient(replies: ["перевод"])),
+                               settings: settings, glossary: scratchGlossary(),
+                               save: { url, _, target in
+                                   seen.record(target)
+                                   return .saved(url)
+                               },
+                               saveAs: { _, url in .saved(url) })
+    model.add([queueJob("a.md", "The resource is published.")])
+    await model.run(source: nil, target: .de, tone: nil)
+
+    model.saveBesideSource(model.jobs[0].id)
+
+    #expect(seen.target == .de)
+}
+
+@MainActor private final class SaveCall {
+    private(set) var target: Language?
+    func record(_ language: Language) { target = language }
+}
+
+/// Holds the model so a closure the model owns can call back into it. Needed because the
+/// closure has to exist before the model does.
+@MainActor private final class ModelBox { var model: FileQueueModel? }
+
+@MainActor @Test func cancellingBetweenTwoFilesStopsTheQueueRatherThanStartingTheNextOne() async {
+    // The gap `cancel()` did not cover: `translate(at:)` reports «carry on» for a файл that
+    // finished normally, so a cancel landing after it and before the next one starts has no
+    // task to reach and nothing else stopped the loop.
+    //
+    // The save closure runs at exactly that instant, on the main actor, which makes the
+    // window reproducible instead of a race against a sleep.
+    let box = ModelBox()
+    let client = QueueClient(replies: ["один", "два"])
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "queue-cancel-between"))
+    box.model = FileQueueModel(translator: Translator(client: client),
+                               settings: settings, glossary: scratchGlossary(),
+                               save: { source, _, _ in
+                                   box.model?.cancel()
+                                   return .saved(source)
+                               },
+                               saveAs: { _, url in .saved(url) })
+    let model = box.model!
+    model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
+
+    await model.run()
+
+    #expect(model.jobs[0].state == .finished)
+    #expect(model.jobs[1].state == .queued)   // never started
+    #expect(client.callCount == 1)
+}
+
+@MainActor @Test func aQueueStoppedBetweenFilesCarriesOnWhenAskedAgain() async {
+    // The flag is about *this* run: pressing «Перевести» again must not find it still set.
+    let box = ModelBox()
+    let client = QueueClient(replies: ["один", "два"])
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "queue-cancel-between-resume"))
+    let stopOnce = CancelOnce()
+    box.model = FileQueueModel(translator: Translator(client: client),
+                               settings: settings, glossary: scratchGlossary(),
+                               save: { source, _, _ in
+                                   if stopOnce.fire() { box.model?.cancel() }
+                                   return .saved(source)
+                               },
+                               saveAs: { _, url in .saved(url) })
+    let model = box.model!
+    model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
+    await model.run()
+    #expect(model.jobs[1].state == .queued)
+
+    await model.run()
+
+    #expect(model.jobs.allSatisfy { $0.state == .finished })
+}
+
+@MainActor private final class CancelOnce {
+    private var fired = false
+    func fire() -> Bool { defer { fired = true }; return !fired }
 }

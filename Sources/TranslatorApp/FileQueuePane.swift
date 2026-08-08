@@ -60,10 +60,12 @@ struct FileQueuePane: View {
         // user learns *which* file could not be taken instead of watching ten fly home
         // with no explanation. See `QueueDrop.accept`.
         .dropDestination(for: URL.self) { urls, _ in
-            guard queue.canChangeMode, let items = QueueDrop.accept(urls) else { return false }
-            // Reading and planning are the model's, off the main actor; this closure only
-            // decides *when*, exactly as `SourceEditor`'s does.
-            Task { await queue.add(dropped: items) }
+            // `acceptable` reads no bytes — it asks the extension and the size, which the
+            // filesystem answers from an attribute. Reading and planning are the model's,
+            // off the main actor; this closure only decides *when*, exactly as
+            // `SourceEditor`'s does.
+            guard queue.canChangeMode, QueueDrop.acceptable(urls) else { return false }
+            Task { await queue.add(droppedURLs: urls) }
             return true
         }
     }
@@ -123,6 +125,13 @@ private struct FileQueueRow: View {
                     Text(detail).font(.caption).foregroundStyle(.secondary)
                 }
             }
+            if job.documentTermsUnavailable {
+                // §6.6: the user asked for the gate and it never opened. Silence here lets
+                // the run's terminology differ from what they were promised with nothing on
+                // screen to say why.
+                Text("термины документа не удалось подготовить")
+                    .font(.caption).foregroundStyle(.orange)
+            }
             if let problem = job.saveProblem {
                 Text(problem).font(.caption).foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
@@ -169,7 +178,11 @@ private struct FileQueueRow: View {
     private var trailing: String {
         switch job.state {
         case .queued: RussianCopy.queuedFile(parts: job.partsTotal)
-        case .running: RussianCopy.chunkCount(job.partsTotal)
+        // The engine's number, not the drop-time estimate: `chunkSize` can change between
+        // the drop and the turn, and `FileJob.partsTotal`'s own doc comment says the running
+        // row must draw from the run. Reading the stored one put «7 частей» next to
+        // «Перевожу часть 2 из 4».
+        case .running(let progress): RussianCopy.chunkCount(progress.partsTotal)
         // The ✓ is the drawing's, and it earns its place: «готово за 3 140 мс» and
         // «прервано» are otherwise two greys of the same weight in the same corner.
         case .finished: job.result.map { "✓ " + RussianCopy.finishedIn(milliseconds: $0.elapsedMS) } ?? "✓"

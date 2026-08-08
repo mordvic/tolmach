@@ -176,6 +176,13 @@ checkable, and a rule written inside a view modifier can only be read.
 Same extension list as `DroppedDocument.readableExtensions` (`txt`, `text`, `md`, `markdown`),
 same UTF-8-or-nothing.
 
+**The drop is decided without reading a byte.** `dropDestination` answers synchronously on the
+main actor, so the check it makes is the extension and the size — both answerable from a file
+attribute. Loading and decoding every dropped file to decide a `Bool` froze the window before
+the drop animation finished. Everything that needs the bytes happens off the actor afterwards,
+which is also why a file that turns out not to be UTF-8 becomes a named row rather than a
+spring-back.
+
 **A mixed drop is accepted, and what could not be read is shown rather than swallowed.** Ten
 `.md` files and one `.pdf` yields eleven rows: ten queued, one in an `.unreadable` state that
 says so and can be removed. The drop is refused — `false`, the system springs everything back —

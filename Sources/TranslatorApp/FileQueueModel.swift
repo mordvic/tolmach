@@ -28,7 +28,15 @@ final class FileQueueModel {
     /// now taken by that very write, and answers with the next number. The link would
     /// have pointed at a file that does not exist. Only the writer knows where the bytes
     /// went.
-    private let save: (FileJob, String) -> SaveOutcome
+    ///
+    /// **Takes the target, and takes a URL rather than a `FileJob`.** It used to take the
+    /// задание and work the language out again by re-detecting the text and applying the
+    /// settings rule — which ignored the toolbar's override, so a file translated into
+    /// German was written as `a.ru.md`. Worse, the задание it was handed was a copy taken
+    /// before `resolvedTarget` was assigned, so even reading that field would have found
+    /// nil. Passing the language explicitly removes both: there is nothing to re-derive and
+    /// no struct to go stale.
+    private let save: (_ source: URL, _ text: String, _ target: Language) -> SaveOutcome
     /// Writing to a destination the user chose. Separate from `save` because the two differ
     /// on collisions: that one must never overwrite, this one must — the save panel has
     /// already asked.
@@ -51,8 +59,24 @@ final class FileQueueModel {
     private(set) var pausedAfterWarnings = false
     /// The text streaming into the right pane right now, for the задание being run.
     private(set) var streamingText = ""
+    /// Set by `cancel()` and cleared by `run()`.
+    ///
+    /// Cancelling the running task is not enough on its own: a cancel landing between one
+    /// задание finishing and the next starting has no task to reach, and the loop would
+    /// carry straight on into the next file after the user pressed «Отмена».
+    private var cancelled = false
     /// The «Термины документа» sheet this queue is waiting on, or nil.
     private(set) var pendingTermsRequest: DocumentTermsRequest?
+    /// Called the moment a terms sheet is raised, so whoever can present it is told rather
+    /// than left to notice.
+    ///
+    /// **Not an `.onChange` in a view.** The escalation used to be one, attached to the
+    /// `Window` scene's content — and this app is `LSUIElement` with `MenuBarExtra` first
+    /// precisely so that window is *not* open at launch. With it closed the view does not
+    /// exist, the observer never runs, and the sheet appears nowhere at all while the run
+    /// sits waiting on an answer nobody can give. A closure set once from `launch()` does
+    /// not depend on any view being alive.
+    var onTermsRequested: (() -> Void)?
     /// Whether this run is suspended on the terms sheet rather than on the model.
     ///
     /// A named property and not `pendingTermsRequest != nil` written at each view, for
@@ -65,7 +89,7 @@ final class FileQueueModel {
     private var suppressTermsForThisRun = false
 
     init(translator: Translator, settings: AppSettings, glossary: GlossaryStore,
-         save: @escaping (FileJob, String) -> SaveOutcome,
+         save: @escaping (URL, String, Language) -> SaveOutcome,
          saveAs: @escaping (String, URL) -> SaveOutcome,
          pasteboard: NSPasteboard = .general) {
         self.translator = translator
@@ -108,7 +132,7 @@ final class FileQueueModel {
     func saveBesideSource(_ id: FileJob.ID) {
         guard let index = jobs.firstIndex(where: { $0.id == id }),
               let text = jobs[index].result?.final else { return }
-        apply(save(jobs[index], text), to: index)
+        apply(save(jobs[index].url, text, target(for: jobs[index])), to: index)
     }
 
     /// «Сохранить как…», once the user has picked a destination.
@@ -151,6 +175,17 @@ final class FileQueueModel {
     /// `Chunker.plan` is a line split plus a `String.count` per block plus sentence
     /// enumeration over oversized ones, which for twenty 2 MB files is not work to do
     /// while the drop animation is still running.
+    /// Read the dropped files and queue them, both off the main actor.
+    ///
+    /// The reading is the expensive half — up to 2 MB per file, any number of files — and it
+    /// used to happen inside the drop closure, on the main actor, before this was even
+    /// reached. `QueueDrop.acceptable` is what the closure asks now: extension and size, no
+    /// bytes.
+    func add(droppedURLs urls: [URL]) async {
+        let items = await Task.detached(priority: .userInitiated) { QueueDrop.read(urls) }.value
+        await add(dropped: items)
+    }
+
     func add(dropped items: [QueueDrop.Item]) async {
         let chunkSize = settings.chunkSize
         let planned = await Task.detached(priority: .userInitiated) {
@@ -186,6 +221,10 @@ final class FileQueueModel {
 
     /// The result whose warnings the status bar's disclosure opens.
     var selectedResult: JobResult? { selectedJob?.result }
+
+    /// The language the selected задание was translated into, for the warnings view's
+    /// term lookups. Nil before it has run, which is also when there are no warnings.
+    var selectedTarget: Language? { selectedJob?.resolvedTarget }
 
     /// «Перевод · techdoc-en.md», or the plain header with nothing selected.
     var selectedTitle: String {
@@ -240,6 +279,7 @@ final class FileQueueModel {
         isRunning = true
         pausedAfterWarnings = false
         suppressTermsForThisRun = false
+        cancelled = false
         defer { isRunning = false }
 
         // **The work list is decided once, here.** `.interrupted` and `.failed` are in it
@@ -255,6 +295,7 @@ final class FileQueueModel {
         for id in pending {
             // Looked up by id rather than carried as an index: `remove(_:)` is refused
             // while running, but nothing here should depend on that from a distance.
+            guard !cancelled else { return }
             guard let index = jobs.firstIndex(where: { $0.id == id }) else { continue }
             if await translate(at: index, source: source, target: target, tone: tone) { return }
         }
@@ -266,6 +307,7 @@ final class FileQueueModel {
     /// run suspended inside the review hook has no network call to interrupt, so cancelling
     /// only the task would leave it on a continuation nobody resumes.
     func cancel() {
+        cancelled = true
         pendingTermsRequest?.cancel()
         current?.cancel()
     }
@@ -275,6 +317,7 @@ final class FileQueueModel {
         guard !suppressTermsForThisRun else { return draft.documentEntries }
         let request = DocumentTermsRequest(draft: draft)
         pendingTermsRequest = request
+        onTermsRequested?()
         defer { pendingTermsRequest = nil }
         let answer = try await request.answer()
         // Read after the answer, not before: the tick and the button are one decision, and
@@ -374,7 +417,7 @@ final class FileQueueModel {
                 // ask the filesystem *after* the write, find the name taken by that very
                 // write, and answer with the next number — a «показать в Finder» link
                 // pointing at a file that does not exist.
-                switch save(job, outcome.final) {
+                switch save(job.url, outcome.final, target) {
                 case .saved(let url):
                     result.savedTo = url
                     jobs[index].saveProblem = nil

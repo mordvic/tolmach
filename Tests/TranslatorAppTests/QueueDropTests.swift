@@ -26,69 +26,73 @@ private final class Scratch {
     }
 }
 
-@Test func aDropOfReadableFilesComesBackInTheOrderItWasDropped() throws {
+@Test func aDropOfReadableFilesComesBackInTheOrderItWasDropped() {
     let scratch = Scratch()
     let a = scratch.file("a.md", "first")
     let b = scratch.file("b.txt", "second")
-    let accepted = try #require(QueueDrop.accept([a, b]))
-    #expect(accepted.map(\.url) == [a, b])
-    #expect(accepted.map(\.text) == ["first", "second"])
+    #expect(QueueDrop.acceptable([a, b]))
+    let items = QueueDrop.read([a, b])
+    #expect(items.map(\.url) == [a, b])
+    #expect(items.map(\.text) == ["first", "second"])
 }
 
-@Test func aMixedDropKeepsWhatItCanReadAndNamesWhatItCannot() throws {
-    // The queue has a slot per file and no ambiguity about intent — the user means all
-    // of them — so there is nothing to guess. A spring-back is legible feedback for one
-    // file and a riddle for ten: everything returns and nothing says which was refused.
+@Test func aMixedDropKeepsWhatItCanReadAndNamesWhatItCannot() {
+    // The queue has a slot per file and no ambiguity about intent — the user means all of
+    // them — so there is nothing to guess. A spring-back is legible feedback for one file
+    // and a riddle for ten: everything returns and nothing says which was refused.
     let scratch = Scratch()
     let good = scratch.file("a.md", "text")
     let bad = scratch.file("b.pdf", "text")
-    let accepted = try #require(QueueDrop.accept([good, bad]))
+    #expect(QueueDrop.acceptable([good, bad]))
 
-    #expect(accepted.map(\.url) == [good, bad])
-    #expect(accepted[0].text == "text")
-    #expect(accepted[1].text == nil)   // becomes a visible .unreadable row
+    let items = QueueDrop.read([good, bad])
+    #expect(items.map(\.url) == [good, bad])
+    #expect(items[0].text == "text")
+    #expect(items[1].text == nil)   // becomes a visible .unreadable row
 }
 
-@Test func aDropWithNothingReadableInItIsRefusedWhole() throws {
-    // Only here does the spring-back stay the right answer: there is no row worth
-    // making, and eleven refused rows would be a mess rather than an explanation.
+@Test func aDropWithNothingPlausibleInItIsRefusedWhole() {
+    // Only here does the spring-back stay the right answer: there is no row worth making,
+    // and eleven refused rows would be a mess rather than an explanation.
     let scratch = Scratch()
-    #expect(QueueDrop.accept([scratch.file("a.pdf", "x"), scratch.file("b.key", "y")]) == nil)
+    #expect(!QueueDrop.acceptable([scratch.file("a.pdf", "x"), scratch.file("b.key", "y")]))
 }
 
-@Test func aFileOverTheCeilingIsRefusedWithoutBeingRead() throws {
+@Test func theSynchronousCheckAnswersFromAttributesAndNotFromBytes() {
+    // `dropDestination` runs on the main actor and must answer at once. A file whose
+    // *contents* disqualify it — not UTF-8, or nothing but blank lines — is therefore
+    // accepted here and becomes a named `.unreadable` row, rather than costing the window a
+    // freeze while every dropped file is loaded and decoded to decide a Bool.
+    let scratch = Scratch()
+    let blank = scratch.file("blank.md", "\n\n   \n")
+    #expect(QueueDrop.acceptable([blank]))
+    #expect(QueueDrop.read([blank])[0].text == nil)
+}
+
+@Test func aFileOverTheCeilingIsRefusedWithoutBeingRead() {
     let scratch = Scratch()
     let huge = scratch.file("huge.md", bytes: QueueDrop.maximumBytes + 1)
-    let readable = scratch.file("ok.md", "text")
-    let accepted = try #require(QueueDrop.accept([huge, readable]))
-    #expect(accepted[0].text == nil)
+    // Refused by the cheap check, so its bytes are never loaded.
+    #expect(!QueueDrop.acceptable([huge]))
+    #expect(QueueDrop.read([huge])[0].text == nil)
 }
 
 @Test func theCeilingHereIsHigherThanTheTextPanesOnPurpose() {
-    // DroppedDocument's 256 KB is justified by what a person waits for *at a window*.
-    // The queue has a progress bar, a per-file state and a cancel button, so that
-    // reasoning does not carry across — see the spec, §4.1.
+    // DroppedDocument's 256 KB is justified by what a person waits for *at a window*. The
+    // queue has a progress bar, a per-file state and a cancel button, so that reasoning does
+    // not carry across — see the spec, §4.1.
     #expect(QueueDrop.maximumBytes > DroppedDocument.maximumBytes)
     #expect(QueueDrop.maximumBytes == 2 * 1024 * 1024)
 }
 
-@Test func aFileOfBlankLinesIsNotReadableEitherAndSaysSo() throws {
-    let scratch = Scratch()
-    let blank = scratch.file("blank.md", "\n\n   \n")
-    let readable = scratch.file("ok.md", "text")
-    let accepted = try #require(QueueDrop.accept([blank, readable]))
-    #expect(accepted[0].text == nil)
-}
-
 @Test func anEmptyDropIsRefusedRatherThanAcceptedAsAnEmptyQueue() {
-    #expect(QueueDrop.accept([]) == nil)
+    #expect(!QueueDrop.acceptable([]))
 }
 
-@Test func aFileThatIsNotUTF8IsNotReadable() throws {
+@Test func aFileThatIsNotUTF8BecomesAnUnreadableRow() throws {
     let scratch = Scratch()
     let url = scratch.directory.appendingPathComponent("latin1.md")
     try Data([0xFF, 0xFE, 0xFD]).write(to: url)
-    let readable = scratch.file("ok.md", "text")
-    let accepted = try #require(QueueDrop.accept([url, readable]))
-    #expect(accepted[0].text == nil)
+    #expect(QueueDrop.acceptable([url]))
+    #expect(QueueDrop.read([url])[0].text == nil)
 }
