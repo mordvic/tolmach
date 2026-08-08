@@ -66,6 +66,13 @@ enum QueueDrop {
     private static func readable(_ url: URL) -> String? {
         guard plausible(url) else { return nil }
         guard let data = try? Data(contentsOf: url),
+              // Checked again, against the bytes that actually arrived. `attributesOfItem`
+              // does not follow a symbolic link — it reports the length of the link's own
+              // target path, a few dozen bytes — while `Data(contentsOf:)` does follow it,
+              // so a symlink named `notes.md` pointing at a 500 MB file walked past the
+              // ceiling and loaded the whole target. It also closes the smaller window
+              // where a file grows between the stat and the read.
+              data.count <= maximumBytes,
               let text = String(data: data, encoding: .utf8),
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return nil }
@@ -78,7 +85,12 @@ enum QueueDrop {
     private static func plausible(_ url: URL) -> Bool {
         guard DroppedDocument.readableExtensions.contains(url.pathExtension.lowercased())
         else { return false }
-        guard let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int
+        // Resolved first: `attributesOfItem` reports on the link, not on what it points at,
+        // so an unresolved path lets a symlink answer «a few dozen bytes» for any target.
+        // The read in `readable` re-checks anyway — this only keeps the cheap half honest,
+        // so a huge file is still refused without being opened.
+        let path = url.resolvingSymlinksInPath().path
+        guard let size = (try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? Int
         else { return false }
         return size <= maximumBytes
     }

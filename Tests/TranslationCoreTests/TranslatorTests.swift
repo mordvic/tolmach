@@ -1052,3 +1052,25 @@ private final class DraftBox: @unchecked Sendable {
         options: ChatOptions(model: "test"), maxChunkCharacters: 900)
     #expect(!outcome.documentGlossaryAttempted)
 }
+
+@Test func timeSpentInTheReviewSheetIsNotCountedAsTranslationTime() async throws {
+    // «Готово за N мс» and a queue row's «✓ готово за …» are read as how long the machine
+    // took. With the gate on, a file the model translated in a moment while its reader
+    // deliberated reported the deliberation.
+    let fake = FakeLLMClient(responses: [
+        "resource => ресурс",
+        "перевод один", "перевод два", "перевод три", "перевод четыре",
+    ])
+    let translator = Translator(client: fake)
+
+    let outcome = try await translator.translate(
+        text: multiChunkText, target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 200,
+        reviewDocumentTerms: { draft in
+            try await Task.sleep(for: .milliseconds(300))   // the human, thinking
+            return draft.documentEntries
+        })
+
+    // The fake answers instantly, so everything but the deliberation is noise.
+    #expect(outcome.totalMS < 300)
+}

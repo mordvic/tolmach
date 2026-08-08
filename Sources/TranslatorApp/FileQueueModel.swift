@@ -521,8 +521,13 @@ final class FileQueueModel {
             }
         }
 
+        // Read **once**, at the top of the attempt, and used for both the hook and the
+        // notice below. Read twice, a user who turned the gate on while a queue was running
+        // made every file already in flight evaluate «gate wanted, terms sought, no sheet
+        // shown» — an orange «не удалось подготовить» for a run that never asked.
+        let gateRequested = settings.reviewDocumentTerms
         var review: (@Sendable (DocumentTermsDraft) async throws -> [GlossaryEntry])?
-        if settings.reviewDocumentTerms {
+        if gateRequested {
             // An `if` and not a ternary: a ternary infers a non-`@Sendable` closure, and the
             // conversion is refused with a «failed to produce diagnostic» rather than a
             // useful message.
@@ -567,7 +572,11 @@ final class FileQueueModel {
             var result = JobResult(final: outcome.final, checks: outcome.checks,
                                    markupDiffs: outcome.markupDiffs,
                                    documentGlossary: outcome.documentGlossary,
-                                   elapsedMS: Int(Date().timeIntervalSince(started) * 1000))
+                                   // The engine's own measurement, not a second one taken
+                                   // here: `started` is stamped before the terms sheet can
+                                   // go up, so recomputing counted the reader's deliberation
+                                   // as translation time. `totalMS` already excludes it.
+                                   elapsedMS: Int(outcome.totalMS))
             if settings.saveNextToSource {
                 // The writer says where it wrote. Recomputing the destination here would
                 // ask the filesystem *after* the write, find the name taken by that very
@@ -588,7 +597,7 @@ final class FileQueueModel {
             // «more than one часть» either — that claimed a failure for every prose document
             // `TermExtractor` found no candidates in, where nothing was attempted and
             // nothing went wrong.
-            jobs[index].documentTermsUnavailable = settings.reviewDocumentTerms
+            jobs[index].documentTermsUnavailable = gateRequested
                 && outcome.documentGlossaryAttempted && !raisedTermsSheet
             jobs[index].result = result
             jobs[index].state = .finished

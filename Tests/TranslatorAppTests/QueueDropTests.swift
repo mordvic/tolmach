@@ -96,3 +96,26 @@ private final class Scratch {
     #expect(QueueDrop.acceptable([url]))
     #expect(QueueDrop.read([url])[0].text == nil)
 }
+
+@Test func aSymlinkCannotSmuggleALargeFilePastTheCeiling() throws {
+    // `attributesOfItem` reports on the link — the length of its target *path*, a few dozen
+    // bytes — while `Data(contentsOf:)` follows it. A symlink named `notes.md` pointing at
+    // something enormous therefore walked straight past the 2 MB ceiling.
+    let scratch = Scratch()
+    let big = scratch.file("big.md", bytes: QueueDrop.maximumBytes + 1)
+    let link = scratch.directory.appendingPathComponent("notes.md")
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: big)
+
+    #expect(!QueueDrop.acceptable([link]))       // refused without opening the target
+    #expect(QueueDrop.read([link])[0].text == nil)
+}
+
+@Test func aSymlinkToSomethingSmallIsStillReadable() throws {
+    let scratch = Scratch()
+    let real = scratch.file("real.md", "текст")
+    let link = scratch.directory.appendingPathComponent("notes.md")
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+
+    #expect(QueueDrop.acceptable([link]))
+    #expect(QueueDrop.read([link])[0].text == "текст")
+}

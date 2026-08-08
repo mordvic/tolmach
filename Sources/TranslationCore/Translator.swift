@@ -35,6 +35,13 @@ public struct TranslationOutcome: Sendable {
     /// actually an absent response. `totalMS` still covers wall-clock time
     /// regardless, so no information is lost by making this optional.
     public let timeToFirstTokenMS: Double?
+    /// Wall-clock time for the whole call — **minus** any time the review hook spent
+    /// waiting for a human.
+    ///
+    /// The subtraction is what keeps this number meaning «how long the machine took», which
+    /// is how both «Готово за N мс» and a queue row's «✓ готово за …» are read. With the
+    /// terms gate on, a file the model translated in 8 s while its reader deliberated for
+    /// four minutes reported 248 000 ms, which says nothing about anything.
     public let totalMS: Double
     /// Why the document-glossary call was abandoned, or nil if it was not — either because it
     /// succeeded or because this run never needed one.
@@ -295,6 +302,8 @@ public struct Translator: Sendable {
         var documentGlossaryFailure: String?
         /// See `TranslationOutcome.documentGlossaryAttempted`.
         var documentGlossaryAttempted = false
+        /// Seconds spent waiting for a human in the review hook. See where it is subtracted.
+        var reviewWait: TimeInterval = 0
         if chunks.count > 1, let source = detected {
             let terms = TermExtractor.extract(from: text, language: source)
             if !terms.isEmpty {
@@ -369,11 +378,17 @@ public struct Translator: Sendable {
             // than on it having a value — so every часть would be told to translate the term
             // as the empty string, and the warnings panel would list it as `API → `.
             // `GlossaryPromotion` already drops exactly this shape for the same reason.
+            let askedAt = Date()
             documentEntries = try await reviewDocumentTerms(draft).filter { entry in
                 guard let required = entry.requiredTranslation(for: target) else { return false }
                 return !required.isEmpty
             }
             try Task.checkCancellation()
+            // Subtracted from `totalMS` below. That number is what «Готово за N мс» and a
+            // queue row's «✓ готово за …» render, and a reader takes it for how long the
+            // machine took — including four minutes of their own deliberation over the terms
+            // sheet makes it say nothing at all.
+            reviewWait = Date().timeIntervalSince(askedAt)
         }
 
         // Reported before the first request, not after it, so a consumer drawing a
@@ -477,7 +492,7 @@ public struct Translator: Sendable {
             markupDiffs: MarkupSkeleton.diff(source: text, translation: final),
             stats: stats,
             timeToFirstTokenMS: firstTokenAt.map { $0.timeIntervalSince(started) * 1000 },
-            totalMS: Date().timeIntervalSince(started) * 1000,
+            totalMS: (Date().timeIntervalSince(started) - reviewWait) * 1000,
             documentGlossaryFailure: documentGlossaryFailure,
             documentGlossaryAttempted: documentGlossaryAttempted)
     }

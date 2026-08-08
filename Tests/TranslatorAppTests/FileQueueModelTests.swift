@@ -1324,3 +1324,27 @@ private func savingModel(_ prefix: String,
 
     #expect(model.startHint == nil)          // nothing left
 }
+
+// MARK: - Review round 14
+
+@MainActor @Test func turningTheGateOnMidRunDoesNotAccuseTheRunOfLosingItsTerms() async {
+    // The setting was read twice — once to build the hook, once to judge the outcome. A
+    // user who turned it on while a queue was running made every file already in flight
+    // report «термины документа не удалось подготовить» for a run that never asked.
+    let client = QueueClient(replies: ["resource => ресурс", "перевод", "перевод"], paced: true)
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "queue-gate-midrun"))
+    let model = FileQueueModel(translator: Translator(client: client),
+                               settings: settings, glossary: scratchGlossary(),
+                               save: { source, _, _ in .saved(source) },
+                               saveAs: { _, url in .saved(url) })
+    model.add([queueJob("a.md", longEnoughForTwoParts)])
+    #expect(!settings.reviewDocumentTerms)
+
+    let run = Task { await model.run() }
+    await waitUntilCalled(client)
+    settings.reviewDocumentTerms = true          // mid-flight
+    await run.value
+
+    #expect(model.jobs[0].state == .finished)
+    #expect(!model.jobs[0].documentTermsUnavailable)
+}

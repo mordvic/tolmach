@@ -329,8 +329,12 @@ final class TranslationViewModel {
         // Built with an `if` and not a ternary: a ternary infers a non-`@Sendable` closure,
         // and converting one to this parameter's `@Sendable` type is refused — with a
         // «failed to produce diagnostic» from the compiler rather than a useful message.
+        // Read **once**, for the hook and for the notice below alike. Read twice, turning
+        // the gate on mid-translation made this run report that terms «не удалось
+        // подготовить» when it had never asked for them.
+        let gateRequested = settings.reviewDocumentTerms
         var review: (@Sendable (DocumentTermsDraft) async throws -> [GlossaryEntry])?
-        if settings.reviewDocumentTerms {
+        if gateRequested {
             review = { [weak self] draft in
                 guard let self else { throw CancellationError() }
                 return try await self.askAboutTerms(draft)
@@ -377,7 +381,7 @@ final class TranslationViewModel {
             // table that never comes. And not «more than one часть» either — that claimed a
             // failure for every prose document `TermExtractor` found no candidates in, where
             // nothing was attempted and nothing went wrong.
-            documentTermsUnavailable = settings.reviewDocumentTerms
+            documentTermsUnavailable = gateRequested
                 && result.documentGlossaryAttempted && !raisedTermsSheet
             resolvedTarget = target
             outcome = result

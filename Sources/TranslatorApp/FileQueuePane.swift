@@ -165,6 +165,14 @@ private struct FileQueueRow: View {
             if job.state == .interrupted, canSaveElsewhere {
                 Button("Сохранить как…", action: onSaveAs).buttonStyle(.link).font(.caption)
             }
+            // Saving is the one outcome that had no feedback: a refusal renders
+            // `saveProblem` outside every state gate, while a success made the button
+            // disappear and said nothing — and for an interrupted задание the «сохранено
+            // как …» row below was gated on `.finished`, so it never appeared at all.
+            if job.state == .interrupted, let saved = job.result?.savedTo {
+                Button("сохранено как \(saved.lastPathComponent)", action: onReveal)
+                    .buttonStyle(.link).font(.caption)
+            }
             // The drawing puts the warning count and the save action on one line, and they
             // belong together: both are «what is left to do about this file».
             if job.state == .finished {
