@@ -432,28 +432,65 @@ struct MainWindowView: View {
 
 /// Hides the window's *displayed* title without emptying `NSWindow.title`.
 ///
-/// `titleVisibility` and not `.navigationTitle("")`, and the difference is the whole reason
-/// this type exists rather than a one-line modifier. `navigationTitle` sets the title itself,
-/// and that same string is what the «Окно» menu lists the window under — so emptying it to
-/// clear the toolbar would leave a nameless row in a menu this app deliberately adds
-/// «Открыть окно перевода» to. `titleVisibility` governs only whether the title bar draws the
-/// string; the window keeps its name for the menu, for Mission Control and for VoiceOver.
+/// **Setting it once does not hold in this app — measured on the running bundle.**
+/// `viewDidMoveToWindow` fires with the window present, the assignment lands
+/// (`titleVisibility` reads `1` immediately after), and by the next sample it is `0` again
+/// with `_NSToolbarTitleField` visible at 60 × 19. Polled every 400 ms for 2.4 s on one
+/// window: `1` at the assignment, `0` at all six samples after. With the three re-assertions
+/// below, the same instrumentation reads `1` and zero visible title fields at all five
+/// samples over 3 s.
 ///
-/// `viewDidMoveToWindow` and not a `Task` scheduled from `makeNSView`: a view has no window at
-/// the moment it is made, so the assignment has to wait for one, and this is the callback that
-/// *is* that moment. Anything time-based would be a guess at how long SwiftUI takes to install
-/// the hierarchy, and would silently do nothing on the run where it guessed short.
+/// **What resets it is not established, and this comment does not pretend otherwise.**
+/// `Scripts/window-title.swift` reproduces the app's scene shape — accessory policy,
+/// `MenuBarExtra` before the `Window`, a full `.navigation` group, `.defaultSize`, and state
+/// read in the *scene* body so the window is reconfigured repeatedly — and in that probe a
+/// single assignment survives. So the reset needs something this app has and that probe does
+/// not, and the difference has not been isolated. Three suspects were tested and cleared:
+/// saved-window-state restoration (no saved state existed), `.defaultSize`, and view-level
+/// churn. The fix is therefore re-assertion rather than a better first assignment, and it is
+/// verified where it matters — on the app, not on the probe. **A reader tempted to delete two
+/// of the three as redundant should re-instrument the bundle rather than re-run the probe:
+/// the probe will say all three are unnecessary, and it is wrong.**
 ///
-/// It re-applies on every move rather than once, because a window is not the only thing a view
-/// can be moved into and back out of — a full-screen transition replaces it.
+/// `titleVisibility` and not `.navigationTitle("")`, and *this* choice the probe does settle:
+/// both remove the drawn title, but `navigationTitle("")` leaves `NSWindow.title` empty while
+/// this leaves it «Толмач». The title string is what the «Окно» menu lists the window under —
+/// a menu this app deliberately adds «Открыть окно перевода» to — as well as what Mission
+/// Control and VoiceOver announce.
+///
+/// `docs/PLATFORM-TRAPS.md` carries both findings.
 private struct WindowTitleHidden: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView { TitleHidingView() }
-    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    /// The second of the three. Empty in the first version of this type, which is most of why
+    /// it did not work.
+    func updateNSView(_ nsView: NSView, context: Context) {
+        nsView.window?.titleVisibility = .hidden
+    }
 
     private final class TitleHidingView: NSView {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            window?.titleVisibility = .hidden
+            // Dropped before re-adding: this fires again whenever the view changes windows —
+            // a full-screen transition replaces the window — and registering per window
+            // without this leaves one observation per transition, all firing.
+            NotificationCenter.default.removeObserver(
+                self, name: NSWindow.didUpdateNotification, object: nil)
+            guard let window else { return }
+            window.titleVisibility = .hidden
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(reassert(_:)),
+                name: NSWindow.didUpdateNotification, object: window)
         }
+
+        /// Re-asserting inside an update notification does not recurse: assigning the value it
+        /// already holds is a no-op, so the update this could provoke is only ever the first
+        /// one. Checked by running the probe to completion rather than by reading the header —
+        /// a loop here would have hung it.
+        @objc private func reassert(_ note: Notification) {
+            (note.object as? NSWindow)?.titleVisibility = .hidden
+        }
+
+        deinit { NotificationCenter.default.removeObserver(self) }
     }
 }

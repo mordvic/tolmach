@@ -22,6 +22,7 @@ swift test --filter TranslationCoreTests   # one test target
 ./Scripts/make-app-bundle.sh      # assemble build/LocalTranslator.app (debug); pass "release" for release
 swift Scripts/make-icon.swift build/AppIcon.icns   # redraw the icon; make-app-bundle.sh does this itself
 swift Scripts/colour-contrast.swift               # re-measure the status colours against both appearances
+swiftc -O -o /tmp/wt Scripts/window-title.swift && /tmp/wt   # why the window title needs re-asserting
 swift run translate-cli --to ru --tone technical "text"   # needs a live Ollama; reads stdin if no text
 swift run acceptance              # live-Ollama corpus run; MUST run from the package root (reads ./corpus)
 ```

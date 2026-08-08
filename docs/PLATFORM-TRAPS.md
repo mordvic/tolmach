@@ -229,13 +229,21 @@ this project can see it; it was found by putting a screenshot of the running app
 drawing. Draw the label as its own `Text` and add `.labelsHidden()` to keep the accessibility
 label from being read twice. → the toolbar in `Sources/TranslatorApp/MainWindowView.swift`
 
-**Hiding a window's title is `titleVisibility`, not `.navigationTitle("")`.** The title string
-is also what the «Окно» menu lists the window under, so emptying it to clear a crowded toolbar
-leaves a nameless row in that menu. `NSWindow.titleVisibility = .hidden` stops the title bar
-drawing the string and keeps the name for the menu, Mission Control and VoiceOver. Apply it
-from `viewDidMoveToWindow` — a view has no window when it is made, and anything time-based is a
-guess at how long SwiftUI takes to install the hierarchy.
-→ `WindowTitleHidden` in `Sources/TranslatorApp/MainWindowView.swift`
+**Hiding a window's title is `titleVisibility`, not `.navigationTitle("")`.** Measured with
+`Scripts/window-title.swift`: both remove the drawn title, but `navigationTitle("")` leaves
+`NSWindow.title` empty while `titleVisibility = .hidden` keeps it. The title string is what the
+«Окно» menu lists the window under — a menu this app deliberately adds «Открыть окно перевода»
+to — as well as what Mission Control and VoiceOver announce.
+
+**And setting it once does not hold.** On the running bundle the assignment lands and is undone
+before the next 400 ms sample: `1` at `viewDidMoveToWindow`, `0` at all six samples after,
+with `_NSToolbarTitleField` visible again at 60 × 19. Re-asserted from `viewDidMoveToWindow`,
+`updateNSView` and `NSWindow.didUpdateNotification` together, the same instrumentation reads
+`1` and zero visible title fields at all five samples over 3 s. **What performs the reset is
+not established** — saved-state restoration, `.defaultSize` and view-level churn were each
+tested and cleared, and the probe does not reproduce the failure at all: `MODE=once` passes
+there and fails on the app. So instrument the bundle, not the probe, before trimming any of
+the three. → `WindowTitleHidden` in `Sources/TranslatorApp/MainWindowView.swift`
 
 **Where SwiftUI puts the window title, relative to your toolbar items.** It lays the title out
 *after* the `.navigation` group, so a full navigation group leaves the title sitting between
