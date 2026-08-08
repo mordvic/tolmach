@@ -245,6 +245,13 @@ tested and cleared, and the probe does not reproduce the failure at all: `MODE=o
 there and fails on the app. So instrument the bundle, not the probe, before trimming any of
 the three. → `WindowTitleHidden` in `Sources/TranslatorApp/MainWindowView.swift`
 
+**A `Spacer` is greedy in the copy you measure, and `minLength: 0` does not save you.**
+`PanelController` sizes the panel from a detached host with no fill frame; a `Spacer` there
+reports «as much as you will give me», so every panel came back at 998 pt — the
+0.6-of-screen ceiling — for every reply length from one sentence to twenty. Gate any spacer
+on the installed copy (`fillsPanel`), which is the same distinction that modifier already
+exists for one row further down. → `Sources/TranslatorApp/PanelView.swift`
+
 **`TextEditor` has no top inset, and 5 pt of leading that is not padding.** Asked of the
 `NSTextView` on the running bundle: `textContainerInset` is `{0, 0}` and `textContainerOrigin`
 is `{0, 0}`, so text begins hard against the top edge — while the horizontal 5 pt comes from

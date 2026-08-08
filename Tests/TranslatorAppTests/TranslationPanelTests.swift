@@ -645,3 +645,64 @@ private func realPanelContent(_ model: TranslationViewModel) -> (PanelContentVar
     #expect(fit.size.height < screen.visibleFrame.height * PanelSizer.maxHeightFraction)
 }
 
+
+// MARK: - The panel does not grow under the reader's hands
+
+/// Builds a real `PanelView` in a real panel, the way `TranslatorApp` does.
+@MainActor
+private func panelSize(source: String, translated: String,
+                       state: TranslationState) -> CGSize {
+    let model = TranslationViewModel(
+        translator: Translator(client: ScriptedClient(responses: ["x"])),
+        settings: AppSettings(defaults: InMemoryDefaults(prefix: "panelsize")),
+        glossary: GlossaryStore(url: FileManager.default.temporaryDirectory
+            .appendingPathComponent("g-\(UUID().uuidString).json")))
+    model.state = state
+    model.translatedText = translated
+    let controller = PanelController { variant in
+        AnyView(PanelView(model: model, selection: .text(source),
+                          scrolls: variant == .installed(scrolls: true),
+                          fillsPanel: variant != .measured))
+    }
+    controller.show(at: CGPoint(x: 600, y: 600))
+    defer { controller.hide() }
+    return controller.panel.frame.size
+}
+
+private let sentence = "Каждый профиль обязан ссылаться на тип, который он ограничивает, "
+
+/// The «кнопки прыгают» report, as an assertion.
+///
+/// The panel used to open at its 120 pt floor and gain ~16 pt per sentence as the reply
+/// arrived — 120 → 198 for a six-sentence paragraph, in five steps, each one moving the
+/// button row underneath. It now reserves the reply's room from the selection it is about to
+/// translate, so the height it opens at is the height it ends at.
+///
+/// Stated as «opens at least as tall as it settles» rather than as equality, because the
+/// running panel also carries the «Перевожу…» row that the settled one does not. Equality
+/// would be a stricter claim than the fix makes, and a false one.
+@MainActor
+@Test func thePanelOpensAtTheSizeTheReplyWillNeedRatherThanGrowingIntoIt() {
+    for count in [2, 4, 6, 12] {
+        let source = String(repeating: sentence, count: count)
+        let opening = panelSize(source: source, translated: "", state: .running)
+        let settled = panelSize(source: source, translated: source, state: .finished)
+        #expect(opening.height >= settled.height)
+        #expect(opening.width >= settled.width)
+    }
+}
+
+/// The other half, and the one that has already been got wrong once: the room is reserved in
+/// the *installed* copy only.
+///
+/// `PanelController` measures a detached copy with no fill frame, and a `Spacer` in it is
+/// greedy on its own axis — with one present in the measured copy every panel came back at
+/// 998 pt, the 0.6-of-screen ceiling, for every reply length from one sentence to twenty. A
+/// panel holding two sentences must be nowhere near that.
+@MainActor
+@Test func aShortReplyDoesNotMeasureToTheHeightCeiling() {
+    let source = String(repeating: sentence, count: 2)
+    let ceiling = (NSScreen.main?.visibleFrame.height ?? 900) * PanelSizer.maxHeightFraction
+    let size = panelSize(source: source, translated: source, state: .finished)
+    #expect(size.height < ceiling / 2)
+}

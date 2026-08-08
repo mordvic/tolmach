@@ -99,6 +99,16 @@ enum PanelSizer {
         // `maxWidth` once its longest unwrapped line passes ~80 characters, so most of a long
         // reply arrives at a fixed width; the bad case is content whose lines are
         // individually short.
+        //
+        // **Those change counts are the worst case now, not the usual one.** `PanelView`
+        // reserves the reply's room from the selection it is about to translate — an
+        // invisible copy of the source, while the run is in flight — so the panel opens at
+        // the width and height the reply will need and the growth rule below has nothing left
+        // to do. Measured on the real panel: opening 560 × 198 against a settled 560 × 174 for
+        // a six-sentence paragraph, against 347 × 120 opening and 560 × 174 settled without
+        // the reservation. The rule stays because it is what still catches a reply longer than
+        // its source, and because it is the only thing holding the width when there is no
+        // source to reserve from.
         // `frozenWidth` pins the width for the rest of the presentation at the settle, which
         // is when reading starts. `PanelController` is what decides that moment — see
         // `applyFit`.

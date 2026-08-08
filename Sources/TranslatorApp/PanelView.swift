@@ -275,6 +275,38 @@ struct PanelView: View {
             // than the defect this replaces.
             scrollingMiddle {
                 VStack(alignment: .leading, spacing: 8) {
+                    // **The room the reply is about to need, taken before it arrives.**
+                    //
+                    // Measured on the real panel while a run streams, at 560 pt wide: it opens
+                    // at the 120 pt floor and gains ~16 pt per sentence — 120 → 198 for a
+                    // six-sentence paragraph, in five steps, with the width going 347 → 475 →
+                    // 560 on the way. Every one of those steps moves the button row, because
+                    // the buttons sit under the text. That is the «кнопки прыгают».
+                    //
+                    // A bigger floor would fix it by making every short translation open with
+                    // a hole under it, since the height is monotonic within a presentation and
+                    // would never give the space back. This reserves the right amount instead:
+                    // the panel is translating a selection it already holds, and a translation
+                    // is about as long as its source. So an invisible copy of the source sets
+                    // the floor while the run is in flight, and stops setting it the moment the
+                    // run settles.
+                    //
+                    // It reserves the *width* too, which is the larger win: the width rule in
+                    // `PanelSizer.fit` records 4–12 changes per streaming run because no early
+                    // moment knows the final width. The source knows it.
+                    //
+                    // `.hidden()` and not `.opacity(0)`: both keep the space, and only the
+                    // first is documented to. `accessibilityHidden` because it is furniture —
+                    // VoiceOver reading the source back inside the translation panel would be
+                    // the same text twice.
+                    ZStack(alignment: .topLeading) {
+                        if model.state == .running, case let .text(source) = selection {
+                            Text(source)
+                                .hidden()
+                                .accessibilityHidden(true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     Text(model.translatedText)
                         .textSelection(.enabled)
                         // Without this the text is a live region VoiceOver has no warning
@@ -289,6 +321,7 @@ struct PanelView: View {
                         // and the panel's width is now measured from this view — so without this
                         // the measurement and the rendering disagree about how many lines there are.
                         .fixedSize(horizontal: false, vertical: true)
+                    }
 
                     statusLine
                     termsNotice
@@ -324,6 +357,23 @@ struct PanelView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+
+            // Holds the buttons at the panel's bottom edge instead of just under the text.
+            //
+            // The reservation above stops the panel growing during a run, and this is what
+            // stops the one movement left: the «Перевожу…» row disappears at the settle, so
+            // the content gets 24 pt shorter — measured, at every reply length from two
+            // sentences to twenty — while the panel's height is monotonic and does not follow
+            // it. Without a spacer the button row rose by those 24 pt at the exact moment the
+            // user reached for it.
+            //
+            // **Only in the installed copy**, and `minLength: 0` is not enough to make that
+            // unnecessary — measured. With the spacer present in the copy `PanelController`
+            // measures, every panel came back at 998 pt, the 0.6-of-screen ceiling, for every
+            // reply length from one sentence to twenty: a `Spacer` is greedy on the axis it
+            // sits on, so the ideal height it reports is «as much as you will give me». That
+            // is the same trap `fillsPanel` was introduced for, one row further down.
+            if fillsPanel { Spacer(minLength: 0) }
 
             // Pinned, and «Отмена» below is why this matters most: it exists only while a run
             // is in flight, which is exactly when the text above it is still growing. In the
