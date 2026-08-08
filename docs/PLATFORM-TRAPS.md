@@ -245,6 +245,21 @@ tested and cleared, and the probe does not reproduce the failure at all: `MODE=o
 there and fails on the app. So instrument the bundle, not the probe, before trimming any of
 the three. → `WindowTitleHidden` in `Sources/TranslatorApp/MainWindowView.swift`
 
+**`windowDidResize` fires for your own `setFrame` too; `inLiveResize` is the only
+discriminator.** AppKit posts it for a hand-drag and for a programmatic resize alike, so a
+delegate that treats every notification as «the user chose this size» will latch that on its
+own first fit. Here that meant the panel freezing at 120 pt and never being given room for the
+reply — a worse defect than the one the handler was added to fix, and one a test caught only
+because it grew the content on the *same* controller.
+→ `PanelController.windowDidResize` in `Sources/TranslatorApp/TranslationPanel.swift`
+
+**And a resize needs a re-fit, not just a flag.** `windowDidEndLiveResize` recorded that the
+size was the user's and stopped, while nothing else re-fits after a drag — content updates are
+driven by the run, and a finished translation has nothing more to say. A panel dragged shorter
+than its content therefore kept the non-scrolling variant: measured at 560 × 120 holding 270 pt
+of it, with the status row, the warnings and both buttons below the window's edge.
+→ `PanelController.windowDidEndLiveResize`
+
 **A `Spacer` is greedy in the copy you measure, and `minLength: 0` does not save you.**
 `PanelController` sizes the panel from a detached host with no fill frame; a `Spacer` there
 reports «as much as you will give me», so every panel came back at 998 pt — the

@@ -754,3 +754,78 @@ private let sentence = "Каждый профиль обязан ссылать�
         #expect(opened.height >= needed.height)
     }
 }
+
+// MARK: - A hand-resize
+
+/// Builds a panel over a finished translation and reports which variant is installed.
+@MainActor
+private func resizablePanel(text: String)
+    -> (PanelController, TranslationViewModel, () -> String) {
+    let model = TranslationViewModel(
+        translator: Translator(client: ScriptedClient(responses: ["x"])),
+        settings: AppSettings(defaults: InMemoryDefaults(prefix: "resize")),
+        glossary: GlossaryStore(url: FileManager.default.temporaryDirectory
+            .appendingPathComponent("g-\(UUID().uuidString).json")))
+    model.sourceText = text
+    model.translatedText = text
+    model.state = .finished
+    final class Box: @unchecked Sendable { var variant = "?" }
+    let box = Box()
+    let controller = PanelController { variant in
+        if case .installed(let scrolls) = variant { box.variant = scrolls ? "scrolling" : "flat" }
+        return AnyView(PanelView(model: model, selection: .text(text),
+                                 scrolls: variant == .installed(scrolls: true),
+                                 fillsPanel: variant != .measured))
+    }
+    return (controller, model, { box.variant })
+}
+
+/// «Когда изменяю размер, кнопки и всё остальное исчезает.»
+///
+/// `windowDidEndLiveResize` recorded that the size was the user's and stopped there, and
+/// nothing else re-fits after a drag — `contentDidChange` is driven by the run, and a finished
+/// translation has nothing more to say. So a panel dragged shorter than its content kept the
+/// flat variant: measured at 560 × 120 holding 270 pt of unscrollable content, with the whole
+/// bottom section — the status row, the warnings and both buttons — below the window's edge.
+@MainActor
+@Test func aPanelDraggedShorterThanItsContentStartsScrollingInstead() {
+    let text = String(repeating: sentence, count: 12)
+    let (controller, _, variant) = resizablePanel(text: text)
+    controller.show(at: CGPoint(x: 600, y: 600))
+    defer { controller.hide() }
+    #expect(variant() == "flat")
+
+    // The user drags the bottom edge up and lets go.
+    var frame = controller.panel.frame
+    frame.size.height -= 150
+    frame.origin.y += 150
+    controller.panel.setFrame(frame, display: true)
+    controller.windowDidEndLiveResize(
+        Notification(name: NSWindow.didEndLiveResizeNotification, object: controller.panel))
+
+    #expect(variant() == "scrolling")
+    // And the drag is still honoured — re-fitting must not undo it.
+    #expect(controller.panel.frame.height == frame.height)
+}
+
+/// The trap the `inLiveResize` guard exists for.
+///
+/// `windowDidResize` cannot tell a drag from `applyFit`'s own `setFrame` by the notification
+/// alone, and AppKit posts it for both. Without the guard the panel's first programmatic fit
+/// would set `userSized` and freeze its automatic sizing for the rest of the presentation, so
+/// a reply arriving after it would never be given room — which is a worse defect than the one
+/// the resize handler was added to fix.
+@MainActor
+@Test func aProgrammaticResizeIsNotMistakenForAHandResize() {
+    let (controller, model, _) = resizablePanel(text: "короткий")
+    controller.show(at: CGPoint(x: 600, y: 600))
+    defer { controller.hide() }
+    let opened = controller.panel.frame.height
+
+    // The reply grows, exactly as it does while a run streams. Every fit along the way sets
+    // the frame, and every one of those posts `didResize` to this same delegate.
+    model.translatedText = String(repeating: sentence, count: 10)
+    controller.contentDidChange()
+
+    #expect(controller.panel.frame.height > opened)
+}

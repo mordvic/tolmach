@@ -530,8 +530,32 @@ final class PanelController: NSObject, NSWindowDelegate {
         hosting.rootView = build(.installed(scrolls: wanted))
     }
 
+    /// The user is dragging an edge right now.
+    ///
+    /// `inLiveResize` is the only thing separating a drag from `applyFit`'s own `setFrame`,
+    /// and the distinction is load-bearing rather than tidy: without it every programmatic
+    /// resize would be read as a drag, set `userSized`, and freeze the panel's automatic
+    /// sizing for the rest of the presentation — after the very first fit.
+    ///
+    /// Re-fitting here rather than only on release is what keeps the content inside the window
+    /// *while* the edge moves. `applyFit` cannot fight the drag: with `userSized` set,
+    /// `PanelSizer.fit` returns the size the panel already has, so the frame never changes and
+    /// only the scrolling variant does.
+    func windowDidResize(_ notification: Notification) {
+        guard panel.inLiveResize else { return }
+        userSized = true
+        contentDidChange()
+    }
+
     /// The user dragged an edge. That is an instruction, and it holds until the panel hides.
     func windowDidEndLiveResize(_ notification: Notification) {
         userSized = true
+        // **Not just the flag.** Nothing else re-fits after a drag — `contentDidChange` is
+        // driven by the run, and a finished translation has nothing more to say — so a panel
+        // dragged shorter than its content kept the flat variant and left its bottom section,
+        // the status row and the warnings and both buttons, below the window's edge. Measured:
+        // dragged 150 pt shorter, the panel was 560 × 120 holding 270 pt of unscrollable
+        // content, and any refit at all put it right.
+        applyFit()
     }
 }
