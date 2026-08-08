@@ -947,3 +947,66 @@ private final class DraftBox: @unchecked Sendable {
     var count: Int { lock.lock(); defer { lock.unlock() }; return storage.count }
     var value: DocumentTermsDraft? { lock.lock(); defer { lock.unlock() }; return storage.first }
 }
+
+@Test func aTermTheUserEmptiedInTheReviewNeverReachesAPrompt() async throws {
+    // Clearing a «перевод» field means «do not force this term». An entry that survived
+    // with an empty translation reached PromptBuilder, which gates on the key being present
+    // rather than on it having a value — so every часть was told to translate the term as
+    // the empty string, and the warnings panel listed it as «resource → ».
+    let fake = FakeLLMClient(responses: [
+        "resource => ресурс\nserver => сервер",
+        "перевод один", "перевод два", "перевод три", "перевод четыре",
+    ])
+    let translator = Translator(client: fake)
+
+    let outcome = try await translator.translate(
+        text: multiChunkText, target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 200,
+        reviewDocumentTerms: { draft in
+            draft.documentEntries.map { entry in
+                var cleared = entry
+                if entry.term.lowercased() == "resource" { cleared.translations["ru"] = "" }
+                return cleared
+            }
+        })
+
+    #expect(!outcome.documentGlossary.contains { $0.term.lowercased() == "resource" })
+    #expect(outcome.documentGlossary.contains { $0.term.lowercased() == "server" })
+    // The word itself is in the document being translated, so the check is on the glossary
+    // *instruction* PromptBuilder emits — which is what an empty translation corrupted:
+    // `- "resource" — translate as "".`
+    let chunkPrompts = fake.receivedMessages.dropFirst()
+    #expect(!chunkPrompts.contains { messages in
+        messages.contains { $0.content.contains("\"resource\" — translate as") }
+    })
+    #expect(chunkPrompts.allSatisfy { messages in
+        messages.contains { $0.content.contains("\"server\" — translate as \"сервер\".") }
+    })
+    #expect(!chunkPrompts.contains { messages in
+        messages.contains { $0.content.contains("translate as \"\".") }
+    })
+}
+
+@Test func aRunCancelledJustAsTheTermListLandsNeverRaisesItsSheet() async throws {
+    // The engine's last cancellation check is before `DocumentGlossary.parse`. A hook that
+    // did not check again brought the window forward and put up a sheet for a run the user
+    // had already stopped.
+    let fake = FakeLLMClient(responses: ["resource => ресурс", "не должно быть запрошено"])
+    let translator = Translator(client: fake)
+    let box = DraftBox()
+
+    let task = Task {
+        try await translator.translate(
+            text: multiChunkText, target: .ru, tone: .neutral, userGlossary: nil,
+            options: ChatOptions(model: "test"), maxChunkCharacters: 200,
+            reviewDocumentTerms: { draft in
+                try Task.checkCancellation()
+                box.record(draft)
+                return draft.documentEntries
+            })
+    }
+    task.cancel()
+    _ = try? await task.value
+
+    #expect(box.count == 0)
+}

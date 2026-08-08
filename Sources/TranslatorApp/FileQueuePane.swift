@@ -56,9 +56,9 @@ struct FileQueuePane: View {
         .frame(minWidth: 280)
         // Refusing returns `false`, which springs every item back — the same and only
         // error channel `SourceEditor` uses. It happens only when nothing in the drop was
-        // readable: a mixed drop is accepted and its refusals become visible rows, so the
-        // user learns *which* file could not be taken instead of watching ten fly home
-        // with no explanation. See `QueueDrop.accept`.
+        // plausible: a mixed drop is accepted and its refusals become visible rows, so the
+        // user learns *which* file could not be taken instead of watching ten fly home with
+        // no explanation. See `QueueDrop.acceptable`.
         .dropDestination(for: URL.self) { urls, _ in
             // `acceptable` reads no bytes — it asks the extension and the size, which the
             // filesystem answers from an attribute. Reading and planning are the model's,
@@ -140,19 +140,19 @@ private struct FileQueueRow: View {
             // belong together: both are «what is left to do about this file».
             if job.state == .finished {
                 HStack(spacing: 6) {
-                    if let result = job.result, result.hasWarnings {
-                        Text(RussianCopy.warningCount(result.warningCount))
+                    if let result = job.result, result.disclosureCount > 0 {
+                        Text(RussianCopy.warningCount(result.disclosureCount))
                             .foregroundStyle(.secondary)
                     }
                     if needsSaving {
-                        if let result = job.result, result.hasWarnings { Text("·").foregroundStyle(.tertiary) }
+                        if let result = job.result, result.disclosureCount > 0 { Text("·").foregroundStyle(.tertiary) }
                         Button("Сохранить рядом с исходником", action: onSaveBeside).buttonStyle(.link)
                         Text("·").foregroundStyle(.tertiary)
                         Button("Сохранить как…", action: onSaveAs).buttonStyle(.link)
                     } else if let saved = job.result?.savedTo {
                         // Names the file rather than saying «сохранено», because the name
                         // may not be the one the user expects: a taken name gets a number.
-                        if let result = job.result, result.hasWarnings { Text("·").foregroundStyle(.tertiary) }
+                        if let result = job.result, result.disclosureCount > 0 { Text("·").foregroundStyle(.tertiary) }
                         Button("сохранено как \(saved.lastPathComponent)", action: onReveal)
                             .buttonStyle(.link)
                     }

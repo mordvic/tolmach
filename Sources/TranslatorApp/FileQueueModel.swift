@@ -265,8 +265,15 @@ final class FileQueueModel {
         // Parts are counted across the whole queue, not within the current file: the
         // sentence is about how much of the *queue* is left, and a per-file count next to a
         // per-queue file count would be two scales in one line.
+        // The running задание contributes the engine's own total, not its drop-time
+        // estimate — `FileJob.partsTotal`'s doc comment says so, and mixing the two put
+        // «20 частей из 13» on screen for a user who changed «размер части» after dropping.
+        // The ones that have not run can only offer the estimate, and that is honest: they
+        // have no other number yet.
         let done = jobs.prefix(index).reduce(0) { $0 + $1.partsTotal } + progress.partsDone
-        let total = jobs.reduce(0) { $0 + $1.partsTotal }
+        let total = jobs.enumerated().reduce(0) { sum, pair in
+            sum + (pair.offset == index ? progress.partsTotal : pair.element.partsTotal)
+        }
         return RussianCopy.queuePosition(fileIndex: index, fileTotal: jobs.count,
                                          partsDone: done, partsTotal: total)
     }
@@ -329,6 +336,11 @@ final class FileQueueModel {
 
     /// Raise the sheet and wait, unless this run has already been told not to ask again.
     private func askAboutTerms(_ draft: DocumentTermsDraft) async throws -> [GlossaryEntry] {
+        // A «Отмена» landing between the engine's last cancellation check and this
+        // point would otherwise bring the window forward and put up a sheet for a run
+        // the user has just stopped, to be dismissed by hand.
+        guard !cancelled else { throw CancellationError() }
+        try Task.checkCancellation()
         raisedTermsSheet = true
         guard !suppressTermsForThisRun else { return draft.documentEntries }
         let request = DocumentTermsRequest(draft: draft)

@@ -32,6 +32,17 @@ enum QueueDrop {
 
     /// Whether this drop is worth taking at all, decided **without reading a byte**.
     ///
+    /// **A mixed drop is accepted and its refusals are named.** Ten `.md` files and one
+    /// `.pdf` yields eleven items, one of them textless. An earlier version refused the
+    /// whole drop on `SourcePane`'s rule that «taking the acceptable ones is a guess about
+    /// which was meant» — but that rule is about *one slot and many candidates*, and a queue
+    /// has a slot per file and no ambiguity at all. What the transplant cost is the part
+    /// that decided it: `dropDestination`'s `Bool` is the entire error channel here, and a
+    /// spring-back is legible feedback for one file and a riddle for ten — everything
+    /// returns and nothing says which one was the problem. `false` here is that
+    /// spring-back, kept for the one case where a row would explain nothing: a drop with
+    /// nothing plausible in it at all.
+    ///
     /// `dropDestination` must answer synchronously on the main actor, and the full check
     /// cannot: it loads and UTF-8-decodes every file, up to 2 MB each and any number of
     /// them, which froze the window before the drop animation had finished. So the
@@ -47,18 +58,6 @@ enum QueueDrop {
     static func read(_ urls: [URL]) -> [Item] {
         urls.map { Item(url: $0, text: readable($0)) }
     }
-
-    /// **A mixed drop is accepted and its refusals are named.** Ten `.md` files and one
-    /// `.pdf` yields eleven items, one of them textless. An earlier version refused the whole
-    /// drop on `SourcePane`'s rule that «taking the acceptable ones is a guess about which was
-    /// meant» — but that rule is about *one slot and many candidates*, and a queue has a slot
-    /// per file and no ambiguity at all. What the transplant cost is the part that decided it:
-    /// `dropDestination`'s `Bool` is the entire error channel here, and a spring-back is
-    /// legible feedback for one file and a riddle for ten — everything returns and nothing
-    /// says which one was the problem.
-    ///
-    /// The spring-back survives for the one case where a row would explain nothing: a drop
-    /// with nothing plausible in it at all.
 
     /// Same extension list, same UTF-8-or-nothing and same blank-file rule as
     /// `DroppedDocument`; only the ceiling differs. The size is read from the file's

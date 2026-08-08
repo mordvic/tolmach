@@ -403,6 +403,9 @@ final class TranslationViewModel {
     /// guarantees exactly one resume whichever way this ends, and clearing the property
     /// here is what stops a cancelled run leaving a modal on screen.
     private func askAboutTerms(_ draft: DocumentTermsDraft) async throws -> [GlossaryEntry] {
+        // A ⌘. landing between the engine's last cancellation check and this point
+        // would otherwise put up a sheet for a run the user has just stopped.
+        try Task.checkCancellation()
         raisedTermsSheet = true
         let request = DocumentTermsRequest(draft: draft)
         pendingTermsRequest = request

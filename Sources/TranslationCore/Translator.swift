@@ -342,7 +342,18 @@ public struct Translator: Sendable {
             // here — the contract the engine already has, rather than a second refusal
             // path. The check after it covers a cancellation that landed while the human
             // was deciding but did not surface as a throw.
-            documentEntries = try await reviewDocumentTerms(draft)
+            // Filtered, and not taken as given. `DocumentGlossary.parse` refuses an empty
+            // translation on the way in; the hook is a second door into the same data and
+            // has to uphold the same invariant. A user who clears a field in the sheet means
+            // «do not force this term», but an entry that survives with `translations[target]
+            // == ""` reaches `PromptBuilder`, which gates on the key being present rather
+            // than on it having a value — so every часть would be told to translate the term
+            // as the empty string, and the warnings panel would list it as `API → `.
+            // `GlossaryPromotion` already drops exactly this shape for the same reason.
+            documentEntries = try await reviewDocumentTerms(draft).filter { entry in
+                guard let required = entry.requiredTranslation(for: target) else { return false }
+                return !required.isEmpty
+            }
             try Task.checkCancellation()
         }
 

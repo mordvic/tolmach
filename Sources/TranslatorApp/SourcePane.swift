@@ -117,8 +117,15 @@ struct PaneHeader<Action: View>: View {
 
     var body: some View {
         HStack {
-            if let title { Text(title).font(.caption).foregroundStyle(.secondary) }
-            Spacer()
+            // The spacer belongs to the *title*, and only to it: it is what pushes the
+            // action to the trailing edge. With no title — the left pane's header, which is
+            // a mode switch — two equally flexible spacers split the free width between
+            // them and the switch floated a quarter of the way in, instead of sitting where
+            // the caption it replaced used to be.
+            if let title {
+                Text(title).font(.caption).foregroundStyle(.secondary)
+                Spacer()
+            }
             action().font(.caption)
         }
         .padding(.horizontal, 8)

@@ -107,4 +107,15 @@ struct JobResult {
         checks.filter { $0.status == .missing }.count + markupDiffs.count
     }
     var hasWarnings: Bool { warningCount > 0 }
+
+    /// How many things the disclosure for this задание actually lists.
+    ///
+    /// One more than `warningCount` when there is a документный глоссарий, because
+    /// `WarningsView` gives it a row of its own — and the status bar counts by asking that
+    /// view. The two numbers answer different questions and both are needed: this one is
+    /// «what is under the chevron», and `warningCount` above is «is something wrong with
+    /// this file», which is what `stopOnWarnings` must not pause on for a term list.
+    /// Showing `warningCount` in the row while the bar showed this one put two different
+    /// counts for one file on screen at once.
+    var disclosureCount: Int { warningCount + (documentGlossary.isEmpty ? 0 : 1) }
 }

@@ -255,11 +255,11 @@ struct MainWindowView: View {
         return model.pendingTermsRequest ?? queue.pendingTermsRequest ?? panelModel?.pendingTermsRequest
     }
 
-    /// «Добавить в пользовательский глоссарий».
+    /// «Добавить…» — the other way into the queue.
     ///
-    /// The panel's result goes through `QueueDrop.accept` exactly as a drop does, so the
-    /// two doors into the queue cannot come to accept different things: one rule, one
-    /// place, checked by `QueueDropTests`.
+    /// The panel's result goes to `add(droppedURLs:)`, the same entry point a drop uses, so
+    /// the two doors read and plan files by one rule. What differs is the refusal, and
+    /// deliberately: see the note at the guard below.
     private func addFiles() {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
