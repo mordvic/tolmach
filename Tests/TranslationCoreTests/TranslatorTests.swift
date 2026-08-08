@@ -1074,3 +1074,25 @@ private final class DraftBox: @unchecked Sendable {
     // The fake answers instantly, so everything but the deliberation is noise.
     #expect(outcome.totalMS < 300)
 }
+
+@Test func theTwoTimingsAreMeasuredOnOneClock() async throws {
+    // The review point is before the per-часть loop, so a reader's deliberation lies
+    // between the start and the first token. Taking it off `totalMS` alone left TTFT
+    // reporting 248 000 ms against a total of 8 000 — the inverse of what the outcome says
+    // the two mean.
+    let fake = FakeLLMClient(responses: [
+        "resource => ресурс",
+        "перевод один", "перевод два", "перевод три", "перевод четыре",
+    ])
+    let outcome = try await Translator(client: fake).translate(
+        text: multiChunkText, target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 200,
+        reviewDocumentTerms: { draft in
+            try await Task.sleep(for: .milliseconds(300))
+            return draft.documentEntries
+        })
+
+    let ttft = try #require(outcome.timeToFirstTokenMS)
+    #expect(ttft < 300)
+    #expect(ttft <= outcome.totalMS)
+}

@@ -34,6 +34,8 @@ public struct TranslationOutcome: Sendable {
     /// read as roughly equal to `totalMS`, which blamed latency for what was
     /// actually an absent response. `totalMS` still covers wall-clock time
     /// regardless, so no information is lost by making this optional.
+    /// Measured on the same clock as `totalMS`: both exclude any time the review hook spent
+    /// waiting for a human, which lies between the start and the first token.
     public let timeToFirstTokenMS: Double?
     /// Wall-clock time for the whole call — **minus** any time the review hook spent
     /// waiting for a human.
@@ -491,7 +493,12 @@ public struct Translator: Sendable {
             // and the source on disk are the same document again.
             markupDiffs: MarkupSkeleton.diff(source: text, translation: final),
             stats: stats,
-            timeToFirstTokenMS: firstTokenAt.map { $0.timeIntervalSince(started) * 1000 },
+            // `reviewWait` comes off this too, and it has to: the review point is before the
+            // per-часть loop, so every millisecond a reader spent in the sheet sits between
+            // `started` and the first token. Subtracting it from `totalMS` alone left the
+            // two measuring different clocks — TTFT of 248 000 ms against a total of 8 000,
+            // which inverts the relationship the outcome documents.
+            timeToFirstTokenMS: firstTokenAt.map { ($0.timeIntervalSince(started) - reviewWait) * 1000 },
             totalMS: (Date().timeIntervalSince(started) - reviewWait) * 1000,
             documentGlossaryFailure: documentGlossaryFailure,
             documentGlossaryAttempted: documentGlossaryAttempted)
