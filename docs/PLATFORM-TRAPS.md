@@ -245,6 +245,19 @@ tested and cleared, and the probe does not reproduce the failure at all: `MODE=o
 there and fails on the app. So instrument the bundle, not the probe, before trimming any of
 the three. → `WindowTitleHidden` in `Sources/TranslatorApp/MainWindowView.swift`
 
+**A `ToolbarItemGroup`'s children are separate toolbar items.** Measured through
+`NSToolbar.items`: a group holding three labels, three pickers and a button reports 7 items, not
+1. macOS spaces them apart and overflows them one at a time, so a label written beside the
+control it names sits a toolbar gap away from it and can be left on the bar when that control is
+pushed into the ». Put the pair in a single `ToolbarItem` containing an `HStack`. Worth 60 pt of
+width here as well. → the toolbar in `Sources/TranslatorApp/MainWindowView.swift`
+
+**An `NSPopUpButton` is as wide as its widest menu item, not as its selection.** So one long
+option sets the width of every picker that lists the same values, whether or not it is ever
+chosen: «китайский (упрощённый)» was seven characters longer than any other language name and
+cost 70 pt in five pickers at once. A mock-up cannot show this — it draws the string that is
+showing. → `Language.russianName` in `Sources/TranslatorApp/RussianCopy.swift`
+
 **Where SwiftUI puts the window title, relative to your toolbar items.** It lays the title out
 *after* the `.navigation` group, so a full navigation group leaves the title sitting between
 the last control and the trailing button, reading as a control itself.

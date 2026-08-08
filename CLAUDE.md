@@ -23,6 +23,7 @@ swift test --filter TranslationCoreTests   # one test target
 swift Scripts/make-icon.swift build/AppIcon.icns   # redraw the icon; make-app-bundle.sh does this itself
 swift Scripts/colour-contrast.swift               # re-measure the status colours against both appearances
 swiftc -O -o /tmp/wt Scripts/window-title.swift && /tmp/wt   # why the window title needs re-asserting
+swiftc -O -o /tmp/tf Scripts/toolbar-fit.swift && /tmp/tf   # narrowest width the toolbar fits in
 swift run translate-cli --to ru --tone technical "text"   # needs a live Ollama; reads stdin if no text
 swift run acceptance              # live-Ollama corpus run; MUST run from the package root (reads ./corpus)
 ```

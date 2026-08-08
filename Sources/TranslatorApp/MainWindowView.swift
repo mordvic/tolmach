@@ -206,7 +206,20 @@ struct MainWindowView: View {
                          onMute: mute,
                          onRetry: { Task { await action.start() } })
         }
-        .frame(minWidth: 700, minHeight: 480)
+        // 840, not the drawing's 700, and the extra 140 pt is the drawing being wrong about
+        // this rather than the app being greedy. The drawing's toolbar is 22 pt-tall pills
+        // sized to the string showing; a real `NSPopUpButton` is as wide as its widest menu
+        // item and sits in a macOS toolbar at the platform's own control size. Swept with
+        // `Scripts/toolbar-fit.swift`, this row needs 830 pt before `NSToolbar` stops pushing
+        // items into the » overflow — and the first thing it pushes is «Перевести».
+        //
+        // A minimum that guarantees the primary action is hidden is not a minimum worth
+        // keeping. 840 is the measured 830 plus one step of the sweep, because the threshold
+        // depends on the system font and on the longest language name, and both can move.
+        // `.controlSize` is deliberately **not** used to buy the difference: measured at 10 pt
+        // between the toolbar default and `.regular`, which is not worth leaving the
+        // platform's own metrics for.
+        .frame(minWidth: 840, minHeight: 480)
         .toolbar { toolbar }
         // The window's title is **not** drawn, and the drawing is deliberate about it: every
         // settings pane in it has a centred title bar of its own, and the main window has
@@ -281,28 +294,51 @@ struct MainWindowView: View {
     }
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
-        ToolbarItemGroup(placement: .navigation) {
-            // **The three labels are drawn, not declared.** A `Picker`'s own title is not
-            // rendered inside a toolbar — SwiftUI drops it and keeps it only as the
-            // accessibility label — so the row shipped as three unlabelled pop-ups reading
-            // «Определить», «По правилу», «По умолчанию», with nothing on screen saying
-            // which was the source, which the target and which the tone. The drawing has
-            // «Из», «В» and «Тон» beside them, and this is the one thing in the whole
-            // comparison that no reading of the source could catch: the code says
-            // `Picker("Из", …)`, and only a screenshot shows that «Из» never arrives.
+        // **Each label travels with its control, in one toolbar item.**
+        //
+        // A `ToolbarItemGroup`'s children are separate toolbar items, not one — measured:
+        // the group below used to produce 8 items and now produces 5. That is not
+        // bookkeeping. macOS spaces items apart and overflows them one at a time, so seven
+        // loose children meant «Из» sat a toolbar gap away from the pop-up it names, and a
+        // narrow window could push the pop-up into the » overflow and leave its label behind
+        // on the bar.
+        //
+        // It is also 60 pt of width. `Scripts/toolbar-fit.swift` sweeps the window and asks
+        // `NSToolbar.visibleItems` when everything is on screen: 960 pt loose against 900 pt
+        // paired, and 830 pt paired once the longest language name stopped carrying a
+        // parenthetical (see `Language.russianName`). The window opens at 900, so the loose
+        // arrangement hid «Перевести» in the overflow **at the default size** — the state the
+        // screenshot that prompted this caught.
+        ToolbarItem(placement: .navigation) {
+            // **The label is drawn, not declared.** A `Picker`'s own title is not rendered
+            // inside a toolbar — SwiftUI keeps it only as the accessibility label — so this
+            // row shipped as three unlabelled pop-ups reading «Определить», «По правилу»,
+            // «По умолчанию», with nothing on screen saying which chose the source, which the
+            // target and which the tone. No reading of the source could catch it: the code
+            // says `Picker("Из", …)` in plain sight.
             //
-            // `.labelsHidden()` on each picker for the reason `GlossaryHeader` uses it: the
-            // title stays as the control's accessibility label, so VoiceOver still reads
-            // «Из» and does not meet the word twice.
-            Text("Из").foregroundStyle(.secondary)
-            // `russianName`, not `shortCode`. The settings name these languages in words and
-            // this window used to name them in codes — one vocabulary under two names, which
-            // is exactly what `CONTEXT.md` exists to prevent.
-            Picker("Из", selection: $model.sourceOverride) {
-                Text("Определить").tag(Language?.none)
-                ForEach(Language.allCases, id: \.self) { Text($0.russianName).tag(Language?.some($0)) }
+            // `.labelsHidden()` keeps that title as the accessibility label, so VoiceOver
+            // still says «Из» and does not meet the word twice.
+            //
+            // 6 pt inside the pair against the toolbar's own spacing between items — the
+            // contrast is what makes a label read as belonging to the control beside it.
+            HStack(spacing: 6) {
+                Text("Из").foregroundStyle(.secondary)
+                // `russianName`, not `shortCode`. The settings name these languages in words
+                // and this window used to name them in codes — one vocabulary under two
+                // names, which is exactly what `CONTEXT.md` exists to prevent. It is also why
+                // the width problem above was solved by shortening one name rather than by
+                // going back to «RU»/«EN» here.
+                Picker("Из", selection: $model.sourceOverride) {
+                    Text("Определить").tag(Language?.none)
+                    ForEach(Language.allCases, id: \.self) {
+                        Text($0.russianName).tag(Language?.some($0))
+                    }
+                }
+                .labelsHidden()
             }
-            .labelsHidden()
+        }
+        ToolbarItem(placement: .navigation) {
             Button {
                 action.swap()
             } label: {
@@ -310,18 +346,30 @@ struct MainWindowView: View {
             }
             .disabled(!action.canSwap)
             .help("Перевести в обратную сторону")
-            Text("В").foregroundStyle(.secondary)
-            Picker("В", selection: $model.targetOverride) {
-                Text("По правилу").tag(Language?.none)
-                ForEach(Language.allCases, id: \.self) { Text($0.russianName).tag(Language?.some($0)) }
+        }
+        ToolbarItem(placement: .navigation) {
+            HStack(spacing: 6) {
+                Text("В").foregroundStyle(.secondary)
+                Picker("В", selection: $model.targetOverride) {
+                    Text("По правилу").tag(Language?.none)
+                    ForEach(Language.allCases, id: \.self) {
+                        Text($0.russianName).tag(Language?.some($0))
+                    }
+                }
+                .labelsHidden()
             }
-            .labelsHidden()
-            Text("Тон").foregroundStyle(.secondary)
-            Picker("Тон", selection: $model.toneOverride) {
-                Text("По умолчанию").tag(Tone?.none)
-                ForEach(Tone.allCases, id: \.self) { Text($0.russianName).tag(Tone?.some($0)) }
+        }
+        ToolbarItem(placement: .navigation) {
+            HStack(spacing: 6) {
+                Text("Тон").foregroundStyle(.secondary)
+                Picker("Тон", selection: $model.toneOverride) {
+                    Text("По умолчанию").tag(Tone?.none)
+                    ForEach(Tone.allCases, id: \.self) {
+                        Text($0.russianName).tag(Tone?.some($0))
+                    }
+                }
+                .labelsHidden()
             }
-            .labelsHidden()
         }
         // Neither button declares a keyboard shortcut any more, and that is the point of the
         // change rather than a side effect. ⌘↩ and ⌘. now live once, in the «Перевод» menu

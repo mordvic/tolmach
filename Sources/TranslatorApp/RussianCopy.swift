@@ -43,7 +43,20 @@ extension Language {
         case .es: "испанский"
         case .pt: "португальский"
         case .it: "итальянский"
-        case .zh: "китайский (упрощённый)"
+        // «китайский», not «китайский (упрощённый)». The parenthetical was the widest
+        // string in this list by seven characters, and an `NSPopUpButton` is as wide as its
+        // widest menu item — so it set the width of **five** pickers (the window's «Из» and
+        // «В», the settings' «Мой язык» and «Второй язык», and the glossary's column) whether
+        // or not anyone ever chose Chinese. Measured with `Scripts/toolbar-fit.swift`: 70 pt
+        // of the window toolbar, which is the difference between a row that fits at the
+        // window's minimum width and one that hides «Перевести» in the overflow.
+        //
+        // Nothing is lost that the user could act on: `Language` has one Chinese case, so the
+        // parenthetical distinguished it from nothing on offer. What it *did* say — which
+        // script the model is asked for — is still said where it is load-bearing:
+        // `englishName` is «Chinese (Simplified)» and `englishName` is what `PromptBuilder`
+        // puts in the prompt. This name is UI only.
+        case .zh: "китайский"
         case .ja: "японский"
         }
     }
