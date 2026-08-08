@@ -29,7 +29,7 @@ struct RunStatusBar: View {
                 // Not `if let summary`: the label never reads the string, only whether
                 // there is one, and binding a name for a value nobody uses is what the
                 // compiler's `#no-usage` warning is for.
-                if canDisclose, summary != nil {
+                if canDisclose {
                     Button {
                         expanded.toggle()
                     } label: {
@@ -50,13 +50,10 @@ struct RunStatusBar: View {
                       systemImage: "exclamationmark.triangle.fill")
                     .font(.caption).foregroundStyle(.orange)
             }
-            // `summary != nil` gates this branch too, not just `expanded`: `expanded` is
-            // `@State` and survives across runs, so without this a run that leaves
-            // warnings expanded, followed by a second, quiet run, would show no triangle
-            // to press — `summary` would be nil — while still drawing an empty
-            // `WarningsView` plus this stack's own spacing underneath. That is the exact
-            // failure `summary`'s own doc comment exists to prevent, reached through
-            // stale `@State` rather than through a disagreeing count.
+            // Gated on `canDisclose`, the same property the chevron reads. `expanded` is
+            // `@State` and survives across runs and across a change of selection, so a
+            // branch with a weaker condition than the chevron's draws an empty
+            // `WarningsView` plus this stack's own spacing with nothing left to collapse it.
             if expanded, canDisclose, let warnings = warningsView {
                 // `ViewThatFits` and not a bare `ScrollView`, because a `ScrollView` is
                 // greedy in its scroll axis: it would sit at the full 200 under a two-line
@@ -98,14 +95,19 @@ struct RunStatusBar: View {
     /// Whether the disclosure is offered at all. In «Текст» that is a finished run; in
     /// «Файлы» it is a selected задание that finished, whatever the queue is doing now —
     /// the warnings belong to the file the user is looking at, not to the run in flight.
-    /// Whether the disclosure is offered at all.
+    /// Whether there is a disclosure at all — read by the chevron **and** by the body it
+    /// opens, so the two cannot disagree.
     ///
-    /// Defined as «there is something to show», by asking the same `warningsView` the
-    /// chevron opens. Stating it as a second condition is what put a chevron over an empty
-    /// disclosure: `selectedResult != nil || glossaryProblem != nil` was true with a
-    /// glossary problem and no finished задание, and the view returned nil.
+    /// One property and not two conditions, and that is the whole point. The chevron asked
+    /// `summary != nil` while the expanded branch asked something weaker, so a run that
+    /// left the warnings expanded followed by a clean one drew an empty `WarningsView` and
+    /// its 6 pt of spacing with **no chevron to collapse it** — `expanded` is `@State` and
+    /// survives across runs and across a change of selection. That is precisely the failure
+    /// the comment at the call site has always described, reintroduced by splitting the
+    /// condition in two.
     private var canDisclose: Bool {
-        queue == nil ? model.state == .finished : warningsView != nil
+        guard summary != nil, warningsView != nil else { return false }
+        return queue != nil || model.state == .finished
     }
 
     /// The warnings for whatever this bar is currently describing, or nil if there are none

@@ -189,6 +189,14 @@ struct MainWindowView: View {
                 .onAppear { presented = request }
                 .onDisappear { if presented === request { presented = nil } }
         }
+        // The queue's half of the same trigger. `onRunFinished` re-probes Ollama, and
+        // nothing watched the queue: a thirteen-file run could fail every file to a dead
+        // server and leave the idle line reporting the last known healthy state, with
+        // «Перевести» still enabled on it.
+        .onChange(of: queue.isRunning) { _, running in
+            guard !running else { return }
+            Task { @MainActor in await onRunFinished() }
+        }
         .onChange(of: model.state) { _, new in
             // Same condition `PanelHost` uses for the hotkey path: a state that is no longer
             // `.running` is the point this window may have something new to say about whether
