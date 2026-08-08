@@ -1,16 +1,31 @@
 // Scripts/toolbar-fit.swift
 //
 // The narrowest window width at which the toolbar shows every item — i.e. the width below
-// which macOS starts pushing controls, «Перевести» first, into the » overflow. Compile it,
-// because the interpreter cannot JIT the availability check SwiftUI emits:
+// which macOS starts pushing controls, «Перевести» among them, into the » overflow. Compile
+// it, because the interpreter cannot JIT the availability check SwiftUI emits:
 //
 //     swiftc -O -o /tmp/toolbar-fit Scripts/toolbar-fit.swift && /tmp/toolbar-fit
-//     V=loose /tmp/toolbar-fit      # each label its own toolbar item, as it shipped once
-//     V=bare /tmp/toolbar-fit       # no labels at all, as it shipped before that
-//     V=paired-short /tmp/toolbar-fit
+//     V=paired /tmp/toolbar-fit   # a Text beside a Picker inside one toolbar item
+//     V=loose  /tmp/toolbar-fit   # each label its own toolbar item
+//     V=bare   /tmp/toolbar-fit   # no labels at all
 //
 // `NSToolbar.visibleItems` excludes overflowed items, so the test is exact rather than
 // visual. The sweep steps 10 pt, so a reported figure is the true threshold rounded up.
+//
+// The default `menu` variant is what the app ships: one `Menu` per control with its label
+// folded into the button title. The other three are the arrangements it replaced, kept
+// because the numbers between them are the argument for the one that shipped. What the
+// widths cannot show is the reason those three were wrong — a `Picker` inside a toolbar item
+// draws a bezelled control inside the item's own chrome, so a `Text` beside it makes the item
+// a container of two things rather than one control. That was measured on the bundle, not
+// here; `docs/PLATFORM-TRAPS.md` carries it.
+//
+// **This harness and the bundle disagree about the shipped arrangement, and the bundle wins.**
+// `menu` reports 810 pt here; the running app fits all five items at 700 pt with every
+// selection tried, including the longest language name on both sides. The same thing happened
+// with `Scripts/window-title.swift`, where a probe said one assignment was enough and the app
+// said otherwise. Use this to compare arrangements against each other — that is what the
+// four figures are for — and measure the absolute number on the bundle.
 import SwiftUI
 import AppKit
 
@@ -24,7 +39,7 @@ let shortLanguages = ["русский", "английский", "немецки�
                       "португальский", "итальянский", "китайский", "японский"]
 let tones = ["нейтральный", "деловой", "разговорный", "технический", "буквальный"]
 
-var variant: String { ProcessInfo.processInfo.environment["V"] ?? "paired-short" }
+var variant: String { ProcessInfo.processInfo.environment["V"] ?? "menu" }
 var langs: [String] { variant.contains("short") ? shortLanguages : languages }
 var size: ControlSize { variant.contains("small") ? .small : .regular }
 var forced: Bool { variant.contains("small") || variant.contains("regular") }
@@ -39,7 +54,15 @@ struct Probe: App {
     }
 
     @ToolbarContentBuilder var bar: some ToolbarContent {
-        if variant.hasPrefix("bare") {
+        if variant.hasPrefix("menu") {
+            // What ships: one control per item, the label inside its title.
+            ToolbarItem(placement: .navigation) { menu("Из", "Определить", langs) }
+            ToolbarItem(placement: .navigation) {
+                Button { } label: { Image(systemName: "arrow.left.arrow.right") }
+            }
+            ToolbarItem(placement: .navigation) { menu("В", "По правилу", langs) }
+            ToolbarItem(placement: .navigation) { menu("Тон", "По умолчанию", tones) }
+        } else if variant.hasPrefix("bare") {
             // What shipped before the labels were added: three bare pickers, a swap and the
             // primary action.
             ToolbarItemGroup(placement: .navigation) {
@@ -64,6 +87,19 @@ struct Probe: App {
             ToolbarItem(placement: .navigation) { pair("Тон", "По умолчанию", tones) }
         }
         ToolbarItem(placement: .primaryAction) { Button("Перевести") { } }
+    }
+
+    @ViewBuilder func menu(_ label: String, _ current: String, _ items: [String]) -> some View {
+        Menu {
+            Picker("", selection: .constant(current)) {
+                ForEach(items, id: \.self) { Text($0).tag($0) }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            Text(label + " ").foregroundStyle(.secondary) + Text(current)
+        }
+        .fixedSize()
     }
 
     @ViewBuilder func pair(_ label: String, _ current: String, _ items: [String]) -> some View {

@@ -206,20 +206,13 @@ struct MainWindowView: View {
                          onMute: mute,
                          onRetry: { Task { await action.start() } })
         }
-        // 840, not the drawing's 700, and the extra 140 pt is the drawing being wrong about
-        // this rather than the app being greedy. The drawing's toolbar is 22 pt-tall pills
-        // sized to the string showing; a real `NSPopUpButton` is as wide as its widest menu
-        // item and sits in a macOS toolbar at the platform's own control size. Swept with
-        // `Scripts/toolbar-fit.swift`, this row needs 830 pt before `NSToolbar` stops pushing
-        // items into the » overflow — and the first thing it pushes is «Перевести».
-        //
-        // A minimum that guarantees the primary action is hidden is not a minimum worth
-        // keeping. 840 is the measured 830 plus one step of the sweep, because the threshold
-        // depends on the system font and on the longest language name, and both can move.
-        // `.controlSize` is deliberately **not** used to buy the difference: measured at 10 pt
-        // between the toolbar default and `.regular`, which is not worth leaving the
-        // platform's own metrics for.
-        .frame(minWidth: 840, minHeight: 480)
+        // The drawing's own 700, restored. It was raised to 840 when the toolbar held three
+        // `Picker`s each sized to its longest menu row and a separate `Text` beside it; with
+        // the labels folded into `Menu` titles the row fits from 650 pt as it usually stands
+        // and 680 pt with the longest names selected on both sides, both measured on the
+        // bundle against `NSToolbar.visibleItems`. 700 therefore covers every selection with
+        // room to spare, and a number the drawing specifies does not have to be argued with.
+        .frame(minWidth: 700, minHeight: 480)
         .toolbar { toolbar }
         // The window's title is **not** drawn, and the drawing is deliberate about it: every
         // settings pane in it has a centred title bar of its own, and the main window has
@@ -294,47 +287,35 @@ struct MainWindowView: View {
     }
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
-        // **Each label travels with its control, in one toolbar item.**
+        // **One control per toolbar item, and the label lives inside it.**
         //
-        // A `ToolbarItemGroup`'s children are separate toolbar items, not one — measured:
-        // the group below used to produce 8 items and now produces 5. That is not
-        // bookkeeping. macOS spaces items apart and overflows them one at a time, so seven
-        // loose children meant «Из» sat a toolbar gap away from the pop-up it names, and a
-        // narrow window could push the pop-up into the » overflow and leave its label behind
-        // on the bar.
+        // Measured on the bundle: a `ToolbarItem` gets its own 36 pt chrome, and a
+        // `Picker` inside it renders a `SwiftUIPopupButton` that is *also* 36 pt with
+        // `isBordered = true`. Putting a `Text` beside that picker — the arrangement this
+        // replaces — therefore drew a bezelled pill inside the item's own capsule. Two
+        // chrome layers for one control, which is what «looks bad» was.
         //
-        // It is also 60 pt of width. `Scripts/toolbar-fit.swift` sweeps the window and asks
-        // `NSToolbar.visibleItems` when everything is on screen: 960 pt loose against 900 pt
-        // paired, and 830 pt paired once the longest language name stopped carrying a
-        // parenthetical (see `Language.russianName`). The window opens at 900, so the loose
-        // arrangement hid «Перевести» in the overflow **at the default size** — the state the
-        // screenshot that prompted this caught.
+        // The framework was already saying so: SwiftUI drops a `Picker`'s title inside a
+        // toolbar, because a macOS toolbar is a row of controls and not a form. A label
+        // beside a control is a form. So the label goes *into* the control, which is what
+        // Xcode's own scheme selector does, and each item then has the shape the two items
+        // that always looked right already had — the ⇄ button and «Перевести», both one
+        // control filling their 36 pt.
+        //
+        // `Menu` rather than `Picker` because only a menu lets the button title differ from
+        // the selection: the rows must read «русский», while the button reads «В русский».
+        // The selection itself is still a `Picker`, inline, so the menu keeps its check mark
+        // and the binding stays exactly what it was.
         ToolbarItem(placement: .navigation) {
-            // **The label is drawn, not declared.** A `Picker`'s own title is not rendered
-            // inside a toolbar — SwiftUI keeps it only as the accessibility label — so this
-            // row shipped as three unlabelled pop-ups reading «Определить», «По правилу»,
-            // «По умолчанию», with nothing on screen saying which chose the source, which the
-            // target and which the tone. No reading of the source could catch it: the code
-            // says `Picker("Из", …)` in plain sight.
-            //
-            // `.labelsHidden()` keeps that title as the accessibility label, so VoiceOver
-            // still says «Из» and does not meet the word twice.
-            //
-            // 6 pt inside the pair against the toolbar's own spacing between items — the
-            // contrast is what makes a label read as belonging to the control beside it.
-            HStack(spacing: 6) {
-                Text("Из").foregroundStyle(.secondary)
-                // `russianName`, not `shortCode`. The settings name these languages in words
-                // and this window used to name them in codes — one vocabulary under two
-                // names, which is exactly what `CONTEXT.md` exists to prevent. It is also why
-                // the width problem above was solved by shortening one name rather than by
-                // going back to «RU»/«EN» here.
+            directionMenu(label: "Из", value: model.sourceOverride?.russianName ?? "Определить",
+                          help: "С какого языка переводить") {
                 Picker("Из", selection: $model.sourceOverride) {
                     Text("Определить").tag(Language?.none)
                     ForEach(Language.allCases, id: \.self) {
                         Text($0.russianName).tag(Language?.some($0))
                     }
                 }
+                .pickerStyle(.inline)
                 .labelsHidden()
             }
         }
@@ -348,26 +329,28 @@ struct MainWindowView: View {
             .help("Перевести в обратную сторону")
         }
         ToolbarItem(placement: .navigation) {
-            HStack(spacing: 6) {
-                Text("В").foregroundStyle(.secondary)
+            directionMenu(label: "В", value: model.targetOverride?.russianName ?? "По правилу",
+                          help: "На какой язык переводить") {
                 Picker("В", selection: $model.targetOverride) {
                     Text("По правилу").tag(Language?.none)
                     ForEach(Language.allCases, id: \.self) {
                         Text($0.russianName).tag(Language?.some($0))
                     }
                 }
+                .pickerStyle(.inline)
                 .labelsHidden()
             }
         }
         ToolbarItem(placement: .navigation) {
-            HStack(spacing: 6) {
-                Text("Тон").foregroundStyle(.secondary)
+            directionMenu(label: "Тон", value: model.toneOverride?.russianName ?? "По умолчанию",
+                          help: "Насколько вольно переводить") {
                 Picker("Тон", selection: $model.toneOverride) {
                     Text("По умолчанию").tag(Tone?.none)
                     ForEach(Tone.allCases, id: \.self) {
                         Text($0.russianName).tag(Tone?.some($0))
                     }
                 }
+                .pickerStyle(.inline)
                 .labelsHidden()
             }
         }
@@ -388,6 +371,29 @@ struct MainWindowView: View {
                     .disabled(!status.isHealthy || !action.canStart)
             }
         }
+    }
+
+    /// One toolbar control: «Из русский», the label in secondary and the value after it.
+    ///
+    /// Concatenated `Text` rather than an `HStack`, and that is the whole point of this
+    /// helper — an `HStack` would be two views inside the item, which is the arrangement
+    /// whose chrome nested. A concatenation is one `Text`, so the menu button has one title
+    /// and the item has one control.
+    ///
+    /// It also decouples the button's width from the menu's contents. An `NSPopUpButton` is
+    /// as wide as its widest row; a `Menu`'s button is as wide as the title it is given. The
+    /// toolbar therefore no longer pays for the longest language name in every picker — see
+    /// `Language.russianName`, where that cost is recorded.
+    @ViewBuilder private func directionMenu(label: String, value: String, help: String,
+                                            @ViewBuilder content: () -> some View) -> some View {
+        Menu {
+            content()
+        } label: {
+            Text(label + " ").foregroundStyle(.secondary) + Text(value)
+        }
+        .help(help)
+        // Without it the menu takes whatever width the toolbar offers rather than its title's.
+        .fixedSize()
     }
 
     /// Whichever model is currently asking — but a sheet already up stays up.
