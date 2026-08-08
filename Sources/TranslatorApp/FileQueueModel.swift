@@ -123,6 +123,21 @@ final class FileQueueModel {
         job.state == .finished && job.result != nil && job.result?.savedTo == nil
     }
 
+    /// Whether this задание has text worth writing somewhere the user picks.
+    ///
+    /// Wider than `needsSaving` by exactly one state, and narrower than it in what it
+    /// offers. `FileJob.State.interrupted` promises the partial translation is kept, and
+    /// until now the row offered no way to get it onto disk at all — the only route was
+    /// selecting it and copying. But «Сохранить рядом с исходником» writes the canonical
+    /// `techdoc-en.ru.md`, and a half-finished translation under that name is
+    /// indistinguishable from a complete one; a partial goes out only through «Сохранить
+    /// как…», where the user names it themselves.
+    func canSaveElsewhere(_ job: FileJob) -> Bool {
+        guard job.result?.savedTo == nil, let final = job.result?.final, !final.isEmpty
+        else { return false }
+        return job.state == .finished || job.state == .interrupted
+    }
+
     /// The name the automatic save would have used, for the save panel's default.
     func suggestedName(for id: FileJob.ID) -> String {
         guard let job = jobs.first(where: { $0.id == id }) else { return "" }

@@ -207,7 +207,16 @@ struct MainWindowView: View {
         // translation the user never asked to stop. Now the only ways out are the sheet's
         // own button and its Esc, both of which hold the specific request they were built
         // with.
-        .sheet(item: Binding(get: { termsRequest }, set: { _ in })) { request in
+        // `termsRequest` is read **here**, in `body`, and the binding hands back the value
+        // that read produced. Reading it only inside the getter leaves the observation of
+        // three different `@Observable` models to whenever SwiftUI happens to invoke that
+        // getter, which is a presentation-update detail this environment cannot render and
+        // check — and if it does not register, the failure is the one
+        // `DocumentTermsRequest` exists to prevent: a run on a continuation with no sheet
+        // on screen. The sharp case is the second and third sheet of a queue run with the
+        // window already open and frontmost, where the escalation's `openWindow` and
+        // `activateThisApp()` change nothing and cannot force the update.
+        .sheet(item: Binding(get: { [request = termsRequest] in request }, set: { _ in })) { request in
             DocumentTermsView(request: request,
                               showsSuppress: queue.pendingTermsRequest === request,
                               onAddToGlossary: { promoteToGlossary(request) })

@@ -58,9 +58,17 @@ final class QueueClient: LLMClient, @unchecked Sendable {
         }
         return AsyncThrowingStream { continuation in
             let producer = Task {
-                if hold { try? await Task.sleep(for: .seconds(10)) }
-                else if paced { try? await Task.sleep(for: .milliseconds(60)) }
-                if !reply.isEmpty { continuation.yield(.token(reply)) }
+                // A held call delivers its content **first** and then waits, so a cancel
+                // landing in the wait leaves a genuine partial translation behind. Waiting
+                // first would leave nothing, which is a different case — and the one the
+                // engine reports as an empty reply rather than as interrupted text.
+                if hold {
+                    if !reply.isEmpty { continuation.yield(.token(reply)) }
+                    try? await Task.sleep(for: .seconds(10))
+                } else {
+                    if paced { try? await Task.sleep(for: .milliseconds(60)) }
+                    if !reply.isEmpty { continuation.yield(.token(reply)) }
+                }
                 continuation.yield(.done(ChatStats(loadDurationMS: 1, promptEvalCount: 1,
                     promptEvalDurationMS: 1, evalCount: reply.count, evalDurationMS: 1)))
                 continuation.finish()
@@ -1140,4 +1148,55 @@ private func savingModel(_ prefix: String,
     text.sourceOverride = .en
     text.targetOverride = .de
     #expect(PrimaryAction.forMode(.files, text: text, queue: queue).canSwap)
+}
+
+// MARK: - Review round 9
+
+@MainActor @Test func anInterruptedFileCanStillBeSavedButOnlyUnderAChosenName() async {
+    // `FileJob.State.interrupted` promises the partial text is kept, and the row offered no
+    // way to get it onto disk at all. It goes out through «Сохранить как…» only: «Сохранить
+    // рядом с исходником» writes the canonical name, and half a document under it is
+    // indistinguishable from a whole one.
+    let client = QueueClient(replies: ["частичный\nперевод"], paced: true, holdCallAtIndex: 0)
+    let model = makeQueueModel(client, prefix: "queue-partial-save")
+    model.add([queueJob("a.md", "first")])
+
+    let run = Task { await model.run() }
+    await waitUntilCalled(client)
+    model.cancel()
+    await run.value
+
+    #expect(model.jobs[0].state == .interrupted)
+    #expect(!model.needsSaving(model.jobs[0]))       // no canonical-name link
+    #expect(model.canSaveElsewhere(model.jobs[0]))   // but «Сохранить как…» is offered
+}
+
+@MainActor @Test func aFinishedFileIsOfferedBothWaysAndASavedOneNeither() async {
+    let model = savingModel("queue-save-both", besideSource: { source, _, _ in .saved(source) }) {
+        $0.saveNextToSource = false
+    }
+    model.add([queueJob("a.md", "first")])
+    await model.run()
+
+    #expect(model.needsSaving(model.jobs[0]))
+    #expect(model.canSaveElsewhere(model.jobs[0]))
+
+    model.saveBesideSource(model.jobs[0].id)
+
+    #expect(!model.needsSaving(model.jobs[0]))
+    #expect(!model.canSaveElsewhere(model.jobs[0]))
+}
+
+@MainActor @Test func anInterruptedFileWithNothingInItIsNotOfferedForSaving() async {
+    let client = QueueClient(replies: [""], paced: true, holdCallAtIndex: 0)
+    let model = makeQueueModel(client, prefix: "queue-partial-empty")
+    model.add([queueJob("a.md", "first")])
+
+    let run = Task { await model.run() }
+    await waitUntilCalled(client)
+    model.cancel()
+    await run.value
+
+    #expect(model.jobs[0].state == .interrupted)
+    #expect(!model.canSaveElsewhere(model.jobs[0]))
 }

@@ -26,13 +26,30 @@ enum TranslatedFileWriter {
         let destination = OutputNaming.destination(
             for: source, target: target,
             exists: { FileManager.default.fileExists(atPath: $0.path) })
+        // Written to a temporary sibling and moved into place, rather than straight to the
+        // destination. Two things have to hold at once and a single `write` cannot give both:
+        //
+        // - **Never clobber.** `OutputNaming` picks a free name and this writes, and another
+        //   process can create the file in between. Losing that race must cost a numbered
+        //   name, not a document — `moveItem` refuses an occupied destination, which is what
+        //   `aMoveIntoPlaceRefusesToClobberAnExistingFile` pins.
+        // - **Never leave half a document.** A plain write killed partway through a 2 MB
+        //   translation leaves a truncated file beside the source that looks finished and
+        //   that `OutputNaming` will thereafter treat as taken.
+        //
+        // `[.withoutOverwriting, .atomic]` is the obvious answer and is **not available**:
+        // measured — Foundation does not return an error for that pair, it traps with
+        // «withoutOverwriting is not supported with atomic», so taking it would have shipped
+        // a crash on every save. The temporary is a sibling so the move is a rename on the
+        // same volume, and it is removed if anything below fails.
+        let temporary = destination.deletingLastPathComponent()
+            .appendingPathComponent(".\(destination.lastPathComponent).\(UUID().uuidString).partial")
         do {
-            // `.withoutOverwriting` and not a plain write: `OutputNaming` checks for a
-            // free name and this writes, and another process can create the file in
-            // between. Losing that race must cost a numbered name, not a document.
-            try Data(text.utf8).write(to: destination, options: [.withoutOverwriting])
+            try Data(text.utf8).write(to: temporary, options: .atomic)
+            try FileManager.default.moveItem(at: temporary, to: destination)
             return .saved(destination)
         } catch {
+            try? FileManager.default.removeItem(at: temporary)
             // The error's own `localizedDescription` is English and names
             // NSCocoaErrorDomain; neither belongs on a Russian screen. The description is
             // logged for diagnosis — `.public`, deliberately, because `<private>` in

@@ -47,6 +47,12 @@ struct SettingsFilesView: View {
                 Text("techdoc-en.md → techdoc-en.ru.md. Существующий файл не "
                      + "перезаписывается — к имени добавляется номер.")
                     .font(.caption).foregroundStyle(.secondary)
+            }
+
+            // Its own section, although the drawing puts this toggle under «Куда сохранять».
+            // It governs when the queue stops, not where its output goes, and a user hunting
+            // for «почему очередь встала» reads the heading and skips the section.
+            Section("Очередь") {
                 Toggle("Останавливаться на предупреждениях", isOn: $settings.stopOnWarnings)
                 Text("Иначе очередь идёт до конца, а разметку и термины можно посмотреть "
                      + "у каждого файла после.")

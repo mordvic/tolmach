@@ -52,3 +52,40 @@ private func scratchDirectory() -> URL {
     #expect(message.contains("Не удалось сохранить"))
     #expect(!message.contains("NSCocoaErrorDomain"))
 }
+
+@Test func aMoveIntoPlaceRefusesToClobberAnExistingFile() throws {
+    // The guarantee the whole naming rule rests on, pinned against Foundation rather than
+    // assumed. `.withoutOverwriting` cannot be combined with `.atomic` — measured: Foundation
+    // does not return an error for that pair, it traps with «withoutOverwriting is not
+    // supported with atomic» — so the write goes to a temporary sibling atomically and then
+    // moves, and it is `moveItem` that has to refuse.
+    let directory = scratchDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let taken = directory.appendingPathComponent("taken.md")
+    try Data("не трогать".utf8).write(to: taken)
+    let temporary = directory.appendingPathComponent("temp")
+    try Data("новое".utf8).write(to: temporary, options: .atomic)
+
+    #expect(throws: (any Error).self) {
+        try FileManager.default.moveItem(at: temporary, to: taken)
+    }
+    #expect(try String(contentsOf: taken, encoding: .utf8) == "не трогать")
+}
+
+@Test func aTornWriteLeavesNoHalfDocumentBesideTheSource() throws {
+    // The destination only ever appears complete: the bytes land in a temporary sibling
+    // first, so a process killed or a disk filled partway through leaves that behind rather
+    // than a truncated file that OutputNaming would thereafter treat as «taken».
+    let directory = scratchDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let source = directory.appendingPathComponent("doc.md")
+    try Data("source".utf8).write(to: source)
+
+    guard case let .saved(written) = TranslatedFileWriter.write("перевод", beside: source, target: .ru)
+    else { Issue.record("expected the write to succeed"); return }
+
+    #expect(try String(contentsOf: written, encoding: .utf8) == "перевод")
+    // Nothing left over.
+    let leftovers = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+    #expect(leftovers.sorted() == ["doc.md", "doc.ru.md"])
+}

@@ -34,6 +34,7 @@ struct FileQueuePane: View {
                     ForEach(queue.jobs) { job in
                         FileQueueRow(job: job,
                                      needsSaving: queue.needsSaving(job),
+                                     canSaveElsewhere: queue.canSaveElsewhere(job),
                                      onSaveBeside: { queue.saveBesideSource(job.id) },
                                      onSaveAs: { saveAs(job) },
                                      onReveal: { reveal(job) })
@@ -106,6 +107,7 @@ struct FileQueuePane: View {
 private struct FileQueueRow: View {
     let job: FileJob
     let needsSaving: Bool
+    let canSaveElsewhere: Bool
     let onSaveBeside: () -> Void
     let onSaveAs: () -> Void
     let onReveal: () -> Void
@@ -135,6 +137,12 @@ private struct FileQueueRow: View {
             if let problem = job.saveProblem {
                 Text(problem).font(.caption).foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+            // An interrupted задание keeps its partial text, and «Сохранить как…» is the
+            // only way it reaches disk: the canonical name is reserved for a translation
+            // that finished, because half a document under it looks like a whole one.
+            if job.state == .interrupted, canSaveElsewhere {
+                Button("Сохранить как…", action: onSaveAs).buttonStyle(.link).font(.caption)
             }
             // The drawing puts the warning count and the save action on one line, and they
             // belong together: both are «what is left to do about this file».
