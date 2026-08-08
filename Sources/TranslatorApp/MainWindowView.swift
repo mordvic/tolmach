@@ -227,15 +227,20 @@ struct MainWindowView: View {
                 .interactiveDismissDisabled()
                 .onAppear { presented = request }
                 .onDisappear {
+                    // Clears the pin and **does not cancel**. It used to cancel here, as
+                    // insurance against a sheet taken away without an answer — and that
+                    // turned an ordinary action into a silent kill: ⌘W tears down this
+                    // view, so closing the window during a queue's review interrupted the
+                    // file and abandoned the eleven behind it. `TranslatorApp.launch()`
+                    // says the opposite in as many words, that ⌘W during a run is survivable.
+                    //
+                    // The insurance was not needed either. `termsRequest` reads the models'
+                    // own `pendingTermsRequest`, which outlives this view, and `presented`
+                    // is `@State` that dies with it — so a reopened window finds the request
+                    // still waiting and presents it again. What remains unverifiable from
+                    // here is whether SwiftUI re-presents without the window being closed
+                    // and reopened; `docs/OPEN-ITEMS.md` carries that.
                     if presented === request { presented = nil }
-                    // Insurance, not the normal path. The sheet has no cancel button by
-                    // design and `.interactiveDismissDisabled()` makes Esc the only escape,
-                    // so a dismissal that reaches here *unanswered* means something took the
-                    // sheet away without a decision — and leaving it at that is the
-                    // «suspended forever» failure `DocumentTermsRequest` exists to prevent,
-                    // one layer up. Answered requests are untouched: `cancel()` after a
-                    // `proceed()` is already a no-op.
-                    request.cancel()
                 }
         }
         // The queue's half of the same trigger. `onRunFinished` re-probes Ollama, and

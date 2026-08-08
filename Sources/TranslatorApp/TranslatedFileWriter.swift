@@ -91,7 +91,19 @@ enum TranslatedFileWriter {
     /// possible in the first place.
     static func write(_ text: String, to destination: URL) -> SaveOutcome {
         do {
-            try Data(text.utf8).write(to: destination, options: .atomic)
+            // `.atomic` first, because a torn write is worth avoiding — but not at the cost
+            // of this path, which is the **only** way out of a refused write. `.atomic`
+            // creates a sibling temporary and renames it, so it needs the *directory*, while
+            // the save panel's grant is for the *file* the user named. If those differ, the
+            // atomic form fails where a direct write would have succeeded, and the user is
+            // left with no route at all. Whether they differ is unverified — it is part of
+            // the same TCC probe `docs/OPEN-ITEMS.md` carries — so this does not depend on
+            // the answer: try the safer form, fall back to the one that needs less.
+            do {
+                try Data(text.utf8).write(to: destination, options: .atomic)
+            } catch {
+                try Data(text.utf8).write(to: destination)
+            }
             return .saved(destination)
         } catch {
             // Same reasoning as above: the description names the file the user chose.
