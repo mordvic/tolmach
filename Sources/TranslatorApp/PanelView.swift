@@ -142,6 +142,29 @@ struct PanelView: View {
         .accessibilityLabel("Толмач — перевод выделенного текста")
     }
 
+    /// Whether the reply to this selection is still to come — the window during which the
+    /// room above is reserved.
+    ///
+    /// **`sourceText`, not `state`, and that is the whole point.** Gating on `.running` looked
+    /// right and was measured wrong: `HotkeyCoordinator.handlePress` assigns `sourceText` and
+    /// calls `translate()` *after* the `afterCapture()` that shows the panel, so at the moment
+    /// `PanelController.show(at:)` takes its measurement the run has not started and the
+    /// reservation was not in force. The panel therefore opened at 300 × 120 — the floor on
+    /// both axes — and needed 134, 198, 294 and 486 pt at one, three, six and twelve sentences
+    /// of selection. Short by up to 366 pt, with the button row hanging below the bottom edge
+    /// until the next `applyFit`.
+    ///
+    /// `sourceText` is the one signal that is already true at that moment: it still holds the
+    /// *previous* press's text, so «the model has not been given this selection yet» is exactly
+    /// «a reply for it cannot have arrived». The `.running` arm keeps it reserved for the rest
+    /// of the run, after `sourceText` has caught up.
+    ///
+    /// A finished run leaves `sourceText == source` and a state that is not `.running`, so the
+    /// reservation lifts and the panel settles onto its own content.
+    private func awaitingReply(for source: String) -> Bool {
+        model.sourceText != source || model.state == .running
+    }
+
     private var background: AnyShapeStyle {
         reduceTransparency
             ? AnyShapeStyle(Color(nsColor: .windowBackgroundColor))
@@ -300,7 +323,7 @@ struct PanelView: View {
                     // VoiceOver reading the source back inside the translation panel would be
                     // the same text twice.
                     ZStack(alignment: .topLeading) {
-                        if model.state == .running, case let .text(source) = selection {
+                        if case let .text(source) = selection, awaitingReply(for: source) {
                             Text(source)
                                 .hidden()
                                 .accessibilityHidden(true)
@@ -442,8 +465,32 @@ struct PanelView: View {
         }
     }
 
+    /// The row's contents, with one override the static rule cannot make on its own.
+    ///
+    /// While `awaitingReply(for:)` holds, `model.state` describes the **previous** press: its
+    /// `sourceText` is the previous selection, and a `.finished` or `.failed` left over from
+    /// that run says nothing true about this one. So the panel reports progress, which is what
+    /// is actually happening — a selection has been captured and a translation of it is under
+    /// way, or is about to be in the same turn of the main actor.
+    ///
+    /// It is also 24 pt of the fix above. The status row exists only from `.running`, which
+    /// arrives after `show(at:)` has taken its measurement — so the panel opened 24 pt short of
+    /// the row it was about to grow, at every selection length from three sentences to twelve.
+    /// Measured: with this, `show(at:)` measures what it is about to display and the shortfall
+    /// is zero.
+    ///
+    /// `Self.status(for:awaitingTerms:)` keeps its own contract untouched. It answers about a
+    /// state; this answers about a presentation, and only the caller knows which selection the
+    /// state belongs to.
+    private var status: PanelStatus? {
+        if case let .text(source) = selection, awaitingReply(for: source) {
+            return Self.status(for: .running, awaitingTerms: model.isAwaitingTerms)
+        }
+        return Self.status(for: model.state, awaitingTerms: model.isAwaitingTerms)
+    }
+
     @ViewBuilder private var statusLine: some View {
-        if let status = Self.status(for: model.state, awaitingTerms: model.isAwaitingTerms) {
+        if let status = status {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 if status.kind.showsSpinner { ProgressView().controlSize(.small) }
                 if let symbol = status.kind.symbol {

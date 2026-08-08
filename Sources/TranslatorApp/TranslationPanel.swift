@@ -340,6 +340,19 @@ final class PanelController: NSObject, NSWindowDelegate {
         // exactly this reason. What is needed here is only *a* size: somewhere to put the panel
         // and a corner to anchor it by. `applyFit` corrects both as the reply arrives.
         //
+        // **That is no longer the whole story for a `.text` press, and the difference is the
+        // point of this paragraph.** `PanelView` reserves the reply's room from `selection`,
+        // and it decides whether to by comparing `model.sourceText` against that selection —
+        // which is stale here, and is exactly what makes «a reply has not arrived» true at
+        // this instant. So this measurement now sizes the panel for the run that is about to
+        // start rather than for the one that just ended. Measured through this call: it opened
+        // at 300 × 120, the floor on both axes, against content needing up to 486 pt; it now
+        // opens covering what the run needs, and `applyFit` has nothing to correct.
+        //
+        // What survives unchanged is the reasoning above for *why* it cannot simply read the
+        // model: it still cannot, and the fix was to find a signal that is true before the
+        // model is written rather than to reorder the press.
+        //
         // `selection` is the half that *is* right by now — `handlePress` assigns it before
         // `afterCapture()` — so an `.empty` or a `.notPermitted` press is measured against its
         // real content here and is correct at this point, which matters because neither runs a

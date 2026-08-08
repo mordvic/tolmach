@@ -706,3 +706,51 @@ private let sentence = "Каждый профиль обязан ссылать�
     let size = panelSize(source: source, translated: source, state: .finished)
     #expect(size.height < ceiling / 2)
 }
+
+/// The «при первом открытии кнопки перекрываются нижней границей» report, as an assertion.
+///
+/// It reproduces `HotkeyCoordinator.handlePress`'s ordering, which is what made this hard to
+/// see: the selection is assigned, then the panel is shown, and only then is the model given
+/// the text and asked to translate. So at the instant `show(at:)` measures, the model still
+/// holds the *previous* press — and a reservation gated on `state == .running` was not yet in
+/// force. The panel opened at 300 × 120, the floor on both axes, against content that needed
+/// 134, 198, 294 and 486 pt at one, three, six and twelve sentences: short by up to 366 pt,
+/// with the button row below the bottom edge until the next `applyFit`.
+///
+/// Asserted as «what it opens at covers what it needs», against the same measuring path the
+/// controller uses, because that is the property — not any particular height.
+@MainActor
+@Test func thePanelOpensCoveringWhatTheRunIsAboutToNeed() {
+    for count in [1, 3, 6, 12] {
+        let source = String(repeating: sentence, count: count)
+        let model = TranslationViewModel(
+            translator: Translator(client: ScriptedClient(responses: ["x"])),
+            settings: AppSettings(defaults: InMemoryDefaults(prefix: "firstopen")),
+            glossary: GlossaryStore(url: FileManager.default.temporaryDirectory
+                .appendingPathComponent("g-\(UUID().uuidString).json")))
+        // Exactly what the coordinator has done by the time it calls `afterCapture()`: the
+        // selection is known, the model has not been given it and has not been asked anything.
+        model.state = .idle
+        model.translatedText = ""
+
+        let controller = PanelController { variant in
+            AnyView(PanelView(model: model, selection: .text(source),
+                              scrolls: variant == .installed(scrolls: true),
+                              fillsPanel: variant != .measured))
+        }
+        controller.show(at: CGPoint(x: 600, y: 600))
+        let opened = controller.panel.frame.size
+        defer { controller.hide() }
+
+        // …and now `runTranslation()` starts. What the content needs at the width the panel
+        // has already committed to.
+        model.state = .running
+        let host = NSHostingController(
+            rootView: PanelView(model: model, selection: .text(source),
+                                scrolls: false, fillsPanel: false))
+        host.view.layoutSubtreeIfNeeded()
+        let needed = host.sizeThatFits(in: CGSize(width: opened.width,
+                                                  height: .greatestFiniteMagnitude))
+        #expect(opened.height >= needed.height)
+    }
+}
