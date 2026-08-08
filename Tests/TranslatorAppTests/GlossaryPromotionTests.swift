@@ -6,7 +6,7 @@ import TranslationCore
 @Test func promotingDocumentTermsAddsTheEditedFormAndNotTheModelsOriginal() {
     let promoted = GlossaryPromotion.entries(
         adding: [GlossaryEntry(term: "profile", translations: ["ru": "профиль"])],
-        to: Glossary(entries: []))
+        to: Glossary(entries: []), target: .ru)
     #expect(promoted.contains { $0.term == "profile" && $0.translations["ru"] == "профиль" })
 }
 
@@ -14,7 +14,7 @@ import TranslationCore
     let existing = Glossary(entries: [GlossaryEntry(term: "profile", doNotTranslate: true)])
     let promoted = GlossaryPromotion.entries(
         adding: [GlossaryEntry(term: "Profile", translations: ["ru": "анкета"])],
-        to: existing)
+        to: existing, target: .ru)
     // The user's own entry is the authority; promoting must not quietly retranslate it.
     // Compared case-insensitively, because GlossaryMerge is.
     #expect(promoted.count == 1)
@@ -25,13 +25,13 @@ import TranslationCore
     let existing = Glossary(entries: [GlossaryEntry(term: "slice", translations: ["ru": "срез"])])
     let promoted = GlossaryPromotion.entries(
         adding: [GlossaryEntry(term: "cardinality", translations: ["ru": "кратность"])],
-        to: existing)
+        to: existing, target: .ru)
     #expect(promoted.map(\.term) == ["slice", "cardinality"])
 }
 
 @Test func promotingNothingLeavesTheGlossaryUntouched() {
     let existing = Glossary(entries: [GlossaryEntry(term: "slice")])
-    #expect(GlossaryPromotion.entries(adding: [], to: existing).map(\.term) == ["slice"])
+    #expect(GlossaryPromotion.entries(adding: [], to: existing, target: .ru).map(\.term) == ["slice"])
 }
 
 @Test func aTermWithNoTranslationTypedIntoItIsNotWorthPromoting() {
@@ -40,6 +40,27 @@ import TranslationCore
     let promoted = GlossaryPromotion.entries(
         adding: [GlossaryEntry(term: "slice", translations: ["ru": ""]),
                  GlossaryEntry(term: "profile", translations: [:])],
-        to: Glossary(entries: []))
+        to: Glossary(entries: []), target: .ru)
     #expect(promoted.isEmpty)
+}
+
+@Test func anEntryWhoseTargetTranslationIsEmptyIsDroppedEvenIfAnotherLanguageHasOne() {
+    // Spelled as «any language has something», this rule let through an entry carrying a
+    // stale key for another language with the target's own value cleared — stored as
+    // translations[target] == "", the very shape it exists to drop, and the one
+    // PromptBuilder gates on key-presence rather than value.
+    let promoted = GlossaryPromotion.entries(
+        adding: [GlossaryEntry(term: "slice", translations: ["de": "Schnitt", "ru": ""])],
+        to: Glossary(entries: []), target: .ru)
+    #expect(promoted.isEmpty)
+}
+
+@Test func aDoNotTranslateEntryIsPromotedWithNoTranslationAtAll() {
+    // `requiredTranslation(for:)` answers with the term itself for these, so the guard
+    // passes without a single translation stored — which is right: the term is its own
+    // required form.
+    let promoted = GlossaryPromotion.entries(
+        adding: [GlossaryEntry(term: "StructureDefinition", doNotTranslate: true)],
+        to: Glossary(entries: []), target: .ru)
+    #expect(promoted.map(\.term) == ["StructureDefinition"])
 }

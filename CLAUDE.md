@@ -15,7 +15,7 @@ to disk.
 ```bash
 swift build                       # build everything
 swift build --build-tests         # must stay at zero warnings — this is a standing rule
-swift test                        # ~557 tests, all offline (fake LLMClient), about a second
+swift test                        # the whole suite, offline (fake LLMClient), about a second
 swift test --filter someTestName  # one test, by name (Swift Testing function names)
 swift test --filter TranslationCoreTests   # one test target
 
@@ -24,6 +24,11 @@ swift Scripts/make-icon.swift build/AppIcon.icns   # redraw the icon; make-app-b
 swift run translate-cli --to ru --tone technical "text"   # needs a live Ollama; reads stdin if no text
 swift run acceptance              # live-Ollama corpus run; MUST run from the package root (reads ./corpus)
 ```
+
+No count here on purpose: it went stale twice in one review cycle, and a number nothing
+checks is a contract nobody can keep. What is worth stating is what the line above already
+says — the suite is offline and finishes in about a second, so there is no reason not to
+run it.
 
 `swift test` never touches the network. `translate-cli` and `acceptance` do — `acceptance` is
 the deliberately-not-in-CI harness that measures TTFT, markup integrity and term consistency

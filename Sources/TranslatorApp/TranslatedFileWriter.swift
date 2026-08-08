@@ -42,8 +42,17 @@ enum TranslatedFileWriter {
         // «withoutOverwriting is not supported with atomic», so taking it would have shipped
         // a crash on every save. The temporary is a sibling so the move is a rename on the
         // same volume, and it is removed if anything below fails.
+        // A fixed-length name, and deliberately not one built from the destination's.
+        //
+        // Embedding `lastPathComponent` added 46 bytes to a name that can already be near
+        // the 255-byte filesystem limit: a source with a ~100-character Cyrillic name is
+        // ~200 bytes, its destination ~211, and the temporary then overflowed — so the write
+        // failed with ENAMETOOLONG and the user was told to use «Сохранить как…», a
+        // TCC-flavoured answer to a failure the save panel does not fix, for a file a direct
+        // write would have saved. A UUID is unique on its own; it needs no help from the
+        // name it is standing in for.
         let temporary = destination.deletingLastPathComponent()
-            .appendingPathComponent(".\(destination.lastPathComponent).\(UUID().uuidString).partial")
+            .appendingPathComponent(".tolmach-\(UUID().uuidString).partial")
         do {
             try Data(text.utf8).write(to: temporary, options: .atomic)
             try FileManager.default.moveItem(at: temporary, to: destination)

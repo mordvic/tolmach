@@ -21,14 +21,21 @@ enum GlossaryPromotion {
     /// An addition with nothing typed into its «перевод» is dropped: a term with no required
     /// translation is one `GlossaryVerifier` can never satisfy, so storing it would arm a
     /// warning that nothing can turn off.
-    static func entries(adding additions: [GlossaryEntry], to glossary: Glossary) -> [GlossaryEntry] {
+    static func entries(adding additions: [GlossaryEntry], to glossary: Glossary,
+                        target: Language) -> [GlossaryEntry] {
         let existing = Set(glossary.entries.map { $0.term.lowercased() })
         var seen = existing
         var out = glossary.entries
         for entry in additions {
             let key = entry.term.lowercased()
             guard !seen.contains(key) else { continue }
-            guard entry.doNotTranslate || entry.translations.values.contains(where: { !$0.isEmpty })
+            // Asked of the target language, exactly as the engine's post-review filter asks
+            // it. Spelled as «any language has something» the two doors held different
+            // invariants: an entry carrying a stale key for another language with the
+            // target's own value cleared passed here and was stored as
+            // `translations[target] == ""` — the very shape this rule exists to drop, and
+            // the one `PromptBuilder` gates on key-presence rather than value.
+            guard let required = entry.requiredTranslation(for: target), !required.isEmpty
             else { continue }
             seen.insert(key)
             out.append(entry)

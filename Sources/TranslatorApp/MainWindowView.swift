@@ -163,9 +163,14 @@ struct MainWindowView: View {
                         }
                         Spacer()
                         if mode == .text {
-                            Button("Очистить") { model.sourceText = "" }
+                            // Through `PrimaryAction`, like the menu item it mirrors. Read
+                            // directly, this button stayed live during a run while «Очистить
+                            // исходник» in the menu was disabled — so it emptied the editor
+                            // under a translation still streaming into the pane beside it,
+                            // with no undo. That is the gap the type was introduced to close.
+                            Button("Очистить", action: action.clear)
                                 .buttonStyle(.link)
-                                .disabled(model.sourceText.isEmpty)
+                                .disabled(!action.canClear)
                         } else {
                             Button("Добавить…", action: addFiles)
                                 .buttonStyle(.link)
@@ -337,7 +342,8 @@ struct MainWindowView: View {
     /// drift. Only the subject of the first clause differs.
     private func promoteToGlossary(_ request: DocumentTermsRequest) {
         glossary.replaceEntries(GlossaryPromotion.entries(adding: request.entries,
-                                                          to: glossary.glossary))
+                                                          to: glossary.glossary,
+                                                          target: request.draft.target))
         do {
             try glossary.save()
             glossary.lastProblem = nil
