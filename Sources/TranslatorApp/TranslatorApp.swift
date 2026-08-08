@@ -165,6 +165,17 @@ struct TranslatorApp: App {
                            queue: queue, panelModel: coordinator.panelModel, mode: $mode)
                 .task { await statusModel.refresh(interactiveModel: settings.interactiveModel) }
         }
+        // The drawing's number, and it is the drawing's for a reason: every main-window state
+        // in the design is 900×520, and the two panes were drawn against that width — 450 pt
+        // each in «Текст», which is what makes a 900-character часть fit without wrapping into
+        // a column. Undeclared, SwiftUI picked its own: the comment above records a 900x492
+        // window, so the height was 28 pt short and the split was never stated at all.
+        //
+        // `minWidth`/`minHeight` stay on `MainWindowView` and are **not** the same statement:
+        // 700×480 is how small the user may drag this window, and this is how big it opens the
+        // first time. A default is remembered per window afterwards, so this governs the first
+        // launch and every fresh window state, not what the user has since resized to.
+        .defaultSize(width: 900, height: 520)
         // The app had no commands at all, and SwiftUI's defaults for this scene combination
         // are not a menu bar anyone would design. Measured on a copy of these three scenes at
         // `.accessory` activation policy, dumping `NSApp.mainMenu`: «Вид» is installed and

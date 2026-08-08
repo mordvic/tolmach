@@ -66,6 +66,7 @@ These changed after the acceptance pass and no one has looked at them.
 | The permission row clearing after granting and returning | It is refreshed on `didBecomeActiveNotification`; the failure it fixes was telling the user their grant had not worked | `SettingsGeneralView.swift` |
 | The icon in Finder, Spotlight and the Accessibility list | Nothing here can see the screen; the rendered PNGs were checked, how macOS composites and caches them was not. Finder caches icons aggressively — a blank sheet right after the first build is a cache artefact, not a failure | `Scripts/make-icon.swift` |
 | The ink tile against a **dark** desktop background | The dark ground was chosen over the parchment one with this trade-off stated and accepted; whether it separates well enough in practice has not been looked at | `Scripts/make-icon.swift`, spec §2.4 |
+| The window **opening** at 900 × 520 | `.defaultSize` is the drawing's number, and nothing here can see a window. Two things it does not answer and a person can: where `HSplitView` puts the divider at that width — the drawing gives «Файлы» a 344 pt left pane and «Текст» an even split — and whether a default is honoured at all on a `Window` scene the user has already resized once, since SwiftUI restores the remembered frame in preference to it | `TranslatorApp.swift` |
 
 **Owed by the UI redesign, Task 4 — the panel sized to its content.** The tests pin the
 numbers the controller computes; none of them can say what the panel looks like.
