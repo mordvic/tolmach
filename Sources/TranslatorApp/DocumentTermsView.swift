@@ -118,8 +118,14 @@ struct DocumentTermsView: View {
                 // that fill for a plain `Button` in a custom sheet is not something this
                 // environment can render and check. Stating the style costs one line and
                 // does not depend on the answer.
-                Button("Перевести") { request.proceed() }
-                    .buttonStyle(.borderedProminent)
+                Button {
+                    request.proceed()
+                } label: {
+                    // On the `Text` and not on the `Button`: the latter is ignored by this
+                    // style. `AccentLabel` carries the measurement and the reason.
+                    Text("Перевести").foregroundStyle(AccentLabel.onAccent)
+                }
+                .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
             }
             .padding(.horizontal, 16).padding(.vertical, 11)

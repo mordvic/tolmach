@@ -353,8 +353,17 @@ struct MainWindowView: View {
             if action.isRunning {
                 Button("Отмена") { action.cancel() }
             } else {
-                Button("Перевести") { Task { await action.start() } }
-                    .buttonStyle(.borderedProminent)
+                // The colour goes on the `Text`, not on the `Button` — measured, by rendering
+                // both to a bitmap and counting pixels: `.foregroundStyle` applied to a
+                // `.borderedProminent` button is ignored (0 dark pixels, identical to the
+                // default), the same modifier on the label's `Text` takes (269 dark). See
+                // `AccentLabel` for why the colour is not simply white.
+                Button {
+                    Task { await action.start() }
+                } label: {
+                    Text("Перевести").foregroundStyle(AccentLabel.onAccent)
+                }
+                .buttonStyle(.borderedProminent)
                     .disabled(!status.isHealthy || !action.canStart)
             }
         }

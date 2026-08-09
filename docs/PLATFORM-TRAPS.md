@@ -246,6 +246,20 @@ tested and cleared, and the probe does not reproduce the failure at all: `MODE=o
 there and fails on the app. So instrument the bundle, not the probe, before trimming any of
 the three. → `WindowTitleHidden` in `Sources/TranslatorApp/MainWindowView.swift`
 
+**`.borderedProminent` ignores `.foregroundStyle` on the button; put it on the label's
+`Text`.** Measured by rendering both to a bitmap and counting pixels: the default draws 284
+light and 0 dark, `.foregroundStyle(.black)` on the `Button` draws exactly the same, and the
+same modifier on the `Text` inside the label draws 269 dark and 0 light. So a prominent
+button's label colour is settable — just not where you would write it.
+→ `AccentLabel`, and its two call sites
+
+**`NSColor.white` and `NSColor(white:alpha:)` are in the generic gray space, and asking one for
+`redComponent` throws.** Not a wrong value — `NSInvalidArgumentException`, which takes the
+process down. Anything doing colour arithmetic must build its constants with
+`NSColor(srgbRed:green:blue:alpha:)` or convert first. It reached a shipping type here and was
+caught by the test written alongside it.
+→ `AccentLabel.white`
+
 **A hosting view installed as a `.titled` window's content view gets a title-bar safe area;
 the detached copy you measure with does not.** Measured on the running bundle:
 `safeAreaInsets.top` is 24 on the installed view of a panel carrying `.fullSizeContentView`,
