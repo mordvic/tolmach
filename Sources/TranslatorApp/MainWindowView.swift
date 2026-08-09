@@ -362,6 +362,7 @@ struct MainWindowView: View {
                     Task { await action.start() }
                 } label: {
                     Text("Перевести").foregroundStyle(PrimaryButtonColour.label)
+                        .padding(.horizontal, PrimaryButtonColour.labelPadding)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(PrimaryButtonColour.fill)

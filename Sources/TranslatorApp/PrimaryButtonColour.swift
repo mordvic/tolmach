@@ -51,4 +51,16 @@ enum PrimaryButtonColour {
     /// Derived rather than written as `.white`, so the fill above can be changed without
     /// quietly taking the label's contrast with it.
     static let label = AccentLabel.label(on: fillColour)
+
+    /// Extra breathing room around the label, per side, on top of what the style already gives.
+    ///
+    /// Measured: `.borderedProminent` puts «Перевести» in a 93 pt control against a 68 pt
+    /// label — 12.4 pt a side — while the toolbar's three `Menu`s come out 134 to 168 pt wide.
+    /// Discounting their chevron leaves roughly 17–18 pt around their own labels, so the
+    /// primary action had the least air of anything in the row it leads. This brings it to
+    /// ~18.4 and the control to 105 pt.
+    ///
+    /// It costs width in a row whose width is already argued over — see `MainWindowView`'s
+    /// minimum — so the fit was re-measured on the bundle rather than assumed.
+    static let labelPadding: CGFloat = 6
 }
