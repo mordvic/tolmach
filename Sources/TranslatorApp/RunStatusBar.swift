@@ -10,7 +10,6 @@ import TranslationCore
 /// warnings stop competing with the editors for the window's minimum height. Collapsed, the
 /// whole region costs one row; the old inline panel claimed 140pt of a 460pt window whether
 /// or not it was being read.
-
 struct RunStatusBar: View {
     let model: TranslationViewModel
     let status: OllamaStatus

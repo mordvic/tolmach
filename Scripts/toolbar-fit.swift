@@ -44,6 +44,11 @@ import AppKit
 // below which macOS starts pushing controls, including «Перевести», into the » overflow.
 // NSToolbar.visibleItems excludes overflowed items, so the test is exact rather than visual.
 
+// **`languages` keeps «китайский (упрощённый)» on purpose, and `RussianCopy` no longer
+// produces it.** That is not drift to be tidied away: this list is what reproduces the 740 and
+// 810 pt figures `RussianCopy` cites as the reason the name was shortened, so removing it
+// would delete the evidence for the decision it documents. `shortLanguages` below is what the
+// app actually shows.
 let languages = ["русский", "английский", "немецкий", "французский", "испанский",
                  "португальский", "итальянский", "китайский (упрощённый)", "японский"]
 let shortLanguages = ["русский", "английский", "немецкий", "французский", "испанский",

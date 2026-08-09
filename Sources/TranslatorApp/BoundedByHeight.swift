@@ -4,10 +4,14 @@ import SwiftUI
 /// Shows a block whole while it fits and scrolls it once it does not, never taller than
 /// `limit`.
 ///
-/// Two surfaces need exactly this and for the same reason: a list of warnings has no length of
-/// its own, and an unbounded one takes the space beside it. The window's disclosure and the
-/// ⌥⌘T panel's pinned block were the same four lines twice, with only the ceiling different —
-/// 200 in a window the user sized, 160 in a panel already capped at 0.6 of the screen.
+/// One surface needs it: the window's warnings disclosure, at 200 pt. A list of warnings has
+/// no length of its own, and an unbounded one takes the space the editors need.
+///
+/// The ⌥⌘T panel was meant to be the second and is not, which is why the ceiling is a
+/// parameter and not a constant here — and why this stays a type rather than four inline
+/// lines. A ceiling there (160 pt) is larger than the panel's whole floor (132), so the block
+/// it bounded outgrew the window at the smallest size the user may drag to; the panel's
+/// warnings scroll with the translation instead. See `PanelView.translation`.
 ///
 /// `ViewThatFits` and not a bare `ScrollView`, and that is the part worth keeping together: a
 /// `ScrollView` is greedy in its scroll axis, so it would sit at the full ceiling under a

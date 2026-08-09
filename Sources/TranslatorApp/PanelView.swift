@@ -250,15 +250,17 @@ struct PanelView: View {
     /// Pinning the row answers the same observation outright instead. The buttons are no
     /// longer in the flow the glossary grows in.
     ///
-    /// **That is now a claim about the buttons only, and it used to say more than it should.**
-    /// It read «a document glossary of any length cannot push the buttons anywhere», which was
-    /// true while this region held the warnings too. Since the panel became three sections it
-    /// holds the translation alone, and the warnings sit in the pinned flow beside the
-    /// buttons — where an unbounded list starves the flexible region instead of pushing the
-    /// buttons out of it. Measured on a 560 × 540 stack: the translation's clip view came out
-    /// 438, 365, 215 and 0 pt tall at 0, 5, 15 and 30 warning rows. The warnings carry their
-    /// own ceiling now, at the site where they are drawn; this comment no longer promises
-    /// anything about them.
+    /// **That is a claim about the buttons only, and it once said more than it should.** It
+    /// read «a document glossary of any length cannot push the buttons anywhere» — true of the
+    /// buttons, and read by a later pass as a promise about the whole bottom of the panel.
+    /// This region holds the translation **and** the warnings, and both grow inside it; what
+    /// the three sections buy is that neither can move the row below.
+    ///
+    /// Moving the warnings out into the pinned flow was tried and taken back out: unbounded
+    /// there they starve the flexible region instead of pushing the buttons out of it —
+    /// measured on a 560 × 540 stack, the translation's clip view came out 438, 365, 215 and
+    /// 0 pt tall at 0, 5, 15 and 30 warning rows — and the ceiling that would have answered
+    /// that is larger than the panel's own floor. The reasoning sits with the warnings, below.
     ///
     /// The two variants do **not** produce the same ideal height, and it would be wrong to
     /// require that they did: measured, the flat one answers 368 at a 400pt width and the
@@ -382,20 +384,21 @@ struct PanelView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
-                    Text(model.translatedText)
-                        .textSelection(.enabled)
-                        // Without this the text is a live region VoiceOver has no warning
-                        // about: it is rewritten on every streamed token, up to ten times a
-                        // second, and an assistive technology that re-reads a changed label
-                        // would talk over itself for the whole of a run. The trait is the
-                        // documented way to say «this changes often, do not follow it» — the
-                        // settle is announced once instead, by `announcement(for:)`.
-                        .accessibilityAddTraits(.updatesFrequently)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        // A `Text` given less width than it wants truncates rather than wrapping,
-                        // and the panel's width is now measured from this view — so without this
-                        // the measurement and the rendering disagree about how many lines there are.
-                        .fixedSize(horizontal: false, vertical: true)
+                        Text(model.translatedText)
+                            .textSelection(.enabled)
+                            // Without this the text is a live region VoiceOver has no warning
+                            // about: it is rewritten on every streamed token, up to ten times a
+                            // second, and an assistive technology that re-reads a changed label
+                            // would talk over itself for the whole of a run. The trait is the
+                            // documented way to say «this changes often, do not follow it» — the
+                            // settle is announced once instead, by `announcement(for:)`.
+                            .accessibilityAddTraits(.updatesFrequently)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            // A `Text` given less width than it wants truncates rather than
+                            // wrapping, and the panel's width is now measured from this view — so
+                            // without this the measurement and the rendering disagree about how
+                            // many lines there are.
+                            .fixedSize(horizontal: false, vertical: true)
                     }
 
                     // Gated on `outcome`, not on `state == .finished`, and the header above is
@@ -423,24 +426,28 @@ struct PanelView: View {
                         // stack does not pad a measured height.
                         let warnings = WarningsView(outcome: outcome, target: model.resolvedTarget)
                         if warnings.hasContent {
-                            // **Bounded, because this is the one part of the static bottom block
-                            // with no length of its own.** The warnings left the scrolling middle
-                            // when the panel became three sections, and unbounded content in a
-                            // pinned flow starves the flexible section beside it: measured on a
-                            // 560 × 540 stack — the 0.6-of-screen cap on a 900 pt display — the
-                            // translation's clip view came out 438, 365, 215 and **0** pt tall at
-                            // 0, 5, 15 and 30 warning rows. At 30 the translation is not merely
-                            // small, it is unreachable: it has no height and the region that
-                            // scrolls is the one it is inside.
+                            // **Unbounded, and inside the scrolling region with the
+                            // translation.** Both halves of that were tried the other way round
+                            // and taken back out, so both are worth stating.
                             //
-                            // The same shape `RunStatusBar` already uses for the same reason, and
-                            // its comment carries the argument: `ViewThatFits` and not a bare
-                            // `ScrollView`, because a `ScrollView` is greedy in its scroll axis
-                            // and would claim the whole cap under a two-line warning.
+                            // Pinned beside the buttons, an unbounded warning list starves the
+                            // flexible section: measured on a 560 × 540 stack — the
+                            // 0.6-of-screen cap on a 900 pt display — the translation's clip
+                            // view came out 438, 365, 215 and **0** pt tall at 0, 5, 15 and 30
+                            // warning rows. At 30 the translation is not merely small, it is
+                            // unreachable.
                             //
-                            // 160 rather than the window's 200: this panel's ceiling is 0.6 of the
-                            // screen, not a window the user sized, and 160 leaves the translation
-                            // at least 280 pt at that ceiling on a 900 pt display.
+                            // The ceiling that would have answered that is what fails: 160 pt
+                            // is larger than this panel's whole floor (`PanelSizer.minHeight`,
+                            // 132), so at the smallest size the user may drag to the pinned
+                            // block alone outgrew the window. Here the warnings' length costs
+                            // only itself. `RunStatusBar` keeps its own `bounded(byHeight: 200)`
+                            // because that block sits in a window the user sized, with no floor
+                            // anywhere near its ceiling.
+                            //
+                            // `docs/OPEN-ITEMS.md` carries whether scrolling them with the
+                            // translation reads right, which is the one part a number cannot
+                            // settle.
                             warnings
                         }
                     }
@@ -460,9 +467,15 @@ struct PanelView: View {
             .frame(maxHeight: fillsPanel ? .infinity : nil, alignment: .top)
 
             // The bottom section, static. What the run has to say about itself belongs with
-            // the buttons that act on it: the status row, the notice and the warnings were
-            // inside the scrolling middle, where a long translation scrolled them out of
-            // reach — and where they took the space the reader wanted for the text.
+            // the buttons that act on it: the status row and the notice were inside the
+            // scrolling middle, where a long translation scrolled them out of reach — and
+            // where they took the space the reader wanted for the text. Both are one row and
+            // cost the pinned block a fixed height.
+            //
+            // The warnings stayed in the middle deliberately, and are the one thing here that
+            // is not a claim about this block: they have no length of their own, and the
+            // ceiling that would give them one is larger than the panel's floor. See their
+            // site above.
             statusLine
             termsNotice
 
@@ -491,7 +504,6 @@ struct PanelView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-
 
             // Only `targetBusy` gets words. `sourceBusy` means this panel's own run is still
             // going, which the spinner and «Отмена» beside it already say; `sameModel` is not
