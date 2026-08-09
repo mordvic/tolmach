@@ -67,6 +67,23 @@ import Foundation
 /// `NSRunningApplication.current.isActive` stays `false`. So `panel.isKeyWindow == true`
 /// here has exactly one possible cause, and deleting `.nonactivatingPanel` from the style
 /// mask turns it `false`. That mutation was run; this test failed on it.
+/// The key-status assertion, run either as a check or as a recorded gap.
+///
+/// Never silently skipped: when the environment cannot hand key status out, the same
+/// expectation runs inside `withKnownIssue`, so the suite is green and the run reports that
+/// this is one of the things it did not manage to check.
+@MainActor
+private func expectKeyWindow(_ controller: PanelController, canGrantKey: Bool) {
+    if canGrantKey {
+        #expect(controller.panel.isKeyWindow)
+    } else {
+        withKnownIssue("этот процесс не выдаёт статус ключевого окна — проверить нечем",
+                       isIntermittent: true) {
+            #expect(controller.panel.isKeyWindow)
+        }
+    }
+}
+
 /// Whether this process can grant key status to a non-activating panel **at all** right now.
 ///
 /// The two tests below assert that *this* panel takes key, and they were written against a
@@ -88,23 +105,6 @@ import Foundation
 /// returns `true` outright, so replacing `makeKeyAndOrderFront` with `orderFront` in
 /// `show(at:)` would keep the suite green while Esc, Enter and ⌘. all stopped working after
 /// ⌥⌘T. Reproduced by exactly that mutation.
-/// The key-status assertion, run either as a check or as a recorded gap.
-///
-/// Never silently skipped: when the environment cannot hand key status out, the same
-/// expectation runs inside `withKnownIssue`, so the suite is green and the run reports that
-/// this is one of the things it did not manage to check.
-@MainActor
-private func expectKeyWindow(_ controller: PanelController, canGrantKey: Bool) {
-    if canGrantKey {
-        #expect(controller.panel.isKeyWindow)
-    } else {
-        withKnownIssue("этот процесс не выдаёт статус ключевого окна — проверить нечем",
-                       isIntermittent: true) {
-            #expect(controller.panel.isKeyWindow)
-        }
-    }
-}
-
 @MainActor
 private func processCanGrantKeyStatus() -> Bool {
     let stock = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 120, height: 80),
@@ -1059,3 +1059,4 @@ private func resizablePanel(text: String)
 
     #expect(settled < awaiting / 2)
 }
+

@@ -20,12 +20,23 @@
 // a container of two things rather than one control. That was measured on the bundle, not
 // here; `docs/PLATFORM-TRAPS.md` carries it.
 //
-// **This harness and the bundle disagree about the shipped arrangement, and the bundle wins.**
-// `menu` reports 810 pt here; the running app fits all five items at 700 pt with every
-// selection tried, including the longest language name on both sides. The same thing happened
-// with `Scripts/window-title.swift`, where a probe said one assignment was enough and the app
-// said otherwise. Use this to compare arrangements against each other — that is what the
-// four figures are for — and measure the absolute number on the bundle.
+// **Treat every absolute figure this prints as unverified.** It has produced two now that did
+// not survive checking. The header once claimed «`menu` reports 810 pt» when it printed 560 —
+// 810 was a *bundle* figure quoted as if it came from here — and the 560 itself was an
+// artefact: the probe window's own `minWidth` was 700, so every sweep step below that was
+// clamped to a width where the row already fitted. With the floor lowered it prints, in one
+// run: menu 550, menu-long 550, paired 980, loose 1050, bare 920 — and `menu-long`, which
+// hands the longest language name to both buttons, agreeing with `menu` to the point is not
+// credible on its face. It is left as it stands rather than tuned until it looks right.
+//
+// So: use it to rank arrangements against each other, which is what the four variants are for
+// and what it has been reliable at. The app's own numbers are taken on the running bundle, by
+// driving the real window and reading `NSToolbar.visibleItems`, and those are the ones its
+// comments cite — `MainWindowView` records 650 pt as the row usually stands and 680 with the
+// longest names on both sides; `RussianCopy` records 740 and 810 for «китайский (упрощённый)»
+// chosen once and twice. When the two disagree the bundle wins, the same lesson
+// `Scripts/window-title.swift` carries, where a probe said one assignment was enough and the
+// app said otherwise.
 import SwiftUI
 import AppKit
 
@@ -49,18 +60,18 @@ struct Probe: App {
     var body: some Scene {
         MenuBarExtra { Text("m") } label: { Image(systemName: "a").task { await run() } }
         Window("Толмач", id: "w") {
-            Color.clear.frame(minWidth: 500, minHeight: 400).toolbar { bar }
+            Color.clear.frame(minWidth: 300, minHeight: 400).toolbar { bar }
         }
     }
 
     @ToolbarContentBuilder var bar: some ToolbarContent {
         if variant.hasPrefix("menu") {
             // What ships: one control per item, the label inside its title.
-            ToolbarItem(placement: .navigation) { menu("Из", "Определить", langs) }
+            ToolbarItem(placement: .navigation) { menu("Из", sourceTitle, langs) }
             ToolbarItem(placement: .navigation) {
                 Button { } label: { Image(systemName: "arrow.left.arrow.right") }
             }
-            ToolbarItem(placement: .navigation) { menu("В", "По правилу", langs) }
+            ToolbarItem(placement: .navigation) { menu("В", targetTitle, langs) }
             ToolbarItem(placement: .navigation) { menu("Тон", "По умолчанию", tones) }
         } else if variant.hasPrefix("bare") {
             // What shipped before the labels were added: three bare pickers, a swap and the
@@ -88,6 +99,13 @@ struct Probe: App {
         }
         ToolbarItem(placement: .primaryAction) { Button("Перевести") { } }
     }
+
+    /// A `Menu`'s button is as wide as the title it is given, so what the toolbar costs
+    /// depends on the *selection* and not on the list. `V=menu` asks about the placeholders —
+    /// the state the row is usually in — and `V=menu-long` about the longest language name,
+    /// which is the case the window's minimum width has to survive.
+    var sourceTitle: String { variant.contains("long") ? langs.max(by: { $0.count < $1.count })! : "Определить" }
+    var targetTitle: String { variant.contains("long") ? langs.max(by: { $0.count < $1.count })! : "По правилу" }
 
     @ViewBuilder func menu(_ label: String, _ current: String, _ items: [String]) -> some View {
         Menu {
@@ -127,7 +145,7 @@ struct Probe: App {
         guard let w = NSApp.windows.first(where: { $0.toolbar != nil }),
               let tb = w.toolbar else { print("no window"); return }
         var fits = -1
-        for width in stride(from: 560, through: 1300, by: 10) {
+        for width in stride(from: 320, through: 1300, by: 10) {
             w.setContentSize(NSSize(width: CGFloat(width), height: 400))
             try? await Task.sleep(for: .milliseconds(45))
             let visible = tb.visibleItems?.count ?? 0

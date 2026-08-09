@@ -58,15 +58,26 @@ struct SourceEditor: View {
             // The editor's own frame moves down by those 8 pt, the stack has no background and
             // the placeholder refuses hits, so the top strip of the pane landed on nothing: a
             // click there neither focused the editor nor placed a caret, and the user had to
-            // aim lower. `contentShape` makes the strip belong to the stack and the tap hands
-            // focus to the editor.
+            // aim lower.
+            //
+            // The gesture covers **the strip and nothing else**. Hung on the stack, as it
+            // first was, its hit region covered the `TextEditor` too — and if SwiftUI resolves
+            // an ancestor tap before the hosted `NSTextView`'s own mouse handling, every click
+            // in the pane would only set focus: no caret placed mid-paragraph, no click-drag
+            // selection, editing a pasted source reduced to appending. Which way that
+            // resolves is exactly the kind of AppKit routing this project refuses to assert
+            // from memory, so the fix is to not depend on the answer.
             //
             // Padding and not an inset inside the editor because there is no way to ask for
             // one: `TextEditor`'s `textContainerInset` is `{0, 0}` and not exposed, and
             // `.contentMargins` does not reach its text — measured, in all three spellings,
             // each leaving the caret flush with the top while the frame stayed full height.
-            .contentShape(Rectangle())
-            .onTapGesture { editorFocused = true }
+            .overlay(alignment: .top) {
+                Color.clear
+                    .frame(height: Self.textTopInset)
+                    .contentShape(Rectangle())
+                    .onTapGesture { editorFocused = true }
+            }
             .overlay(alignment: .bottomTrailing) { SourceFooter(model: model).padding(6) }
         }
         .frame(minWidth: 280)

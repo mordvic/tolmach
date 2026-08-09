@@ -345,9 +345,9 @@ struct PanelView: View {
             // exit at all.
             header
 
-            // Everything whose height the content decides goes in one scrolling region, so
-            // exactly one thing moves. Two scroll views in a panel this size would be worse
-            // than the defect this replaces.
+            // The translation and the warnings that describe it, in one scrolling region:
+            // they are the two things with no length of their own, and inside here their
+            // length costs only itself. Everything below is pinned.
             scrollingMiddle {
                 VStack(alignment: .leading, spacing: 8) {
                     // **The room the reply is about to need, taken before it arrives.**
@@ -398,7 +398,6 @@ struct PanelView: View {
                         .fixedSize(horizontal: false, vertical: true)
                     }
 
-                }
                     // Gated on `outcome`, not on `state == .finished`, and the header above is
                     // gated the same way — because `TranslationViewModel` drops `outcome` at the
                     // exact instant it clears `translatedText`, so "there is an outcome" means
@@ -445,30 +444,6 @@ struct PanelView: View {
                             warnings
                         }
                     }
-
-                // Pinned, and «Отмена» below is why this matters most: it exists only while a run
-                // is in flight, which is exactly when the text above it is still growing. In the
-                // scrolling flow it was pushed further out of reach by every token it was there
-                // to stop.
-                HStack {
-                    // Enabled the moment the first token lands, not only at the end: a run the
-                    // user interrupts leaves partial output that spec 8 says must be kept, and
-                    // keeping it while refusing to copy it would be pointless.
-                    Button("Скопировать", action: onCopy)
-                        .disabled(model.translatedText.isEmpty)
-                    // One condition, and it is the window's own answer. Whatever
-                    // `adoptionRefusal` covers, this button covers — including refusals added
-                    // after this line was written, which is the whole point of asking rather
-                    // than restating.
-                    Button("Открыть в окне", action: onOpenInWindow)
-                        .disabled(adoptionRefusal != nil)
-                    Spacer()
-                    if model.state == .running {
-                        // ⌘. is the macOS convention for cancelling an operation in progress,
-                        // and Esc is taken: the panel gives it to «close and cancel».
-                        Button("Отмена") { model.cancel() }
-                            .keyboardShortcut(".", modifiers: .command)
-                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -490,6 +465,33 @@ struct PanelView: View {
             // reach — and where they took the space the reader wanted for the text.
             statusLine
             termsNotice
+
+            // Pinned, and «Отмена» below is why this matters most: it exists only while a run
+            // is in flight, which is exactly when the text above it is still growing. In the
+            // scrolling flow it was pushed further out of reach by every token it was there
+            // to stop.
+            HStack {
+                // Enabled the moment the first token lands, not only at the end: a run the
+                // user interrupts leaves partial output that spec 8 says must be kept, and
+                // keeping it while refusing to copy it would be pointless.
+                Button("Скопировать", action: onCopy)
+                    .disabled(model.translatedText.isEmpty)
+                // One condition, and it is the window's own answer. Whatever
+                // `adoptionRefusal` covers, this button covers — including refusals added
+                // after this line was written, which is the whole point of asking rather
+                // than restating.
+                Button("Открыть в окне", action: onOpenInWindow)
+                    .disabled(adoptionRefusal != nil)
+                Spacer()
+                if model.state == .running {
+                    // ⌘. is the macOS convention for cancelling an operation in progress,
+                    // and Esc is taken: the panel gives it to «close and cancel».
+                    Button("Отмена") { model.cancel() }
+                        .keyboardShortcut(".", modifiers: .command)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
 
             // Only `targetBusy` gets words. `sourceBusy` means this panel's own run is still
             // going, which the spinner and «Отмена» beside it already say; `sameModel` is not
@@ -550,10 +552,12 @@ struct PanelView: View {
     /// state; this answers about a presentation, and only the caller knows which selection the
     /// state belongs to.
     private var status: PanelStatus? {
-        if case .text = selection, awaitingReply {
-            return Self.status(for: .running, awaitingTerms: model.isAwaitingTerms)
-        }
-        return Self.status(for: model.state, awaitingTerms: model.isAwaitingTerms)
+        // No `if case .text` guard: `statusLine` is reachable only from `translation`, which
+        // `content` builds for that case alone. Restating it here reads as though the
+        // «выделите текст» and «нет доступа» panels also draw a status row, and leaves a
+        // branch that cannot be false for a later reader to keep in step with the enum.
+        awaitingReply ? Self.status(for: .running, awaitingTerms: model.isAwaitingTerms)
+                      : Self.status(for: model.state, awaitingTerms: model.isAwaitingTerms)
     }
 
     @ViewBuilder private var statusLine: some View {
