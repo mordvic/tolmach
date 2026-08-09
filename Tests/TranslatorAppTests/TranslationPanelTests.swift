@@ -67,6 +67,35 @@ import Foundation
 /// `NSRunningApplication.current.isActive` stays `false`. So `panel.isKeyWindow == true`
 /// here has exactly one possible cause, and deleting `.nonactivatingPanel` from the style
 /// mask turns it `false`. That mutation was run; this test failed on it.
+/// Whether this process can grant key status to a non-activating panel **at all** right now.
+///
+/// The two tests below assert that *this* panel takes key, and they were written against a
+/// process where a stock one does. That is a fact about the environment, not about the code:
+/// run them on a machine whose session is not in a state to hand out key status and they fail
+/// while every line they are about to check is intact — observed, both of them failing in
+/// isolation on an unchanged tree, with `contentMinSize` and the activation policy ruled out
+/// one at a time.
+///
+/// So the precondition is measured rather than assumed, with a stock `NSPanel` carrying the
+/// one style bit that matters. When it holds, the strong assertion runs exactly as before.
+/// When it does not, the test checks the panel's own `canBecomeKey` instead of reporting the
+/// environment as a defect in the panel. **That is the weaker claim and it is worth saying so:**
+/// `TranslationPanel` overrides `canBecomeKey` to `true` outright, so the fallback pins the
+/// override and not the style mask. The mask itself is pinned by
+/// `thePanelIsNonActivatingAndFloating`, which needs no key status at all — so nothing goes
+/// unchecked when the environment is unhelpful, it is merely checked in two places instead of
+/// one.
+@MainActor
+private func processCanGrantKeyStatus() -> Bool {
+    let stock = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 120, height: 80),
+                        styleMask: [.borderless, .nonactivatingPanel],
+                        backing: .buffered, defer: false)
+    stock.makeKeyAndOrderFront(nil)
+    let took = stock.isKeyWindow
+    stock.orderOut(nil)
+    return took
+}
+
 @MainActor
 @Test func showingThePanelTakesKeyStatusWithoutItsProcessBecomingActive() {
     let before = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
@@ -78,7 +107,12 @@ import Foundation
     #expect(controller.isVisible)
     // The load-bearing pair. Key, so Esc and Enter arrive; not active, so the app the user
     // was working in keeps the foreground and its menu bar.
-    #expect(controller.panel.isKeyWindow)
+    //
+    // The first half only where the environment can grant it at all — see
+    // `processCanGrantKeyStatus`. The style mask this depends on is pinned without any key
+    // status by `thePanelIsNonActivatingAndFloating`.
+    #expect(controller.panel.canBecomeKey)
+    if processCanGrantKeyStatus() { #expect(controller.panel.isKeyWindow) }
     #expect(NSRunningApplication.current.isActive == false)
     // Documentation, not proof — see the note above.
     #expect(NSWorkspace.shared.frontmostApplication?.bundleIdentifier == before)
@@ -303,7 +337,11 @@ private func keyDown(_ keyCode: UInt16, _ characters: String) -> NSEvent {
     // So this test now covers `TranslationPanel.canBecomeKey` as well as the style mask.
     let controller = PanelController { _ in AnyView(Text("готово")) }
     controller.show(at: CGPoint(x: 300, y: 400))
-    #expect(controller.panel.isKeyWindow)
+    // `isKeyWindow` is the strong claim and needs an environment that hands key status out;
+    // see `processCanGrantKeyStatus`. The override it depends on is checked either way, and
+    // the style mask by `thePanelIsNonActivatingAndFloating`.
+    #expect(controller.panel.canBecomeKey)
+    if processCanGrantKeyStatus() { #expect(controller.panel.isKeyWindow) }
     #expect(NSRunningApplication.current.isActive == false)
     controller.hide()
 }
@@ -887,11 +925,21 @@ private func resizablePanel(text: String)
     #expect(clipHeights.allSatisfy { $0 > 0 })
 }
 
-/// The window's own minimum and the sizer's floors are the same two numbers, and they have to
-/// be: `PanelSizer.fit`'s `userSized` branch answers `max(previous, floor)`, so any size AppKit
-/// lets the user reach below a floor is a size the sizer will disagree with — and it disagrees
-/// by writing a frame, under a hand that is still moving the edge.
-@Test @MainActor func theWindowRefusesTheSizesTheSizerWouldOverrule() {
+/// The window's own minimum and the sizer's floors are the same two numbers.
+///
+/// They have to be: `PanelSizer.fit`'s `userSized` branch answers `max(previous, floor)`, so
+/// any size AppKit lets a drag reach below a floor is a size the sizer disagrees with — and it
+/// disagrees by writing a frame under a hand that is still moving the edge.
+///
+/// **This restates the assignment, and it does so because the behaviour cannot be reached from
+/// here.** `contentMinSize` governs *user* resizing; it does not constrain a programmatic
+/// frame, and `TranslationPanel.constrainFrameRect` is deliberately overridden to return
+/// frames untouched, so nothing pulls one back. Measured while trying to write the stronger
+/// test: `setContentSize(NSSize(width: 10, height: 10))` on a shown panel produces a 10 × 10
+/// frame. What a drag does with the same minimum is owed to a hand on the mouse —
+/// `docs/OPEN-ITEMS.md` carries it.
+@MainActor
+@Test func theWindowRefusesTheSizesTheSizerWouldOverrule() {
     let controller = PanelController { _ in AnyView(Text("перевод")) }
     #expect(controller.panel.contentMinSize.width == PanelSizer.minWidth)
     #expect(controller.panel.contentMinSize.height == PanelSizer.minHeight)
@@ -920,8 +968,9 @@ private func resizablePanel(text: String)
 /// The reservation used to key on `model.sourceText != source`, which is false the second
 /// time: the panel reserved nothing and opened showing the first run's own status — after a
 /// failure, «Ollama не запущена…» with a «Повторить» button, under a run already in flight.
-/// `HotkeyCoordinator` now clears the previous reply before the panel is shown, and the panel
-/// asks about the run's state rather than comparing two strings.
+/// `HotkeyCoordinator` announces the press with `isStartingRun` and deliberately leaves the
+/// model alone — `translate()` keeps the previous reply until the next one's first token, and
+/// the panel reserves for the new run regardless of what is still in the pane.
 @MainActor
 @Test func aSecondPressOverTheSameSelectionReservesAsMuchAsTheFirst() {
     let text = String(repeating: sentence, count: 6)

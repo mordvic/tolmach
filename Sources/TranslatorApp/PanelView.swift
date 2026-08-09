@@ -175,40 +175,37 @@ struct PanelView: View {
     /// See `reservation(for:)` for the measurements behind it.
     static let reservationLimit = 16_000
 
-    /// The selection whose reply is still to come, or nil — the single gate two things read.
+    /// The selection to reserve room for, or nil — **only while the run has not started**.
     ///
-    /// Both the reserved room and the «Перевожу…» row must open and close together: the row is
-    /// 24 pt of what the reservation measures, so a change applied to one copy of the
-    /// condition and not the other reintroduces exactly the shortfall the reservation was
-    /// written to remove. They asked the same question in two places until this existed.
+    /// This and the status row below were one gate, on the reasoning that they must open and
+    /// close together. They must not: the row is on screen for the whole run and the
+    /// reservation has one job, done in `PanelController.show(at:)` and finished the moment it
+    /// returns. Leaving it in cost the rest of the run dearly — `measure()` runs on every
+    /// streamed token, throttled to ten a second, and each pass laid the hidden copy out
+    /// again: 29.3 ms for 8 000 characters and 43.1 ms for 16 000, so a multi-page selection
+    /// spent 300–430 ms of every second re-measuring an invisible copy of itself on the main
+    /// actor. The 16 000-character cap bounds one pass; nothing bounded the number of them.
+    ///
+    /// Dropping it once the run starts cannot let the panel shrink back: `PanelSizer` is
+    /// monotonic in both axes outside the settle, so the size the reservation won at
+    /// `show(at:)` is kept without it being re-measured to justify it.
+    ///
+    /// `!scrolls` because a panel already at its ceiling cannot open any larger, and there the
+    /// reservation stops being room to grow into and becomes blank scroll extent the reader
+    /// can drag past the arriving reply.
     private var selectionAwaitingReply: String? {
-        // **Not while scrolling.** The reservation sits inside `scrollingMiddle`, so once the
-        // panel is at its ceiling and that region has become a `ScrollView` the reserved
-        // height stops being room the panel might grow into and becomes blank scroll extent:
-        // the reader can drag past the arriving reply into the space its source would have
-        // taken. It buys nothing there either — a panel already at the ceiling cannot be
-        // opened any larger — so the one case where it costs something is the one case where
-        // it is worthless.
-        guard !scrolls, case let .text(source) = selection, awaitingReply else { return nil }
+        guard !scrolls, awaitingRun, case let .text(source) = selection else { return nil }
         return source
     }
 
-    /// Whether the reply this presentation is waiting for is still to come — the window
-    /// during which room is reserved and the row says «Перевожу…».
+    /// Whether the panel should report progress rather than whatever the model's state says.
     ///
-    /// **A state, not a comparison of texts.** This first asked
-    /// `model.sourceText != source || model.state == .running`, on the reasoning that a stale
-    /// `sourceText` proves no reply can have arrived. True for a *different* selection and
-    /// false for the same one: press ⌥⌘T twice over one paragraph and the second press found
-    /// `sourceText` already equal to it and the state `.finished`, so it reserved nothing and
-    /// showed the finished run's own status — or, after a failure, «Ollama не запущена…» with
-    /// a «Повторить» button, under a press that was already running.
-    ///
-    /// `.idle` with nothing in the pane is what «a run is coming and has produced nothing»
-    /// actually looks like, and `HotkeyCoordinator` puts the model into exactly that shape
-    /// before it shows the panel. It is narrow on purpose: a finished run with an empty reply
-    /// leaves `.finished`, and a failed one leaves `.failed`, so neither is mistaken for a run
-    /// still to come and neither loses its own row.
+    /// Wider than the reservation above, and the difference is the point: this holds for the
+    /// whole run, so the row is «Перевожу…» from the first frame to the settle. Sharing the
+    /// reservation's gate meant the `!scrolls` clause — added for the scroll extent, which has
+    /// nothing to do with status — silently took the row away too, and a selection long enough
+    /// to open at the ceiling was drawn carrying the *previous* run's «Ollama не запущена…»
+    /// and a «Повторить» that does nothing, over a run already in flight.
     private var awaitingReply: Bool { awaitingRun || model.state == .running }
 
     private var background: AnyShapeStyle {
@@ -538,14 +535,13 @@ struct PanelView: View {
 
     /// The row's contents, with one override the static rule cannot make on its own.
     ///
-    /// While `awaitingReply(for:)` holds, `model.state` describes the **previous** press: its
-    /// `sourceText` is the previous selection, and a `.finished` or `.failed` left over from
-    /// that run says nothing true about this one. So the panel reports progress, which is what
+    /// While `awaitingReply` holds, `model.state` describes the **previous** press — a
+    /// `.finished` or `.failed` left over from a run that is not this one. So the panel reports progress, which is what
     /// is actually happening — a selection has been captured and a translation of it is under
     /// way, or is about to be in the same turn of the main actor.
     ///
-    /// It is also 24 pt of the fix above. The status row exists only from `.running`, which
-    /// arrives after `show(at:)` has taken its measurement — so the panel opened 24 pt short of
+    /// It is also 24 pt of the reservation above. The status row exists only from `.running`,
+    /// which arrives after `show(at:)` has taken its measurement — so the panel opened 24 pt short of
     /// the row it was about to grow, at every selection length from three sentences to twelve.
     /// Measured: with this, `show(at:)` measures what it is about to display and the shortfall
     /// is zero.
@@ -554,7 +550,7 @@ struct PanelView: View {
     /// state; this answers about a presentation, and only the caller knows which selection the
     /// state belongs to.
     private var status: PanelStatus? {
-        if selectionAwaitingReply != nil {
+        if case .text = selection, awaitingReply {
             return Self.status(for: .running, awaitingTerms: model.isAwaitingTerms)
         }
         return Self.status(for: model.state, awaitingTerms: model.isAwaitingTerms)

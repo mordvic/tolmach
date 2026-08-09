@@ -216,13 +216,21 @@ final class HotkeyCoordinator {
         // model is left exactly as `translate()` expects to find it.
         isStartingRun = true
         afterCapture()
-        guard case .text(let text) = captured else {
-            isStartingRun = false
-            return
-        }
+        // Cleared **here**, not after the run. `afterCapture()` is the whole of what the flag
+        // is for — `PanelController.show(at:)` takes its measurement inside it — and nothing
+        // between this line and `state = .running` can observe the gap: there is no suspension
+        // point, so no layout pass runs in it.
+        //
+        // Held to the end of the run instead, it outlived its purpose and did damage.
+        // `runTranslation()` awaits `copyResult()` when «копировать автоматически» is on, and
+        // the main actor renders during that suspension — so the settle was measured with the
+        // flag still true, froze the panel at the *source's* size, and `PanelSizer` is
+        // monotonic outside the settle, so nothing ever gave the space back. The doc comment
+        // promising «a handful of milliseconds» is now true of the code as well.
+        isStartingRun = false
+        guard case .text(let text) = captured else { return }
         panelModel.sourceText = text
         await runTranslation()
-        isStartingRun = false
     }
 
     /// The «Повторить» the panel offers on a failure. Translates the selection already

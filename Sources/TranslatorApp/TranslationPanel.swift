@@ -81,7 +81,7 @@ final class TranslationPanel: NSPanel {
         // rather than being pulled back from beyond them.
         //
         // Without this the two disagreed while the mouse was still down: `PanelSizer.fit`'s
-        // `userSized` branch answers `max(previous, floor)`, so dragging past 300 × 120 made
+        // `userSized` branch answers `max(previous, floor)`, so dragging past 300 × 132 made
         // it return a size that was *not* the panel's, and `applyFit` reframed and re-anchored
         // underneath the drag ten times a second. Stating the minimum here removes the
         // disagreement at its source — there is no size below the floor for the two to
@@ -252,6 +252,9 @@ final class PanelController: NSObject, NSWindowDelegate {
     /// in `PanelSizer.fit` for the measurement that says why no earlier moment will do.
     private var frozenWidth: CGFloat?
     private var userSized = false
+    /// A settle arrived while the user was dragging an edge, so it was declined and is owed.
+    /// See the guard in `applyFit` and `windowDidEndLiveResize`.
+    private var missedSettle = false
     private var scrolls = false
     private var lastFit: CFAbsoluteTime = 0
     private var pendingFit = false
@@ -425,6 +428,21 @@ final class PanelController: NSObject, NSWindowDelegate {
         lastFit = CFAbsoluteTimeGetCurrent()
         let visible = panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame
             ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
+        // **Nothing at all happens under a moving hand.** This guard used to sit below
+        // `setScrolling`, which let the installed root view be swapped mid-drag: crossing the
+        // point where the content stops fitting replaced the `ScrollView` with a plain stack
+        // and back again, so a reader part-way through a long translation was thrown to the
+        // top and lost the selection they were about to copy — up to ten times a second for
+        // as long as the edge kept moving near the threshold.
+        //
+        // A settle that lands in that window is remembered rather than dropped. It is the one
+        // fit allowed to shrink — the one that lifts the reservation and the «Перевожу…» row —
+        // and nothing would re-run it: `windowDidEndLiveResize` fits with `settling` defaulted
+        // to false, and `userSized` then answers the panel's current size, which returns early.
+        guard !panel.inLiveResize else {
+            missedSettle = missedSettle || settling
+            return
+        }
         let fit = measure(previous: panel.frame.size, screen: visible, settling: settling)
         // The settle is where the width stops being provisional and becomes this
         // presentation's width, for the reason `PanelSizer.fit`'s width rule measures out: the
@@ -436,11 +454,6 @@ final class PanelController: NSObject, NSWindowDelegate {
         // change is not a reason to leave the width unsettled.
         if settling { frozenWidth = fit.size.width }
         setScrolling(fit.scrolls)
-        // The variant may change while the user drags; the frame may not. `contentMinSize`
-        // above is what should make the two agree, and this is the guarantee that does not
-        // depend on it holding — a frame written while the mouse is down fights the hand
-        // moving it, and no size is worth that.
-        guard !panel.inLiveResize else { return }
         guard fit.size != panel.frame.size else { return }
         // A shrink holds the top whatever corner the panel was anchored by. Growth keeps the
         // corner nearest the pointer — that is what stops the panel expanding over the text
@@ -576,25 +589,32 @@ final class PanelController: NSObject, NSWindowDelegate {
     /// **`applyFit` cannot fight the drag, and the reason is not the one first written here.**
     /// That said «with `userSized` set, `PanelSizer.fit` returns the size the panel already
     /// has» — true only above the floors. The `userSized` branch answers
-    /// `max(previous, floor)`, so a drag past 300 × 120 produced a size that was *not* the
+    /// `max(previous, floor)`, so a drag past 300 × 132 produced a size that was *not* the
     /// panel's and reframed it under the hand still moving it. Two things hold it now:
     /// `contentMinSize` stops the drag reaching below the floors at all, and `applyFit`
     /// declines to write a frame during a live resize whatever the sizer says.
     func windowDidResize(_ notification: Notification) {
         guard panel.inLiveResize else { return }
+        // The flag, and only the flag. Re-fitting from here is what tore the content view down
+        // under the drag, and the fit that matters happens once, on release. Setting
+        // `userSized` this early still earns its place: a token arriving mid-drag drives a fit
+        // of its own, and without this it would be measured against the automatic rules and
+        // fight the hand.
         userSized = true
-        contentDidChange()
     }
 
     /// The user dragged an edge. That is an instruction, and it holds until the panel hides.
     func windowDidEndLiveResize(_ notification: Notification) {
         userSized = true
+        // A settle that arrived mid-drag was declined, not lost; it is owed its shrink.
+        let owedSettle = missedSettle
+        missedSettle = false
         // **Not just the flag.** Nothing else re-fits after a drag — `contentDidChange` is
         // driven by the run, and a finished translation has nothing more to say — so a panel
         // dragged shorter than its content kept the flat variant and left its bottom section,
         // the status row and the warnings and both buttons, below the window's edge. Measured:
         // dragged 150 pt shorter, the panel was 560 × 120 holding 270 pt of unscrollable
         // content, and any refit at all put it right.
-        applyFit()
+        applyFit(settling: owedSettle)
     }
 }

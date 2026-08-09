@@ -246,6 +246,13 @@ tested and cleared, and the probe does not reproduce the failure at all: `MODE=o
 there and fails on the app. So instrument the bundle, not the probe, before trimming any of
 the three. → `WindowTitleHidden` in `Sources/TranslatorApp/MainWindowView.swift`
 
+**`contentMinSize` binds the user, not you.** It is what makes a drag stop at a floor, and it
+does nothing to a programmatic frame — measured: `setContentSize(NSSize(width: 10, height: 10))`
+on a shown panel produces a 10 × 10 frame. `TranslationPanel.constrainFrameRect` is overridden
+to return frames untouched, so nothing pulls one back either. A test can therefore assert that
+the minimum is *set*, and only a hand on the mouse can confirm what it does.
+→ `TranslationPanel.init`, `PanelSizer.minWidth` / `minHeight`
+
 **`windowDidResize` fires for your own `setFrame` too; `inLiveResize` is the only
 discriminator.** AppKit posts it for a hand-drag and for a programmatic resize alike, so a
 delegate that treats every notification as «the user chose this size» will latch that on its
