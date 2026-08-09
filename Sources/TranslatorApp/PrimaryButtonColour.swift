@@ -40,8 +40,29 @@ import SwiftUI
 enum PrimaryButtonColour {
     /// sRGB, stated the way `StatusColour` states its own: a literal here is a colour this app
     /// owns, not a system one to be resolved.
-    static let fillColour = NSColor(srgbRed: 0x15 / 255, green: 0x80 / 255, blue: 0x7E / 255,
-                                    alpha: 1)
+    ///
+    /// **Two values, because one could not serve both appearances.** A single `#15807E` put the
+    /// label at 4.75:1 — over WCAG's 4.5, and still reported as hard to read, which is the
+    /// known weakness of that formula for light text on a saturated mid-tone. Going deeper
+    /// fixes the label and costs the separation the control needs from a `#1e1e1e` window:
+    ///
+    /// ```
+    ///           label   sep. light  sep. dark   to success
+    /// #15807E    4.75      4.75        3.51         74
+    /// #0F6E6E    6.04      6.04        2.76         61
+    /// #0C6060    7.35      7.35        2.27         55
+    /// #0A5555    8.59      8.59        1.94         54
+    /// ```
+    ///
+    /// So the light appearance takes the deeper one, where the ground is white and separation
+    /// is free, and the dark appearance keeps the one that can still be seen against it. The
+    /// column that stops this going deeper still is the last: `#0C6060` is 55 from
+    /// `StatusColour.success`, inside the ~60 at which two fills read as one colour.
+    static let fillColour = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(srgbRed: 0x15 / 255, green: 0x80 / 255, blue: 0x7E / 255, alpha: 1)
+            : NSColor(srgbRed: 0x0F / 255, green: 0x6E / 255, blue: 0x6E / 255, alpha: 1)
+    }
 
     /// Applied with `.tint`, which is what actually re-fills a `.borderedProminent` button —
     /// measured by rendering one and counting pixels: the untinted button's dominant colour is
@@ -63,4 +84,13 @@ enum PrimaryButtonColour {
     /// It costs width in a row whose width is already argued over — see `MainWindowView`'s
     /// minimum — so the fit was re-measured on the bundle rather than assumed.
     static let labelPadding: CGFloat = 6
+
+    /// Weight, which is the other half of «плохо читаем» and the half no contrast ratio sees.
+    ///
+    /// Measured by rendering the button and counting the glyphs' own pixels against the fill's:
+    /// regular lays down 991 px of them, `.medium` 1139 and `.semibold` **1197** — 21% more
+    /// ink for the same colours. That is what carries light text on a saturated fill, and it is
+    /// why the fill was not simply darkened further: the two levers cost different things, and
+    /// this one costs nothing at all.
+    static let labelWeight: Font.Weight = .semibold
 }
