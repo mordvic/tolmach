@@ -112,6 +112,16 @@ final class HotkeyCoordinator {
 
     // MARK: - A press
 
+    /// A press has captured its text and the panel is being shown, but `translate()` has not
+    /// been reached yet — the one window in which nothing about the model says what is about
+    /// to happen.
+    ///
+    /// It exists because `PanelController.show(at:)` measures the panel inside
+    /// `afterCapture()`, before `translate()` runs. Read only by `PanelView`, for the room it
+    /// reserves and the status row it shows; `state == .running` covers the rest of the run,
+    /// so this is true for a handful of milliseconds and false for everything else.
+    private(set) var isStartingRun = false
+
     /// Read the selection, then translate it. Everything the panel shows is decided here so
     /// the view stays a readout.
     ///
@@ -183,7 +193,41 @@ final class HotkeyCoordinator {
         // up, the system-wide focused element is «Толмач», role `AXWindow`, and
         // `kAXSelectedTextAttribute` answers -25205; with it gone, the same query returns
         // TextEdit's `AXTextArea` and the selected sentence.
+        // «A run for this selection is about to start», said in the one way that changes
+        // nothing else.
+        //
+        // This was `panelModel.translatedText = ""; outcome = nil; state = .idle` and both
+        // halves were wrong. Writing `state` is a *state change*, and `PanelHost` answers
+        // every one of them with `onContentChange(new != .running)` — so `.finished → .idle`
+        // was delivered as a **settle**, at the start of a press, and `applyFit(settling:)`
+        // froze `frozenWidth` at the opening width for the whole presentation. The growth rule
+        // that `PanelSizer` spends thirty lines justifying was dead: a selection of short lines
+        // opened at ~330 pt and the reply was wrapped into that column for the entire run. It
+        // also fired an Ollama round trip at the start of every press instead of at the settle.
+        //
+        // Clearing the text was the other half. `translate()` keeps the previous reply until
+        // the new run's first real token precisely so a failed run does not clobber it — spec
+        // 8 — and clearing ahead of the run threw that away: press again while Ollama is down
+        // and the pane is blank with «Скопировать» disabled, the earlier translation gone for
+        // good.
+        //
+        // A flag on this coordinator touches neither. `PanelView` reads it for the two things
+        // that must know — the room it reserves and the row that says «Перевожу…» — and the
+        // model is left exactly as `translate()` expects to find it.
+        isStartingRun = true
         afterCapture()
+        // Cleared **here**, not after the run. `afterCapture()` is the whole of what the flag
+        // is for — `PanelController.show(at:)` takes its measurement inside it — and nothing
+        // between this line and `state = .running` can observe the gap: there is no suspension
+        // point, so no layout pass runs in it.
+        //
+        // Held to the end of the run instead, it outlived its purpose and did damage.
+        // `runTranslation()` awaits `copyResult()` when «копировать автоматически» is on, and
+        // the main actor renders during that suspension — so the settle was measured with the
+        // flag still true, froze the panel at the *source's* size, and `PanelSizer` is
+        // monotonic outside the settle, so nothing ever gave the space back. The doc comment
+        // promising «a handful of milliseconds» is now true of the code as well.
+        isStartingRun = false
         guard case .text(let text) = captured else { return }
         panelModel.sourceText = text
         await runTranslation()

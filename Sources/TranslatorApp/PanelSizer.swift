@@ -18,8 +18,48 @@ enum PanelSizer {
     /// Above this the panel stops being a panel. A translation is read, not scanned, and a
     /// 900pt line is worse to read than a 560pt one.
     static let maxWidth: CGFloat = 560
-    /// Enough for the header, one line and the buttons.
-    static let minHeight: CGFloat = 120
+    /// Enough for everything the panel pins, at its narrowest.
+    ///
+    /// 120 while this region held the header, one line and the buttons. The panel is three
+    /// sections now and the status row is pinned too, so the floor has to clear that as well
+    /// — measured on the real view at each width, in the states that pin the most:
+    ///
+    ///     width  idle+empty  running  failed  finished, one line
+    ///       300      92        118      130          94
+    ///       560      92        118      120          94
+    ///
+    /// 130 is a failure message wrapping to two lines in a 300 pt panel, which is the widest
+    /// the pinned block ever gets. At 120 it overflowed by 10, and since the translation is
+    /// the section that stretches, the overflow came out of it: dragged to the floor with a
+    /// failure showing, the pane went to nothing while the buttons stayed.
+    ///
+    /// **Not** raised to clear the pinned block *plus* a line of translation, which the same
+    /// table puts at ~148. The floor is what a settled short reply is padded to — a one-line
+    /// translation wants 94 — so every point above the content is a hole between the text and
+    /// the button row, which is the defect this panel was rebuilt to remove. 12 pt of that is
+    /// a trade; 54 is the thing itself.
+    static let minHeight: CGFloat = 132
+
+    /// The smallest the **user** may drag the panel to, which is not the same number.
+    ///
+    /// `minHeight` is what the panel auto-sizes to and so must stay near what short content
+    /// actually needs — a one-line finished reply wants 92, and every point above that is a
+    /// hole between the text and the buttons. A drag is different: the user is asserting a
+    /// size, and the one thing that cannot be allowed is a size where the pinned block runs
+    /// off the frame, because nothing there scrolls.
+    ///
+    /// Measured at 300 pt, the narrowest the panel gets, over the states that pin the most:
+    ///
+    ///     finished                        92
+    ///     finished + «окно занято»       126
+    ///     failed (wrapping to two lines) 130
+    ///     failed + «окно занято»         164   ← both at once, and reachable
+    ///
+    /// The last is a window already translating when ⌥⌘T is pressed and the panel's own run
+    /// then failing. It was missed when `minHeight` was measured — that table stopped at the
+    /// four states above it — so `contentMinSize` let the drag reach 132 and the caption
+    /// explaining the greyed-out «Открыть в окне» ran off the bottom with the button row.
+    static let dragMinHeight: CGFloat = 164
     /// The panel floats over the work the user is reading; taking more than this much of
     /// the screen makes it a window with no way to move it aside.
     static let maxHeightFraction: CGFloat = 0.6
@@ -40,8 +80,10 @@ enum PanelSizer {
     ///   - previous: the panel's current size. `.zero` before it is first shown.
     ///   - screen: the `visibleFrame` of the screen the panel is on.
     ///   - userSized: the user has dragged the panel's edge, so it is theirs until it hides.
+    ///   - settling: the run has just ended, so this is the last size this presentation will
+    ///     be asked for. It is the one call allowed to make the panel *smaller*.
     static func fit(ideal: CGSize, frozenWidth: CGFloat?, previous: CGSize,
-                    screen: CGRect, userSized: Bool) -> Fit {
+                    screen: CGRect, userSized: Bool, settling: Bool = false) -> Fit {
         let wanted = CGSize(width: measured(ideal.width, unmeasured: minWidth, unbounded: maxWidth),
                             height: measured(ideal.height, unmeasured: minHeight,
                                              unbounded: .greatestFiniteMagnitude))
@@ -99,6 +141,16 @@ enum PanelSizer {
         // `maxWidth` once its longest unwrapped line passes ~80 characters, so most of a long
         // reply arrives at a fixed width; the bad case is content whose lines are
         // individually short.
+        //
+        // **Those change counts are the worst case now, not the usual one.** `PanelView`
+        // reserves the reply's room from the selection it is about to translate — an
+        // invisible copy of the source, while the run is in flight — so the panel opens at
+        // the width and height the reply will need and the growth rule below has nothing left
+        // to do. Measured on the real panel: opening 560 × 198 against a settled 560 × 174 for
+        // a six-sentence paragraph, against 347 × 120 opening and 560 × 174 settled without
+        // the reservation. The rule stays because it is what still catches a reply longer than
+        // its source, and because it is the only thing holding the width when there is no
+        // source to reserve from.
         // `frozenWidth` pins the width for the rest of the presentation at the settle, which
         // is when reading starts. `PanelController` is what decides that moment — see
         // `applyFit`.
@@ -108,8 +160,27 @@ enum PanelSizer {
         // below the floor, and a panel shorter than its own buttons is the worse failure.
         let ceiling = max(minHeight, screen.height * maxHeightFraction)
         let fitted = min(max(wanted.height, minHeight), ceiling)
-        // Monotonic within a presentation. The caller resets `previous` by hiding the panel.
-        let height = min(max(fitted, previous.height), ceiling)
+        // Monotonic within a presentation — **except at the settle**. The caller resets
+        // `previous` by hiding the panel.
+        //
+        // The exception is what keeps the panel's three sections honest. The reservation in
+        // `PanelView` holds the panel at the height the reply was expected to need, and the
+        // «Перевожу…» row is 24 pt of that; when the run ends both go, and a strictly
+        // monotonic height would keep the space as a hole between the text and the buttons.
+        // Shrinking there costs one movement, at one moment, in the direction of less. The
+        // rule it bends exists to stop the panel moving while the reader reads — and the
+        // settle is **not** reliably before reading starts: a long reply has been on screen
+        // for seconds by then. What makes the exception safe is not timing but direction.
+        // `PanelController` reframes a shrink by `PanelAnchor.holdingTheTop`, so the top edge
+        // never comes down and no line already on screen moves; what moves is the bottom edge
+        // and the button row pinned to it. That was not true when this exception was written:
+        // a bottom-anchored panel brought its top edge down and took every read line with it.
+        //
+        // Growth at the settle still goes through the same expression, because `fitted` is
+        // simply used as-is: a run that ends with warnings is taller, not shorter. And `fitted`
+        // already carries the ceiling — it is `min(max(wanted, minHeight), ceiling)` — so the
+        // settle arm does not re-apply one.
+        let height = settling ? fitted : min(max(fitted, previous.height), ceiling)
         return Fit(size: CGSize(width: width, height: height), scrolls: wanted.height > height)
     }
 

@@ -57,34 +57,34 @@ struct RunStatusBar: View {
             // nothing below folds it into a count any more.
             if let problem = glossaryProblem {
                 Label(problem, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption).foregroundStyle(.orange)
+                    .font(.caption).foregroundStyle(StatusColour.warning)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if queue == nil, model.documentTermsUnavailable, model.state == .finished {
                 Label("Термины документа не удалось подготовить, перевод шёл без них",
                       systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption).foregroundStyle(.orange)
+                    .font(.caption).foregroundStyle(StatusColour.warning)
             }
             // Gated on `canDisclose`, the same property the chevron reads. `expanded` is
             // `@State` and survives across runs and across a change of selection, so a
             // branch with a weaker condition than the chevron's draws an empty
             // `WarningsView` plus this stack's own spacing with nothing left to collapse it.
             if expanded, canDisclose, let warnings = warningsView {
-                // `ViewThatFits` and not a bare `ScrollView`, because a `ScrollView` is
-                // greedy in its scroll axis: it would sit at the full 200 under a two-line
-                // warning and leave the rest blank. This takes the plain stack's own height
-                // while that fits, and only falls back to scrolling once it does not.
-                //
-                // 200 rather than the 140 this used to be. The old number came out of the
+                // 200 rather than the 140 this used to be. Why the block is bounded at all,
+                // and why by `ViewThatFits` rather than a `ScrollView`, is `BoundedByHeight`'s
+                // — this is only the number. The old number came out of the
                 // window's minimum height because the warnings sat between the editors and
                 // the bottom of the window whether or not anyone was reading them. Collapsed
                 // by default, the region costs one row, so the ceiling can be set by what is
                 // readable rather than by what the editors can spare.
-                ViewThatFits(in: .vertical) {
-                    warnings
-                    ScrollView { warnings }
-                }
-                .frame(maxHeight: 200)
+                warnings.bounded(byHeight: 200)
+                // The drawing indents the whole disclosure by 16 pt, which puts «Разметка
+                // изменилась» under «Готово за 4 812 мс» rather than under the chevron that
+                // opened it. Flush left, the bold group titles start at the same x as the
+                // summary's own control and read as three peers of it instead of as its
+                // contents — and this row is the one place in the window where a heading and
+                // the thing it belongs to are stacked rather than side by side.
+                .padding(.leading, 16)
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
@@ -171,7 +171,7 @@ struct RunStatusBar: View {
                 HStack(spacing: 6) {
                     if queue.isRunning { ProgressView().controlSize(.small) }
                     Text(status).font(.caption)
-                        .foregroundStyle(queue.pausedAfterWarnings ? AnyShapeStyle(.orange)
+                        .foregroundStyle(queue.pausedAfterWarnings ? AnyShapeStyle(StatusColour.warning)
                                                                    : AnyShapeStyle(.secondary))
                 }
             } else if let summary {
@@ -209,16 +209,28 @@ struct RunStatusBar: View {
             }
         case .interrupted:
             Text("Перевод прерван — показана та часть, что успела прийти")
-                .font(.caption).foregroundStyle(.orange)
+                .font(.caption).foregroundStyle(StatusColour.warning)
         case .failed(let message):
             // Spec 8 pairs both failure rows — a timed-out request and an empty model reply
             // — with a retry. Reachable: `translate()` opens with `guard state != .running`,
             // and `.failed` is not `.running`. The source text is still in the editor, so
             // retrying costs the user nothing but the wait.
             HStack(spacing: 8) {
-                Text(message).font(.caption).foregroundStyle(.red)
+                Text(message).font(.caption).foregroundStyle(StatusColour.failure)
                     .fixedSize(horizontal: false, vertical: true)
-                Button("Повторить", action: onRetry).font(.caption)
+                // Small, not standard. The drawing gives this button 19 pt and an 11 pt
+                // label against the 22 and 12 every other button in the app gets, because
+                // it is the only one that sits *inside* a caption-sized line rather than in
+                // a row of its own — a full-height bezel beside «Ollama не запущена…» makes
+                // the sentence look like a caption under a control instead of the message
+                // the control answers.
+                //
+                // `.font` alone was the whole of it and only ever addressed the label:
+                // `controlSize` is what the bezel is measured from, and it is the modifier
+                // this codebase already reaches for when a control has to be drawn smaller
+                // (the mode switch, and the spinner three lines above). Both are set, so the
+                // label does not depend on `.small` choosing the font as well as the height.
+                Button("Повторить", action: onRetry).font(.caption).controlSize(.small)
             }
         }
     }

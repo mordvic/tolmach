@@ -40,10 +40,10 @@ struct SettingsGeneralView: View {
                 LabeledContent("Доступ к тексту в других программах") {
                     if isTrusted {
                         Label("предоставлен", systemImage: "checkmark.circle")
-                            .foregroundStyle(.green).labelStyle(.titleAndIcon)
+                            .foregroundStyle(StatusColour.success).labelStyle(.titleAndIcon)
                     } else {
                         Label("нет доступа", systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange).labelStyle(.titleAndIcon)
+                            .foregroundStyle(StatusColour.warning).labelStyle(.titleAndIcon)
                     }
                 }
                 if !isTrusted {
@@ -102,7 +102,7 @@ struct SettingsGeneralView: View {
                     } icon: {
                         Image(systemName: "exclamationmark.triangle.fill")
                     }
-                    .font(.caption).foregroundStyle(.orange)
+                    .font(.caption).foregroundStyle(StatusColour.warning)
                 }
                 // The section-wide caption that used to sit here — «Направление выбирается
                 // само: текст на основном языке переводится в рабочий, любой другой — в

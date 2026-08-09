@@ -14,6 +14,16 @@ enum PanelAnchor: Equatable {
 
     var isLeading: Bool { self == .topLeading || self == .bottomLeading }
     var isTop: Bool { self == .topLeading || self == .topTrailing }
+
+    /// The same corner horizontally, pinned to the top vertically.
+    ///
+    /// For **growth** the rule is that the corner nearest the pointer stays put, so the panel
+    /// grows away from the text already read. A **shrink** inverts it: keeping a bottom corner
+    /// fixed means the *top* edge comes down, and the content is top-aligned, so every line
+    /// already on screen moves down with it — which is precisely what the monotonic height
+    /// rule exists to prevent. Holding the top instead costs a bottom edge that steps away
+    /// from the pointer and moves nothing anyone is reading.
+    var holdingTheTop: PanelAnchor { isLeading ? .topLeading : .topTrailing }
 }
 
 /// Where the floating panel goes, given where the pointer is.

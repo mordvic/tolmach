@@ -165,6 +165,33 @@ struct TranslatorApp: App {
                            queue: queue, panelModel: coordinator.panelModel, mode: $mode)
                 .task { await statusModel.refresh(interactiveModel: settings.interactiveModel) }
         }
+        // The drawing's number, and it is the drawing's for a reason: every main-window state
+        // in the design is 900×520, and the two panes were drawn against that width — 450 pt
+        // each in «Текст», which is what makes a 900-character часть fit without wrapping into
+        // a column. Undeclared, SwiftUI picked its own: the comment above records a 900x492
+        // window, so the height was 28 pt short and the split was never stated at all.
+        //
+        // `minWidth`/`minHeight` stay on `MainWindowView` and are **not** the same statement:
+        // 700×480 is how small the user may drag this window, and this is how big it opens the
+        // first time. A default is remembered per window afterwards, so this governs the first
+        // launch and every fresh window state, not what the user has since resized to.
+        .defaultSize(width: 900, height: 520)
+        // **Twelve points of chrome, measured, for nothing given up.** The toolbar band —
+        // `frame.height - contentLayoutRect.height` — is 52 pt under `.unified` and **40**
+        // under `.unifiedCompact`, and the row still fits from the same width in both, so the
+        // narrowest window that keeps «Перевести» out of the » overflow does not move.
+        //
+        // It is also the style this window actually is. `.unifiedCompact` puts the title on
+        // the toolbar's own row rather than above it, and this window draws no title at all —
+        // see `WindowTitleHidden`. `.unified` was reserving a line for something that is not
+        // there.
+        //
+        // `.controlSize` is **not** the lever and was measured not to be: the band stays 52 at
+        // `.regular`, `.small` and `.mini` alike, while the controls inside it shrink from 26
+        // to 24 to 21 — smaller controls floating in an unchanged band, which is worse than
+        // where this started. Same conclusion the toolbar's width reached, for a different
+        // reason.
+        .windowToolbarStyle(.unifiedCompact)
         // The app had no commands at all, and SwiftUI's defaults for this scene combination
         // are not a menu bar anyone would design. Measured on a copy of these three scenes at
         // `.accessory` activation policy, dumping `NSApp.mainMenu`: «Вид» is installed and
@@ -635,6 +662,7 @@ private struct PanelHost: View {
     var body: some View {
         PanelView(model: coordinator.panelModel,
                   selection: coordinator.selection,
+                  awaitingRun: coordinator.isStartingRun,
                   adoptionRefusal: windowModel.adoptionRefusal(from: coordinator.panelModel),
                   onCopy: onCopy,
                   onOpenInWindow: onOpenInWindow,

@@ -67,8 +67,67 @@ import Foundation
 /// `NSRunningApplication.current.isActive` stays `false`. So `panel.isKeyWindow == true`
 /// here has exactly one possible cause, and deleting `.nonactivatingPanel` from the style
 /// mask turns it `false`. That mutation was run; this test failed on it.
+/// The key-status assertion, run either as a check or as a recorded gap.
+///
+/// Never silently skipped: when the environment cannot hand key status out, the same
+/// expectation runs inside `withKnownIssue`, so the suite is green and the run reports that
+/// this is one of the things it did not manage to check.
+@MainActor
+private func expectKeyWindow(_ controller: PanelController, canGrantKey: Bool) {
+    if canGrantKey {
+        #expect(controller.panel.isKeyWindow)
+    } else {
+        withKnownIssue("этот процесс не выдаёт статус ключевого окна — проверить нечем",
+                       isIntermittent: true) {
+            #expect(controller.panel.isKeyWindow)
+        }
+    }
+}
+
+/// Whether this process can grant key status to a non-activating panel **at all** right now.
+///
+/// The two tests below assert that *this* panel takes key, and they were written against a
+/// process where a stock one does. That is a fact about the environment, not about the code:
+/// run them on a machine whose session is not in a state to hand out key status and they fail
+/// while every line they are about to check is intact — observed, both of them failing in
+/// isolation on an unchanged tree, with `contentMinSize` and the activation policy ruled out
+/// one at a time.
+///
+/// So the precondition is measured rather than assumed, with a stock `NSPanel` carrying the
+/// one style bit that matters. When it holds, the strong assertion runs exactly as before.
+/// **Run it before showing the panel under test, never after.** The probe calls
+/// `makeKeyAndOrderFront` on a panel of its own, which takes key status away from whatever
+/// held it — so asking the question after the panel was shown answered about the probe.
+///
+/// When the environment cannot grant key, the assertion is not dropped: it is run inside
+/// `withKnownIssue`, so the suite stays green and the run *says* the check did not happen.
+/// Silently narrowing it to `canBecomeKey` would have been worse than useless — that override
+/// returns `true` outright, so replacing `makeKeyAndOrderFront` with `orderFront` in
+/// `show(at:)` would keep the suite green while Esc, Enter and ⌘. all stopped working after
+/// ⌥⌘T. Reproduced by exactly that mutation.
+@MainActor
+private func processCanGrantKeyStatus() -> Bool {
+    // **`TranslationPanel` itself, and the first version of this got that wrong in the worst
+    // way.** It probed with `[.borderless, .nonactivatingPanel]`, whose `canBecomeKey` is
+    // `false` by construction — measured: that mask answers `false`/`false` while the panel's
+    // own answers `true`/`true`. So the probe could never return true, both assertions moved
+    // permanently into `withKnownIssue`, and the mutation this file exists to catch —
+    // `makeKeyAndOrderFront` → `orderFront` in `show(at:)` — left the suite green.
+    //
+    // Probing with the type under test is not circular: this calls `makeKeyAndOrderFront`
+    // itself, so it answers about the *session*, while the tests answer about what `show(at:)`
+    // does. Break `show(at:)` and this still returns true, so the real assertion runs.
+    let probe = TranslationPanel()
+    probe.makeKeyAndOrderFront(nil)
+    let took = probe.isKeyWindow
+    probe.orderOut(nil)
+    return took
+}
+
 @MainActor
 @Test func showingThePanelTakesKeyStatusWithoutItsProcessBecomingActive() {
+    // Before the panel exists: the probe takes key from whoever has it.
+    let canGrantKey = processCanGrantKeyStatus()
     let before = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
     let menuBarBefore = NSWorkspace.shared.menuBarOwningApplication?.bundleIdentifier
     let controller = PanelController { _ in AnyView(Text("перевод")) }
@@ -78,7 +137,9 @@ import Foundation
     #expect(controller.isVisible)
     // The load-bearing pair. Key, so Esc and Enter arrive; not active, so the app the user
     // was working in keeps the foreground and its menu bar.
-    #expect(controller.panel.isKeyWindow)
+    //
+    #expect(controller.panel.canBecomeKey)
+    expectKeyWindow(controller, canGrantKey: canGrantKey)
     #expect(NSRunningApplication.current.isActive == false)
     // Documentation, not proof — see the note above.
     #expect(NSWorkspace.shared.frontmostApplication?.bundleIdentifier == before)
@@ -301,9 +362,11 @@ private func keyDown(_ keyCode: UInt16, _ characters: String) -> NSEvent {
     // with `.titled` in the mask `canBecomeKey` answered `true`, with the mask this panel
     // now carries it answered `false` and `makeKeyAndOrderFront` left `isKeyWindow` false.
     // So this test now covers `TranslationPanel.canBecomeKey` as well as the style mask.
+    let canGrantKey = processCanGrantKeyStatus()
     let controller = PanelController { _ in AnyView(Text("готово")) }
     controller.show(at: CGPoint(x: 300, y: 400))
-    #expect(controller.panel.isKeyWindow)
+    #expect(controller.panel.canBecomeKey)
+    expectKeyWindow(controller, canGrantKey: canGrantKey)
     #expect(NSRunningApplication.current.isActive == false)
     controller.hide()
 }
@@ -645,3 +708,366 @@ private func realPanelContent(_ model: TranslationViewModel) -> (PanelContentVar
     #expect(fit.size.height < screen.visibleFrame.height * PanelSizer.maxHeightFraction)
 }
 
+
+/// The panel's view model, built the one way every test here needs it.
+///
+/// Six copies of these five lines differed only in a `UserDefaults` prefix that no test read.
+/// `InMemoryDefaults` per instance for the reason `CLAUDE.md` gives: a written suite leaves a
+/// plist in ~/Library/Preferences that nothing reliably removes.
+@MainActor
+private func panelModel() -> TranslationViewModel {
+    TranslationViewModel(
+        translator: Translator(client: ScriptedClient(responses: ["x"])),
+        settings: AppSettings(defaults: InMemoryDefaults(prefix: "panel")),
+        glossary: GlossaryStore(url: FileManager.default.temporaryDirectory
+            .appendingPathComponent("g-\(UUID().uuidString).json")))
+}
+
+// MARK: - The panel does not grow under the reader's hands
+
+/// Builds a real `PanelView` in a real panel, the way `TranslatorApp` does.
+@MainActor
+private func panelSize(source: String, translated: String,
+                       state: TranslationState,
+                       awaitingRun: Bool = false) -> CGSize {
+    let model = panelModel()
+    model.state = state
+    model.translatedText = translated
+    let controller = PanelController { variant in
+        AnyView(PanelView(model: model, selection: .text(source),
+                          awaitingRun: awaitingRun,
+                          scrolls: variant == .installed(scrolls: true),
+                          fillsPanel: variant != .measured))
+    }
+    controller.show(at: CGPoint(x: 600, y: 600))
+    defer { controller.hide() }
+    return controller.panel.frame.size
+}
+
+private let sentence = "Каждый профиль обязан ссылаться на тип, который он ограничивает, "
+
+/// The «кнопки прыгают» report, as an assertion.
+///
+/// The panel used to open at its 120 pt floor and gain ~16 pt per sentence as the reply
+/// arrived — 120 → 198 for a six-sentence paragraph, in five steps, each one moving the
+/// button row underneath. It now reserves the reply's room from the selection it is about to
+/// translate, so the height it opens at is the height it ends at.
+///
+/// Stated as «opens at least as tall as it settles» rather than as equality, because the
+/// running panel also carries the «Перевожу…» row that the settled one does not. Equality
+/// would be a stricter claim than the fix makes, and a false one.
+@MainActor
+@Test func thePanelOpensAtTheSizeTheReplyWillNeedRatherThanGrowingIntoIt() {
+    for count in [2, 4, 6, 12] {
+        let source = String(repeating: sentence, count: count)
+        // The press window: captured, shown, `translate()` not yet reached.
+        let opening = panelSize(source: source, translated: "", state: .idle, awaitingRun: true)
+        let settled = panelSize(source: source, translated: source, state: .finished)
+        #expect(opening.height >= settled.height)
+        #expect(opening.width >= settled.width)
+    }
+}
+
+/// The other half, and the one that has already been got wrong once: the room is reserved in
+/// the *installed* copy only.
+///
+/// `PanelController` measures a detached copy with no fill frame, and a `Spacer` in it is
+/// greedy on its own axis — with one present in the measured copy every panel came back at
+/// 998 pt, the 0.6-of-screen ceiling, for every reply length from one sentence to twenty. A
+/// panel holding two sentences must be nowhere near that.
+@MainActor
+@Test func aShortReplyDoesNotMeasureToTheHeightCeiling() {
+    let source = String(repeating: sentence, count: 2)
+    let ceiling = (NSScreen.main?.visibleFrame.height ?? 900) * PanelSizer.maxHeightFraction
+    let size = panelSize(source: source, translated: source, state: .finished)
+    #expect(size.height < ceiling / 2)
+}
+
+/// The «при первом открытии кнопки перекрываются нижней границей» report, as an assertion.
+///
+/// It reproduces `HotkeyCoordinator.handlePress`'s ordering, which is what made this hard to
+/// see: the selection is assigned, then the panel is shown, and only then is the model given
+/// the text and asked to translate. So at the instant `show(at:)` measures, the model still
+/// holds the *previous* press — and a reservation gated on `state == .running` was not yet in
+/// force. The panel opened at 300 × 120, the floor on both axes, against content that needed
+/// 134, 198, 294 and 486 pt at one, three, six and twelve sentences: short by up to 366 pt,
+/// with the button row below the bottom edge until the next `applyFit`.
+///
+/// Asserted as «what it opens at covers what it needs», against the same measuring path the
+/// controller uses, because that is the property — not any particular height.
+@MainActor
+@Test func thePanelOpensCoveringWhatTheRunIsAboutToNeed() {
+    for count in [1, 3, 6, 12] {
+        let source = String(repeating: sentence, count: count)
+        let model = panelModel()
+        // Exactly what the coordinator has done by the time it calls `afterCapture()`: the
+        // selection is known, `isStartingRun` is set, and the model has been left alone —
+        // `translate()` has not run, so its state and its pane still describe the last press.
+        model.state = .finished
+        model.translatedText = "перевод прошлого нажатия"
+
+        let controller = PanelController { variant in
+            AnyView(PanelView(model: model, selection: .text(source),
+                              awaitingRun: true,
+                              scrolls: variant == .installed(scrolls: true),
+                              fillsPanel: variant != .measured))
+        }
+        controller.show(at: CGPoint(x: 600, y: 600))
+        let opened = controller.panel.frame.size
+        defer { controller.hide() }
+
+        // …and now `runTranslation()` starts. What the content needs at the width the panel
+        // has already committed to.
+        model.state = .running
+        model.translatedText = ""
+        let host = NSHostingController(
+            rootView: PanelView(model: model, selection: .text(source),
+                                scrolls: false, fillsPanel: false))
+        host.view.layoutSubtreeIfNeeded()
+        let needed = host.sizeThatFits(in: CGSize(width: opened.width,
+                                                  height: .greatestFiniteMagnitude))
+        #expect(opened.height >= needed.height)
+    }
+}
+
+// MARK: - A hand-resize
+
+/// Builds a panel over a finished translation and reports which variant is installed.
+@MainActor
+private func resizablePanel(text: String)
+    -> (PanelController, TranslationViewModel, () -> String) {
+    let model = panelModel()
+    model.sourceText = text
+    model.translatedText = text
+    model.state = .finished
+    final class Box: @unchecked Sendable { var variant = "?" }
+    let box = Box()
+    let controller = PanelController { variant in
+        if case .installed(let scrolls) = variant { box.variant = scrolls ? "scrolling" : "flat" }
+        return AnyView(PanelView(model: model, selection: .text(text),
+                                 scrolls: variant == .installed(scrolls: true),
+                                 fillsPanel: variant != .measured))
+    }
+    return (controller, model, { box.variant })
+}
+
+/// «Когда изменяю размер, кнопки и всё остальное исчезает.»
+///
+/// `windowDidEndLiveResize` recorded that the size was the user's and stopped there, and
+/// nothing else re-fits after a drag — `contentDidChange` is driven by the run, and a finished
+/// translation has nothing more to say. So a panel dragged shorter than its content kept the
+/// flat variant: measured at 560 × 120 holding 270 pt of unscrollable content, with the whole
+/// bottom section — the status row, the warnings and both buttons — below the window's edge.
+@MainActor
+@Test func aPanelDraggedShorterThanItsContentStartsScrollingInstead() {
+    let text = String(repeating: sentence, count: 12)
+    let (controller, _, variant) = resizablePanel(text: text)
+    controller.show(at: CGPoint(x: 600, y: 600))
+    defer { controller.hide() }
+    #expect(variant() == "flat")
+
+    // The user drags the bottom edge up and lets go. 100 pt and not 150: the panel's own
+    // floor is `PanelSizer.minHeight`, and a test that drags through it would be asserting
+    // that the floor is not applied rather than that the variant changed.
+    var frame = controller.panel.frame
+    frame.size.height -= 100
+    frame.origin.y += 100
+    controller.panel.setFrame(frame, display: true)
+    controller.windowDidEndLiveResize(
+        Notification(name: NSWindow.didEndLiveResizeNotification, object: controller.panel))
+
+    #expect(variant() == "scrolling")
+    // And the drag is still honoured — re-fitting must not undo it.
+    #expect(controller.panel.frame.height == frame.height)
+}
+
+/// The trap the `inLiveResize` guard exists for.
+///
+/// `windowDidResize` cannot tell a drag from `applyFit`'s own `setFrame` by the notification
+/// alone, and AppKit posts it for both. Without the guard the panel's first programmatic fit
+/// would set `userSized` and freeze its automatic sizing for the rest of the presentation, so
+/// a reply arriving after it would never be given room — which is a worse defect than the one
+/// the resize handler was added to fix.
+@MainActor
+@Test func aProgrammaticResizeIsNotMistakenForAHandResize() {
+    let (controller, model, _) = resizablePanel(text: "короткий")
+    controller.show(at: CGPoint(x: 600, y: 600))
+    defer { controller.hide() }
+    let opened = controller.panel.frame.height
+
+    // The reply grows, exactly as it does while a run streams. Every fit along the way sets
+    // the frame, and every one of those posts `didResize` to this same delegate.
+    model.translatedText = String(repeating: sentence, count: 10)
+    controller.contentDidChange()
+
+    #expect(controller.panel.frame.height > opened)
+}
+
+/// A long warning list must not take the translation's height away from it.
+///
+/// The warnings were briefly pinned beside the buttons, and unbounded content in a pinned flow
+/// starves the flexible section next to it: measured on a bare 560 × 540 stack, the middle's
+/// clip view came out 438, 365, 215 and **0** pt tall at 0, 5, 15 and 30 warning rows. Capping
+/// them answered that badly — a 160 pt ceiling is larger than the panel's own 132 pt floor, so
+/// at the smallest size the user is allowed to drag to, the pinned block alone outgrew the
+/// window. They scroll with the translation again, where their length costs only itself.
+///
+/// 60 rows and not 30, and the number is measured: at 30 the panel is 560 × 741, under this
+/// display's 997 pt ceiling, so nothing scrolls and there is nothing to check. At 60 it caps
+/// and the scrolling region comes out 929 pt — the property, stated as «not zero» rather than
+/// as that figure, which is a fact about this screen.
+@MainActor
+@Test func aLongWarningListDoesNotStarveTheTranslation() {
+    let text = String(repeating: sentence, count: 12)
+    let model = panelModel()
+    model.sourceText = text
+    model.translatedText = text
+    model.state = .finished
+    model.outcome = TranslationOutcome(
+        final: text, chunks: [], translatedChunks: [text], documentGlossary: [],
+        detectedSource: .en,
+        checks: [],
+        markupDiffs: (0..<60).map { _ in
+            MarkupDiff(expected: nil, actual: nil, note: "потеряно: граница абзаца")
+        },
+        stats: [], timeToFirstTokenMS: 12, totalMS: 34,
+        documentGlossaryFailure: nil, documentGlossaryAttempted: false)
+
+    let controller = PanelController { variant in
+        AnyView(PanelView(model: model, selection: .text(text),
+                          scrolls: variant == .installed(scrolls: true),
+                          fillsPanel: variant != .measured))
+    }
+    controller.show(at: CGPoint(x: 600, y: 600))
+    defer { controller.hide() }
+    controller.panel.contentView?.layoutSubtreeIfNeeded()
+
+    var clipHeights: [CGFloat] = []
+    func walk(_ v: NSView) {
+        if v is NSClipView { clipHeights.append(v.frame.height) }
+        for s in v.subviews { walk(s) }
+    }
+    if let content = controller.panel.contentView { walk(content) }
+    // The content exceeds the ceiling, so there must be somewhere to scroll it — and that
+    // somewhere must have a height.
+    #expect(!clipHeights.isEmpty)
+    #expect(clipHeights.allSatisfy { $0 > 0 })
+}
+
+/// The window's own minimum and the sizer's floors are the same two numbers.
+///
+/// They have to be: `PanelSizer.fit`'s `userSized` branch answers `max(previous, floor)`, so
+/// any size AppKit lets a drag reach below a floor is a size the sizer disagrees with — and it
+/// disagrees by writing a frame under a hand that is still moving the edge.
+///
+/// **This restates the assignment, and it does so because the behaviour cannot be reached from
+/// here.** `contentMinSize` governs *user* resizing; it does not constrain a programmatic
+/// frame, and `TranslationPanel.constrainFrameRect` is deliberately overridden to return
+/// frames untouched, so nothing pulls one back. Measured while trying to write the stronger
+/// test: `setContentSize(NSSize(width: 10, height: 10))` on a shown panel produces a 10 × 10
+/// frame. What a drag does with the same minimum is owed to a hand on the mouse —
+/// `docs/OPEN-ITEMS.md` carries it.
+@MainActor
+@Test func theWindowRefusesTheSizesTheSizerWouldOverrule() {
+    let controller = PanelController { _ in AnyView(Text("перевод")) }
+    #expect(controller.panel.contentMinSize.width == PanelSizer.minWidth)
+    // `dragMinHeight`, which is deliberately above `minHeight`: the panel auto-sizes down to
+    // 132 and refuses to be *dragged* below 164, because that is what the pinned block wants
+    // at its worst — «окно занято» under a failure, at 300 pt wide.
+    #expect(controller.panel.contentMinSize.height == PanelSizer.dragMinHeight)
+    #expect(PanelSizer.dragMinHeight > PanelSizer.minHeight)
+}
+
+/// A selection of a few pages must not cost half a second before the panel appears.
+///
+/// The reservation lays a hidden copy of the selection out to decide the panel's opening size.
+/// Measured showing the real panel at each length: 500 chars → 214 pt in 15.7 ms, 8 000 →
+/// 998 pt (this display's 0.6-of-screen ceiling, 997) in 29.3 ms, 200 000 → the same 998 pt in
+/// **419 ms**. Every character past the ceiling is laid out to produce a number that has
+/// already stopped changing, on the main actor, at the moment the panel is meant to appear.
+/// `@MainActor` because it calls statics on a `View` — the trap `CLAUDE.md` records.
+@MainActor
+@Test func theReservationStopsAtTheLengthThatStopsChangingTheAnswer() {
+    let long = String(repeating: "слово ", count: 20_000)
+    #expect(long.count > PanelView.reservationLimit)
+    #expect(PanelView.reservation(for: long).count == PanelView.reservationLimit)
+    // Short selections are reserved whole — the cap must not truncate the ordinary case.
+    let short = "Каждый профиль обязан ссылаться на тип."
+    #expect(PanelView.reservation(for: short) == short)
+}
+
+/// Pressing ⌥⌘T twice over the same paragraph must be the same as pressing it once.
+///
+/// The reservation used to key on `model.sourceText != source`, which is false the second
+/// time: the panel reserved nothing and opened showing the first run's own status — after a
+/// failure, «Ollama не запущена…» with a «Повторить» button, under a run already in flight.
+/// `HotkeyCoordinator` announces the press with `isStartingRun` and deliberately leaves the
+/// model alone — `translate()` keeps the previous reply until the next one's first token, and
+/// the panel reserves for the new run regardless of what is still in the pane.
+@MainActor
+@Test func aSecondPressOverTheSameSelectionReservesAsMuchAsTheFirst() {
+    let text = String(repeating: sentence, count: 6)
+
+    func opening(afterPreviousRun previous: Bool) -> CGFloat {
+        let model = panelModel()
+        if previous {
+            // A run over this very selection has already finished. `handlePress` leaves all
+            // of it alone — that is the point: `translate()` keeps the previous reply until
+            // the next one's first token, and the panel must reserve for the new run anyway.
+            model.sourceText = text
+            model.translatedText = text
+            model.state = .finished
+        }
+
+        let controller = PanelController { variant in
+            AnyView(PanelView(model: model, selection: .text(text),
+                              awaitingRun: true,
+                              scrolls: variant == .installed(scrolls: true),
+                              fillsPanel: variant != .measured))
+        }
+        controller.show(at: CGPoint(x: 600, y: 600))
+        defer { controller.hide() }
+        return controller.panel.frame.height
+    }
+
+    #expect(opening(afterPreviousRun: true) == opening(afterPreviousRun: false))
+}
+
+/// The reservation must *lift*, and nothing pinned that until this test.
+///
+/// The three tests that measure the panel's opening all build it while the reply is still to
+/// come, so every one of them passes when the reservation is made unconditional — checked,
+/// all three green with `awaitingReply` hard-wired to `true`. What that would ship is a panel
+/// that keeps room for the source's whole length after the run has ended: a hole between a
+/// short translation and the button row, for the rest of the presentation.
+///
+/// Measured through `sizeThatFits` rather than a panel, so no animation and no clock: the
+/// settle is the one resize `PanelController` animates, and a frame read after it is only
+/// sometimes there.
+@MainActor
+@Test func aFinishedShortReplyDoesNotKeepTheRoomReservedForItsSource() {
+    let source = String(repeating: sentence, count: 12)
+    let model = panelModel()
+    model.sourceText = source
+
+    func idealHeight(awaitingRun: Bool = false) -> CGFloat {
+        let host = NSHostingController(
+            rootView: PanelView(model: model, selection: .text(source),
+                                awaitingRun: awaitingRun,
+                                scrolls: false, fillsPanel: false))
+        host.view.layoutSubtreeIfNeeded()
+        return host.sizeThatFits(in: CGSize(width: 560, height: CGFloat.greatestFiniteMagnitude)).height
+    }
+
+    // Waiting for the reply: the room is the source's.
+    model.translatedText = ""
+    model.state = .idle
+    let awaiting = idealHeight(awaitingRun: true)
+
+    // The reply arrives and is short. The room must go back.
+    model.translatedText = "Короткий ответ."
+    model.state = .finished
+    let settled = idealHeight()
+
+    #expect(settled < awaiting / 2)
+}

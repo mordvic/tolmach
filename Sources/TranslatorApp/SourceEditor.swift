@@ -12,6 +12,14 @@ import SwiftUI
 /// second one under it.
 struct SourceEditor: View {
     @Bindable var model: TranslationViewModel
+    /// So a click in the pane's top margin can still put the caret in the editor. See the
+    /// `contentShape` on the stack below.
+    @FocusState private var editorFocused: Bool
+
+    /// The drawing's 8 pt top margin for this pane, applied to the editor **and** to the
+    /// placeholder from one place. Two copies of it is exactly how the caret and the grey
+    /// text came to sit 8 pt apart.
+    private static let textTopInset: CGFloat = 8
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -19,15 +27,56 @@ struct SourceEditor: View {
                 TextEditor(text: $model.sourceText)
                     .font(.body)
                     .scrollContentBackground(.hidden)
+                    // **The editor's own top margin, and the reason the caret used to look
+                    // misplaced.** Asked of the text view on the running bundle:
+                    // `textContainerInset` is `{0, 0}` and `textContainerOrigin` is `{0, 0}`,
+                    // so text begins hard against the top edge of the pane; the caret's own
+                    // rect came back at exactly the text view's top, at x = 5. The 5 is
+                    // `lineFragmentPadding`, which `NSTextContainer` defaults to and which is
+                    // why the placeholder's leading inset below is 5 and not 8.
+                    //
+                    // Vertically there was nothing, so the placeholder's 8 pt put the grey
+                    // text a whole 8 pt below the caret that was supposed to sit in front of
+                    // it. Padding the editor rather than un-padding the placeholder, because
+                    // the drawing gives this pane `padding: 8px 5px` — the margin is wanted,
+                    // it was simply being applied to the wrong one of the two.
+                    .padding(.top, Self.textTopInset)
+                    .focused($editorFocused)
                 // A placeholder and not a first line of grey text in the editor itself:
                 // anything in the binding is text the user would have to delete, and would
                 // be translated if they did not.
                 if model.sourceText.isEmpty {
                     Text("Вставьте или наберите текст")
                         .font(.body).foregroundStyle(.tertiary)
-                        .padding(.top, 8).padding(.leading, 5)
+                        // The same constant the editor is padded by, so the two cannot drift.
+                        // The 5 is `lineFragmentPadding`, measured, not chosen.
+                        .padding(.top, Self.textTopInset).padding(.leading, 5)
                         .allowsHitTesting(false)
                 }
+            }
+            // **The margin above is padding, and padding is outside its child's hit region.**
+            // The editor's own frame moves down by those 8 pt, the stack has no background and
+            // the placeholder refuses hits, so the top strip of the pane landed on nothing: a
+            // click there neither focused the editor nor placed a caret, and the user had to
+            // aim lower.
+            //
+            // The gesture covers **the strip and nothing else**. Hung on the stack, as it
+            // first was, its hit region covered the `TextEditor` too — and if SwiftUI resolves
+            // an ancestor tap before the hosted `NSTextView`'s own mouse handling, every click
+            // in the pane would only set focus: no caret placed mid-paragraph, no click-drag
+            // selection, editing a pasted source reduced to appending. Which way that
+            // resolves is exactly the kind of AppKit routing this project refuses to assert
+            // from memory, so the fix is to not depend on the answer.
+            //
+            // Padding and not an inset inside the editor because there is no way to ask for
+            // one: `TextEditor`'s `textContainerInset` is `{0, 0}` and not exposed, and
+            // `.contentMargins` does not reach its text — measured, in all three spellings,
+            // each leaving the caret flush with the top while the frame stayed full height.
+            .overlay(alignment: .top) {
+                Color.clear
+                    .frame(height: Self.textTopInset)
+                    .contentShape(Rectangle())
+                    .onTapGesture { editorFocused = true }
             }
             .overlay(alignment: .bottomTrailing) { SourceFooter(model: model).padding(6) }
         }

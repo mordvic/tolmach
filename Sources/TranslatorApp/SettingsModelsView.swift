@@ -33,7 +33,13 @@ struct SettingsModelsView: View {
                 LabeledContent("Состояние") {
                     Label(status.label, systemImage: status.isHealthy
                           ? "checkmark.circle" : "exclamationmark.triangle.fill")
-                        .foregroundStyle(status.isHealthy ? .green : .orange)
+                        // `StatusColour`, like every other status hue in the app. This row
+                        // was missed when the three colours were spelled: on a white grouped
+                        // form `systemOrange` is 2.31:1 and `systemGreen` 2.22:1, and this is
+                        // the most prominent status string in Settings — the one a user with
+                        // Ollama stopped comes here to read.
+                        .foregroundStyle(status.isHealthy ? StatusColour.success
+                                                          : StatusColour.warning)
                         .labelStyle(.titleAndIcon)
                 }
                 // Spec §5.3 asks this section for three things: whether Ollama is running,
@@ -133,7 +139,7 @@ struct SettingsModelsView: View {
                 // Spec 8: the pane must say why it is empty. `error` covers both an
                 // unreachable server at load and a download that failed halfway.
                 if let error = models.error {
-                    SettingsNote(text: error, icon: "xmark.octagon.fill", tint: .red)
+                    SettingsNote(text: error, icon: "xmark.octagon.fill", tint: StatusColour.failure)
                 }
             }
 
@@ -267,7 +273,7 @@ private struct ModelChoice: View {
             // The name is known exactly here, so the download is one press.
             HStack {
                 SettingsNote(text: "«\(selection)» не установлена.",
-                             icon: "arrow.down.circle", tint: .orange)
+                             icon: "arrow.down.circle", tint: StatusColour.warning)
                 Button("Скачать") { onDownload(selection) }
                     .font(.caption)
                     .disabled(models.isPulling)
@@ -276,7 +282,7 @@ private struct ModelChoice: View {
         // Blacklisted models stay selectable: the reason is measured evidence, and the user
         // may have a reason to override it.
         if let warning = models.warning(for: selection) {
-            SettingsNote(text: warning, icon: "exclamationmark.triangle.fill", tint: .orange)
+            SettingsNote(text: warning, icon: "exclamationmark.triangle.fill", tint: StatusColour.warning)
         }
     }
 }

@@ -38,7 +38,7 @@ struct SettingsFilesView: View {
                           + "нажатие сочетания клавиш будет перезагружать модель — около "
                           + "двух секунд туда и столько же обратно.",
                           systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption).foregroundStyle(.orange)
+                        .font(.caption).foregroundStyle(StatusColour.warning)
                 }
             }
 

@@ -64,7 +64,7 @@ struct SettingsGlossaryView: View {
                         Image(systemName: "exclamationmark.triangle.fill")
                     }
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(StatusColour.failure)
                 }
                 GlossaryHeader(query: $query, language: languageBinding,
                                count: glossary.file.entries.count,

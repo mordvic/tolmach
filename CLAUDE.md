@@ -21,21 +21,31 @@ swift test --filter TranslationCoreTests   # one test target
 
 ./Scripts/make-app-bundle.sh      # assemble build/LocalTranslator.app (debug); pass "release" for release
 swift Scripts/make-icon.swift build/AppIcon.icns   # redraw the icon; make-app-bundle.sh does this itself
+swift Scripts/colour-contrast.swift               # re-measure the status colours against both appearances
+swiftc -O -o /tmp/ac Scripts/accent-contrast.swift && /tmp/ac   # white on every accent macOS offers
+swiftc -O -o /tmp/wt Scripts/window-title.swift && /tmp/wt   # why the window title needs re-asserting
+swiftc -O -o /tmp/tf Scripts/toolbar-fit.swift && /tmp/tf   # narrowest width the toolbar fits in
+swiftc -O -o /tmp/tbh Scripts/toolbar-height.swift && /tmp/tbh   # what the toolbar band costs, per style
 swift run translate-cli --to ru --tone technical "text"   # needs a live Ollama; reads stdin if no text
 swift run acceptance              # live-Ollama corpus run; MUST run from the package root (reads ./corpus)
 ```
 
 No count here on purpose: it went stale twice in one review cycle, and a number nothing
 checks is a contract nobody can keep. What is worth stating is what the line above already
-says — the suite is offline and finishes in about a second and a half, so there is no reason
-not to run it. That number has a floor and a reason: one test
+says — the suite is offline and finishes in about two seconds, so there is no reason not to
+run it. That number has a floor and a reason: one test
 (`aFileInterruptedFromTheTermsSheetDoesNotReportTheReadersDeliberation`) sleeps a deliberate
 second, because the property it pins — that a reader's time in the terms sheet is not reported
 as the machine's — can only be seen by letting real time pass in the sheet. Its two runs go
-concurrently, so the floor is ~1.05 s rather than ~1.1 s, and everything else together is under
-a second. If the suite ever reads much above this, suspect the machine before the code: a
-leaked load generator from an earlier session made the same hardware measure 0.87 s and 3.0 s
-on the same commit.
+concurrently, so the floor is ~1.05 s rather than ~1.1 s.
+
+That floor has since become the *whole* of the figure rather than most of it. The suite reads
+**~2.1 s** now, and the reason is contention rather than any test being slow: `TranslationPanelTests`
+shows real `NSPanel`s and lays out real `NSHostingController`s — 22 tests, 0.75 s on their own —
+and running beside them stretches the sleeping test's own two runs from ~1.05 s to ~1.97 s. So the
+number to watch is still that one test's, not the total. If the suite ever reads much above this,
+suspect the machine before the code: a leaked load generator from an earlier session made the same
+hardware measure 0.87 s and 3.0 s on the same commit.
 
 `swift test` never touches the network. `translate-cli` and `acceptance` do — `acceptance` is
 the deliberately-not-in-CI harness that measures TTFT, markup integrity and term consistency
@@ -288,6 +298,13 @@ Facts that will bite you if you "tidy" them:
 - Tests use **Swift Testing** (`@Test`, `#expect`), not XCTest. Test names are sentences describing
   the behaviour being pinned. `UserDefaults`-backed tests use `InMemoryDefaults`, never a real suite
   (a written suite leaves a plist in `~/Library/Preferences` that nothing reliably removes).
+- **The three status colours are `StatusColour`, not `.orange`/`.green`/`.red`.** In the dark
+  appearance the system colours are what the design uses and `StatusColour` returns them; in
+  the light one it returns the design's darkened values, because `systemOrange` on a white pane
+  is 2.31:1 against 11 pt text and this app writes every warning at that size. Measured — the
+  table is in the type's doc comment, the probe is `Scripts/colour-contrast.swift`, and
+  `StatusColourTests` turns the figures into assertions. Reaching for a bare `.orange` in a new
+  view puts one warning back at a quarter of the contrast of the one beside it.
 - All user-facing strings are Russian, with «guillemets» and «ё». **No backticks in strings rendered
   by `Text(String)`** — the plain-`String` initialiser does not parse Markdown and they show as
   literal grave accents. Identifiers (`aya-expanse:8b`) and key glyphs (⌥⌘T) stay as they are.

@@ -43,7 +43,26 @@ extension Language {
         case .es: "испанский"
         case .pt: "португальский"
         case .it: "итальянский"
-        case .zh: "китайский (упрощённый)"
+        // «китайский», not «китайский (упрощённый)» — and the reason is not the one it was
+        // first dropped for. It was dropped because an `NSPopUpButton` is as wide as its
+        // widest menu row, so seven characters nobody had chosen set the width of every
+        // picker listing languages. The window's two are `Menu`s now (see `MainWindowView`'s
+        // toolbar) and a menu's button is as wide as the title it is given, so that argument
+        // is gone.
+        //
+        // What replaced it is narrower and stronger. Measured on the bundle, sweeping the
+        // window against `NSToolbar.visibleItems`, the toolbar fits from: 650 pt as it
+        // usually stands, 680 pt with the longest names selected on both sides — and 740 pt
+        // with this parenthetical chosen once, 810 pt with it chosen twice. The drawing
+        // specifies a 700 pt minimum. So the parenthetical is the difference between a window
+        // that honours that number and never hides «Перевести», and one that does not.
+        //
+        // Nothing is lost that the user could act on: `Language` has one Chinese case, so it
+        // distinguished this from nothing on offer. What it *said* — which script the model is
+        // asked for — is still said where it is load-bearing: `englishName` is «Chinese
+        // (Simplified)», and `englishName` is what `PromptBuilder` puts in the prompt. This
+        // name is UI only. The drawing specifies the 700; it never shows Chinese at all.
+        case .zh: "китайский"
         case .ja: "японский"
         }
     }

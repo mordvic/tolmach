@@ -190,3 +190,28 @@ private let size = CGSize(width: 360, height: 240)
     #expect(grown.minY >= screen.minY)
     #expect(grown.maxY <= screen.maxY)
 }
+
+/// A shrink must not bring the top edge down, whatever corner the panel was anchored by.
+///
+/// Growth keeps the corner nearest the pointer, so the panel expands away from the text
+/// already read. A shrink inverts that: holding a *bottom* corner moves the top edge down, and
+/// the panel's content is top-aligned, so every line on screen comes down with it. The settle
+/// is the only fit allowed to shrink and it is exactly when a reader is part-way through.
+@Test func shrinkingHoldsTheTopEdgeEvenWhenThePanelWasAnchoredByItsBottom() {
+    let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+    let current = CGRect(x: 200, y: 300, width: 400, height: 300)   // top edge at y = 600
+    let smaller = CGSize(width: 400, height: 240)
+
+    for anchor in [PanelAnchor.bottomLeading, .bottomTrailing] {
+        let kept = PanelPlacement.reframe(current: current, newSize: smaller,
+                                          anchor: anchor.holdingTheTop, screen: screen)
+        #expect(kept.maxY == current.maxY)
+        // …and the horizontal corner is still the one the panel was placed by.
+        if anchor.isLeading { #expect(kept.minX == current.minX) }
+        else { #expect(kept.maxX == current.maxX) }
+    }
+    // Growth is untouched: it still keeps whatever corner was chosen.
+    let grown = PanelPlacement.reframe(current: current, newSize: CGSize(width: 400, height: 400),
+                                       anchor: .bottomLeading, screen: screen)
+    #expect(grown.minY == current.minY)
+}

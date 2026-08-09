@@ -222,6 +222,130 @@ failure makes a settings window swallow its first click. macOS 14 replaced unila
 activation with the cooperative `NSRunningApplication.activate(from:options:)`.
 → `activateThisApp()` in `Sources/TranslatorApp/TranslatorApp.swift`
 
+**A `Picker`'s title is not drawn inside a `.toolbar`, and that is a hint rather than a gap.**
+SwiftUI keeps it as the accessibility label and renders nothing, so `Picker("Из", …)` ships as a
+bare pop-up. Nothing in the source says so and no test here can see it — it took a screenshot of
+the running app. **Do not answer it with a sibling `Text`:** that is the trap above, where the
+item's own chrome then wraps a control that already has a bezel. The framework is saying a
+toolbar is a row of controls and not a form, so the label belongs *in* the control — a `Menu`
+whose title carries it. → `Sources/TranslatorApp/MainWindowView.swift`
+
+**Hiding a window's title is `titleVisibility`, not `.navigationTitle("")`.** Measured with
+`Scripts/window-title.swift`: both remove the drawn title, but `navigationTitle("")` leaves
+`NSWindow.title` empty while `titleVisibility = .hidden` keeps it. The title string is what the
+«Окно» menu lists the window under — a menu this app deliberately adds «Открыть окно перевода»
+to — as well as what Mission Control and VoiceOver announce.
+
+**And setting it once does not hold.** On the running bundle the assignment lands and is undone
+before the next 400 ms sample: `1` at `viewDidMoveToWindow`, `0` at all six samples after,
+with `_NSToolbarTitleField` visible again at 60 × 19. Re-asserted from `viewDidMoveToWindow`,
+`updateNSView` and `NSWindow.didUpdateNotification` together, the same instrumentation reads
+`1` and zero visible title fields at all five samples over 3 s. **What performs the reset is
+not established** — saved-state restoration, `.defaultSize` and view-level churn were each
+tested and cleared, and the probe does not reproduce the failure at all: `MODE=once` passes
+there and fails on the app. So instrument the bundle, not the probe, before trimming any of
+the three. → `WindowTitleHidden` in `Sources/TranslatorApp/MainWindowView.swift`
+
+**`.borderedProminent` ignores `.foregroundStyle` on the button; put it on the label's
+`Text`.** Measured by rendering both to a bitmap and counting pixels: the default draws 284
+light and 0 dark, `.foregroundStyle(.black)` on the `Button` draws exactly the same, and the
+same modifier on the `Text` inside the label draws 269 dark and 0 light. So a prominent
+button's label colour is settable — just not where you would write it.
+→ `AccentLabel`, and its two call sites
+
+**`NSColor.white` and `NSColor(white:alpha:)` are in the generic gray space, and asking one for
+`redComponent` throws.** Not a wrong value — `NSInvalidArgumentException`, which takes the
+process down. Anything doing colour arithmetic must build its constants with
+`NSColor(srgbRed:green:blue:alpha:)` or convert first. It reached a shipping type here and was
+caught by the test written alongside it.
+→ `AccentLabel.white`
+
+**A hosting view installed as a `.titled` window's content view gets a title-bar safe area;
+the detached copy you measure with does not.** Measured on the running bundle:
+`safeAreaInsets.top` is 24 on the installed view of a panel carrying `.fullSizeContentView`,
+and 0 on the `NSHostingController` the size was computed from. The window is then set to a
+height that does not include it, the installed view insets its content anyway, and the bottom
+edge is what runs out — 28 pt above the content against 2 below, and −2 after a shrink, where
+the view asks for a uniform 14. `hosting.safeAreaRegions = []` makes the two agree.
+**It resists a test:** in the test process the safe area exists (`safeAreaInsets.top > 0`) but
+SwiftUI does not apply it, so an assertion on the resulting gap passes with the line and
+without it — checked by mutation, twice, with filling content. Measure it on the bundle.
+→ `PanelController.init` in `Sources/TranslatorApp/TranslationPanel.swift`
+
+**`windowBackgroundColor` is not the same colour on every macOS.** In the dark appearance it
+is materially lighter on macOS 15 than on macOS 26 — measured through a contrast that came out
+3.51 locally and 2.70 on CI for the same fill. A colour decision measured against it on one
+machine is not portable; state the grounds a design was chosen against as literals, the way
+`StatusColourTests` does, and record what the real surface does per release.
+→ `PrimaryButtonColourTests`, `docs/OPEN-ITEMS.md`
+
+**`contentMinSize` binds the user, not you.** It is what makes a drag stop at a floor, and it
+does nothing to a programmatic frame — measured: `setContentSize(NSSize(width: 10, height: 10))`
+on a shown panel produces a 10 × 10 frame. `TranslationPanel.constrainFrameRect` is overridden
+to return frames untouched, so nothing pulls one back either. A test can therefore assert that
+the minimum is *set*, and only a hand on the mouse can confirm what it does.
+→ `TranslationPanel.init`, `PanelSizer.minWidth` / `minHeight`
+
+**`windowDidResize` fires for your own `setFrame` too; `inLiveResize` is the only
+discriminator.** AppKit posts it for a hand-drag and for a programmatic resize alike, so a
+delegate that treats every notification as «the user chose this size» will latch that on its
+own first fit. Here that meant the panel freezing at 120 pt and never being given room for the
+reply — a worse defect than the one the handler was added to fix, and one a test caught only
+because it grew the content on the *same* controller.
+→ `PanelController.windowDidResize` in `Sources/TranslatorApp/TranslationPanel.swift`
+
+**And a resize needs a re-fit, not just a flag.** `windowDidEndLiveResize` recorded that the
+size was the user's and stopped, while nothing else re-fits after a drag — content updates are
+driven by the run, and a finished translation has nothing more to say. A panel dragged shorter
+than its content therefore kept the non-scrolling variant: measured at 560 × 120 holding 270 pt
+of it, with the status row, the warnings and both buttons below the window's edge.
+→ `PanelController.windowDidEndLiveResize`
+
+**A `Spacer` is greedy in the copy you measure, and `minLength: 0` does not save you.**
+`PanelController` sizes the panel from a detached host with no fill frame; a `Spacer` there
+reports «as much as you will give me», so every panel came back at 998 pt — the
+0.6-of-screen ceiling — for every reply length from one sentence to twenty. Gate any spacer
+on the installed copy (`fillsPanel`), which is the same distinction that modifier already
+exists for one row further down. → `Sources/TranslatorApp/PanelView.swift`
+
+**`TextEditor` has no top inset, and 5 pt of leading that is not padding.** Asked of the
+`NSTextView` on the running bundle: `textContainerInset` is `{0, 0}` and `textContainerOrigin`
+is `{0, 0}`, so text begins hard against the top edge — while the horizontal 5 pt comes from
+`NSTextContainer.lineFragmentPadding`, which is a default of the text system rather than
+anything SwiftUI applies. A placeholder overlaid on the editor must therefore be offset by
+5 horizontally and by **whatever the editor itself is padded by** vertically, or the caret and
+the grey text end up on different lines: they were 8 pt apart here, which reads as the caret
+being in the wrong place. `firstRect(forCharacterRange:)` is how to ask where the caret
+actually is — it answered `x = 5`, flush with the text view's top, both before and after.
+→ `Sources/TranslatorApp/SourceEditor.swift`
+
+**A toolbar item wraps its content in chrome, so its content must be one control.** Measured
+on the bundle by walking `NSToolbar.items`: a `ToolbarItem` host is 36 pt tall, and a `Picker`
+inside it renders a `SwiftUIPopupButton` that is *also* 36 pt with `isBordered = true`. Put a
+`Text` beside that picker and the item's own capsule wraps a control that already has a bezel —
+a pill inside a pill, which is what it looks like. The shape to aim for is host size == control
+size, which is what the plain `Button` items in the same toolbar already have. Folding the
+label into a `Menu`'s title gets there: 124 × 36 host holding a 124 × 36 control.
+→ the toolbar in `Sources/TranslatorApp/MainWindowView.swift`
+
+**A `ToolbarItemGroup`'s children are separate toolbar items.** Measured through
+`NSToolbar.items`: a group holding three labels, three pickers and a button reports 7 items, not
+1. macOS spaces them apart and overflows them one at a time, so a label written beside the
+control it names can be left on the bar when that control is pushed into the ».
+→ the toolbar in `Sources/TranslatorApp/MainWindowView.swift`
+
+**An `NSPopUpButton` is as wide as its widest menu item; a `Menu`'s button is as wide as its
+title.** So one long option sets the width of every `Picker` listing the same values, chosen or
+not — «китайский (упрощённый)» cost 70 pt in five pickers at once — while a `Menu` pays only for
+the value showing, at the price of a width that moves with the selection. A mock-up shows
+neither: it draws the string that is showing and never opens the menu.
+→ `Language.russianName` in `Sources/TranslatorApp/RussianCopy.swift`
+
+**Where SwiftUI puts the window title, relative to your toolbar items.** It lays the title out
+*after* the `.navigation` group, so a full navigation group leaves the title sitting between
+the last control and the trailing button, reading as a control itself.
+→ `Sources/TranslatorApp/MainWindowView.swift`
+
 **`.nonactivatingPanel` grants key status; `canBecomeKey` only permits it.** A `.titled`
 `NSPanel` answers `canBecomeKey` true with *and* without the style bit — the bit is what lets
 the panel take key without activating the app. → `Sources/TranslatorApp/TranslationPanel.swift`
