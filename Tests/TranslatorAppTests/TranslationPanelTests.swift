@@ -1059,4 +1059,3 @@ private func resizablePanel(text: String)
 
     #expect(settled < awaiting / 2)
 }
-

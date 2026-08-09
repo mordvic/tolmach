@@ -296,6 +296,27 @@ final class PanelController: NSObject, NSWindowDelegate {
         hosting.sizingOptions = []
         hosting.translatesAutoresizingMaskIntoConstraints = true
         hosting.autoresizingMask = [.width, .height]
+        // **The installed view must measure the same as the copy the size came from.**
+        //
+        // It does not by default, and the difference is a whole edge of padding. This view is
+        // the content view of a `.titled` window carrying `.fullSizeContentView`, so AppKit
+        // hands it a safe area for the title bar it is drawing under — measured on the running
+        // bundle: `safeAreaInsets` is `top: 24`. The `NSHostingController` in `measure` is
+        // detached, has no window and therefore no safe area, so it reports the height of the
+        // content alone.
+        //
+        // The panel is then set to that height and the installed view insets its content by
+        // 24 pt anyway. Everything shifts down and the bottom edge is what runs out: measured
+        // before this line, a settled panel had 28 pt above its content and **2 pt** below,
+        // against the uniform 14 the view asks for — and after a settle, which is the one fit
+        // allowed to shrink, −2, with the buttons overhanging the frame. Laid out at its own
+        // ideal height with no window, the same view measures 14 and 14, at every reply length
+        // from 65 to 1040 characters.
+        //
+        // Ignoring the region is right rather than merely convenient: the title bar is hidden
+        // (`titleVisibility`), the close button is hidden, and `PanelView` draws its own ⨯ —
+        // there is nothing up there to stay clear of.
+        hosting.safeAreaRegions = []
         panel.contentView = hosting
         panel.delegate = self
         // Forwarded through the controller's own properties rather than assigned to the

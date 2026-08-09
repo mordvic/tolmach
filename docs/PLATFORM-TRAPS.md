@@ -246,6 +246,18 @@ tested and cleared, and the probe does not reproduce the failure at all: `MODE=o
 there and fails on the app. So instrument the bundle, not the probe, before trimming any of
 the three. → `WindowTitleHidden` in `Sources/TranslatorApp/MainWindowView.swift`
 
+**A hosting view installed as a `.titled` window's content view gets a title-bar safe area;
+the detached copy you measure with does not.** Measured on the running bundle:
+`safeAreaInsets.top` is 24 on the installed view of a panel carrying `.fullSizeContentView`,
+and 0 on the `NSHostingController` the size was computed from. The window is then set to a
+height that does not include it, the installed view insets its content anyway, and the bottom
+edge is what runs out — 28 pt above the content against 2 below, and −2 after a shrink, where
+the view asks for a uniform 14. `hosting.safeAreaRegions = []` makes the two agree.
+**It resists a test:** in the test process the safe area exists (`safeAreaInsets.top > 0`) but
+SwiftUI does not apply it, so an assertion on the resulting gap passes with the line and
+without it — checked by mutation, twice, with filling content. Measure it on the bundle.
+→ `PanelController.init` in `Sources/TranslatorApp/TranslationPanel.swift`
+
 **`contentMinSize` binds the user, not you.** It is what makes a drag stop at a floor, and it
 does nothing to a programmatic frame — measured: `setContentSize(NSSize(width: 10, height: 10))`
 on a shown panel produces a 10 × 10 frame. `TranslationPanel.constrainFrameRect` is overridden
