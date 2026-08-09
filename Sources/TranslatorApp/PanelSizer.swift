@@ -18,8 +18,27 @@ enum PanelSizer {
     /// Above this the panel stops being a panel. A translation is read, not scanned, and a
     /// 900pt line is worse to read than a 560pt one.
     static let maxWidth: CGFloat = 560
-    /// Enough for the header, one line and the buttons.
-    static let minHeight: CGFloat = 120
+    /// Enough for everything the panel pins, at its narrowest.
+    ///
+    /// 120 while this region held the header, one line and the buttons. The panel is three
+    /// sections now and the status row is pinned too, so the floor has to clear that as well
+    /// — measured on the real view at each width, in the states that pin the most:
+    ///
+    ///     width  idle+empty  running  failed  finished, one line
+    ///       300      92        118      130          94
+    ///       560      92        118      120          94
+    ///
+    /// 130 is a failure message wrapping to two lines in a 300 pt panel, which is the widest
+    /// the pinned block ever gets. At 120 it overflowed by 10, and since the translation is
+    /// the section that stretches, the overflow came out of it: dragged to the floor with a
+    /// failure showing, the pane went to nothing while the buttons stayed.
+    ///
+    /// **Not** raised to clear the pinned block *plus* a line of translation, which the same
+    /// table puts at ~148. The floor is what a settled short reply is padded to — a one-line
+    /// translation wants 94 — so every point above the content is a hole between the text and
+    /// the button row, which is the defect this panel was rebuilt to remove. 12 pt of that is
+    /// a trade; 54 is the thing itself.
+    static let minHeight: CGFloat = 132
     /// The panel floats over the work the user is reading; taking more than this much of
     /// the screen makes it a window with no way to move it aside.
     static let maxHeightFraction: CGFloat = 0.6

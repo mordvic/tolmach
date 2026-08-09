@@ -352,16 +352,21 @@ final class PanelController: NSObject, NSWindowDelegate {
         //
         // **That is no longer the whole story for a `.text` press, and the difference is the
         // point of this paragraph.** `PanelView` reserves the reply's room from `selection`,
-        // and it decides whether to by comparing `model.sourceText` against that selection —
-        // which is stale here, and is exactly what makes «a reply has not arrived» true at
-        // this instant. So this measurement now sizes the panel for the run that is about to
-        // start rather than for the one that just ended. Measured through this call: it opened
-        // at 300 × 120, the floor on both axes, against content needing up to 486 pt; it now
-        // opens covering what the run needs, and `applyFit` has nothing to correct.
+        // and what tells it a reply is still to come is `HotkeyCoordinator.isStartingRun` —
+        // set before `afterCapture()` precisely so it is true at this instant. Nothing about
+        // the model is: `translate()` has not run, so its state and its pane still describe
+        // the previous press. Measured through this call: it opened at 300 × 120, the floor on
+        // both axes, against content needing up to 486 pt; it now opens covering what the run
+        // needs, and `applyFit` has nothing to correct.
         //
-        // What survives unchanged is the reasoning above for *why* it cannot simply read the
-        // model: it still cannot, and the fix was to find a signal that is true before the
-        // model is written rather than to reorder the press.
+        // The gate was first written as «`model.sourceText` differs from this selection», and
+        // that is wrong twice over — it is false for a second press over the same text, and
+        // making it true by blanking the model turned this measurement into a settle. See
+        // `PanelView.awaitingReply` and `HotkeyCoordinator.isStartingRun`.
+        //
+        // What survives unchanged is the reasoning above for *why* this cannot simply read the
+        // model: it still cannot, and the answer was to be told rather than to reorder the
+        // press.
         //
         // `selection` is the half that *is* right by now — `handlePress` assigns it before
         // `afterCapture()` — so an `.empty` or a `.notPermitted` press is measured against its
@@ -443,10 +448,15 @@ final class PanelController: NSObject, NSWindowDelegate {
         // and with top-aligned content every line already on screen comes down with it. The
         // settle is the only fit that can shrink, and it is exactly the moment a reader is
         // most likely to be part-way through.
-        let shrinking = fit.size.height < panel.frame.height
+        // …and the record follows the edge, because the next fit reads it. Holding the top
+        // for one shrink and then growing from the bottom the shrink had just moved would
+        // push the top edge up over the text being read — the movement `PanelAnchor` exists
+        // to prevent — and «Повторить» on the same presentation does exactly that: it runs a
+        // new translation without a new `show(at:)`, so whatever is stored here is what the
+        // growth uses.
+        if fit.size.height < panel.frame.height { anchor = anchor.holdingTheTop }
         let frame = PanelPlacement.reframe(current: panel.frame, newSize: fit.size,
-                                           anchor: shrinking ? anchor.holdingTheTop : anchor,
-                                           screen: visible)
+                                           anchor: anchor, screen: visible)
         // Unanimated while a run streams, and that is not an omission. The steps are a line
         // of text at a time and arrive up to ten times a second; animating each one puts a
         // 150ms tween on top of a 100ms interval, so the animations overlap and the panel

@@ -222,12 +222,13 @@ failure makes a settings window swallow its first click. macOS 14 replaced unila
 activation with the cooperative `NSRunningApplication.activate(from:options:)`.
 → `activateThisApp()` in `Sources/TranslatorApp/TranslatorApp.swift`
 
-**A `Picker`'s title is not drawn inside a `.toolbar`.** SwiftUI keeps it as the control's
-accessibility label and renders nothing, so `Picker("Из", …)` in a toolbar ships as a bare
-pop-up. Nothing in the source says so — the title is right there in the call — and no test in
-this project can see it; it was found by putting a screenshot of the running app next to the
-drawing. Draw the label as its own `Text` and add `.labelsHidden()` to keep the accessibility
-label from being read twice. → the toolbar in `Sources/TranslatorApp/MainWindowView.swift`
+**A `Picker`'s title is not drawn inside a `.toolbar`, and that is a hint rather than a gap.**
+SwiftUI keeps it as the accessibility label and renders nothing, so `Picker("Из", …)` ships as a
+bare pop-up. Nothing in the source says so and no test here can see it — it took a screenshot of
+the running app. **Do not answer it with a sibling `Text`:** that is the trap above, where the
+item's own chrome then wraps a control that already has a bezel. The framework is saying a
+toolbar is a row of controls and not a form, so the label belongs *in* the control — a `Menu`
+whose title carries it. → `Sources/TranslatorApp/MainWindowView.swift`
 
 **Hiding a window's title is `titleVisibility`, not `.navigationTitle("")`.** Measured with
 `Scripts/window-title.swift`: both remove the drawn title, but `navigationTitle("")` leaves

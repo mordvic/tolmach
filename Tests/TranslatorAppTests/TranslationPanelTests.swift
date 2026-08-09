@@ -646,21 +646,33 @@ private func realPanelContent(_ model: TranslationViewModel) -> (PanelContentVar
 }
 
 
+/// The panel's view model, built the one way every test here needs it.
+///
+/// Six copies of these five lines differed only in a `UserDefaults` prefix that no test read.
+/// `InMemoryDefaults` per instance for the reason `CLAUDE.md` gives: a written suite leaves a
+/// plist in ~/Library/Preferences that nothing reliably removes.
+@MainActor
+private func panelModel() -> TranslationViewModel {
+    TranslationViewModel(
+        translator: Translator(client: ScriptedClient(responses: ["x"])),
+        settings: AppSettings(defaults: InMemoryDefaults(prefix: "panel")),
+        glossary: GlossaryStore(url: FileManager.default.temporaryDirectory
+            .appendingPathComponent("g-\(UUID().uuidString).json")))
+}
+
 // MARK: - The panel does not grow under the reader's hands
 
 /// Builds a real `PanelView` in a real panel, the way `TranslatorApp` does.
 @MainActor
 private func panelSize(source: String, translated: String,
-                       state: TranslationState) -> CGSize {
-    let model = TranslationViewModel(
-        translator: Translator(client: ScriptedClient(responses: ["x"])),
-        settings: AppSettings(defaults: InMemoryDefaults(prefix: "panelsize")),
-        glossary: GlossaryStore(url: FileManager.default.temporaryDirectory
-            .appendingPathComponent("g-\(UUID().uuidString).json")))
+                       state: TranslationState,
+                       awaitingRun: Bool = false) -> CGSize {
+    let model = panelModel()
     model.state = state
     model.translatedText = translated
     let controller = PanelController { variant in
         AnyView(PanelView(model: model, selection: .text(source),
+                          awaitingRun: awaitingRun,
                           scrolls: variant == .installed(scrolls: true),
                           fillsPanel: variant != .measured))
     }
@@ -685,7 +697,8 @@ private let sentence = "Каждый профиль обязан ссылать�
 @Test func thePanelOpensAtTheSizeTheReplyWillNeedRatherThanGrowingIntoIt() {
     for count in [2, 4, 6, 12] {
         let source = String(repeating: sentence, count: count)
-        let opening = panelSize(source: source, translated: "", state: .running)
+        // The press window: captured, shown, `translate()` not yet reached.
+        let opening = panelSize(source: source, translated: "", state: .idle, awaitingRun: true)
         let settled = panelSize(source: source, translated: source, state: .finished)
         #expect(opening.height >= settled.height)
         #expect(opening.width >= settled.width)
@@ -723,18 +736,16 @@ private let sentence = "Каждый профиль обязан ссылать�
 @Test func thePanelOpensCoveringWhatTheRunIsAboutToNeed() {
     for count in [1, 3, 6, 12] {
         let source = String(repeating: sentence, count: count)
-        let model = TranslationViewModel(
-            translator: Translator(client: ScriptedClient(responses: ["x"])),
-            settings: AppSettings(defaults: InMemoryDefaults(prefix: "firstopen")),
-            glossary: GlossaryStore(url: FileManager.default.temporaryDirectory
-                .appendingPathComponent("g-\(UUID().uuidString).json")))
+        let model = panelModel()
         // Exactly what the coordinator has done by the time it calls `afterCapture()`: the
-        // selection is known, the model has not been given it and has not been asked anything.
-        model.state = .idle
-        model.translatedText = ""
+        // selection is known, `isStartingRun` is set, and the model has been left alone —
+        // `translate()` has not run, so its state and its pane still describe the last press.
+        model.state = .finished
+        model.translatedText = "перевод прошлого нажатия"
 
         let controller = PanelController { variant in
             AnyView(PanelView(model: model, selection: .text(source),
+                              awaitingRun: true,
                               scrolls: variant == .installed(scrolls: true),
                               fillsPanel: variant != .measured))
         }
@@ -745,6 +756,7 @@ private let sentence = "Каждый профиль обязан ссылать�
         // …and now `runTranslation()` starts. What the content needs at the width the panel
         // has already committed to.
         model.state = .running
+        model.translatedText = ""
         let host = NSHostingController(
             rootView: PanelView(model: model, selection: .text(source),
                                 scrolls: false, fillsPanel: false))
@@ -761,11 +773,7 @@ private let sentence = "Каждый профиль обязан ссылать�
 @MainActor
 private func resizablePanel(text: String)
     -> (PanelController, TranslationViewModel, () -> String) {
-    let model = TranslationViewModel(
-        translator: Translator(client: ScriptedClient(responses: ["x"])),
-        settings: AppSettings(defaults: InMemoryDefaults(prefix: "resize")),
-        glossary: GlossaryStore(url: FileManager.default.temporaryDirectory
-            .appendingPathComponent("g-\(UUID().uuidString).json")))
+    let model = panelModel()
     model.sourceText = text
     model.translatedText = text
     model.state = .finished
@@ -795,10 +803,12 @@ private func resizablePanel(text: String)
     defer { controller.hide() }
     #expect(variant() == "flat")
 
-    // The user drags the bottom edge up and lets go.
+    // The user drags the bottom edge up and lets go. 100 pt and not 150: the panel's own
+    // floor is `PanelSizer.minHeight`, and a test that drags through it would be asserting
+    // that the floor is not applied rather than that the variant changed.
     var frame = controller.panel.frame
-    frame.size.height -= 150
-    frame.origin.y += 150
+    frame.size.height -= 100
+    frame.origin.y += 100
     controller.panel.setFrame(frame, display: true)
     controller.windowDidEndLiveResize(
         Notification(name: NSWindow.didEndLiveResizeNotification, object: controller.panel))
@@ -843,11 +853,7 @@ private func resizablePanel(text: String)
 @MainActor
 @Test func aLongWarningListDoesNotStarveTheTranslation() {
     let text = String(repeating: sentence, count: 12)
-    let model = TranslationViewModel(
-        translator: Translator(client: ScriptedClient(responses: ["x"])),
-        settings: AppSettings(defaults: InMemoryDefaults(prefix: "starve")),
-        glossary: GlossaryStore(url: FileManager.default.temporaryDirectory
-            .appendingPathComponent("g-\(UUID().uuidString).json")))
+    let model = panelModel()
     model.sourceText = text
     model.translatedText = text
     model.state = .finished
@@ -921,24 +927,19 @@ private func resizablePanel(text: String)
     let text = String(repeating: sentence, count: 6)
 
     func opening(afterPreviousRun previous: Bool) -> CGFloat {
-        let model = TranslationViewModel(
-            translator: Translator(client: ScriptedClient(responses: ["x"])),
-            settings: AppSettings(defaults: InMemoryDefaults(prefix: "repeat")),
-            glossary: GlossaryStore(url: FileManager.default.temporaryDirectory
-                .appendingPathComponent("g-\(UUID().uuidString).json")))
+        let model = panelModel()
         if previous {
-            // What the model looks like after a run over this very selection has finished…
+            // A run over this very selection has already finished. `handlePress` leaves all
+            // of it alone — that is the point: `translate()` keeps the previous reply until
+            // the next one's first token, and the panel must reserve for the new run anyway.
             model.sourceText = text
             model.translatedText = text
             model.state = .finished
         }
-        // …and what `handlePress` does to it before showing the panel for the next press.
-        model.translatedText = ""
-        model.outcome = nil
-        model.state = .idle
 
         let controller = PanelController { variant in
             AnyView(PanelView(model: model, selection: .text(text),
+                              awaitingRun: true,
                               scrolls: variant == .installed(scrolls: true),
                               fillsPanel: variant != .measured))
         }
@@ -964,16 +965,13 @@ private func resizablePanel(text: String)
 @MainActor
 @Test func aFinishedShortReplyDoesNotKeepTheRoomReservedForItsSource() {
     let source = String(repeating: sentence, count: 12)
-    let model = TranslationViewModel(
-        translator: Translator(client: ScriptedClient(responses: ["x"])),
-        settings: AppSettings(defaults: InMemoryDefaults(prefix: "lift")),
-        glossary: GlossaryStore(url: FileManager.default.temporaryDirectory
-            .appendingPathComponent("g-\(UUID().uuidString).json")))
+    let model = panelModel()
     model.sourceText = source
 
-    func idealHeight() -> CGFloat {
+    func idealHeight(awaitingRun: Bool = false) -> CGFloat {
         let host = NSHostingController(
             rootView: PanelView(model: model, selection: .text(source),
+                                awaitingRun: awaitingRun,
                                 scrolls: false, fillsPanel: false))
         host.view.layoutSubtreeIfNeeded()
         return host.sizeThatFits(in: CGSize(width: 560, height: CGFloat.greatestFiniteMagnitude)).height
@@ -982,7 +980,7 @@ private func resizablePanel(text: String)
     // Waiting for the reply: the room is the source's.
     model.translatedText = ""
     model.state = .idle
-    let awaiting = idealHeight()
+    let awaiting = idealHeight(awaitingRun: true)
 
     // The reply arrives and is short. The room must go back.
     model.translatedText = "Короткий ответ."

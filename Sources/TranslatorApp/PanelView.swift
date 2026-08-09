@@ -63,6 +63,13 @@ struct PanelStatus: Equatable {
 struct PanelView: View {
     let model: TranslationViewModel
     let selection: SelectionResult
+    /// Whether a press has been captured and its translation has not started yet — the window
+    /// `PanelController.show(at:)` measures in. `HotkeyCoordinator.isStartingRun` is the only
+    /// thing that knows, because nothing about the model does: `translate()` has not run, so
+    /// the state and the pane still describe the previous press.
+    ///
+    /// Defaults to false so a call site that does not know about it measures the model alone.
+    var awaitingRun = false
     /// Why the main window would refuse this run right now, straight from the type that
     /// decides it — not a restatement of its rule. `nil` means the hand-off would go through.
     ///
@@ -175,7 +182,14 @@ struct PanelView: View {
     /// condition and not the other reintroduces exactly the shortfall the reservation was
     /// written to remove. They asked the same question in two places until this existed.
     private var selectionAwaitingReply: String? {
-        guard case let .text(source) = selection, awaitingReply else { return nil }
+        // **Not while scrolling.** The reservation sits inside `scrollingMiddle`, so once the
+        // panel is at its ceiling and that region has become a `ScrollView` the reserved
+        // height stops being room the panel might grow into and becomes blank scroll extent:
+        // the reader can drag past the arriving reply into the space its source would have
+        // taken. It buys nothing there either — a panel already at the ceiling cannot be
+        // opened any larger — so the one case where it costs something is the one case where
+        // it is worthless.
+        guard !scrolls, case let .text(source) = selection, awaitingReply else { return nil }
         return source
     }
 
@@ -195,9 +209,7 @@ struct PanelView: View {
     /// before it shows the panel. It is narrow on purpose: a finished run with an empty reply
     /// leaves `.finished`, and a failed one leaves `.failed`, so neither is mistaken for a run
     /// still to come and neither loses its own row.
-    private var awaitingReply: Bool {
-        model.state == .running || (model.state == .idle && model.translatedText.isEmpty)
-    }
+    private var awaitingReply: Bool { awaitingRun || model.state == .running }
 
     private var background: AnyShapeStyle {
         reduceTransparency
@@ -453,11 +465,7 @@ struct PanelView: View {
                         // 160 rather than the window's 200: this panel's ceiling is 0.6 of the
                         // screen, not a window the user sized, and 160 leaves the translation
                         // at least 280 pt at that ceiling on a 900 pt display.
-                        ViewThatFits(in: .vertical) {
-                            warnings
-                            ScrollView { warnings }
-                        }
-                        .frame(maxHeight: 160)
+                        warnings.bounded(byHeight: 160)
                     }
                 }
 

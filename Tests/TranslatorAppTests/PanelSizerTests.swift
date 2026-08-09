@@ -15,7 +15,7 @@ private let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)   // ceiling: 
     // A one-word translation would otherwise open a panel too narrow for its own buttons.
     let fit = PanelSizer.fit(ideal: CGSize(width: 90, height: 60), frozenWidth: nil,
                              previous: .zero, screen: screen, userSized: false)
-    #expect(fit.size == CGSize(width: 300, height: 120))
+    #expect(fit.size == CGSize(width: PanelSizer.minWidth, height: PanelSizer.minHeight))
 }
 
 @Test func aWideResultIsCappedRatherThanSpanningTheDisplay() {
@@ -38,7 +38,8 @@ private let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)   // ceiling: 
     // catch up. Without this a first press comes up at the floor and stays there — see
     // `aPanelShownBeforeItsTranslationArrivesEndsUpAsWideAsThatTranslationNeeds`.
     let fit = PanelSizer.fit(ideal: CGSize(width: 520, height: 300), frozenWidth: nil,
-                             previous: CGSize(width: 300, height: 120), screen: screen,
+                             previous: CGSize(width: PanelSizer.minWidth,
+                                              height: PanelSizer.minHeight), screen: screen,
                              userSized: false)
     #expect(fit.size.width == 520)
 }
@@ -90,7 +91,7 @@ private let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)   // ceiling: 
     // proposal, and a greedy subview can hand the proposal straight back.
     let zero = PanelSizer.fit(ideal: .zero, frozenWidth: nil, previous: .zero,
                               screen: screen, userSized: false)
-    #expect(zero.size == CGSize(width: 300, height: 120))
+    #expect(zero.size == CGSize(width: PanelSizer.minWidth, height: PanelSizer.minHeight))
 
     let infinite = PanelSizer.fit(ideal: CGSize(width: CGFloat.infinity, height: CGFloat.infinity),
                                   frozenWidth: nil, previous: .zero, screen: screen,
@@ -108,18 +109,18 @@ private let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)   // ceiling: 
     let notANumber = PanelSizer.fit(ideal: CGSize(width: CGFloat.nan, height: CGFloat.nan),
                                     frozenWidth: nil, previous: .zero, screen: screen,
                                     userSized: false)
-    #expect(notANumber.size == CGSize(width: 300, height: 120))
+    #expect(notANumber.size == CGSize(width: PanelSizer.minWidth, height: PanelSizer.minHeight))
     #expect(notANumber.size.width.isFinite)
     #expect(notANumber.size.height.isFinite)
 }
 
 @Test func aScreenTooShortForTheHeightFloorStillYieldsTheFloor() {
-    // 60% of a 150pt strip is 90pt, below the 120pt floor. A panel smaller than its own
+    // 60% of a 150pt strip is 90pt, below the floor. A panel smaller than its own
     // buttons is worse than one that overhangs a freak display.
     let strip = CGRect(x: 0, y: 0, width: 1440, height: 150)
     let fit = PanelSizer.fit(ideal: CGSize(width: 380, height: 400), frozenWidth: nil,
                              previous: .zero, screen: strip, userSized: false)
-    #expect(fit.size.height == 120)
+    #expect(fit.size.height == PanelSizer.minHeight)
     #expect(fit.scrolls)
 }
 
@@ -148,7 +149,7 @@ private let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)   // ceiling: 
     // size. The user's choice still wins, but floors are applied.
     let fit = PanelSizer.fit(ideal: CGSize(width: 500, height: 900), frozenWidth: nil,
                              previous: .zero, screen: screen, userSized: true)
-    #expect(fit.size == CGSize(width: 300, height: 120))
+    #expect(fit.size == CGSize(width: PanelSizer.minWidth, height: PanelSizer.minHeight))
 }
 
 /// The settle is the one fit allowed to make the panel smaller, and the three sections need

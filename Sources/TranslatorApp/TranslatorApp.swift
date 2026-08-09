@@ -646,6 +646,7 @@ private struct PanelHost: View {
     var body: some View {
         PanelView(model: coordinator.panelModel,
                   selection: coordinator.selection,
+                  awaitingRun: coordinator.isStartingRun,
                   adoptionRefusal: windowModel.adoptionRefusal(from: coordinator.panelModel),
                   onCopy: onCopy,
                   onOpenInWindow: onOpenInWindow,

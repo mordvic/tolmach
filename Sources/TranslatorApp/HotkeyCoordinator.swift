@@ -112,6 +112,16 @@ final class HotkeyCoordinator {
 
     // MARK: - A press
 
+    /// A press has captured its text and the panel is being shown, but `translate()` has not
+    /// been reached yet — the one window in which nothing about the model says what is about
+    /// to happen.
+    ///
+    /// It exists because `PanelController.show(at:)` measures the panel inside
+    /// `afterCapture()`, before `translate()` runs. Read only by `PanelView`, for the room it
+    /// reserves and the status row it shows; `state == .running` covers the rest of the run,
+    /// so this is true for a handful of milliseconds and false for everything else.
+    private(set) var isStartingRun = false
+
     /// Read the selection, then translate it. Everything the panel shows is decided here so
     /// the view stays a readout.
     ///
@@ -183,28 +193,36 @@ final class HotkeyCoordinator {
         // up, the system-wide focused element is «Толмач», role `AXWindow`, and
         // `kAXSelectedTextAttribute` answers -25205; with it gone, the same query returns
         // TextEdit's `AXTextArea` and the selected sentence.
-        // The panel is about to be shown for a run that has not started, and it must not be
-        // shown wearing the last one's clothes. Cleared *before* `afterCapture()` because
-        // `PanelController.show(at:)` measures in that call: `PanelView` reserves room for the
-        // reply and says «Перевожу…» while the model is `.idle` with an empty pane, and this
-        // is what puts it in that shape. Pressing ⌥⌘T twice over one paragraph used to find a
-        // `.finished` model holding the previous reply, so the second press reserved nothing
-        // and opened showing the first press's status — after a failure, «Ollama не запущена…»
-        // and a «Повторить» button, under a run already in flight.
+        // «A run for this selection is about to start», said in the one way that changes
+        // nothing else.
         //
-        // Only a press does this. `retry()` goes straight to `runTranslation()`, so the
-        // partial text spec 8 asks it to keep is kept: `translate()`'s own rule — drop the
-        // previous reply at the first token of the next one — is untouched and still governs
-        // everything that is not a fresh press.
-        if case .text = captured {
-            panelModel.translatedText = ""
-            panelModel.outcome = nil
-            panelModel.state = .idle
-        }
+        // This was `panelModel.translatedText = ""; outcome = nil; state = .idle` and both
+        // halves were wrong. Writing `state` is a *state change*, and `PanelHost` answers
+        // every one of them with `onContentChange(new != .running)` — so `.finished → .idle`
+        // was delivered as a **settle**, at the start of a press, and `applyFit(settling:)`
+        // froze `frozenWidth` at the opening width for the whole presentation. The growth rule
+        // that `PanelSizer` spends thirty lines justifying was dead: a selection of short lines
+        // opened at ~330 pt and the reply was wrapped into that column for the entire run. It
+        // also fired an Ollama round trip at the start of every press instead of at the settle.
+        //
+        // Clearing the text was the other half. `translate()` keeps the previous reply until
+        // the new run's first real token precisely so a failed run does not clobber it — spec
+        // 8 — and clearing ahead of the run threw that away: press again while Ollama is down
+        // and the pane is blank with «Скопировать» disabled, the earlier translation gone for
+        // good.
+        //
+        // A flag on this coordinator touches neither. `PanelView` reads it for the two things
+        // that must know — the room it reserves and the row that says «Перевожу…» — and the
+        // model is left exactly as `translate()` expects to find it.
+        isStartingRun = true
         afterCapture()
-        guard case .text(let text) = captured else { return }
+        guard case .text(let text) = captured else {
+            isStartingRun = false
+            return
+        }
         panelModel.sourceText = text
         await runTranslation()
+        isStartingRun = false
     }
 
     /// The «Повторить» the panel offers on a failure. Translates the selection already

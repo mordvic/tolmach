@@ -382,3 +382,42 @@ private func waitUntil(_ condition: @MainActor () -> Bool,
     #expect(coordinator.refreshRegistration() == false)
     #expect(coordinator.registeredCombo == combo(0x2B))
 }
+
+/// A press must say «a run is starting» without touching anything the panel or the engine
+/// reads for something else. Two defects came from saying it the other way.
+///
+/// **The state.** `PanelHost` answers every state change with
+/// `onContentChange(new != .running)`, so writing `.idle` here delivered a *settle* at the
+/// start of a press — `applyFit(settling:)` then froze `frozenWidth` at the panel's opening
+/// width for the whole presentation, killing the growth rule `PanelSizer` spends thirty lines
+/// justifying, and fired an Ollama round trip at every press instead of at every settle.
+///
+/// **The text.** `translate()` keeps the previous reply until the new run's first real token
+/// precisely so a failed run cannot clobber it (spec 8). Clearing it here meant a press made
+/// while Ollama was down left a blank pane with «Скопировать» disabled and the earlier
+/// translation gone for good.
+@MainActor
+@Test func aPressAnnouncesItselfWithoutDisturbingTheModel() async {
+    let reader = ScriptedReader(["Slicing is how one repeating element is split."])
+    let (coordinator, _) = makeCoordinator(reader: reader)
+    coordinator.panelModel.translatedText = "перевод прошлого нажатия"
+    coordinator.panelModel.state = .finished
+
+    var stateAtShow: TranslationState?
+    var textAtShow: String?
+    var flagAtShow: Bool?
+    await coordinator.handlePress(afterCapture: {
+        stateAtShow = coordinator.panelModel.state
+        textAtShow = coordinator.panelModel.translatedText
+        flagAtShow = coordinator.isStartingRun
+    })
+
+    // The panel is told, and it is told by the flag.
+    #expect(flagAtShow == true)
+    // Nothing else moved: no state change for `PanelHost` to read as a settle, and the
+    // previous reply still on screen for a run that may be about to fail.
+    #expect(stateAtShow == .finished)
+    #expect(textAtShow == "перевод прошлого нажатия")
+    // And the flag does not outlive the press.
+    #expect(coordinator.isStartingRun == false)
+}
