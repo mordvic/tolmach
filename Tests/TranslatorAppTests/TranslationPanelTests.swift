@@ -107,12 +107,20 @@ private func expectKeyWindow(_ controller: PanelController, canGrantKey: Bool) {
 /// ⌥⌘T. Reproduced by exactly that mutation.
 @MainActor
 private func processCanGrantKeyStatus() -> Bool {
-    let stock = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 120, height: 80),
-                        styleMask: [.borderless, .nonactivatingPanel],
-                        backing: .buffered, defer: false)
-    stock.makeKeyAndOrderFront(nil)
-    let took = stock.isKeyWindow
-    stock.orderOut(nil)
+    // **`TranslationPanel` itself, and the first version of this got that wrong in the worst
+    // way.** It probed with `[.borderless, .nonactivatingPanel]`, whose `canBecomeKey` is
+    // `false` by construction — measured: that mask answers `false`/`false` while the panel's
+    // own answers `true`/`true`. So the probe could never return true, both assertions moved
+    // permanently into `withKnownIssue`, and the mutation this file exists to catch —
+    // `makeKeyAndOrderFront` → `orderFront` in `show(at:)` — left the suite green.
+    //
+    // Probing with the type under test is not circular: this calls `makeKeyAndOrderFront`
+    // itself, so it answers about the *session*, while the tests answer about what `show(at:)`
+    // does. Break `show(at:)` and this still returns true, so the real assertion runs.
+    let probe = TranslationPanel()
+    probe.makeKeyAndOrderFront(nil)
+    let took = probe.isKeyWindow
+    probe.orderOut(nil)
     return took
 }
 
@@ -963,7 +971,11 @@ private func resizablePanel(text: String)
 @Test func theWindowRefusesTheSizesTheSizerWouldOverrule() {
     let controller = PanelController { _ in AnyView(Text("перевод")) }
     #expect(controller.panel.contentMinSize.width == PanelSizer.minWidth)
-    #expect(controller.panel.contentMinSize.height == PanelSizer.minHeight)
+    // `dragMinHeight`, which is deliberately above `minHeight`: the panel auto-sizes down to
+    // 132 and refuses to be *dragged* below 164, because that is what the pinned block wants
+    // at its worst — «окно занято» under a failure, at 300 pt wide.
+    #expect(controller.panel.contentMinSize.height == PanelSizer.dragMinHeight)
+    #expect(PanelSizer.dragMinHeight > PanelSizer.minHeight)
 }
 
 /// A selection of a few pages must not cost half a second before the panel appears.

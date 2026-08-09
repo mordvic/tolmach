@@ -24,10 +24,10 @@ import SwiftUI
 /// ```
 ///
 /// The label wants 4.5:1 at 13 pt; a control wants 3:1 against the surface behind it; and two
-/// fills closer than roughly 60 in sRGB read as the same colour. `#15807E` is the only
-/// candidate that clears all three **with one value in both appearances** — the deeper teal
-/// and the indigo both dissolve into the dark window, and every darker variant that separates
-/// on white fails to separate on `#1e1e1e`.
+/// fills closer than roughly 60 in sRGB read as the same colour. `#15807E` was chosen as the
+/// one value clearing all three in both appearances — and then 4.75:1 turned out not to be
+/// enough to read, so the fill below is a **pair**. This table is what ruled the alternatives
+/// out; `fillColour`'s own comment carries what replaced the single value and why.
 ///
 /// The icon's own `cinnabar` was the first candidate and is the one to explain: it is 27 from
 /// `StatusColour.failure`, so the app's primary action would have been the colour of its
@@ -71,7 +71,32 @@ enum PrimaryButtonColour {
 
     /// Derived rather than written as `.white`, so the fill above can be changed without
     /// quietly taking the label's contrast with it.
-    static let label = AccentLabel.label(on: fillColour)
+    static let labelColour = AccentLabel.label(on: fillColour)
+
+    /// The whole label, built once for the two buttons that share it.
+    ///
+    /// **`isEnabled` is why this is a view and not three modifiers.** An explicitly styled
+    /// `Text` keeps its colour through `.disabled()` — SwiftUI dims a button's *default*
+    /// foreground, and this one has none — so «Перевести» rendered white semibold on the
+    /// system's desaturated prominent fill in exactly the state a user with Ollama stopped
+    /// meets first. Handing the colour back when disabled lets the platform dim it as it does
+    /// every other button.
+    ///
+    /// It is also the fix for the same five modifiers living in two files: the window's
+    /// «Перевести» and the terms sheet's now cannot drift.
+    struct Label: View {
+        let title: String
+        @Environment(\.isEnabled) private var isEnabled
+
+        var body: some View {
+            Text(title)
+                .foregroundStyle(isEnabled ? AnyShapeStyle(labelColour) : AnyShapeStyle(.primary))
+                .fontWeight(labelWeight)
+                .padding(.horizontal, labelPadding)
+        }
+    }
+
+    static func label(_ title: String) -> Label { Label(title: title) }
 
     /// Extra breathing room around the label, per side, on top of what the style already gives.
     ///

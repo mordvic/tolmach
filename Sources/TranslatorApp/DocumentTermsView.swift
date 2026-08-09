@@ -123,10 +123,7 @@ struct DocumentTermsView: View {
                 } label: {
                     // On the `Text` and not on the `Button`: the latter is ignored by this
                     // style. `AccentLabel` carries the measurement and the reason.
-                    Text("Перевести")
-                        .foregroundStyle(PrimaryButtonColour.label)
-                        .fontWeight(PrimaryButtonColour.labelWeight)
-                        .padding(.horizontal, PrimaryButtonColour.labelPadding)
+                    PrimaryButtonColour.label("Перевести")
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(PrimaryButtonColour.fill)

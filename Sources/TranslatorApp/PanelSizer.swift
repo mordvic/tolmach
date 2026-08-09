@@ -39,6 +39,27 @@ enum PanelSizer {
     /// the button row, which is the defect this panel was rebuilt to remove. 12 pt of that is
     /// a trade; 54 is the thing itself.
     static let minHeight: CGFloat = 132
+
+    /// The smallest the **user** may drag the panel to, which is not the same number.
+    ///
+    /// `minHeight` is what the panel auto-sizes to and so must stay near what short content
+    /// actually needs — a one-line finished reply wants 92, and every point above that is a
+    /// hole between the text and the buttons. A drag is different: the user is asserting a
+    /// size, and the one thing that cannot be allowed is a size where the pinned block runs
+    /// off the frame, because nothing there scrolls.
+    ///
+    /// Measured at 300 pt, the narrowest the panel gets, over the states that pin the most:
+    ///
+    ///     finished                        92
+    ///     finished + «окно занято»       126
+    ///     failed (wrapping to two lines) 130
+    ///     failed + «окно занято»         164   ← both at once, and reachable
+    ///
+    /// The last is a window already translating when ⌥⌘T is pressed and the panel's own run
+    /// then failing. It was missed when `minHeight` was measured — that table stopped at the
+    /// four states above it — so `contentMinSize` let the drag reach 132 and the caption
+    /// explaining the greyed-out «Открыть в окне» ran off the bottom with the button row.
+    static let dragMinHeight: CGFloat = 164
     /// The panel floats over the work the user is reading; taking more than this much of
     /// the screen makes it a window with no way to move it aside.
     static let maxHeightFraction: CGFloat = 0.6
@@ -156,8 +177,10 @@ enum PanelSizer {
         // a bottom-anchored panel brought its top edge down and took every read line with it.
         //
         // Growth at the settle still goes through the same expression, because `fitted` is
-        // simply used as-is: a run that ends with warnings is taller, not shorter.
-        let height = settling ? min(fitted, ceiling) : min(max(fitted, previous.height), ceiling)
+        // simply used as-is: a run that ends with warnings is taller, not shorter. And `fitted`
+        // already carries the ceiling — it is `min(max(wanted, minHeight), ceiling)` — so the
+        // settle arm does not re-apply one.
+        let height = settling ? fitted : min(max(fitted, previous.height), ceiling)
         return Fit(size: CGSize(width: width, height: height), scrolls: wanted.height > height)
     }
 

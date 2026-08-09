@@ -190,11 +190,27 @@ struct PanelView: View {
     /// monotonic in both axes outside the settle, so the size the reservation won at
     /// `show(at:)` is kept without it being re-measured to justify it.
     ///
-    /// `!scrolls` because a panel already at its ceiling cannot open any larger, and there the
-    /// reservation stops being room to grow into and becomes blank scroll extent the reader
-    /// can drag past the arriving reply.
+    /// **`scrolls` is not consulted, and the clause that read it was dead where it mattered.**
+    /// It said `!scrolls` — «stop reserving once the panel is at its ceiling, where the
+    /// reservation buys nothing and becomes blank scroll extent the reader can drag past the
+    /// arriving reply». But the only copy whose size decides the panel is the `.measured`
+    /// variant, and `PanelContentVariant` hard-wires `scrolls` to `false` there, so it could
+    /// never be true at the one moment it was asked. `awaitingRun` is itself true only inside
+    /// that same synchronous window, so there was no other path for it to govern.
+    ///
+    /// What it was reaching for is real and is **not** answered elsewhere, which is worth
+    /// stating plainly rather than implying `reservationLimit` covers it. Measured on the
+    /// panel: a 2 000-character selection opens it at 550 pt, and 8 000, 16 000 and 100 000
+    /// all open it at 998 — the 0.6-of-screen ceiling. The cap bounds what the *measurement*
+    /// costs, not the height it arrives at.
+    ///
+    /// That is the reservation working rather than failing: a reply to pages of text will need
+    /// that room, and opening there is the alternative to climbing there during the run, which
+    /// is the complaint the reservation exists for. What it costs is a panel covering 60% of
+    /// the display from its first frame, over the document being read.
+    /// `docs/OPEN-ITEMS.md` carries that trade, which is a judgement and not a number.
     private var selectionAwaitingReply: String? {
-        guard !scrolls, awaitingRun, case let .text(source) = selection else { return nil }
+        guard awaitingRun, case let .text(source) = selection else { return nil }
         return source
     }
 

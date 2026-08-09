@@ -86,7 +86,9 @@ final class TranslationPanel: NSPanel {
         // underneath the drag ten times a second. Stating the minimum here removes the
         // disagreement at its source — there is no size below the floor for the two to
         // disagree about.
-        contentMinSize = NSSize(width: PanelSizer.minWidth, height: PanelSizer.minHeight)
+        // `dragMinHeight` and not `minHeight`: the two answer different questions and the
+        // difference is measured — see `PanelSizer`.
+        contentMinSize = NSSize(width: PanelSizer.minWidth, height: PanelSizer.dragMinHeight)
     }
 
     /// Belt and braces again, now that `.titled` is back — and worth stating rather than
@@ -497,9 +499,16 @@ final class PanelController: NSObject, NSWindowDelegate {
         // to prevent — and «Повторить» on the same presentation does exactly that: it runs a
         // new translation without a new `show(at:)`, so whatever is stored here is what the
         // growth uses.
-        if fit.size.height < panel.frame.height { anchor = anchor.holdingTheTop }
+        // The top is held **for this reframe**, and the record is not rewritten. Storing it
+        // was deliberate once — the next fit reads it — and it is the wrong deliberate: a
+        // panel placed by a bottom corner, shrunk at the settle, then grown again by
+        // «Повторить» in the same presentation would grow from the bottom edge the shrink had
+        // just moved, pushing its top up over the text being read and, near the screen edge,
+        // sliding the whole panel when the clamp catches it. `show(at:)` is what chooses a
+        // corner; nothing else should.
+        let holding = fit.size.height < panel.frame.height ? anchor.holdingTheTop : anchor
         let frame = PanelPlacement.reframe(current: panel.frame, newSize: fit.size,
-                                           anchor: anchor, screen: visible)
+                                           anchor: holding, screen: visible)
         // Unanimated while a run streams, and that is not an omission. The steps are a line
         // of text at a time and arrive up to ten times a second; animating each one puts a
         // 150ms tween on top of a 100ms interval, so the animations overlap and the panel
