@@ -272,6 +272,13 @@ SwiftUI does not apply it, so an assertion on the resulting gap passes with the 
 without it — checked by mutation, twice, with filling content. Measure it on the bundle.
 → `PanelController.init` in `Sources/TranslatorApp/TranslationPanel.swift`
 
+**`windowBackgroundColor` is not the same colour on every macOS.** In the dark appearance it
+is materially lighter on macOS 15 than on macOS 26 — measured through a contrast that came out
+3.51 locally and 2.70 on CI for the same fill. A colour decision measured against it on one
+machine is not portable; state the grounds a design was chosen against as literals, the way
+`StatusColourTests` does, and record what the real surface does per release.
+→ `PrimaryButtonColourTests`, `docs/OPEN-ITEMS.md`
+
 **`contentMinSize` binds the user, not you.** It is what makes a drag stop at a floor, and it
 does nothing to a programmatic frame — measured: `setContentSize(NSSize(width: 10, height: 10))`
 on a shown panel produces a 10 × 10 frame. `TranslationPanel.constrainFrameRect` is overridden
