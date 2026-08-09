@@ -78,13 +78,33 @@ import Foundation
 ///
 /// So the precondition is measured rather than assumed, with a stock `NSPanel` carrying the
 /// one style bit that matters. When it holds, the strong assertion runs exactly as before.
-/// When it does not, the test checks the panel's own `canBecomeKey` instead of reporting the
-/// environment as a defect in the panel. **That is the weaker claim and it is worth saying so:**
-/// `TranslationPanel` overrides `canBecomeKey` to `true` outright, so the fallback pins the
-/// override and not the style mask. The mask itself is pinned by
-/// `thePanelIsNonActivatingAndFloating`, which needs no key status at all — so nothing goes
-/// unchecked when the environment is unhelpful, it is merely checked in two places instead of
-/// one.
+/// **Run it before showing the panel under test, never after.** The probe calls
+/// `makeKeyAndOrderFront` on a panel of its own, which takes key status away from whatever
+/// held it — so asking the question after the panel was shown answered about the probe.
+///
+/// When the environment cannot grant key, the assertion is not dropped: it is run inside
+/// `withKnownIssue`, so the suite stays green and the run *says* the check did not happen.
+/// Silently narrowing it to `canBecomeKey` would have been worse than useless — that override
+/// returns `true` outright, so replacing `makeKeyAndOrderFront` with `orderFront` in
+/// `show(at:)` would keep the suite green while Esc, Enter and ⌘. all stopped working after
+/// ⌥⌘T. Reproduced by exactly that mutation.
+/// The key-status assertion, run either as a check or as a recorded gap.
+///
+/// Never silently skipped: when the environment cannot hand key status out, the same
+/// expectation runs inside `withKnownIssue`, so the suite is green and the run reports that
+/// this is one of the things it did not manage to check.
+@MainActor
+private func expectKeyWindow(_ controller: PanelController, canGrantKey: Bool) {
+    if canGrantKey {
+        #expect(controller.panel.isKeyWindow)
+    } else {
+        withKnownIssue("этот процесс не выдаёт статус ключевого окна — проверить нечем",
+                       isIntermittent: true) {
+            #expect(controller.panel.isKeyWindow)
+        }
+    }
+}
+
 @MainActor
 private func processCanGrantKeyStatus() -> Bool {
     let stock = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 120, height: 80),
@@ -98,6 +118,8 @@ private func processCanGrantKeyStatus() -> Bool {
 
 @MainActor
 @Test func showingThePanelTakesKeyStatusWithoutItsProcessBecomingActive() {
+    // Before the panel exists: the probe takes key from whoever has it.
+    let canGrantKey = processCanGrantKeyStatus()
     let before = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
     let menuBarBefore = NSWorkspace.shared.menuBarOwningApplication?.bundleIdentifier
     let controller = PanelController { _ in AnyView(Text("перевод")) }
@@ -108,11 +130,8 @@ private func processCanGrantKeyStatus() -> Bool {
     // The load-bearing pair. Key, so Esc and Enter arrive; not active, so the app the user
     // was working in keeps the foreground and its menu bar.
     //
-    // The first half only where the environment can grant it at all — see
-    // `processCanGrantKeyStatus`. The style mask this depends on is pinned without any key
-    // status by `thePanelIsNonActivatingAndFloating`.
     #expect(controller.panel.canBecomeKey)
-    if processCanGrantKeyStatus() { #expect(controller.panel.isKeyWindow) }
+    expectKeyWindow(controller, canGrantKey: canGrantKey)
     #expect(NSRunningApplication.current.isActive == false)
     // Documentation, not proof — see the note above.
     #expect(NSWorkspace.shared.frontmostApplication?.bundleIdentifier == before)
@@ -335,13 +354,11 @@ private func keyDown(_ keyCode: UInt16, _ characters: String) -> NSEvent {
     // with `.titled` in the mask `canBecomeKey` answered `true`, with the mask this panel
     // now carries it answered `false` and `makeKeyAndOrderFront` left `isKeyWindow` false.
     // So this test now covers `TranslationPanel.canBecomeKey` as well as the style mask.
+    let canGrantKey = processCanGrantKeyStatus()
     let controller = PanelController { _ in AnyView(Text("готово")) }
     controller.show(at: CGPoint(x: 300, y: 400))
-    // `isKeyWindow` is the strong claim and needs an environment that hands key status out;
-    // see `processCanGrantKeyStatus`. The override it depends on is checked either way, and
-    // the style mask by `thePanelIsNonActivatingAndFloating`.
     #expect(controller.panel.canBecomeKey)
-    if processCanGrantKeyStatus() { #expect(controller.panel.isKeyWindow) }
+    expectKeyWindow(controller, canGrantKey: canGrantKey)
     #expect(NSRunningApplication.current.isActive == false)
     controller.hide()
 }
@@ -880,14 +897,17 @@ private func resizablePanel(text: String)
 
 /// A long warning list must not take the translation's height away from it.
 ///
-/// The warnings left `scrollingMiddle` when the panel became three sections, and unbounded
-/// content in a pinned flow starves the flexible section beside it rather than pushing the
-/// buttons out of it. Measured on a bare 560 × 540 stack before the fix — the 0.6-of-screen
-/// cap on a 900 pt display — the middle's clip view came out 438, 365, 215 and **0** pt tall
-/// at 0, 5, 15 and 30 warning rows. At zero the translation is not small, it is unreachable.
+/// The warnings were briefly pinned beside the buttons, and unbounded content in a pinned flow
+/// starves the flexible section next to it: measured on a bare 560 × 540 stack, the middle's
+/// clip view came out 438, 365, 215 and **0** pt tall at 0, 5, 15 and 30 warning rows. Capping
+/// them answered that badly — a 160 pt ceiling is larger than the panel's own 132 pt floor, so
+/// at the smallest size the user is allowed to drag to, the pinned block alone outgrew the
+/// window. They scroll with the translation again, where their length costs only itself.
 ///
-/// Asserted against the installed hierarchy rather than the ideal size, because the starving
-/// happens in layout: the sizer is content, and the clip view is where it shows.
+/// 60 rows and not 30, and the number is measured: at 30 the panel is 560 × 741, under this
+/// display's 997 pt ceiling, so nothing scrolls and there is nothing to check. At 60 it caps
+/// and the scrolling region comes out 929 pt — the property, stated as «not zero» rather than
+/// as that figure, which is a fact about this screen.
 @MainActor
 @Test func aLongWarningListDoesNotStarveTheTranslation() {
     let text = String(repeating: sentence, count: 12)
@@ -899,7 +919,7 @@ private func resizablePanel(text: String)
         final: text, chunks: [], translatedChunks: [text], documentGlossary: [],
         detectedSource: .en,
         checks: [],
-        markupDiffs: (0..<30).map { _ in
+        markupDiffs: (0..<60).map { _ in
             MarkupDiff(expected: nil, actual: nil, note: "потеряно: граница абзаца")
         },
         stats: [], timeToFirstTokenMS: 12, totalMS: 34,
@@ -920,7 +940,8 @@ private func resizablePanel(text: String)
         for s in v.subviews { walk(s) }
     }
     if let content = controller.panel.contentView { walk(content) }
-    // Every scrolling region in the panel must have somewhere to put its content.
+    // The content exceeds the ceiling, so there must be somewhere to scroll it — and that
+    // somewhere must have a height.
     #expect(!clipHeights.isEmpty)
     #expect(clipHeights.allSatisfy { $0 > 0 })
 }

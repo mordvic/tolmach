@@ -97,7 +97,10 @@ struct Probe: App {
             .pickerStyle(.inline)
             .labelsHidden()
         } label: {
-            Text(label + " ").foregroundStyle(.secondary) + Text(current)
+            HStack(spacing: 6) {
+                Text(label).foregroundStyle(.secondary)
+                Text(current)
+            }
         }
         .fixedSize()
     }

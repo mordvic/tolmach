@@ -252,9 +252,6 @@ final class PanelController: NSObject, NSWindowDelegate {
     /// in `PanelSizer.fit` for the measurement that says why no earlier moment will do.
     private var frozenWidth: CGFloat?
     private var userSized = false
-    /// A settle arrived while the user was dragging an edge, so it was declined and is owed.
-    /// See the guard in `applyFit` and `windowDidEndLiveResize`.
-    private var missedSettle = false
     private var scrolls = false
     private var lastFit: CFAbsoluteTime = 0
     private var pendingFit = false
@@ -424,7 +421,17 @@ final class PanelController: NSObject, NSWindowDelegate {
 
     /// - Parameter settling: this is the resize that follows the end of a run, rather than
     ///   one of the many during it.
-    private func applyFit(settling: Bool = false) {
+    /// - Parameter ignoringLiveResize: run even though AppKit may still report a live
+    ///   resize. Passed only by `windowDidEndLiveResize`, and it is what keeps the recovery
+    ///   from depending on an unverified fact: whether `inLiveResize` has already flipped
+    ///   false inside that callback is not something this project has probed, and if it has
+    ///   not, the fit that puts the panel right after a drag would decline itself.
+    private func applyFit(settling: Bool = false, ignoringLiveResize: Bool = false) {
+        // `contentDidChange` has always gated on this; `windowDidEndLiveResize` is a second
+        // entry point and needs the same. A drag released after the panel was dismissed —
+        // Esc with the other hand, or the ⨯ — would otherwise lay out the measuring host and
+        // animate a frame onto a window nobody is looking at.
+        guard panel.isVisible else { return }
         lastFit = CFAbsoluteTimeGetCurrent()
         let visible = panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame
             ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
@@ -435,14 +442,16 @@ final class PanelController: NSObject, NSWindowDelegate {
         // top and lost the selection they were about to copy — up to ten times a second for
         // as long as the edge kept moving near the threshold.
         //
-        // A settle that lands in that window is remembered rather than dropped. It is the one
-        // fit allowed to shrink — the one that lifts the reservation and the «Перевожу…» row —
-        // and nothing would re-run it: `windowDidEndLiveResize` fits with `settling` defaulted
-        // to false, and `userSized` then answers the panel's current size, which returns early.
-        guard !panel.inLiveResize else {
-            missedSettle = missedSettle || settling
-            return
-        }
+        // A settle that lands in that window has nothing to deliver, and the first version of
+        // this guard tried to save one. It recorded the settle and re-ran it on release —
+        // dead machinery: `windowDidResize` has already set `userSized`, and `PanelSizer.fit`
+        // returns from its own `guard !userSized` before it ever consults `settling`. That is
+        // the right answer rather than a bug to route around: once a hand has moved an edge,
+        // the size is the user's until the panel hides, and a settle is not entitled to take
+        // it back. The cost is real and accepted — nudge only the *left* edge mid-run and the
+        // height keeps the slack the reservation won — and `show(at:)` clears `userSized`, so
+        // it lasts one presentation.
+        guard !panel.inLiveResize || ignoringLiveResize else { return }
         let fit = measure(previous: panel.frame.size, screen: visible, settling: settling)
         // The settle is where the width stops being provisional and becomes this
         // presentation's width, for the reason `PanelSizer.fit`'s width rule measures out: the
@@ -583,8 +592,8 @@ final class PanelController: NSObject, NSWindowDelegate {
     /// resize would be read as a drag, set `userSized`, and freeze the panel's automatic
     /// sizing for the rest of the presentation — after the very first fit.
     ///
-    /// Re-fitting here rather than only on release is what keeps the content inside the window
-    /// *while* the edge moves.
+    /// It sets the flag and does nothing else. Re-fitting from here is what tore the content
+    /// view down under the drag; the fit that puts the panel right happens once, on release.
     ///
     /// **`applyFit` cannot fight the drag, and the reason is not the one first written here.**
     /// That said «with `userSized` set, `PanelSizer.fit` returns the size the panel already
@@ -606,15 +615,12 @@ final class PanelController: NSObject, NSWindowDelegate {
     /// The user dragged an edge. That is an instruction, and it holds until the panel hides.
     func windowDidEndLiveResize(_ notification: Notification) {
         userSized = true
-        // A settle that arrived mid-drag was declined, not lost; it is owed its shrink.
-        let owedSettle = missedSettle
-        missedSettle = false
         // **Not just the flag.** Nothing else re-fits after a drag — `contentDidChange` is
         // driven by the run, and a finished translation has nothing more to say — so a panel
         // dragged shorter than its content kept the flat variant and left its bottom section,
         // the status row and the warnings and both buttons, below the window's edge. Measured:
         // dragged 150 pt shorter, the panel was 560 × 120 holding 270 pt of unscrollable
         // content, and any refit at all put it right.
-        applyFit(settling: owedSettle)
+        applyFit(ignoringLiveResize: true)
     }
 }

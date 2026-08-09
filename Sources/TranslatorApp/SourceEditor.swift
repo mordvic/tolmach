@@ -12,6 +12,9 @@ import SwiftUI
 /// second one under it.
 struct SourceEditor: View {
     @Bindable var model: TranslationViewModel
+    /// So a click in the pane's top margin can still put the caret in the editor. See the
+    /// `contentShape` on the stack below.
+    @FocusState private var editorFocused: Bool
 
     /// The drawing's 8 pt top margin for this pane, applied to the editor **and** to the
     /// placeholder from one place. Two copies of it is exactly how the caret and the grey
@@ -38,6 +41,7 @@ struct SourceEditor: View {
                     // the drawing gives this pane `padding: 8px 5px` — the margin is wanted,
                     // it was simply being applied to the wrong one of the two.
                     .padding(.top, Self.textTopInset)
+                    .focused($editorFocused)
                 // A placeholder and not a first line of grey text in the editor itself:
                 // anything in the binding is text the user would have to delete, and would
                 // be translated if they did not.
@@ -50,6 +54,19 @@ struct SourceEditor: View {
                         .allowsHitTesting(false)
                 }
             }
+            // **The margin above is padding, and padding is outside its child's hit region.**
+            // The editor's own frame moves down by those 8 pt, the stack has no background and
+            // the placeholder refuses hits, so the top strip of the pane landed on nothing: a
+            // click there neither focused the editor nor placed a caret, and the user had to
+            // aim lower. `contentShape` makes the strip belong to the stack and the tap hands
+            // focus to the editor.
+            //
+            // Padding and not an inset inside the editor because there is no way to ask for
+            // one: `TextEditor`'s `textContainerInset` is `{0, 0}` and not exposed, and
+            // `.contentMargins` does not reach its text — measured, in all three spellings,
+            // each leaving the caret flush with the top while the frame stayed full height.
+            .contentShape(Rectangle())
+            .onTapGesture { editorFocused = true }
             .overlay(alignment: .bottomTrailing) { SourceFooter(model: model).padding(6) }
         }
         .frame(minWidth: 280)

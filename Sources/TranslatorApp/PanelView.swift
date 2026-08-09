@@ -399,6 +399,77 @@ struct PanelView: View {
                     }
 
                 }
+                    // Gated on `outcome`, not on `state == .finished`, and the header above is
+                    // gated the same way — because `TranslationViewModel` drops `outcome` at the
+                    // exact instant it clears `translatedText`, so "there is an outcome" means
+                    // "this outcome describes the text in the pane" and nothing weaker. One
+                    // condition governs everything derived from the run, so the header, the
+                    // warnings and the text can never disagree about which run they belong to.
+                    //
+                    // The visible difference from a `.finished` gate is a run that fails without
+                    // producing output — Ollama down, an empty reply — where spec 8 requires the
+                    // previous translation to stay on screen. It keeps its own header and warnings,
+                    // with the failure and its «Повторить» underneath, instead of a labelled
+                    // paragraph losing its annotations for a reason that has nothing to do with it.
+                    if let outcome = model.outcome {
+                        // `onMute:` is deliberately not passed. Muting a term is a
+                        // decision about the glossary, and the glossary is not on screen here; the
+                        // window is where that belongs.
+                        // Gated on `hasContent`, not merely on `outcome` being present. A short clean
+                        // translation has no diffs, no missing terms and no document glossary, so
+                        // `WarningsView` draws an empty `VStack` — and the sizer measures whatever is
+                        // here, so an empty stack would still add its `VStack` spacing to a height
+                        // nothing is asking for. The 120pt slot this used to fill is gone — `scrolls`
+                        // and `PanelSizer` own the ceiling now — and this gate exists only so an empty
+                        // stack does not pad a measured height.
+                        let warnings = WarningsView(outcome: outcome, target: model.resolvedTarget)
+                        if warnings.hasContent {
+                            // **Bounded, because this is the one part of the static bottom block
+                            // with no length of its own.** The warnings left the scrolling middle
+                            // when the panel became three sections, and unbounded content in a
+                            // pinned flow starves the flexible section beside it: measured on a
+                            // 560 × 540 stack — the 0.6-of-screen cap on a 900 pt display — the
+                            // translation's clip view came out 438, 365, 215 and **0** pt tall at
+                            // 0, 5, 15 and 30 warning rows. At 30 the translation is not merely
+                            // small, it is unreachable: it has no height and the region that
+                            // scrolls is the one it is inside.
+                            //
+                            // The same shape `RunStatusBar` already uses for the same reason, and
+                            // its comment carries the argument: `ViewThatFits` and not a bare
+                            // `ScrollView`, because a `ScrollView` is greedy in its scroll axis
+                            // and would claim the whole cap under a two-line warning.
+                            //
+                            // 160 rather than the window's 200: this panel's ceiling is 0.6 of the
+                            // screen, not a window the user sized, and 160 leaves the translation
+                            // at least 280 pt at that ceiling on a 900 pt display.
+                            warnings
+                        }
+                    }
+
+                // Pinned, and «Отмена» below is why this matters most: it exists only while a run
+                // is in flight, which is exactly when the text above it is still growing. In the
+                // scrolling flow it was pushed further out of reach by every token it was there
+                // to stop.
+                HStack {
+                    // Enabled the moment the first token lands, not only at the end: a run the
+                    // user interrupts leaves partial output that spec 8 says must be kept, and
+                    // keeping it while refusing to copy it would be pointless.
+                    Button("Скопировать", action: onCopy)
+                        .disabled(model.translatedText.isEmpty)
+                    // One condition, and it is the window's own answer. Whatever
+                    // `adoptionRefusal` covers, this button covers — including refusals added
+                    // after this line was written, which is the whole point of asking rather
+                    // than restating.
+                    Button("Открыть в окне", action: onOpenInWindow)
+                        .disabled(adoptionRefusal != nil)
+                    Spacer()
+                    if model.state == .running {
+                        // ⌘. is the macOS convention for cancelling an operation in progress,
+                        // and Esc is taken: the panel gives it to «close and cancel».
+                        Button("Отмена") { model.cancel() }
+                            .keyboardShortcut(".", modifiers: .command)
+                    }
+                }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             // **The one section that stretches.** The panel is three: a header that does not
@@ -419,77 +490,6 @@ struct PanelView: View {
             // reach — and where they took the space the reader wanted for the text.
             statusLine
             termsNotice
-                // Gated on `outcome`, not on `state == .finished`, and the header above is
-                // gated the same way — because `TranslationViewModel` drops `outcome` at the
-                // exact instant it clears `translatedText`, so "there is an outcome" means
-                // "this outcome describes the text in the pane" and nothing weaker. One
-                // condition governs everything derived from the run, so the header, the
-                // warnings and the text can never disagree about which run they belong to.
-                //
-                // The visible difference from a `.finished` gate is a run that fails without
-                // producing output — Ollama down, an empty reply — where spec 8 requires the
-                // previous translation to stay on screen. It keeps its own header and warnings,
-                // with the failure and its «Повторить» underneath, instead of a labelled
-                // paragraph losing its annotations for a reason that has nothing to do with it.
-                if let outcome = model.outcome {
-                    // `onMute:` is deliberately not passed. Muting a term is a
-                    // decision about the glossary, and the glossary is not on screen here; the
-                    // window is where that belongs.
-                    // Gated on `hasContent`, not merely on `outcome` being present. A short clean
-                    // translation has no diffs, no missing terms and no document glossary, so
-                    // `WarningsView` draws an empty `VStack` — and the sizer measures whatever is
-                    // here, so an empty stack would still add its `VStack` spacing to a height
-                    // nothing is asking for. The 120pt slot this used to fill is gone — `scrolls`
-                    // and `PanelSizer` own the ceiling now — and this gate exists only so an empty
-                    // stack does not pad a measured height.
-                    let warnings = WarningsView(outcome: outcome, target: model.resolvedTarget)
-                    if warnings.hasContent {
-                        // **Bounded, because this is the one part of the static bottom block
-                        // with no length of its own.** The warnings left the scrolling middle
-                        // when the panel became three sections, and unbounded content in a
-                        // pinned flow starves the flexible section beside it: measured on a
-                        // 560 × 540 stack — the 0.6-of-screen cap on a 900 pt display — the
-                        // translation's clip view came out 438, 365, 215 and **0** pt tall at
-                        // 0, 5, 15 and 30 warning rows. At 30 the translation is not merely
-                        // small, it is unreachable: it has no height and the region that
-                        // scrolls is the one it is inside.
-                        //
-                        // The same shape `RunStatusBar` already uses for the same reason, and
-                        // its comment carries the argument: `ViewThatFits` and not a bare
-                        // `ScrollView`, because a `ScrollView` is greedy in its scroll axis
-                        // and would claim the whole cap under a two-line warning.
-                        //
-                        // 160 rather than the window's 200: this panel's ceiling is 0.6 of the
-                        // screen, not a window the user sized, and 160 leaves the translation
-                        // at least 280 pt at that ceiling on a 900 pt display.
-                        warnings.bounded(byHeight: 160)
-                    }
-                }
-
-            // Pinned, and «Отмена» below is why this matters most: it exists only while a run
-            // is in flight, which is exactly when the text above it is still growing. In the
-            // scrolling flow it was pushed further out of reach by every token it was there
-            // to stop.
-            HStack {
-                // Enabled the moment the first token lands, not only at the end: a run the
-                // user interrupts leaves partial output that spec 8 says must be kept, and
-                // keeping it while refusing to copy it would be pointless.
-                Button("Скопировать", action: onCopy)
-                    .disabled(model.translatedText.isEmpty)
-                // One condition, and it is the window's own answer. Whatever
-                // `adoptionRefusal` covers, this button covers — including refusals added
-                // after this line was written, which is the whole point of asking rather
-                // than restating.
-                Button("Открыть в окне", action: onOpenInWindow)
-                    .disabled(adoptionRefusal != nil)
-                Spacer()
-                if model.state == .running {
-                    // ⌘. is the macOS convention for cancelling an operation in progress,
-                    // and Esc is taken: the panel gives it to «close and cancel».
-                    Button("Отмена") { model.cancel() }
-                        .keyboardShortcut(".", modifiers: .command)
-                }
-            }
 
             // Only `targetBusy` gets words. `sourceBusy` means this panel's own run is still
             // going, which the spinner and «Отмена» beside it already say; `sameModel` is not

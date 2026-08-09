@@ -23,3 +23,8 @@ struct BoundedByHeight: ViewModifier {
         .frame(maxHeight: limit)
     }
 }
+
+extension View {
+    /// See `BoundedByHeight`.
+    func bounded(byHeight limit: CGFloat) -> some View { modifier(BoundedByHeight(limit: limit)) }
+}
