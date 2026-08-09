@@ -176,6 +176,22 @@ struct TranslatorApp: App {
         // first time. A default is remembered per window afterwards, so this governs the first
         // launch and every fresh window state, not what the user has since resized to.
         .defaultSize(width: 900, height: 520)
+        // **Twelve points of chrome, measured, for nothing given up.** The toolbar band —
+        // `frame.height - contentLayoutRect.height` — is 52 pt under `.unified` and **40**
+        // under `.unifiedCompact`, and the row still fits from the same width in both, so the
+        // narrowest window that keeps «Перевести» out of the » overflow does not move.
+        //
+        // It is also the style this window actually is. `.unifiedCompact` puts the title on
+        // the toolbar's own row rather than above it, and this window draws no title at all —
+        // see `WindowTitleHidden`. `.unified` was reserving a line for something that is not
+        // there.
+        //
+        // `.controlSize` is **not** the lever and was measured not to be: the band stays 52 at
+        // `.regular`, `.small` and `.mini` alike, while the controls inside it shrink from 26
+        // to 24 to 21 — smaller controls floating in an unchanged band, which is worse than
+        // where this started. Same conclusion the toolbar's width reached, for a different
+        // reason.
+        .windowToolbarStyle(.unifiedCompact)
         // The app had no commands at all, and SwiftUI's defaults for this scene combination
         // are not a menu bar anyone would design. Measured on a copy of these three scenes at
         // `.accessory` activation policy, dumping `NSApp.mainMenu`: «Вид» is installed and
