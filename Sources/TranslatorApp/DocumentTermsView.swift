@@ -123,9 +123,10 @@ struct DocumentTermsView: View {
                 } label: {
                     // On the `Text` and not on the `Button`: the latter is ignored by this
                     // style. `AccentLabel` carries the measurement and the reason.
-                    Text("Перевести").foregroundStyle(AccentLabel.onAccent)
+                    Text("Перевести").foregroundStyle(PrimaryButtonColour.label)
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(PrimaryButtonColour.fill)
                     .keyboardShortcut(.defaultAction)
             }
             .padding(.horizontal, 16).padding(.vertical, 11)

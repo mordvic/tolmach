@@ -361,9 +361,10 @@ struct MainWindowView: View {
                 Button {
                     Task { await action.start() }
                 } label: {
-                    Text("Перевести").foregroundStyle(AccentLabel.onAccent)
+                    Text("Перевести").foregroundStyle(PrimaryButtonColour.label)
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(PrimaryButtonColour.fill)
                     .disabled(!status.isHealthy || !action.canStart)
             }
         }

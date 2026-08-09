@@ -54,16 +54,16 @@ enum AccentLabel {
         return onWhite == 0 || onWhite >= switchBelow ? .white : .black
     }
 
-    /// What the app's prominent buttons put their text in.
+    /// The same decision as a colour, resolved per appearance whenever it is drawn.
     ///
-    /// Dynamic, so it re-resolves per appearance — and, because the provider reads
-    /// `controlAccentColor` each time rather than closing over a value, an accent changed in
-    /// System Settings while the app runs is picked up at the next draw. That last part is
-    /// reasoned from the colour being resolved on demand, not measured: nothing here can
-    /// change a system setting.
-    static let onAccent = Color(nsColor: NSColor(name: nil) { appearance in
-        label(on: .controlAccentColor, in: appearance)
-    })
+    /// A fill may be dynamic itself — `controlAccentColor` is — so the provider takes the
+    /// decision each time rather than closing over one answer. An accent changed in System
+    /// Settings while the app runs is therefore picked up at the next draw; that part is
+    /// reasoned from the colour being resolved on demand, not measured, because nothing here
+    /// can change a system setting.
+    static func label(on fill: NSColor) -> Color {
+        Color(nsColor: NSColor(name: nil) { label(on: fill, in: $0) })
+    }
 
     /// `NSColor(srgbRed:…)` and **not** `NSColor.white` or `.init(white:alpha:)`, which live in
     /// the generic gray space: asking one of those for `redComponent` does not return a grey

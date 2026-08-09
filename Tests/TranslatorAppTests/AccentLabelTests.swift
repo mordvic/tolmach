@@ -80,3 +80,58 @@ struct AccentLabelTests {
         #expect(Set(switched) == ["оранжевый", "жёлтый", "зелёный", "графит"])
     }
 }
+
+/// The three things a fill for «Перевести» has to satisfy, checked against the one chosen.
+///
+/// The colour is the app's own rather than the system accent, so unlike `controlAccentColor`
+/// it is fully reachable from here — which makes this the rare visual property that can be
+/// pinned instead of owed to a pair of eyes.
+@MainActor
+struct PrimaryButtonColourTests {
+    static let aqua = NSAppearance(named: .aqua)!
+    static let darkAqua = NSAppearance(named: .darkAqua)!
+
+    /// A 13 pt label wants 4.5:1. The system accent manages 4.02 at best, which is why this
+    /// button stopped using it.
+    @Test func theLabelIsReadableOnTheFill() {
+        for appearance in [Self.aqua, Self.darkAqua] {
+            let label = AccentLabel.label(on: PrimaryButtonColour.fillColour, in: appearance)
+            let got = AccentLabelTests.contrast(label, PrimaryButtonColour.fillColour,
+                                                in: appearance)
+            #expect(got >= 4.5, "\(got)")
+        }
+    }
+
+    /// A control has to be visible against the surface behind it — and this fill is one value
+    /// for two very different surfaces, which is what ruled out every darker candidate.
+    @Test func theFillSeparatesFromTheWindowInBothAppearances() {
+        for appearance in [Self.aqua, Self.darkAqua] {
+            let got = AccentLabelTests.contrast(PrimaryButtonColour.fillColour,
+                                                .windowBackgroundColor, in: appearance)
+            #expect(got >= 3, "\(got)")
+        }
+    }
+
+    /// And it must not be mistaken for something the app already says in colour. Two fills
+    /// closer than about 60 in sRGB read as the same one: the icon's cinnabar was 27 from
+    /// `failure`, which is what took it out of the running.
+    @Test func theFillIsNotConfusableWithTheAppsSemanticColours() {
+        func distance(_ a: NSColor, _ b: NSColor) -> Double {
+            var out = 0.0
+            Self.aqua.performAsCurrentDrawingAppearance {
+                guard let x = a.usingColorSpace(.sRGB), let y = b.usingColorSpace(.sRGB) else { return }
+                let dr = (x.redComponent - y.redComponent) * 255
+                let dg = (x.greenComponent - y.greenComponent) * 255
+                let db = (x.blueComponent - y.blueComponent) * 255
+                out = Double(dr * dr + dg * dg + db * db).squareRoot()
+            }
+            return out
+        }
+        for (name, semantic) in [("warning", StatusColour.warning),
+                                 ("success", StatusColour.success),
+                                 ("failure", StatusColour.failure)] {
+            let got = distance(PrimaryButtonColour.fillColour, NSColor(semantic))
+            #expect(got >= 60, "\(name): \(got)")
+        }
+    }
+}
