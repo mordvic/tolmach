@@ -58,6 +58,28 @@ final class AppSettings {
         }
         set { withMutation(keyPath: \.defaultTone) { defaults.set(newValue.rawValue, forKey: "defaultTone") } }
     }
+    var defaultProofreadingLevel: ProofreadingLevel {
+        get {
+            access(keyPath: \.defaultProofreadingLevel)
+            return ProofreadingLevel(rawValue: string("proofreadingLevel", "errorsOnly")) ?? .errorsOnly
+        }
+        set {
+            withMutation(keyPath: \.defaultProofreadingLevel) {
+                defaults.set(newValue.rawValue, forKey: "proofreadingLevel")
+            }
+        }
+    }
+    var defaultRewriteStyle: RewriteStyle {
+        get {
+            access(keyPath: \.defaultRewriteStyle)
+            return RewriteStyle(rawValue: string("rewriteStyle", "original")) ?? .original
+        }
+        set {
+            withMutation(keyPath: \.defaultRewriteStyle) {
+                defaults.set(newValue.rawValue, forKey: "rewriteStyle")
+            }
+        }
+    }
     var interactiveModel: String {
         get {
             access(keyPath: \.interactiveModel)
