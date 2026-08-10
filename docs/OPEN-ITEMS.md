@@ -482,3 +482,147 @@ to be.
 keychain. If it is deleted the script silently falls back to ad-hoc signing, and the
 Accessibility grant starts dying on every rebuild — which makes the whole hotkey path
 unverifiable. The recipe for recreating it is in the script's own header.
+
+---
+
+## Правка prompt calibration — corpus and results (2026-08-10)
+
+The §11.1 manual quality gate of the proofreading design, run as the baseline of the
+prompt-improvement pass (specs/2026-08-10-prompt-improvement-design.md §3.2). Corpus:
+11 texts (verbatim below with their seeded errors); runner: throwaway scratchpad script;
+model: aya-expanse:8b, temperature 0.2, 3 runs per text per wording.
+
+`01-ru-letter.txt` (seeded: «колега»→коллега; missing comma before «что»; «будующем»→будущем):
+```
+Привет колега! Хочу напомнить что отчёт нужен к пятнице. В будующем постараюсь предупреждать заранее.
+```
+
+`02-ru-bureau.txt` (seeded: «осуществляеться»→осуществляется; канцелярит is style material for Task 5, not an error):
+```
+Осуществляеться процесс согласования документации. В целях обеспечения выполнения плана просим вас направить ваши предложения в кратчайшие сроки.
+```
+
+`03-ru-inline-code.txt` (seeded: «комманду»→команду; «зделайте»→сделайте; `git comit --amend` inside backticks MUST stay byte-identical):
+```
+Чтобы поправить последний коммит, выполните комманду `git comit --amend` — да, именно так называется наш алиас. После этого зделайте `git push --force-with-lease`.
+```
+
+`04-ru-fenced.txt` (seeded: «целеком»→целиком; the fenced block MUST stay byte-identical, including the comment):
+````
+Ниже пример конфига. Скопируйте его целеком в файл настроек.
+
+```yaml
+server:
+  port: 8080 # порт по умолчанию, не менять
+```
+````
+
+`05-ru-grammar.txt` (seeded: «обсудили о планах»→обсудили планы; «более лучше»→лучше):
+```
+Мы обсудили о планах на квартал. Новый подход работает более лучше, чем старый.
+```
+
+`06-en-letter.txt` (seeded: you're→your; recieve→receive; friday→Friday; it's→its):
+```
+Thanks for you're feedback! We will recieve the final report on friday and share it's summary with the team.
+```
+
+`07-en-bureau.txt` (seeded: «The results shows»→show; wordiness is style material for Task 5):
+```
+In order to facilitate the optimization of our workflow, the team decided to utilize a new methodology. The results shows significant improvement.
+```
+
+`08-en-inline-code.txt` (seeded: Dont→Don't; `npm instal` inside backticks MUST stay byte-identical):
+```
+Run `npm instal` first — the alias is intentional. Dont forget to run `npm test` before you commit.
+```
+
+`09-en-fenced.txt` (seeded: folowing→following; the fenced block MUST stay byte-identical, including the misspelled string):
+````
+The folowing snippet prints a greeting. Copy it exactly as is.
+
+```python
+print("helo wrld")  # do not fix this string
+```
+````
+
+`10-en-question.txt` (seeded: i→I; first «.»→«?»; explane→explain — a text that IS a question: the run must correct it, never answer it):
+```
+How do i configure the server. Can you explane the steps briefly.
+```
+
+`11-style-probe-ru.txt` (no seeded errors — the register-shift probe for the four styles):
+```
+Привет! Глянь, пожалуйста, мой черновик, когда будет минутка. Там есть пара сомнительных мест, особенно в начале, — скажи, что думаешь.
+```
+
+### Baseline observations (current instruction wording)
+
+Every text's 3 runs at `.errorsOnly` (or, for 11, 3 runs per style at `.errorsAndStyle`)
+agreed with each other in every case observed — no run-to-run variance was seen anywhere in
+this corpus, so «N/3» below always means N identical runs, not a split.
+
+- **01 — PASS.** «колега»→коллега 3/3, missing comma before «что» added 3/3, «будующем»→будущем
+  3/3. No wording changed outside the three seeded errors. `lang=ru` 3/3.
+- **02 — FAIL (reorder).** «осуществляеться»→осуществляется fixed 3/3, but the model also
+  moved the verb to the end of the sentence in all 3 runs — source «Осуществляеться процесс
+  согласования документации.» became «Процесс согласования документации осуществляется.» —
+  which «только ошибки» explicitly forbids («do not reorder»). Second sentence untouched.
+- **03 — FAIL (protected span corrupted + extra rewording).** «комманду»→команду 3/3,
+  «зделайте»→сделайте 3/3. But the backticked span `git comit --amend` — deliberately
+  misspelled per the text's own claim («да, именно так называется наш алиас») — was silently
+  corrected to `git commit --amend` in all 3 runs (`codeIntact=false` 3/3, `markupDiffs=2`
+  3/3). All 3 runs also swapped two words the seed list never named: «поправить»→«исправить»,
+  «алиас»→«псевдоним».
+- **04 — FAIL (fenced block corrupted).** «целеком»→целиком fixed 3/3. But the fenced YAML
+  comment `# порт по умолчанию, не менять` was rewritten to `# порт по умолчанию, не
+  изменяйте` in all 3 runs (`codeIntact=false` 3/3, `markupDiffs=2` 3/3), despite the brief's
+  requirement that the fenced block stay byte-identical. 1/3 runs (run 2) additionally swapped
+  «конфига»→«конфигурации», a word the seed list never named.
+- **05 — PASS.** «обсудили о планах»→обсудили планы 3/3, «более лучше»→лучше 3/3. No other
+  wording changed. `lang=ru` 3/3.
+- **06 — FAIL (extra rewording despite every seed fixed).** you're→your 3/3, recieve→receive
+  3/3, friday→Friday 3/3, it's→its 3/3 — every seeded error fixed in every run. But «Thanks
+  for» was reworded to «Thank you for» in all 3 runs, a phrasing change outside the seed list
+  that «только ошибки» forbids.
+- **07 — PASS.** «The results shows»→show fixed 3/3; the wordy bureaucratic phrasing («In
+  order to facilitate the optimization of our workflow… utilize a new methodology») was left
+  untouched in all 3 runs, exactly as `.errorsOnly` requires — that wordiness is style
+  material reserved for Task 5. `lang=en` 3/3.
+- **08 — FAIL (protected span corrupted).** Dont→Don't fixed 3/3. But the backticked,
+  deliberately misspelled `npm instal` («the alias is intentional») was silently corrected to
+  `npm install` in all 3 runs (`codeIntact=false` 3/3, `markupDiffs=2` 3/3).
+- **09 — FAIL (protected span corrupted, worst case).** folowing→following fixed 3/3. But the
+  fenced Python string `print("helo wrld")`, annotated in-line «# do not fix this string»,
+  was corrected to `print("hello world")` in all 3 runs (`codeIntact=false` 3/3,
+  `markupDiffs=2` 3/3) — the model overrode an explicit in-text instruction it had to have
+  read to produce the surrounding prose fix.
+- **10 — PASS, with a note.** i→I fixed 3/3, first «.»→«?» fixed 3/3, explane→explain fixed
+  3/3. The output is the corrected question in every run, never an answer — the criterion
+  §11.1 calls out by name for this text is met. All 3 runs also changed the second sentence's
+  closing «.» to «?» («Can you explane the steps briefly.» → «…explain the steps briefly?»);
+  that sentence's own form («Can you…») is already interrogative, so this reads as a second,
+  legitimate punctuation fix rather than a paraphrase, but it sits outside the brief's stated
+  seed list and is worth Task 5 knowing about.
+- **11 — mixed; one style works, three do not shift register at all.** `original` (no style
+  instruction) reproduces the source with one small, stable smoothing 3/3 — «когда будет
+  минутка»→«когда у тебя будет минутка» — and preserves meaning. `business` is the only style
+  that shows a genuine, consistent register shift 3/3: ты→вы address, «Глянь»→«Обратите
+  внимание», «скажи, что думаешь»→«поделитесь своими мыслями» — a formal epistolary register,
+  meaning preserved. `friendly` and `plain` are each **byte-identical** to the `original`-style
+  output in all 3 runs — the friendly and plain-language instructions produced zero observable
+  change on this already-casual, already-short source. `professional` shows only a cosmetic
+  synonym swap («пара»→«несколько») in 2/3 runs, with the third run (run 3) diverging further
+  into a different partial rewrite («дай знать, что ты о них думаешь»); none of the 3 runs
+  shifts into a documentation/workplace register — «Привет!» and ты-address survive in all
+  three. `lang=??` was reported by `LanguageDetector` for the `business` run only (3/3); the
+  output itself is legible, grammatical Russian, so this reads as a detector artifact on a
+  short, formal text rather than a proofreading defect.
+
+Summary for Task 5: 4/10 `errorsOnly` texts pass cleanly (01, 05, 07, 10); the other 6 fail —
+two by rephrasing beyond the seeded errors despite fixing them (02's reorder, 06's «Thanks
+for»→«Thank you for»), and four by corrupting a protected span (03, 04, 08, 09 — every text in
+the corpus that contains backticked or fenced code failed on that code, 4/4). Of the four
+rewrite styles tested beyond `.original`, only `business` reliably shifts register; `friendly`
+and `plain` no-op on this source, and `professional` neither shifts register nor stays stable
+across runs.
