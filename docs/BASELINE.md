@@ -200,6 +200,6 @@ the lowest average adherence **87.0 %** (article-en), **87.8 %** (techdoc-en) an
 (techdoc-ru) against an 80 % floor — each at or above its Task 1 baseline figure (84.3 %,
 87.8 %, 93.8 % respectively), so nothing regressed. All three files land within the same
 run-to-run noise band as the change-1/2 entry above (article-en identical average, techdoc-en
-0.6 points lower but still above Task 1's 87.8 %, techdoc-ru identical). All known markup diffs
+0.6 points lower but still equal to Task 1's 87.8 %, techdoc-ru identical). All known markup diffs
 reproduced as expected — the code-block hashes differ run to run as they already did between
 every prior entry — and no new diff appeared.

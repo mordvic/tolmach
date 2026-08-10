@@ -624,6 +624,12 @@ and paths was preserved byte for byte — the model understands the rule but tre
 as an exception to it. Sharpening the prompt was attempted and changed nothing; the attempt was
 deliberately limited to one round, to avoid tuning the wording to a single model.
 
+The правка calibration (2026-08-10) measured the same phenomenon in a stronger form: under
+«только ошибки», the model corrected seeded typos INSIDE inline code and fenced blocks on 4/4
+code-bearing corpus texts, in one case overriding an explicit in-band «# do not fix this
+string» comment. See `docs/OPEN-ITEMS.md`'s «5. Правка prompt calibration» section for the
+per-text counts.
+
 **Hard line breaks are lost in chunking.** `Chunker` trims trailing whitespace on the last line of
 a block, and two trailing spaces in Markdown are precisely a жёсткий перенос строки. The markup
 check no longer reports this (it compares against what the model actually received), but the

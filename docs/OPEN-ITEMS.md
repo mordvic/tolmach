@@ -228,15 +228,27 @@ nothing in this environment can see either.
 | The new first menu row (`Text(status.label)`) rendering above the divider, at a sane width, without truncating or pushing the existing items around | Never opened on a real status item | `MenuContent` in `TranslatorApp.swift` |
 | **A launch loop from `.task { await launch() }` re-running.** Before this task the label view had a constant body with no observation dependencies; it now reads `statusModel.status`, and `launch()` — which the same `.task` calls — writes that property via `statusModel.refresh(...)`. SwiftUI's documented contract re-runs `.task` on the *view's identity* changing, not on every body re-evaluation, so this should be safe, and it is exactly the same shape the `Window` and `Settings` scenes already use with their own `.task`s reading and writing through `statusModel`. But nobody has watched it run. If it is not safe, the failure is not cosmetic: a re-triggered `launch()` re-runs `configurePanel()`, re-registers the hotkey through `coordinator.start`, and re-awaits `warmUp()`, on every status change | `TranslatorApp.body` (the `MenuBarExtra` label), `launch()` |
 
-- **The правка quality gate (spec §11.1) has not been run.** Before the feature
-  merges: paste each file from `docs/proofreading-gate/` into the window's «Правка»
-  mode against the live default model. Per text: the output language equals the
-  input language; every seeded error fixed or at least not worsened; code, URLs and
-  identifiers byte-identical; under «только ошибки» the wording outside the seeded
-  errors unchanged (eyeball diff). Run each of the four rewrite styles once on one
-  text and check register shift without meaning drift. Record the results here. If
-  the model fails, the feature waits on prompt calibration or a model decision — it
-  does not ship on the offline suite alone.
+- **The правка quality gate (spec §11.1) has not been run on its designated corpus,
+  and a parallel calibration run on a different corpus came back NOT a clean pass.**
+  The committed `docs/proofreading-gate/` corpus — the one this entry names below —
+  has still not been pasted through the window's «Правка» mode; that run predates
+  this entry's own discovery of that corpus and used a throwaway 11-text scratchpad
+  corpus instead (see «5. Правка prompt calibration — corpus and results
+  (2026-08-10)» below). That run's verdict: protected-span corruption on 4/4
+  code-bearing texts (backticked or fenced code silently rewritten, once overriding
+  an explicit in-line «do not fix this string» comment), two rephrasing failures
+  beyond the seeded errors, and of the four rewrite styles only «деловой» showed a
+  real, consistent register shift — «дружелюбный» and «простой» no-op on the probe
+  text and «профессиональный» neither shifts register nor stays stable across runs.
+  Neither gap was closeable by further prompt wording within this pass; both are
+  escalated. The merge decision on the правка feature now rests with a human, given
+  these recorded failures — it does not ship on the offline suite alone. Before the
+  feature merges: paste each file from `docs/proofreading-gate/` into the window's
+  «Правка» mode against the live default model. Per text: the output language equals
+  the input language; every seeded error fixed or at least not worsened; code, URLs
+  and identifiers byte-identical; under «только ошибки» the wording outside the
+  seeded errors unchanged (eyeball diff). Run each of the four rewrite styles once on
+  one text and check register shift without meaning drift. Record the results here.
 - **The 700 pt toolbar minimum is now assumed, not measured.** The translate-mode toolbar
   gained the «Перевод | Правка» operation switch, and the 650/680 pt fit measurements it
   rests on — and the 700 pt minimum `MainWindowView.swift` derives from them — predate that
@@ -485,12 +497,15 @@ unverifiable. The recipe for recreating it is in the script's own header.
 
 ---
 
-## Правка prompt calibration — corpus and results (2026-08-10)
+## 5. Правка prompt calibration — corpus and results (2026-08-10)
 
 The §11.1 manual quality gate of the proofreading design, run as the baseline of the
 prompt-improvement pass (specs/2026-08-10-prompt-improvement-design.md §3.2). Corpus:
 11 texts (verbatim below with their seeded errors); runner: throwaway scratchpad script;
-model: aya-expanse:8b, temperature 0.2, 3 runs per text per wording.
+model: aya-expanse:8b, temperature 0.2, 3 runs per text per wording. This corpus is a
+parallel one, assembled before this run noticed that a committed gate corpus already
+exists at `docs/proofreading-gate/` (10 files, named in §1 above); that committed corpus
+was not used by this run and remains un-run.
 
 `01-ru-letter.txt` (seeded: «колега»→коллега; missing comma before «что»; «будующем»→будущем):
 ```
