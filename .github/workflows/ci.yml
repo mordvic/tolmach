@@ -30,7 +30,12 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - uses: actions/checkout@v4
+      # v4 declares node20, which the runners no longer have: every run carried an annotation
+      # saying it was being forced onto node24. v5 is the version that fixes that; v7 is taken
+      # because it is current and nothing between them touches this workflow — v6 moves the
+      # credentials it writes into a separate file, and v7 refuses to check out a fork's PR
+      # under `pull_request_target` / `workflow_run`, neither of which is a trigger here.
+      - uses: actions/checkout@v7
 
       # Pinned to the runner image's newest Xcode rather than left to the default, which is not
       # always the newest installed — on macos-15 the default was 16.4 with 26.3 sitting beside
