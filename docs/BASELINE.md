@@ -265,3 +265,115 @@ reproducible rather than a one-off sampling artifact. No prior entry in this fil
 recorded a blockquote diff, so it is new relative to the whole recorded history, not merely
 to the immediately preceding entry. Per this task's brief: engine code is left untouched: the
 failure analysis and any fix belong to the controller, not to this task.
+
+---
+
+## 2026-08-10 — blockquote rule after the re-basing failure
+
+- Machine: Apple M5 Pro, macOS 26.6.1
+- Ollama 0.31.1, model `aya-expanse:8b`
+- Commit: entry above's commit plus this task's dedicated rule line in
+  `Sources/TranslationCore/PromptBuilder.swift`'s shared `protectionRules`
+  (`"- Every output line that corresponds to a source line beginning with \">\" must
+  itself begin with \">\". Never drop a blockquote marker."`, immediately after the
+  general «Preserve the original structure exactly…» line)
+- Verdict: **FAILED — the fix made the regression worse, not better**
+
+The entry above measured the problem: the model dropping the leading `>` on the
+«Note»/«Важно» blockquote that now follows a standalone passthrough fenced block,
+stochastically (dropped-blockquote diffs on 1–2 of 3 runs per file). This entry measures
+the controller's dedicated-rule attempt at fixing it. Two live runs, same corpus, same
+model, same machine.
+
+```
+article-en.md: run1 86.1% (31/36) · run2 86.1% (31/36) · run3 83.3% (30/36) · average 85.2% · 3 chunks · 20 terms · TTFT 3331/2868/3039 ms (info only — multi-chunk, not asserted)
+    markup run1: expected nil actual Optional(TranslationCore.MarkupToken.blockquote)
+    markup run1: expected nil actual Optional(TranslationCore.MarkupToken.blockquote)
+    markup run2: expected nil actual Optional(TranslationCore.MarkupToken.blockquote)
+    markup run2: expected nil actual Optional(TranslationCore.MarkupToken.blockquote)
+    markup run2: expected nil actual Optional(TranslationCore.MarkupToken.blockquote)
+    markup run2: expected nil actual Optional(TranslationCore.MarkupToken.blockquote)
+    markup run3: expected nil actual Optional(TranslationCore.MarkupToken.blockquote)
+    markup run3: expected nil actual Optional(TranslationCore.MarkupToken.blockquote)
+    markup run3: expected nil actual Optional(TranslationCore.MarkupToken.blockquote)
+email-en.md: adherence n/a (single model-bound chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 455 ms
+snippet-en.md: adherence n/a (single model-bound chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 566 ms
+techdoc-en.md: run1 84.3% (43/51) · run2 84.3% (43/51) · run3 86.3% (44/51) · average 85.0% · 6 chunks (4 model-bound) · 20 terms · TTFT 4677/4663/4542 ms (info only — multi-chunk, not asserted)
+    markup run1: expected nil actual Optional(TranslationCore.MarkupToken.blockquote)
+    markup run1: expected Optional(TranslationCore.MarkupToken.heading(level: 2)) actual nil
+    markup run1: expected nil actual Optional(TranslationCore.MarkupToken.blockquote)
+    markup run1: expected nil actual Optional(TranslationCore.MarkupToken.blockquote)
+    markup run1: expected nil actual Optional(TranslationCore.MarkupToken.blockquote)
+    markup run2: expected nil actual Optional(TranslationCore.MarkupToken.blockquote)
+    markup run2: expected Optional(TranslationCore.MarkupToken.heading(level: 2)) actual nil
+    markup run2: expected nil actual Optional(TranslationCore.MarkupToken.blockquote)
+    markup run2: expected nil actual Optional(TranslationCore.MarkupToken.blockquote)
+    markup run2: expected nil actual Optional(TranslationCore.MarkupToken.blockquote)
+    markup run3: expected nil actual Optional(TranslationCore.MarkupToken.blockquote)
+    markup run3: expected Optional(TranslationCore.MarkupToken.heading(level: 2)) actual nil
+    markup run3: expected nil actual Optional(TranslationCore.MarkupToken.blockquote)
+    markup run3: expected nil actual Optional(TranslationCore.MarkupToken.blockquote)
+    markup run3: expected nil actual Optional(TranslationCore.MarkupToken.blockquote)
+techdoc-ru.md: run1 91.8% (45/49) · run2 93.9% (46/49) · run3 91.8% (45/49) · average 92.5% · 5 chunks (4 model-bound) · 20 terms · TTFT 4560/4576/4382 ms (info only — multi-chunk, not asserted)
+    markup run1: expected Optional(TranslationCore.MarkupToken.blockquote) actual nil
+    markup run1: expected nil actual Optional(TranslationCore.MarkupToken.blockquote)
+    markup run1: expected Optional(TranslationCore.MarkupToken.heading(level: 2)) actual nil
+    markup run1: expected nil actual Optional(TranslationCore.MarkupToken.blockquote)
+    markup run1: expected Optional(TranslationCore.MarkupToken.blockquote) actual nil
+    markup run2: expected Optional(TranslationCore.MarkupToken.blockquote) actual nil
+    markup run2: expected nil actual Optional(TranslationCore.MarkupToken.blockquote)
+    markup run2: expected Optional(TranslationCore.MarkupToken.heading(level: 2)) actual nil
+    markup run2: expected nil actual Optional(TranslationCore.MarkupToken.blockquote)
+    markup run2: expected Optional(TranslationCore.MarkupToken.blockquote) actual nil
+    markup run3: expected Optional(TranslationCore.MarkupToken.blockquote) actual nil
+    markup run3: expected nil actual Optional(TranslationCore.MarkupToken.blockquote)
+    markup run3: expected Optional(TranslationCore.MarkupToken.heading(level: 2)) actual nil
+    markup run3: expected nil actual Optional(TranslationCore.MarkupToken.blockquote)
+    markup run3: expected Optional(TranslationCore.MarkupToken.blockquote) actual nil
+
+FAILED
+  - article-en.md: unaccepted markup diff — expected nil actual Optional(TranslationCore.MarkupToken.blockquote) (9/3 runs)
+  - techdoc-en.md: unaccepted markup diff — expected Optional(TranslationCore.MarkupToken.heading(level: 2)) actual nil (3/3 runs)
+  - techdoc-en.md: unaccepted markup diff — expected nil actual Optional(TranslationCore.MarkupToken.blockquote) (12/3 runs)
+  - techdoc-ru.md: unaccepted markup diff — expected Optional(TranslationCore.MarkupToken.blockquote) actual nil (6/3 runs)
+  - techdoc-ru.md: unaccepted markup diff — expected Optional(TranslationCore.MarkupToken.heading(level: 2)) actual nil (3/3 runs)
+  - techdoc-ru.md: unaccepted markup diff — expected nil actual Optional(TranslationCore.MarkupToken.blockquote) (6/3 runs)
+```
+
+Gates: adherence and TTFT both still pass (lowest average **85.0 %** on techdoc-en.md
+against the 80 % floor; TTFT **455 ms**/**566 ms** against the 1000 ms ceiling). The
+no-new-diff gate is **FAILED**, worse than the entry above rather than fixed by it.
+
+Per-file blockquote-diff counts, dropped (`expected .blockquote actual nil`, the original
+defect) vs. spurious (`expected nil actual .blockquote`, a new one the rule introduced),
+in this recorded run:
+
+| File | Dropped (defect the rule targeted) | Spurious (new, caused by the rule) | Heading dropped (new) |
+|---|---|---|---|
+| article-en.md | 0/3 runs (had 0 before, too) | **9** occurrences / 3 runs (0 before — this file has no source blockquote at all) | 0 |
+| techdoc-en.md | 0/3 runs (was 1/3 in the recorded pre-fix entry) | **12** occurrences / 3 runs (0 before) | **3/3 runs** (0 before) |
+| techdoc-ru.md | **6** occurrences / 3 runs (unchanged — was 6/3 before, identical count) | **6** occurrences / 3 runs (0 before) | **3/3 runs** (0 before) |
+
+Reading the table: on `techdoc-en.md` the dedicated rule did stop the model from dropping
+the one blockquote it used to drop — but on `techdoc-ru.md` the same defect persisted at
+the exact same rate (6/3 runs, both before and after), so the rule did not reliably fix
+even the targeted defect. Worse, it introduced two regressions across the whole corpus:
+the model now inserts a spurious `>` in front of lines that were never blockquotes at all
+— on `article-en.md`, a file with **zero source blockquotes** and **zero diffs in every
+one of the eight prior entries in this file**, and on both `techdoc-*` files — and it now
+drops the level-2 `##` heading immediately preceding the code fence on **every run of
+both** `techdoc-*` files (3/3, deterministic, never seen before). Both regressions
+reproduced identically on the discarded first run of this pair (article-en 13/3 spurious
+plus a new `paragraphBreak` diff on one run; techdoc-en 12/3 spurious, 3/3 heading;
+techdoc-ru 6/3 dropped unchanged, 6/3 spurious, 3/3 heading) — this is not a one-off
+sampling artifact, it is what the rule does.
+
+**Conclusion: the dedicated blockquote-marker rule should not be kept as written.** It
+over-applies — the model appears to read «every output line matching a `>` source line
+must begin with `>`» as license to also mark lines it merges or restructures near a
+quote — and it destabilised heading translation on the same files it was meant to help.
+Reverting it and trying a narrower formulation (e.g. one that names the specific line
+rather than a general correspondence rule, or one scoped only to the line immediately
+after a fenced block) is a decision left to the controller; this entry records why the
+first attempt does not clear the bar, per the measurement discipline this file exists to
+keep.
