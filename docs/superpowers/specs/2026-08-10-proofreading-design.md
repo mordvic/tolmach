@@ -248,6 +248,13 @@ docs gain one line each saying so.
 - Правка in the panel uses the settings defaults for степень and стиль; the panel gets no
   pickers. `autoCopy` applies to a finished правка exactly as to a translation — it is the
   same `runTranslation()` path.
+- **A deliberate consequence, stated so nobody reads it as a defect:** with factory
+  settings (степень «только ошибки», §7), правка in the panel is purely error correction
+  and «Ещё вариант» never appears there — style rewriting is reachable from the panel only
+  after the user changes the default in settings, and with its own pickers only in the
+  window. That is the safe-default trade (§3) accepted knowingly; if panel-правка earns
+  traction, per-panel степень/стиль controls are the expected first ask (product review,
+  second pass, 2026-08-10).
 - «Ещё вариант» appears in the panel's pinned button row under the same condition as in
   the window (степень of the finished run was «ошибки и стиль») and calls the
   coordinator's re-run.
