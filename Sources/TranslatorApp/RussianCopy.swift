@@ -68,6 +68,40 @@ extension Language {
     }
 }
 
+extension ProofreadingLevel {
+    var russianName: String {
+        switch self {
+        case .errorsOnly: "только ошибки"
+        case .errorsAndStyle: "ошибки и стиль"
+        }
+    }
+}
+
+extension RewriteStyle {
+    var russianName: String {
+        switch self {
+        case .original: "как в оригинале"
+        case .friendly: "дружеский"
+        case .business: "деловой"
+        case .professional: "профессиональный"
+        case .plain: "простой и ясный"
+        }
+    }
+
+    /// «Деловой» and «профессиональный» in one list read as synonyms — at DeepL they
+    /// live on different axes. The descriptions are what tells them apart, rendered as
+    /// `.help` in the toolbar and as a caption in settings (spec §3).
+    var russianDescription: String? {
+        switch self {
+        case .original: nil
+        case .friendly: "Тёплый, неформальный тон — как коллеге, которого хорошо знаешь."
+        case .business: "Письма, заявления, официальная переписка."
+        case .professional: "Документация, отчёты, рабочий тон без канцелярита."
+        case .plain: "Короткие предложения, простые слова — максимальная читабельность."
+        }
+    }
+}
+
 enum RussianCopy {
     /// Russian nouns after a number take one of three forms, chosen by the last two
     /// digits of the count:
@@ -279,5 +313,13 @@ enum RussianCopy {
         let gigabytes = Double(bytes) / 1_073_741_824
         return gigabytes.formatted(.number.precision(.fractionLength(1))
             .locale(Locale(identifier: "ru_RU"))) + " ГБ"
+    }
+
+    /// The panel's and the window's header line for правка: there is no direction to
+    /// draw, so the line names the operation and the language it worked in. The language
+    /// is omitted rather than replaced by «язык не определён» — правка ran fine without
+    /// it, unlike translation, where the detector picked the target (spec §5).
+    static func proofreadHeader(language: Language?) -> String {
+        language.map { "правка · \($0.russianName)" } ?? "правка"
     }
 }
