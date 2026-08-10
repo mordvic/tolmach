@@ -63,16 +63,31 @@ nothing to mangle.
   bytes to `onToken` and contributes them verbatim to the assembly; no request is issued;
   `onProgress` still counts it as a completed part. `stats` and `timeToFirstTokenMS`
   keep their model-call meaning: a pass-through emission does **not** stamp the first
-  token (it is not a model token; TTFT keeps measuring the model), and a document that is
-  100 % code finishes with `timeToFirstTokenMS == nil` — the existing
-  nil-means-no-model-emission contract, now reachable by a new path and worth one pinned
-  test.
+  token (it is not a model token; TTFT keeps measuring the model).
+- **The nil-TTFT contract must be renegotiated, not inherited.** Today «`timeToFirstTokenMS
+  == nil` is the empty-reply signal» holds because every chunk goes to the model —
+  `TranslationViewModel` fails a run on that nil (`TranslationViewModel.swift:502`,
+  «Модель вернула пустой ответ»). A 100 %-code document under pass-through finishes with
+  nil TTFT *and a correct result*, so the old reading would fail a successful run on both
+  surfaces. New contract: `TranslationOutcome` gains `modelChunkCount: Int` (chunks that
+  were model-bound); the empty-reply ending fires only when `modelChunkCount > 0 &&
+  timeToFirstTokenMS == nil`; zero model-bound chunks is a trivially successful run. One
+  pinned test per surface-visible half (outcome fields; the view model ending).
+- **Every «is this multi-chunk?» decision counts model-bound chunks, not chunks.** The
+  document-glossary trigger (`Translator.swift:220`, `chunks.count > 1`) — and with it
+  the terms-review suspension — must not start firing because a code block became its own
+  chunk: a «code + one paragraph» document has one model-bound chunk and gets no term-list
+  call, no review sheet, exactly as today. The acceptance harness classifies files as
+  single-chunk (TTFT gated) by the same count and migrates to model-bound counting too.
 - The reassembly invariant (`ChunkPlan.assembled(from:)`, byte-lossless) is untouched:
   pass-through chunks go through the same formula with «translated text» = source bytes.
 - Consequences stated so nobody reads them as defects: a code-heavy document gains chunk
-  boundaries (more, smaller model calls — the code bytes leave the prompts entirely); a
-  «run the following:» sentence loses its code block from the model's context window.
-  Whether either moves the acceptance numbers is measured, not guessed (§4.1).
+  boundaries (more, smaller model calls — each extra call pays prompt-prefill overhead),
+  and a «run the following:» sentence loses its code block from the model's context
+  window. Against that stands the dominant saving: the model stops **regenerating code
+  token by token** — on long blocks that decode time dwarfs the added call overhead, so
+  the latency story cuts both ways. Whether and which way it moves the acceptance
+  numbers is measured, not guessed (§4.1).
 - The §11a limitation «the model translates human-readable text inside code» becomes
   structurally impossible for fenced blocks on both routes; §11a is updated to say the
   mechanism removed it (and what remains for inline spans).
@@ -85,16 +100,27 @@ after the fact**. The calibration showed the model keeps the backtick delimiters
 edits only the contents (3/3 on every failing file), which is exactly the case positional
 restore handles.
 
-- Rule, applied identically to `final` and the stream so they agree byte-for-byte: the
-  N-th backtick-delimited span in the model's reply for a chunk gets the N-th source
-  span's content, byte-for-byte. Excess reply spans keep the model's content; missing
-  ones restore nothing. Deterministic, greedy, order-based.
+- Rule, applied identically to `final` and the stream so they agree byte-for-byte:
+  **restore only when the reply's span count equals the source chunk's** — then the N-th
+  reply span gets the N-th source span's content, byte-for-byte. On any count mismatch,
+  restore **nothing** in that chunk. Rationale: a model in correction mode plausibly
+  *adds* backticks around a word, and a greedy N-th↔N-th alignment would then inject
+  source content into the wrong span — worse than no restore. The measured failure mode
+  is exactly the equal-count case (delimiters kept, content edited, 3/3 on every failing
+  file), so the safe rule covers everything actually observed.
 - Streaming: content is held from an opening backtick until its closing backtick, then
   the *source* span is emitted — bounded buffering, same shape as the existing
-  first-line/fence buffering in `streamChunkReply`. An unclosed backtick at chunk end
-  flushes held content as-is.
+  first-line/fence buffering in `streamChunkReply`. The hold flushes at end of **line**,
+  not chunk: the span definition is per-line (`MarkupSkeleton.inlineTokens(in line:)`), a
+  backtick with no close on its own line is not a span, and a hold that outlived the line
+  would let restore and skeleton disagree. (Equal-count restore under streaming needs the
+  counts known per line — the reply's spans on a line are restored against the source
+  spans assigned to that line's positions; the exact bookkeeping is the plan's to pin,
+  the invariant «`final` and the stream agree byte-for-byte» is not negotiable.)
 - The span definition is **`MarkupSkeleton`'s** (`inlineTokens`) — shared, not a new
-  regex, so restore and diff cannot disagree about what an inline span is.
+  regex, so restore and diff cannot disagree about what an inline span is. Whatever that
+  definition says about double-backtick spans (`` `code with a ` inside` `` exists in the
+  wild) is what restore does — pinned by a test that goes through the shared definition.
 - A span-count mismatch is already visible through `MarkupSkeleton.diff` (inline tokens
   are part of the skeleton); no new warning surface.
 
@@ -126,6 +152,9 @@ runner:
 | «профессиональный» | `11-style-probe-ru.txt` | informal → workplace register |
 | «простой и ясный» | `02-ru-bureau.txt` (bureaucratese, existing) | канцелярит → plain |
 
+Plus one EN spot-check: «дружеский» on `07-en-bureau.txt` (formal EN → warm), so the
+conclusion is not silently RU-only.
+
 The matrix runs twice: once on the current prompt (does the matrix alone change the
 baseline conclusions?) and once with §3.1's fix. A style that still does not move under
 the correct probe *and* the resolved contradiction is then honestly a model limitation.
@@ -137,11 +166,19 @@ the correct probe *and* the resolved contradiction is then honestly a model limi
 ### 4.1 Translation (Part A touches this route)
 
 `swift run acceptance` before Part A lands is already recorded (BASELINE 2026-08-10
-entries); run again after. Gates as before: adherence ≥ 80 % and within noise of the
-newest entry, single-chunk TTFT < 1000 ms, and markup diffs — with one expected
-*improvement*: the known-limitation «translated commit message inside a code block»
-should disappear. Its disappearance is recorded in the BASELINE entry; its §11a entry is
-rewritten per §2.1.
+entries); run again after. Gates: adherence ≥ 80 %, single-chunk TTFT < 1000 ms, markup
+diffs — with one expected *improvement*: the known-limitation «translated commit message
+inside a code block» should disappear. Its disappearance is recorded in the BASELINE
+entry; its §11a entry is rewritten per §2.1.
+
+**The after-entry is a re-basing, and must say so.** Part A changes the chunking of every
+code-bearing corpus file, so adherence is computed over a different chunk set and files
+may migrate between the single-chunk and multi-chunk classes (`snippet-en.md` is the
+obvious candidate to leave the TTFT-gated class — under model-bound counting per §2.1 it
+may stop being «multi-chunk» at all). Percent-to-percent comparison against the older
+entries is therefore qualitative (the 80 % floor still binds absolutely); the entry lists
+which files changed class, so the next reader does not misread the shift as a prompt
+regression.
 
 ### 4.2 Правка
 
@@ -163,8 +200,10 @@ at least `gpt-oss:20b` (the policy's background model), optionally `qwen3:8b` /
 `gemma4:26b` — one matrix + errorsOnly pass each, 3 runs per text. Purpose: facts for a
 future model-policy decision about правка, **not** a policy change now. Warm TTFT is
 noted per model (the interactive path's < 1 s bound and the one-model-in-memory
-`keep_alive` economics both constrain any future switch). Recorded in the same
-OPEN-ITEMS subsection.
+`keep_alive` economics both constrain any future switch). `gpt-oss:20b` is a
+reasoning-prone model and `OllamaKit` discards `message.thinking` by standing rule — its
+TTFT figures will carry that cost; the record says so, so the numbers do not surprise.
+Recorded in the same OPEN-ITEMS subsection.
 
 ## 5. Deliberately not done here
 
@@ -189,12 +228,17 @@ Offline, Swift Testing, `FakeLLMClient`, the standing rules and `docs/TESTING.md
 - **Translator, both routes**: a pass-through chunk issues no model call (the fake
   counts); its bytes reach `final` and the stream verbatim; `final` equals
   `plan.assembled(from:)`; the stream reconstructs `final` byte-for-byte; an all-code
-  document yields `timeToFirstTokenMS == nil` and an empty `stats`; cancellation before
-  and after pass-through emission still surfaces as `CancellationError`.
-- **Inline restore**: an altered span is restored in `final` and in the stream; the
-  greedy rule under excess/missing spans; an unclosed backtick flushes; restore uses
-  `MarkupSkeleton`'s span definition (a span the skeleton would not count is not
-  restored).
+  document yields `timeToFirstTokenMS == nil`, empty `stats`, `modelChunkCount == 0` —
+  and the **view model treats it as success, not «пустой ответ»** (the renegotiated
+  contract, pinned on both halves); a document glossary is never attempted below two
+  model-bound chunks; cancellation before and after pass-through emission still surfaces
+  as `CancellationError`.
+- **Inline restore**: an altered span is restored in `final` and in the stream when
+  counts match; **any count mismatch restores nothing in that chunk** (a reply that adds
+  a span must not shift source content into the wrong place — pinned with an added-span
+  case); the hold flushes at end of line, and a lone backtick is not a span; restore uses
+  `MarkupSkeleton`'s span definition, including its double-backtick behaviour (a span the
+  skeleton would not count is not restored).
 - **Prompt**: `errorsAndStyle` wording with and without «voice» switches exactly on a
   non-nil style instruction; `errorsOnly` and the translation prompt byte-unchanged.
 - **RussianCopy/UI**: untouched — nothing user-visible changes shape.
