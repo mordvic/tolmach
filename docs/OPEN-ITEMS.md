@@ -228,6 +228,16 @@ nothing in this environment can see either.
 | The new first menu row (`Text(status.label)`) rendering above the divider, at a sane width, without truncating or pushing the existing items around | Never opened on a real status item | `MenuContent` in `TranslatorApp.swift` |
 | **A launch loop from `.task { await launch() }` re-running.** Before this task the label view had a constant body with no observation dependencies; it now reads `statusModel.status`, and `launch()` — which the same `.task` calls — writes that property via `statusModel.refresh(...)`. SwiftUI's documented contract re-runs `.task` on the *view's identity* changing, not on every body re-evaluation, so this should be safe, and it is exactly the same shape the `Window` and `Settings` scenes already use with their own `.task`s reading and writing through `statusModel`. But nobody has watched it run. If it is not safe, the failure is not cosmetic: a re-triggered `launch()` re-runs `configurePanel()`, re-registers the hotkey through `coordinator.start`, and re-awaits `warmUp()`, on every status change | `TranslatorApp.body` (the `MenuBarExtra` label), `launch()` |
 
+- **The правка quality gate (spec §11.1) has not been run.** Before the feature
+  merges: paste each file from `docs/proofreading-gate/` into the window's «Правка»
+  mode against the live default model. Per text: the output language equals the
+  input language; every seeded error fixed or at least not worsened; code, URLs and
+  identifiers byte-identical; under «только ошибки» the wording outside the seeded
+  errors unchanged (eyeball diff). Run each of the four rewrite styles once on one
+  text and check register shift without meaning drift. Record the results here. If
+  the model fails, the feature waits on prompt calibration or a model decision — it
+  does not ship on the offline suite alone.
+
 ---
 
 ## 2. Known and accepted

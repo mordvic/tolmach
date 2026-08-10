@@ -154,6 +154,14 @@ Facts that will bite you if you "tidy" them:
 - `timeToFirstTokenMS` is `nil` when nothing was ever emitted — that nil *is* the empty-reply
   signal. Do not substitute a sentinel; it makes an absent response read as a slow one.
 - `stats` covers the per-chunk translation calls only, never the term-list call.
+- **Правка is a second route through the same pipeline, not a second pipeline.**
+  `Translator.proofread` shares the chunking, the per-chunk streaming
+  (`streamChunkReply`), the cancellation discipline and `ChunkPlan.assembled(from:)`
+  with `translate`, and runs **no** glossary stage: no term-list call, no review hook,
+  no `GlossaryVerifier`. It returns `TranslationOutcome` with honestly empty glossary
+  fields (`documentGlossaryAttempted == false` is the marker). The style instruction
+  reaches the prompt only under `.errorsAndStyle` — `PromptBuilder` enforces it and the
+  UI disables the control. See `docs/superpowers/specs/2026-08-10-proofreading-design.md`.
 
 ### Ollama rules (empirical, non-negotiable)
 
