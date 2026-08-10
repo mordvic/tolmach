@@ -626,10 +626,18 @@ public struct Translator: Sendable {
         // the same buffered path: one full clean, emitted in one `onToken` call.
         // The marker unwrap is suppressed when the source chunk itself opens
         // with the marker line — the cleaner's erring-toward-not-unwrapping
-        // rule, same as `containsCodeFence` suppresses the fence unwrap.
+        // rule, same as `passthrough` suppresses the fence unwrap. Still
+        // conditional here, not unconditional: this task only isolates fenced
+        // chunks in `Chunker` and does not yet stop them reaching the model, so
+        // a passthrough chunk is still streamed through this exact path and an
+        // echoing model still opens its reply with the chunk's own fence — the
+        // case `allowFenceUnwrap: false` exists to protect. `chunk.passthrough`
+        // will go moot once a later task skips the model call for such chunks
+        // entirely (a model-bound chunk could no longer contain a fence at all),
+        // at which point this can turn unconditional.
         let cleaned = ResponseCleaner.clean(
             buffer,
-            allowFenceUnwrap: !chunk.containsCodeFence,
+            allowFenceUnwrap: !chunk.passthrough,
             allowMarkerUnwrap: !chunk.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 .hasPrefix("<text>")).text
         emit(cleaned)

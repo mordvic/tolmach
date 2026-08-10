@@ -17,7 +17,7 @@ public enum ResponseCleaner {
     ]
 
     /// `allowFenceUnwrap` defaults to true for standalone callers (e.g. tests probing
-    /// `clean` in isolation), but `Translator` always passes `!chunk.containsCodeFence`
+    /// `clean` in isolation), but `Translator` always passes `!chunk.passthrough`
     /// explicitly — see the false-positive case below. `allowMarkerUnwrap` follows the
     /// same shape for the same reason: the caller knows whether the source itself
     /// opened with the marker line, and this function does not.

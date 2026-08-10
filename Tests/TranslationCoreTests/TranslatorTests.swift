@@ -139,7 +139,7 @@ private struct FakeTermListFailure: Error {}
     let maxCharacters = prose.trimmingCharacters(in: .whitespacesAndNewlines).count + 20
     let chunks = Chunker.plan(doc, maxCharacters: maxCharacters).chunks
     #expect(chunks.count == 2)
-    #expect(chunks[1].containsCodeFence)
+    #expect(chunks[1].passthrough)
     #expect(chunks[1].text == fence)
 
     let fake = FakeLLMClient(responses: ["переклад абзацу", fence])

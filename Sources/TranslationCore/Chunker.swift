@@ -18,7 +18,12 @@ public struct Chunk: Sendable, Equatable {
     /// translation off screen for a run that then fails — exactly what spec 8 forbids.
     /// `Chunker.plan` asserts it at every append.
     public let separatorBefore: String
-    public let containsCodeFence: Bool
+    /// True exactly when this chunk IS a fenced code block, standing alone. A passthrough
+    /// chunk never reaches the model: `Translator` copies its bytes verbatim (spec §2.1 —
+    /// protection by construction, DeepL/LanguageTool precedent). Replaces
+    /// `containsCodeFence`, whose only load-bearing consumer was the fence-unwrap
+    /// suppression — moot now that a model-bound chunk cannot contain a fence.
+    public let passthrough: Bool
 }
 
 /// What `Chunker.plan` promises: `chunks.map { $0.separatorBefore + $0.text }.joined()
@@ -126,7 +131,7 @@ public enum Chunker {
         var chunks: [Chunk] = []
         var current = ""
         var currentSeparator = ""
-        var currentHasFence = false
+        var currentIsPassthrough = false
         func flush() {
             guard !current.isEmpty else { return }
             // The whitespace-only separator invariant, checked where it is produced —
@@ -137,8 +142,8 @@ public enum Chunker {
                    "Chunker: a separator must be whitespace only")
             chunks.append(Chunk(index: chunks.count, text: current,
                                 separatorBefore: currentSeparator,
-                                containsCodeFence: currentHasFence))
-            current = ""; currentSeparator = ""; currentHasFence = false
+                                passthrough: currentIsPassthrough))
+            current = ""; currentSeparator = ""; currentIsPassthrough = false
         }
         for piece in pieces {
             // Structural, and stated rather than assumed because it once was not:
@@ -152,18 +157,25 @@ public enum Chunker {
             // dropping the separator of whatever came before it, which is the one way
             // the byte-for-byte contract could break without a test noticing.
             precondition(!piece.text.isEmpty, "Chunker: a piece must carry content")
-            // Every line terminator is a single Swift `Character` ("\r\n" included), so
-            // one blank line is `count == 2` in every convention and the budget check
-            // below reads the actual separator rather than a literal.
-            if !current.isEmpty, LineScanner.isExactlyOneBlankLine(piece.separatorBefore),
+            if piece.kind == .fencedCode {
+                // Never merged, in either direction (spec §2.1): the model must not see
+                // it, and prose after it must not inherit its chunk.
+                flush()
+                currentSeparator = piece.separatorBefore
+                current = piece.text
+                currentIsPassthrough = true
+                flush()
+            } else if !current.isEmpty, LineScanner.isExactlyOneBlankLine(piece.separatorBefore),
+               // Every line terminator is a single Swift `Character` ("\r\n" included),
+               // so one blank line is `count == 2` in every convention and the budget
+               // check below reads the actual separator rather than a literal.
                current.count + piece.separatorBefore.count + piece.text.count <= maxCharacters {
                 current += piece.separatorBefore + piece.text
-                currentHasFence = currentHasFence || piece.kind == .fencedCode
             } else {
                 flush()
                 currentSeparator = piece.separatorBefore
                 current = piece.text
-                currentHasFence = piece.kind == .fencedCode
+                currentIsPassthrough = false
             }
         }
         flush()
