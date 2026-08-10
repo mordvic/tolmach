@@ -857,3 +857,27 @@ private func waitForSheet(_ model: TranslationViewModel,
     await model.run()
     #expect(!fake.receivedMessages[0].first!.content.contains("German"))
 }
+
+@MainActor @Test func anAllCodeDocumentFinishesAsSuccessNotEmptyReply() async {
+    // nil TTFT used to be the empty-reply signal; with pass-through chunks an
+    // all-code document has nil TTFT AND a correct result (spec §2.1) — the
+    // fenced block never reaches the model, so `QueueClient` sees no calls at all.
+    let (model, _) = makeModel(responses: [])
+    model.sourceText = "```sh\nls -la\n```"
+    await model.run()
+    #expect(model.state == .finished)
+    #expect(model.translatedText == "```sh\nls -la\n```")
+}
+
+@MainActor @Test func anotherVariantIsNotOfferedWhenNothingWentToTheModel() async {
+    // Re-running an identity is not a variant (spec §2.1): a lone fenced block never
+    // reaches the model, so «Ещё вариант» must not be offered for it even though the
+    // run finished under «ошибки и стиль».
+    let (model, _) = makeModel(responses: [])
+    model.operation = .proofread
+    model.proofreadingLevelOverride = .errorsAndStyle
+    model.sourceText = "```sh\nls\n```"
+    await model.run()
+    #expect(model.state == .finished)
+    #expect(model.offersAnotherVariant == false)
+}

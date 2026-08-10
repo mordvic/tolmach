@@ -265,6 +265,8 @@ final class TranslationViewModel {
     /// which operation it is about to run.
     var offersAnotherVariant: Bool {
         state == .finished && operation == .proofread && resolvedProofreadingLevel == .errorsAndStyle
+            // Re-running an identity is not a variant (spec §2.1).
+            && (outcome?.modelChunkCount ?? 0) > 0
     }
 
     /// The availability rule for the style controls, resolved the way the next run would
@@ -499,7 +501,11 @@ final class TranslationViewModel {
             await consumer.value
             // Nothing was ever emitted: the model returned an empty reply rather than
             // translating to nothing. Reporting success here would show a blank pane.
-            guard result.timeToFirstTokenMS != nil else {
+            // nil TTFT means «empty reply» only when something was actually model-bound: an
+            // all-code document legitimately finishes with nil TTFT and modelChunkCount == 0
+            // (spec §2.1, the renegotiated contract — pass-through chunks made the old reading
+            // fail a successful run).
+            guard result.modelChunkCount == 0 || result.timeToFirstTokenMS != nil else {
                 state = .failed("Модель вернула пустой ответ. Попробуйте ещё раз.")
                 return
             }
