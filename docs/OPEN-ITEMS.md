@@ -240,15 +240,20 @@ nothing in this environment can see either.
   beyond the seeded errors, and of the four rewrite styles only «деловой» showed a
   real, consistent register shift — «дружелюбный» and «простой» no-op on the probe
   text and «профессиональный» neither shifts register nor stays stable across runs.
-  Neither gap was closeable by further prompt wording within this pass; both are
-  escalated. The merge decision on the правка feature now rests with a human, given
-  these recorded failures — it does not ship on the offline suite alone. Before the
-  feature merges: paste each file from `docs/proofreading-gate/` into the window's
-  «Правка» mode against the live default model. Per text: the output language equals
-  the input language; every seeded error fixed or at least not worsened; code, URLs
-  and identifiers byte-identical; under «только ошибки» the wording outside the
-  seeded errors unchanged (eyeball diff). Run each of the four rewrite styles once on
-  one text and check register shift without meaning drift. Record the results here.
+  Neither gap was closeable by further prompt wording within this pass; both were
+  escalated at the time. **Closed, 2026-08-10, by the code-protection-and-styles
+  pass**, not by a further prompt guess: the protected-span escalation is moot by
+  construction for fenced code — a fenced block is now a passthrough chunk that
+  never reaches the model, so there is nothing in it for the model to reword — and
+  for inline code the span is restored from the source's own bytes after the model
+  returns, deterministically, rather than asked of the model at all. Re-run against
+  this same corpus: `codeIntact` 12/12 (03/04/08/09 × 3 runs each), both before and
+  after a follow-up prompt fix (§3.1) that dropped «voice» from the level
+  instruction under a named style. The style no-ops (`friendly` on files 11 and 12,
+  `plain`'s grammar defects, `professional`'s instability) persisted unchanged
+  through that fix and are recorded as an honest model limitation with
+  `aya-expanse:8b`, not an open merge question — see «Part A verification and the
+  style matrix (2026-08-10, follow-up)» in §5 below for the full counts.
 - **The 700 pt toolbar minimum is now assumed, not measured.** The translate-mode toolbar
   gained the «Перевод | Правка» operation switch, and the 650/680 pt fit measurements it
   rests on — and the 700 pt minimum `MainWindowView.swift` derives from them — predate that
@@ -733,3 +738,55 @@ What **does** meet the gate: 4/10 `errorsOnly` texts (01, 05, 07, 10) and the `b
 style pass cleanly and unchanged, and nothing regressed anywhere in the corpus between the
 baseline and after-calibration runs (verified file-by-file, not only via the runner's summary
 counts).
+
+### Part A verification and the style matrix (2026-08-10, follow-up)
+
+Engine: pass-through chunks + inline restore (specs/2026-08-10-code-protection-and-styles-design.md).
+Same 12-text corpus and scratchpad runner as the run above, recompiled to pick up §3.1 (a named
+style drops «voice» from the `errorsAndStyle` level instruction — `ProofreadingLevel.instruction
+(styleGovernsVoice:)`), re-run in full (51 calls, one uninterrupted foreground pass, no crash
+this time) into a fresh output directory and diffed file-by-file against this run's own
+pre-§3.1 baseline, not just the runner's summary line.
+
+- **codeIntact: 12/12 true** — 03, 04, 08, 09 × 3 runs each, both before and after §3.1. This is
+  the headline the code-protection design exists for: fenced blocks (04's YAML comment, 09's
+  `print("helo wrld")`) are byte-identical passthrough chunks that never reach the model, and
+  inline spans (03's `git comit --amend`, 08's `npm instal`) are restored from the source's own
+  bytes after the model returns. Confirmed by direct text comparison against the source, not
+  only the summary field.
+- **errorsOnly non-regression: 30/31 byte-identical** (01–10 × 3 runs, against the pre-§3.1
+  matrix) — expected, since `.errorsOnly` never reaches the `styleGovernsVoice: true` branch, so
+  no prompt text changed for this level at all. The one exception, 03 run 2, swapped a synonym
+  outside the seed list («алиас» rendered as «этот алиас» instead of «наш псевдоним» — the same
+  out-of-seed-list wording variance the baseline run already flagged on this text) with
+  `codeIntact` still true: model stochasticity at temperature 0.2, not a protection regression.
+  Spot-checked against this section's own older baseline text too: 01/05/07/10 unchanged PASS,
+  02's verb-reorder and 06's «Thanks for»→«Thank you for» persist, and 04's out-of-seed-list
+  «конфига»→«конфигурационного файла» reword persists 3/3 as already recorded above.
+- **Style matrix, before §3.1** (this run's own pre-fix pass, matching the earlier corpus run's
+  verdicts): 11-business 3/3 register shift; 11-professional 0/3; 12-friendly 0/3; 02-plain 3/3
+  shift with grammar defects (вы/вас accusative error 2/3, «вывести» wrong-sense substitution
+  1/3); 07-friendly (EN) 3/3 shift.
+- **Style matrix, after §3.1**: 11-business 3/3 (unchanged; run 2 only a synonym swap,
+  «неясных»→«спорных»); 11-professional 0/3 by majority — 2/3 runs stay in casual ты-address with
+  only a cosmetic «пара»→«несколько» swap, the 3rd diverges into a differently-worded partial
+  rewrite that borrows business-register phrasing («Обратите внимание», «поделитесь своими
+  мыслями») rather than landing on a stable professional/workplace register, the same
+  instability shape as before; 12-friendly 0/3 — byte-identical to the pre-§3.1 output in all 3
+  runs, formal salutation and вы-address untouched; 02-plain 3/3 shift, same grammar-defect
+  pattern (вы/вас 2/3, «вывести» 1/3), individual runs swapped which defect landed where —
+  stochastic, not a regression; 07-friendly (EN) 3/3 (unchanged; minor cross-run synonym
+  variance, «reveal»/«demonstrate», «process»/«processes»).
+- **Verdict per style: no probe moved.** `business` and English `friendly` were already working
+  and still are. `friendly` on Russian text (files 11 and 12), `plain`'s grammar defects, and
+  `professional`'s instability are unchanged by dropping «voice» from the level instruction under
+  a named style — dead under both the old and the corrected prompt. This is recorded as an
+  honest model limitation with `aya-expanse:8b` at this temperature, matching this section's
+  earlier conclusion (a materially different strategy — few-shot examples, stricter decoding, or
+  a different model for правка — would be needed to move these), not a wording gap this pass can
+  still close.
+- **New probe text 12 (verbatim):**
+  ```
+  Уважаемые коллеги! Настоящим уведомляем вас о необходимости предоставить отчётные материалы в
+  срок до пятницы. При наличии вопросов надлежит обращаться к руководителю подразделения.
+  ```
