@@ -85,6 +85,14 @@ Two mandatory rules, derived empirically:
   does not disable reasoning, it moves it out of `message.thinking` and into `message.content`,
   from where it lands directly in the translated text.
 
+> **Correction (2026-08-11).** The second rule generalises further than the evidence does. Swept
+> across all eight installed models, `"think": false` silences `qwen3:8b` and `gemma4:26b`
+> completely, is ignored by `gpt-oss:20b`, and leaks into `message.content` on `qwen3:30b` alone —
+> the model it was verified on. It is a fact about that model, not about Ollama. What is
+> protocol-wide, and was not known when this section was written, is the opposite direction:
+> `think: true` or a level sent to a model without the `thinking` capability is HTTP 400. The
+> table is in `docs/PLATFORM-TRAPS.md`; §11's item 8 inherits the same correction.
+
 Ollama reports durations in nanoseconds — the client converts them to milliseconds at the
 boundary.
 
@@ -602,7 +610,9 @@ The key facts the design rests on:
    shortage of information.
 7. `gemma3n:e4b` corrupted an identifier inside inline code.
 8. `qwen3:30b` spent 78 s reasoning before the first character; `"think": false` moves the
-   reasoning into `message.content` and makes it worse.
+   reasoning into `message.content` and makes it worse. **Corrected 2026-08-11** — see §3.1: the
+   leak is this model's alone, and the 78 s did not reproduce against a one-sentence prompt
+   (14.5 s cold, 7.3 s warm), which is a different measurement rather than a refutation.
 
 ## 11a. Known limitations of v1
 
