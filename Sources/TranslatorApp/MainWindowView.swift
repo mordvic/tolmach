@@ -24,6 +24,9 @@ import TranslationCore
 struct PrimaryAction {
     let isRunning: Bool
     let canStart: Bool
+    /// «Перевести» or «Исправить» — read by the toolbar button and the «Перевод» menu
+    /// item both, so the two cannot disagree (spec §6).
+    let startTitle: String
     let start: () async -> Void
     let cancel: () -> Void
     let canCopy: Bool
@@ -52,13 +55,15 @@ struct PrimaryAction {
                 // the mode switch no longer stands between the user and a second run.
                 canStart: !text.sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     && !queue.isRunning,
-                start: { await text.translate() },
+                startTitle: text.operation == .proofread ? "Исправить" : "Перевести",
+                start: { await text.run() },
                 cancel: { text.cancel() },
                 canCopy: !text.translatedText.isEmpty,
                 copy: { await text.copyToPasteboard() },
                 canClear: !text.sourceText.isEmpty && text.state != .running,
                 clear: { text.sourceText = "" },
-                canSwap: text.canSwapLanguages,
+                // There is nothing to exchange in правка: it has no target language.
+                canSwap: text.operation == .translate && text.canSwapLanguages,
                 swap: { text.swapLanguages() })
         case .files:
             PrimaryAction(
@@ -69,6 +74,9 @@ struct PrimaryAction {
                 // a copy of the condition is how a seventh `FileJob.State` gets remembered
                 // in one place and forgotten in the other.
                 canStart: queue.hasWorkLeft && text.state != .running,
+                // «Файлы» is translation-only — the queue never proofs — so unlike `.text`
+                // this title never varies with the text model's switch.
+                startTitle: "Перевести",
                 // The toolbar's three pickers are drawn on this screen and must configure
                 // this run. They are read from the text model because that is what the
                 // toolbar binds to — one owner for those values, passed in per run.
