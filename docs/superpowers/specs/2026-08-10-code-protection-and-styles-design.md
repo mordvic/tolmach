@@ -127,15 +127,17 @@ restore handles.
   source content into the wrong span — worse than no restore. The measured failure mode
   is exactly the equal-count case (delimiters kept, content edited, 3/3 on every failing
   file), so the safe rule covers everything actually observed.
-- Streaming: content is held from an opening backtick until its closing backtick, then
-  the *source* span is emitted — bounded buffering, same shape as the existing
-  first-line/fence buffering in `streamChunkReply`. The hold flushes at end of **line**,
-  not chunk: the span definition is per-line (`MarkupSkeleton.inlineTokens(in line:)`), a
-  backtick with no close on its own line is not a span, and a hold that outlived the line
-  would let restore and skeleton disagree. (Equal-count restore under streaming needs the
-  counts known per line — the reply's spans on a line are restored against the source
-  spans assigned to that line's positions; the exact bookkeeping is the plan's to pin,
-  the invariant «`final` and the stream agree byte-for-byte» is not negotiable.)
+- Streaming: the equal-count gate is decidable only when the chunk's reply is complete,
+  and emitted bytes cannot be recalled — so **a chunk whose *source* contains inline
+  spans is buffered whole**: cleaned, restored, then emitted once. Chunks without source
+  spans stream incrementally exactly as today. The buffering is bounded by the chunk
+  budget (≤ `maxChunkCharacters` of source, a comparable reply), it is the same
+  buffer-until-decidable shape the cleaner already uses for the first line and the fence
+  unwrap, and it makes «`final` and the stream agree byte-for-byte» trivially true. The
+  UX cost — a code-bearing paragraph appears per-chunk instead of per-token — is
+  accepted, stated here so nobody reads it as a streaming regression. Span *parsing*
+  stays per-line (`MarkupSkeleton.inlineTokens(in line:)`): a backtick with no close on
+  its own line is not a span, in source and reply alike.
 - **Restore operates on the cleaned reply**, downstream of `ResponseCleaner`'s decisions
   (preamble strip, whole-answer fence unwrap) in both `final` and the stream — cleaning
   shifts bytes, and a restore that ran before it would misplace every span after the
