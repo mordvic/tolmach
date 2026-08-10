@@ -75,6 +75,12 @@ public struct TranslationOutcome: Sendable {
     /// candidates — asserting a failure that never happened.
     /// Empty/false for a правка run — правка builds no glossary (spec §4.3).
     public let documentGlossaryAttempted: Bool
+    /// How many chunks were model-bound. Pass-through (fenced-code) chunks are excluded.
+    /// Zero means the whole document was code: a trivially successful run in which
+    /// `timeToFirstTokenMS` is nil WITHOUT meaning «empty reply» — consumers must check
+    /// this count before reading that nil as a failure (spec §2.1, the renegotiated
+    /// contract; `TranslationViewModel` is the consumer that got this wrong first).
+    public let modelChunkCount: Int
 }
 
 // Every other public value type in this API is already Sendable; the entry point
@@ -217,7 +223,12 @@ public struct Translator: Sendable {
         var documentGlossaryAttempted = false
         /// Seconds spent waiting for a human in the review hook. See where it is subtracted.
         var reviewWait: TimeInterval = 0
-        if chunks.count > 1, let source = detected {
+        // Model-bound chunks, not raw chunks: a passthrough (fenced-code) chunk never
+        // reaches the model, so a document of one paragraph plus one code fence is two
+        // chunks but only one worth building cross-chunk consistency for — the case
+        // `aDocumentGlossaryIsNeverAttemptedBelowTwoModelBoundChunks` pins.
+        let modelChunks = chunks.filter { !$0.passthrough }
+        if modelChunks.count > 1, let source = detected {
             let terms = TermExtractor.extract(from: text, language: source)
             if !terms.isEmpty {
                 documentGlossaryAttempted = true
@@ -336,14 +347,27 @@ public struct Translator: Sendable {
             // hard-coded "\n\n" did. The consumer contract is unchanged: whitespace-only
             // pieces are not "output" (TranslationViewModel holds them in `pending`).
             if !chunk.separatorBefore.isEmpty { onToken(chunk.separatorBefore) }
-            // Every chunk goes to the model. An indented chunk was briefly reproduced
-            // here instead, with no call at all — which returned tab-indented plain
+            // Protection by construction (spec §2.1): a passthrough chunk IS a fenced
+            // code block standing alone, so its bytes go straight through — no
+            // request, no `PromptBuilder`, no `ResponseCleaner`. This is a different
+            // guarantee from the one below: an indented chunk was briefly reproduced
+            // the same way, with no call at all — which returned tab-indented plain
             // text and Markdown loose-list continuations untranslated (nothing in a
             // selection carries format context), and stamped `firstTokenAt` without a
             // single token of model content, defeating the "nil TTFT == empty reply"
-            // contract this outcome documents. Indentation is preserved by the
-            // verbatim separators instead; fenced and inline code stay the only forms
-            // the prompt protects.
+            // contract this outcome documents. Indentation is therefore still sent to
+            // the model and preserved by the verbatim separators instead; fenced code
+            // is categorically different — a lone fence chunk's content is never prose
+            // to translate at all, so skipping the call loses nothing a model could
+            // have added, and progress still counts the part.
+            if chunk.passthrough {
+                onToken(chunk.text)
+                translatedChunks.append(chunk.text)
+                onProgress(TranslationProgress(partsDone: translatedChunks.count,
+                                               partsTotal: chunks.count,
+                                               documentTermCount: documentTermCount))
+                continue
+            }
             //
             // Filter over code-stripped text, not the raw chunk. `Glossary.relevantEntries`
             // is a plain occurrence check, so a term that only ever appears inside a fenced
@@ -421,7 +445,8 @@ public struct Translator: Sendable {
             timeToFirstTokenMS: acc.firstTokenAt.map { ($0.timeIntervalSince(started) - reviewWait) * 1000 },
             totalMS: (Date().timeIntervalSince(started) - reviewWait) * 1000,
             documentGlossaryFailure: documentGlossaryFailure,
-            documentGlossaryAttempted: documentGlossaryAttempted)
+            documentGlossaryAttempted: documentGlossaryAttempted,
+            modelChunkCount: modelChunks.count)
     }
 
     /// Правка: the same route as `translate` — detect → chunk → per-chunk streamed calls →
@@ -460,6 +485,17 @@ public struct Translator: Sendable {
             // `onToken`, never through the helper's emit, so it cannot stamp the
             // first-token time (same rule and reason as `translate`).
             if !chunk.separatorBefore.isEmpty { onToken(chunk.separatorBefore) }
+            // Protection by construction (spec §2.1), shared with `translate`: a
+            // passthrough chunk is a fenced code block standing alone, so правка's own
+            // "fix the prose, leave the code" rule is enforced structurally here rather
+            // than trusted to the model — the bytes go straight through, no request.
+            if chunk.passthrough {
+                onToken(chunk.text)
+                correctedChunks.append(chunk.text)
+                onProgress(TranslationProgress(partsDone: correctedChunks.count,
+                                               partsTotal: chunks.count, documentTermCount: 0))
+                continue
+            }
             let messages = PromptBuilder.proofreadMessages(text: chunk.text, language: detected,
                                                            level: level, style: style)
             let cleaned = try await streamChunkReply(messages, chunk: chunk, options: options,
@@ -485,7 +521,8 @@ public struct Translator: Sendable {
             timeToFirstTokenMS: acc.firstTokenAt.map { $0.timeIntervalSince(started) * 1000 },
             totalMS: Date().timeIntervalSince(started) * 1000,
             documentGlossaryFailure: nil,
-            documentGlossaryAttempted: false)
+            documentGlossaryAttempted: false,
+            modelChunkCount: chunks.lazy.filter { !$0.passthrough }.count)
     }
 
     // Streams one chunk's translation call, delivering content to `onToken` as
@@ -624,20 +661,18 @@ public struct Translator: Sendable {
         // deferred to the end, exactly as documented above), or the stream ended
         // without ever producing a "\n" (a single-line reply). All fall back to
         // the same buffered path: one full clean, emitted in one `onToken` call.
-        // The marker unwrap is suppressed when the source chunk itself opens
-        // with the marker line — the cleaner's erring-toward-not-unwrapping
-        // rule, same as `passthrough` suppresses the fence unwrap. Still
-        // conditional here, not unconditional: this task only isolates fenced
-        // chunks in `Chunker` and does not yet stop them reaching the model, so
-        // a passthrough chunk is still streamed through this exact path and an
-        // echoing model still opens its reply with the chunk's own fence — the
-        // case `allowFenceUnwrap: false` exists to protect. `chunk.passthrough`
-        // will go moot once a later task skips the model call for such chunks
-        // entirely (a model-bound chunk could no longer contain a fence at all),
-        // at which point this can turn unconditional.
+        // The marker unwrap is suppressed when the source chunk itself opens with
+        // the marker line — the cleaner's erring-toward-not-unwrapping rule. The
+        // fence unwrap has no such suppression to make anymore: both `translate`
+        // and `proofread` skip a passthrough chunk before it ever reaches this
+        // function (spec §2.1), so every chunk `streamChunkReply` sees IS
+        // model-bound and cannot itself be a lone fence — a fence opening the
+        // reply is always the model's own wrapper around real prose, never an
+        // echo of the source. `allowFenceUnwrap: false` used to protect exactly
+        // that echo case; now unreachable, it is gone rather than dead-coded.
         let cleaned = ResponseCleaner.clean(
             buffer,
-            allowFenceUnwrap: !chunk.passthrough,
+            allowFenceUnwrap: true,
             allowMarkerUnwrap: !chunk.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 .hasPrefix("<text>")).text
         emit(cleaned)

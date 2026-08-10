@@ -113,3 +113,22 @@ private final class StreamCollector: @unchecked Sendable {
         options: ChatOptions(model: "test"), maxChunkCharacters: 900)
     #expect(outcome.final == source)
 }
+
+@Test func proofreadPassesFencedChunksThroughAndCountsModelChunks() async throws {
+    let source = "Текст с ошибкой.\n\n```py\nprint('helo')\n```"
+    let fake = FakeLLMClient(responses: ["Текст без ошибки."])
+    let translator = Translator(client: fake)
+    // A raw `var` mutated from the `@Sendable` `onToken` closure is a Swift 6 capture
+    // error — `StreamCollector` (above) is this file's existing answer.
+    let collector = StreamCollector()
+    let outcome = try await translator.proofread(
+        text: source, level: .errorsOnly,
+        options: ChatOptions(model: "fake"), maxChunkCharacters: 900,
+        onToken: { collector.append($0) })
+    for messages in fake.receivedMessages {
+        for message in messages { #expect(!message.content.contains("print('helo')")) }
+    }
+    #expect(outcome.final.contains("```py\nprint('helo')\n```"))
+    #expect(collector.value == outcome.final)
+    #expect(outcome.modelChunkCount == 1)
+}

@@ -306,7 +306,8 @@ private func makeFinishedOutcome(detected: Language?) -> TranslationOutcome {
                        timeToFirstTokenMS: 12,
                        totalMS: 34,
                        documentGlossaryFailure: nil,
-                       documentGlossaryAttempted: false)
+                       documentGlossaryAttempted: false,
+                       modelChunkCount: 1)
 }
 
 @Test func theHeaderLineSaysПравкаForAProofreadOutcome() {
