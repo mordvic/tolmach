@@ -117,4 +117,4 @@ techdoc-en.md: run1 87.8% (43/49) · run2 87.8% (43/49) · run3 87.8% (43/49) ·
 techdoc-ru.md: run1 94.4% (51/54) · run2 94.4% (51/54) · run3 92.6% (50/54) · average 93.8% · 4 chunks · 20 terms · TTFT 3045/3084/3081 ms (info only — multi-chunk, not asserted)
 ```
 
-The gated numbers: single-chunk TTFT **453 ms** and **515 ms** against a 1000 ms ceiling, and the lowest average adherence **84.3 %** (article-en) and **87.8 %** (techdoc-en and techdoc-ru) against an 80 % floor. All known markup diffs reproduced as expected; no new diff appeared.
+The gated numbers: single-chunk TTFT **453 ms** and **515 ms** against a 1000 ms ceiling, and the lowest average adherence **84.3 %** (article-en), **87.8 %** (techdoc-en) and **93.8 %** (techdoc-ru) against an 80 % floor. All known markup diffs reproduced as expected; no new diff appeared.
