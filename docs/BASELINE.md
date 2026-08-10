@@ -444,3 +444,32 @@ itself appeared on 2/3 runs of `techdoc-en.md` and all 3/3 runs of `techdoc-ru.m
 blockquotes per run in that file, both dropped every time it showed) — every occurrence
 printed as `known-limitation`, none counted toward `failures`. This closes the arc this
 file has carried since the re-basing entry above: **ACCEPTED**.
+
+---
+
+## 2026-08-10 — adherence denominator corrected (pass-through chunks excluded)
+
+The adherence loop in `Sources/acceptance/main.swift` counted a glossary term as
+`applicable` even when it matched only inside a pass-through (fenced-code) chunk that
+never reaches the model — penalising the metric for the protection itself, since such a
+term can never be `honoured` — so the loop now skips `chunk.passthrough` chunks
+entirely; expected direction: percentages rise (or hold unchanged, for a file with no
+such occurrence).
+
+```
+article-en.md: run1 86.1% (31/36) · run2 83.3% (30/36) · run3 86.1% (31/36) · average 85.2% · 3 chunks · 20 terms · TTFT 3366/3117/3008 ms (info only — multi-chunk, not asserted)
+email-en.md: adherence n/a (single model-bound chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 455 ms
+snippet-en.md: adherence n/a (single model-bound chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 468 ms
+techdoc-en.md: run1 88.0% (44/50) · run2 88.0% (44/50) · run3 86.0% (43/50) · average 87.3% · 6 chunks (4 model-bound) · 20 terms · TTFT 4603/4539/4327 ms (info only — multi-chunk, not asserted)
+    known-limitation run1: aya-expanse:8b stochastically drops the leading ">" on the blockquote that follows a fenced code block, now that the fence is a standalone passthrough chunk and the following chunk recomposed. Two prompt-rule attempts to fix it made the model's structure preservation worse elsewhere and were reverted. Accepted by the user 2026-08-10 as a stochastic marker loss WarningsView already surfaces, traded against the deterministic code corruption the same change fixed 4/4. (expected Optional(TranslationCore.MarkupToken.blockquote) actual nil)
+    known-limitation run3: aya-expanse:8b stochastically drops the leading ">" on the blockquote that follows a fenced code block, now that the fence is a standalone passthrough chunk and the following chunk recomposed. Two prompt-rule attempts to fix it made the model's structure preservation worse elsewhere and were reverted. Accepted by the user 2026-08-10 as a stochastic marker loss WarningsView already surfaces, traded against the deterministic code corruption the same change fixed 4/4. (expected Optional(TranslationCore.MarkupToken.blockquote) actual nil)
+techdoc-ru.md: run1 93.9% (46/49) · run2 93.9% (46/49) · run3 93.9% (46/49) · average 93.9% · 5 chunks (4 model-bound) · 20 terms · TTFT 5059/4463/4778 ms (info only — multi-chunk, not asserted)
+    known-limitation run1: aya-expanse:8b stochastically drops the leading ">" on the blockquote that follows a fenced code block, now that the fence is a standalone passthrough chunk and the following chunk recomposed. Two prompt-rule attempts to fix it made the model's structure preservation worse elsewhere and were reverted. Accepted by the user 2026-08-10 as a stochastic marker loss WarningsView already surfaces, traded against the deterministic code corruption the same change fixed 4/4. (expected Optional(TranslationCore.MarkupToken.blockquote) actual nil)
+    known-limitation run1: aya-expanse:8b stochastically drops the leading ">" on the blockquote that follows a fenced code block, now that the fence is a standalone passthrough chunk and the following chunk recomposed. Two prompt-rule attempts to fix it made the model's structure preservation worse elsewhere and were reverted. Accepted by the user 2026-08-10 as a stochastic marker loss WarningsView already surfaces, traded against the deterministic code corruption the same change fixed 4/4. (expected Optional(TranslationCore.MarkupToken.blockquote) actual nil)
+    known-limitation run2: aya-expanse:8b stochastically drops the leading ">" on the blockquote that follows a fenced code block, now that the fence is a standalone passthrough chunk and the following chunk recomposed. Two prompt-rule attempts to fix it made the model's structure preservation worse elsewhere and were reverted. Accepted by the user 2026-08-10 as a stochastic marker loss WarningsView already surfaces, traded against the deterministic code corruption the same change fixed 4/4. (expected Optional(TranslationCore.MarkupToken.blockquote) actual nil)
+    known-limitation run2: aya-expanse:8b stochastically drops the leading ">" on the blockquote that follows a fenced code block, now that the fence is a standalone passthrough chunk and the following chunk recomposed. Two prompt-rule attempts to fix it made the model's structure preservation worse elsewhere and were reverted. Accepted by the user 2026-08-10 as a stochastic marker loss WarningsView already surfaces, traded against the deterministic code corruption the same change fixed 4/4. (expected Optional(TranslationCore.MarkupToken.blockquote) actual nil)
+    known-limitation run3: aya-expanse:8b stochastically drops the leading ">" on the blockquote that follows a fenced code block, now that the fence is a standalone passthrough chunk and the following chunk recomposed. Two prompt-rule attempts to fix it made the model's structure preservation worse elsewhere and were reverted. Accepted by the user 2026-08-10 as a stochastic marker loss WarningsView already surfaces, traded against the deterministic code corruption the same change fixed 4/4. (expected Optional(TranslationCore.MarkupToken.blockquote) actual nil)
+    known-limitation run3: aya-expanse:8b stochastically drops the leading ">" on the blockquote that follows a fenced code block, now that the fence is a standalone passthrough chunk and the following chunk recomposed. Two prompt-rule attempts to fix it made the model's structure preservation worse elsewhere and were reverted. Accepted by the user 2026-08-10 as a stochastic marker loss WarningsView already surfaces, traded against the deterministic code corruption the same change fixed 4/4. (expected Optional(TranslationCore.MarkupToken.blockquote) actual nil)
+
+ACCEPTED — engine meets the recalibrated baseline
+```

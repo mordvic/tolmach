@@ -122,11 +122,15 @@ func adherence(_ outcome: TranslationOutcome, target: Language) -> (honoured: In
     // document?" — the same question the engine itself gates the document-glossary
     // stage on (`Translator.translate`'s `modelChunks.count > 1`). A passthrough
     // (fenced-code) chunk never gets a glossary-consistency check because it never
-    // reaches the model.
+    // reaches the model — so the loop below excludes them too, or a term that only
+    // ever appears inside fenced code would count as `applicable` while being
+    // structurally unhonourable, penalising the metric for the protection itself
+    // (measured: techdoc-en's `applicable` moved 49→51 with `honoured` unchanged at
+    // 42–44, once inline/fenced protection started matching this document's code).
     if outcome.modelChunkCount > 1, let source = outcome.detectedSource {
         for entry in outcome.documentGlossary {
             guard let expected = entry.requiredTranslation(for: target) else { continue }
-            for (index, chunk) in outcome.chunks.enumerated() {
+            for (index, chunk) in outcome.chunks.enumerated() where !chunk.passthrough {
                 guard LemmaMatcher.matches(expected: entry.term, in: chunk.text, language: source) == true
                 else { continue }
                 applicable += 1

@@ -245,6 +245,11 @@ public enum MarkupSkeleton {
     /// (spec §2.2). Per line: parity pairs backticks left to right; an unterminated
     /// opener emits nothing; an empty pair (``) emits nothing but consumes both.
     /// NSRange coordinates are UTF-16, matching the rest of `inlineTokens`.
+    /// This scan is fence-blind — it does not know a ``` line from any other — and
+    /// that is safe only because `Chunker`'s all-or-nothing fence rule guarantees a
+    /// model-bound chunk never contains a fence line at all (a fenced block is its
+    /// own passthrough chunk). If that rule is ever relaxed to let fence markers
+    /// reach a chunk this function scans, this scan must learn to recognise fences too.
     static func inlineCodeSpans(in line: String) -> [(range: NSRange, content: String)] {
         let ns = line as NSString
         var spans: [(NSRange, String)] = []

@@ -361,6 +361,11 @@ public struct Translator: Sendable {
             // to translate at all, so skipping the call loses nothing a model could
             // have added, and progress still counts the part.
             if chunk.passthrough {
+                // Redundant for every chunk but the last — the top-of-loop check above
+                // already catches a cancellation before any but the final pass-through
+                // emission — but cheap, and it closes that one window instead of
+                // leaving it to a traced argument that the emission is byte-correct anyway.
+                try Task.checkCancellation()
                 onToken(chunk.text)
                 translatedChunks.append(chunk.text)
                 onProgress(TranslationProgress(partsDone: translatedChunks.count,
@@ -490,6 +495,10 @@ public struct Translator: Sendable {
             // "fix the prose, leave the code" rule is enforced structurally here rather
             // than trusted to the model — the bytes go straight through, no request.
             if chunk.passthrough {
+                // Same trace as `translate`: the top-of-loop check already catches a
+                // cancellation before any but the final pass-through emission — this
+                // closes that last window rather than leaving it to that argument.
+                try Task.checkCancellation()
                 onToken(chunk.text)
                 correctedChunks.append(chunk.text)
                 onProgress(TranslationProgress(partsDone: correctedChunks.count,

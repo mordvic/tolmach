@@ -447,6 +447,23 @@ Deliberate, with the reason. Do not "fix" these without reading the reason first
   longest Russian language name. Spec §5.3 names the download section «Загрузка»; it ships as
   «Загрузить модель», because this pane says «модель в памяти» and «модель не загружена» a few
   rows above, so the bare noun reads as «loading into memory» as readily as «downloading».
+- **The buffer-whole cost of inline-code restore is measured but not yet weighed against
+  the interactive TTFT bound.** Spec §2.2 accepts, deliberately, that a chunk whose source
+  carries inline code spans buffers its whole reply before emitting anything, rather than
+  streaming incrementally, so restore's equal-count gate can be decided before a byte
+  reaches `onToken`. The price shows in the corpus: techdoc's TTFT moved ~2.9→~4.27 s (en)
+  and ~3.2→~4.3 s (ru) once the re-basing landed (`docs/BASELINE.md`'s 2026-08-10 entries,
+  «after the idiom/proper-noun rule» through «re-based state accepted»). Both are
+  multi-chunk and so outside the <1 s gate — but the gate's own single-chunk corpus files
+  (`email-en.md`, `snippet-en.md`) carry no backticks at all, so a hotkey selection that
+  *does* contain inline code has never actually been measured against the interactive
+  bound; whether buffer-whole can blow it is untested, not cleared.
+- **`aya-expanse:8b` stochastically drops the leading `>` on a blockquote that follows a
+  standalone passthrough fenced chunk, once the following chunk is recomposed.** Accepted
+  2026-08-10 as a known limitation rather than chased further — see `docs/BASELINE.md`'s
+  2026-08-10 entries, from «after pass-through chunks and inline restore (re-basing)»
+  through «re-based state accepted», for the measurements and the reasoning; not retold
+  here.
 - **The smaller findings the UI redesign deferred are listed in its ledger**, not repeated
   here: `docs/history/2026-07-30-ui-redesign-ledger.md`. They are test-coverage gaps and
   comment imprecisions rather than behaviour, with the exception of the resize items above,

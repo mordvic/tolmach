@@ -44,6 +44,11 @@ Final paragraph after the code, closing the document out with a few more words.
     #expect(Chunker.plan("", maxCharacters: 900).chunks.isEmpty)
 }
 
+// 2026-08-10: the consequence of this shape, stated plainly — an unterminated fence
+// runs to EOF as `.fencedCode`, so it becomes one passthrough chunk covering the
+// document's entire tail. In `translate`/`proofread` a passthrough chunk never
+// reaches the model, so a stray or unclosed ``` silently leaves everything after it
+// untranslated (or uncorrected) rather than erroring.
 @Test func unterminatedFenceIsKeptWholeAndNotSplit() {
     let doc = """
     Intro paragraph before the code that is long enough to matter here.
