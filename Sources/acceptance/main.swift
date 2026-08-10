@@ -61,6 +61,18 @@ let knownFileLimitations: [String: String] = [
 
 func target(for name: String) -> Language { name.hasSuffix("-ru.md") ? .en : .ru }
 
+/// "N chunks" when every chunk reached the model, else "N chunks (M model-bound)" —
+/// the re-basing format the brief asks the entry to record per file. A raw chunk
+/// count alone no longer says how many model calls a code-bearing file paid for,
+/// now that a fenced block is a standalone passthrough chunk the model never sees.
+func chunkSummary(_ outcome: TranslationOutcome) -> String {
+    let raw = outcome.chunks.count
+    let noun = raw == 1 ? "chunk" : "chunks"
+    return raw == outcome.modelChunkCount
+        ? "\(raw) \(noun)"
+        : "\(raw) \(noun) (\(outcome.modelChunkCount) model-bound)"
+}
+
 func translate(_ text: String, to target: Language) async throws -> TranslationOutcome {
     try await translator.translate(
         text: text, target: target, tone: .technical, userGlossary: nil,
@@ -76,7 +88,12 @@ func translate(_ text: String, to target: Language) async throws -> TranslationO
 /// pass threshold; nil forces the caller to exclude it from that average instead.
 func adherence(_ outcome: TranslationOutcome, target: Language) -> (honoured: Int, applicable: Int, pct: Double?) {
     var honoured = 0, applicable = 0
-    if outcome.chunks.count > 1, let source = outcome.detectedSource {
+    // Model-bound, not raw: this asks "did the model see more than one chunk of this
+    // document?" — the same question the engine itself gates the document-glossary
+    // stage on (`Translator.translate`'s `modelChunks.count > 1`). A passthrough
+    // (fenced-code) chunk never gets a glossary-consistency check because it never
+    // reaches the model.
+    if outcome.modelChunkCount > 1, let source = outcome.detectedSource {
         for entry in outcome.documentGlossary {
             guard let expected = entry.requiredTranslation(for: target) else { continue }
             for (index, chunk) in outcome.chunks.enumerated() {
@@ -157,7 +174,13 @@ for name in corpus {
         // Chunking is decided by input length alone, not by anything the model does,
         // so whether a file is "chunked-shaped" or "hotkey-shaped" is already known
         // from this first run and never changes across repeats of the same file.
-        if first.chunks.count > 1 {
+        //
+        // Gated on model-bound chunks, not raw chunks: a code-bearing file can now
+        // have more than one raw chunk (prose plus a standalone passthrough fenced
+        // block) while still paying for only one model call, in which case it is
+        // "hotkey-shaped" — TTFT-gated, not adherence-measured — exactly like a file
+        // with one raw chunk always was.
+        if first.modelChunkCount > 1 {
             var outcomes = [first]
             for _ in 0..<2 { outcomes.append(try await translate(text, to: dest)) }
 
@@ -177,7 +200,7 @@ for name in corpus {
             let averageDescription = average.map { String(format: "%.1f%%", $0) } ?? "n/a"
 
             print("\(name): \(runsDescription) · average \(averageDescription) · " +
-                  "\(first.chunks.count) chunks · \(first.documentGlossary.count) terms · " +
+                  "\(chunkSummary(first)) · \(first.documentGlossary.count) terms · " +
                   "TTFT \(ttftDescription) ms (info only — multi-chunk, not asserted)")
             for (i, outcome) in outcomes.enumerated() { checkMarkup(outcome, label: " run\(i + 1)") }
             flushMarkupFailures(totalRuns: outcomes.count)
@@ -187,15 +210,29 @@ for name in corpus {
             // nothing at all — checked on every run, not just the first. This is the
             // failure that covers the every-run-nil case below, not a division by zero.
             for (i, m) in measurements.enumerated() where m.applicable == 0 {
-                failures.append("\(name) run\(i + 1): chunked into \(outcomes[i].chunks.count) but no term was measurable — document glossary did nothing")
+                failures.append("\(name) run\(i + 1): chunked into \(chunkSummary(outcomes[i])) but no term was measurable — document glossary did nothing")
             }
             if let average, average < 80 {
                 failures.append("\(name): average adherence \(String(format: "%.1f%%", average)) < 80%")
             }
+        } else if first.modelChunkCount == 0 {
+            // The whole document is code: every chunk is a standalone passthrough
+            // fenced block, so no model call happened at all. `timeToFirstTokenMS`
+            // is nil here WITHOUT meaning "empty reply" — see
+            // `TranslationOutcome.modelChunkCount`'s doc comment, which names this
+            // exact case as the one a naive consumer misreads as a failure.
+            print("\(name): adherence n/a (no model-bound chunk — the whole document is code) · " +
+                  "\(chunkSummary(first)) · \(first.documentGlossary.count) terms · " +
+                  "TTFT — ms (no model call, not gated)")
+            checkMarkup(first, label: "")
+            flushMarkupFailures(totalRuns: 1)
         } else {
+            // Single model-bound chunk: TTFT-gated, whether or not the document also
+            // carried a passthrough chunk alongside it (chunkSummary reports both
+            // counts when they differ).
             let ttftDescription = first.timeToFirstTokenMS.map { String(Int($0)) } ?? "—"
-            print("\(name): adherence n/a (single chunk, document glossary not applicable) · 1 chunk · " +
-                  "\(first.documentGlossary.count) terms · TTFT \(ttftDescription) ms")
+            print("\(name): adherence n/a (single model-bound chunk, document glossary not applicable) · " +
+                  "\(chunkSummary(first)) · \(first.documentGlossary.count) terms · TTFT \(ttftDescription) ms")
             checkMarkup(first, label: "")
             flushMarkupFailures(totalRuns: 1)
             // Absent and slow are different failures. Before, a nil TTFT was measured

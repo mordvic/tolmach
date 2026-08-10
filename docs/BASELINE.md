@@ -203,3 +203,65 @@ run-to-run noise band as the change-1/2 entry above (article-en identical averag
 0.6 points lower but still equal to Task 1's 87.8 %, techdoc-ru identical). All known markup diffs
 reproduced as expected — the code-block hashes differ run to run as they already did between
 every prior entry — and no new diff appeared.
+
+---
+
+## 2026-08-10 — after pass-through chunks and inline restore (re-basing)
+
+- Machine: Apple M5 Pro, macOS 26.6.1
+- Ollama 0.31.1, model `aya-expanse:8b`
+- Commit: `7af13b3` plus this task's change to `Sources/acceptance/main.swift` (classify by
+  `TranslationOutcome.modelChunkCount`, not raw `chunks.count`)
+- Verdict: **FAILED**
+
+Part A of specs/2026-08-10-code-protection-and-styles-design.md changed the chunking of
+every code-bearing file, so adherence is computed over a different chunk set and files
+may have changed single-/multi-chunk class — percent-to-percent comparison with the
+entries above is qualitative; the 80 % floor is absolute. Files that changed class: none.
+`techdoc-en.md` and `techdoc-ru.md` are the only files with a fenced block; their fenced
+block is now a standalone passthrough chunk that never reaches the model, so their raw
+chunk count grew (4 chunks → 6 chunks (4 model-bound) for techdoc-en.md; 4 chunks →
+5 chunks (4 model-bound) for techdoc-ru.md) while their model-bound count held at 4 — both
+stayed on the multi-model-chunk (adherence-measured) side of the line throughout, so
+neither crossed into or out of the TTFT-gated class. `article-en.md` (3 chunks),
+`email-en.md` and `snippet-en.md` (1 chunk each) carry no fenced code and are unaffected.
+
+```
+article-en.md: run1 91.7% (33/36) · run2 86.1% (31/36) · run3 86.1% (31/36) · average 88.0% · 3 chunks · 20 terms · TTFT 3232/2978/2910 ms (info only — multi-chunk, not asserted)
+email-en.md: adherence n/a (single model-bound chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 447 ms
+snippet-en.md: adherence n/a (single model-bound chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 504 ms
+techdoc-en.md: run1 86.3% (44/51) · run2 82.4% (42/51) · run3 86.3% (44/51) · average 85.0% · 6 chunks (4 model-bound) · 20 terms · TTFT 4273/4112/4226 ms (info only — multi-chunk, not asserted)
+    markup run2: expected Optional(TranslationCore.MarkupToken.blockquote) actual nil
+techdoc-ru.md: run1 93.9% (46/49) · run2 91.8% (45/49) · run3 93.9% (46/49) · average 93.2% · 5 chunks (4 model-bound) · 20 terms · TTFT 4854/4515/5066 ms (info only — multi-chunk, not asserted)
+    markup run1: expected Optional(TranslationCore.MarkupToken.blockquote) actual nil
+    markup run1: expected Optional(TranslationCore.MarkupToken.blockquote) actual nil
+    markup run2: expected Optional(TranslationCore.MarkupToken.blockquote) actual nil
+    markup run2: expected Optional(TranslationCore.MarkupToken.blockquote) actual nil
+    markup run3: expected Optional(TranslationCore.MarkupToken.blockquote) actual nil
+    markup run3: expected Optional(TranslationCore.MarkupToken.blockquote) actual nil
+
+FAILED
+  - techdoc-en.md: unaccepted markup diff — expected Optional(TranslationCore.MarkupToken.blockquote) actual nil (1/3 runs)
+  - techdoc-ru.md: unaccepted markup diff — expected Optional(TranslationCore.MarkupToken.blockquote) actual nil (6/3 runs)
+```
+
+The gated numbers that pass: single-model-chunk TTFT **447 ms** (email-en) and **504 ms**
+(snippet-en) against the 1000 ms ceiling, and the lowest average adherence **85.0 %**
+(techdoc-en.md) against the 80 % floor — comfortably above it, and qualitatively consistent
+with the pre-rebasing figures given the chunk set changed underneath it. The headline this
+run exists to check: the known-limitation codeBlock diff (aya-expanse:8b translating the
+commit message inside the bash fence) is **absent** from both runs of both `techdoc-*` files
+— Part A's pass-through fenced chunks and inline-code restore remove that defect at the
+source rather than merely resizing the checker's tolerance list.
+
+But the markup-diff gate itself is **FAILED**: a diff shape outside `isKnownModelBehaviour`
+and `knownFileLimitations` appeared on both code-bearing files — `expected
+.blockquote actual nil`, i.e. the model dropped the leading `>` on the «Note»/«Важно»
+blockquote that immediately follows the now-standalone fenced block. It reproduced on the
+discarded first run too (techdoc-en 2/3 runs, techdoc-ru 6/3 — techdoc-ru carries two such
+blockquotes, each diffing identically, so `MarkupDiffKey`'s per-pair count exceeds
+`totalRuns`; that ratio format is pre-existing, not a defect of this task's edit), so this is
+reproducible rather than a one-off sampling artifact. No prior entry in this file has ever
+recorded a blockquote diff, so it is new relative to the whole recorded history, not merely
+to the immediately preceding entry. Per this task's brief: engine code is left untouched: the
+failure analysis and any fix belong to the controller, not to this task.
