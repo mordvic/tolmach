@@ -754,15 +754,24 @@ pre-§3.1 baseline, not just the runner's summary line.
   inline spans (03's `git comit --amend`, 08's `npm instal`) are restored from the source's own
   bytes after the model returns. Confirmed by direct text comparison against the source, not
   only the summary field.
-- **errorsOnly non-regression: 30/31 byte-identical** (01–10 × 3 runs, against the pre-§3.1
-  matrix) — expected, since `.errorsOnly` never reaches the `styleGovernsVoice: true` branch, so
-  no prompt text changed for this level at all. The one exception, 03 run 2, swapped a synonym
-  outside the seed list («алиас» rendered as «этот алиас» instead of «наш псевдоним» — the same
-  out-of-seed-list wording variance the baseline run already flagged on this text) with
-  `codeIntact` still true: model stochasticity at temperature 0.2, not a protection regression.
-  Spot-checked against this section's own older baseline text too: 01/05/07/10 unchanged PASS,
-  02's verb-reorder and 06's «Thanks for»→«Thank you for» persist, and 04's out-of-seed-list
-  «конфига»→«конфигурационного файла» reword persists 3/3 as already recorded above.
+- **errorsOnly non-regression: 29/30 byte-identical** (the `.errorsOnly`-tagged files only —
+  01–10 × 3 runs, 30 total; the style probes are a separate denominator, covered above) against
+  the pre-§3.1 matrix — expected, since `.errorsOnly` never reaches the `styleGovernsVoice: true`
+  branch, so no prompt text changed for this level at all. The one exception, 03 run 2, differs
+  at the same spot the baseline's own three runs already disagreed on: the baseline's run 2 read
+  «...называется этот алиас» while its own runs 1 and 3 read «...называется наш псевдоним»; this
+  run's run 2 reads «...называется наш псевдоним», matching the baseline's majority instead of
+  its own run 2 — the identical out-of-seed-list stochastic wobble at temperature 0.2 landing on
+  a different run, not a §3.1 effect. `codeIntact` stayed true throughout. Spot-checked against
+  this section's own older baseline text too: 01/05/07/10 unchanged PASS, 02's verb-reorder and
+  06's «Thanks for»→«Thank you for» persist, and 04's out-of-seed-list «конфига»→«конфигурационного
+  файла» reword persists 3/3 as already recorded above. One more stochastic diff turned up in the
+  full sweep, outside this denominator: `12-style-probe-formal-ru.errorsAndStyle-original.run2.txt`
+  reads «...к пятнице» here against «...до пятницы» in the baseline run. `.original` carries no
+  style instruction (`style.instruction == nil`), so `styleGovernsVoice` is always false for it
+  and §3.1 cannot be the cause — the same wobble is already visible between the baseline's own
+  run 1 («к пятнице») and runs 2/3 («до пятницы») on this file, so this is that identical pattern
+  landing on a different run, not a new defect.
 - **Style matrix, before §3.1** (this run's own pre-fix pass, matching the earlier corpus run's
   verdicts): 11-business 3/3 register shift; 11-professional 0/3; 12-friendly 0/3; 02-plain 3/3
   shift with grammar defects (вы/вас accusative error 2/3, «вывести» wrong-sense substitution
