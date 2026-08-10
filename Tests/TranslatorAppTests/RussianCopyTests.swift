@@ -301,3 +301,33 @@ func pullStatusesAreShownInRussian(raw: String, expected: String) {
     #expect(RussianCopy.warningCount(2) == "2 предупреждения")
     #expect(RussianCopy.warningCount(5) == "5 предупреждений")
 }
+
+// MARK: - Proofreading
+
+@Test func proofreadingLevelsAndStylesHaveRussianNames() {
+    #expect(ProofreadingLevel.errorsOnly.russianName == "только ошибки")
+    #expect(ProofreadingLevel.errorsAndStyle.russianName == "ошибки и стиль")
+    #expect(RewriteStyle.original.russianName == "как в оригинале")
+    #expect(RewriteStyle.friendly.russianName == "дружеский")
+    #expect(RewriteStyle.business.russianName == "деловой")
+    #expect(RewriteStyle.professional.russianName == "профессиональный")
+    #expect(RewriteStyle.plain.russianName == "простой и ясный")
+}
+
+@Test func everyRewriteStyleExceptOriginalCarriesADescription() {
+    // «Деловой» and «профессиональный» read as synonyms without them (spec §3).
+    #expect(RewriteStyle.original.russianDescription == nil)
+    for style in RewriteStyle.allCases where style != .original {
+        #expect(style.russianDescription?.isEmpty == false)
+    }
+}
+
+@Test func theProofreadHeaderNamesTheLanguageOnlyWhenKnown() {
+    #expect(RussianCopy.proofreadHeader(language: .ru) == "правка · русский")
+    #expect(RussianCopy.proofreadHeader(language: nil) == "правка")
+}
+
+@Test func textOperationLabelsAreTheVocabularyWords() {
+    #expect(TextOperation.translate.label == "Перевод")
+    #expect(TextOperation.proofread.label == "Правка")
+}

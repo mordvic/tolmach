@@ -231,21 +231,41 @@ public enum MarkupSkeleton {
         // offset, so sharing that coordinate system here (instead of iterating
         // Swift `Character`s, which are grapheme clusters) is what keeps the merged
         // sort correct on a line containing an emoji or any other non-BMP character.
+        // The token's sort position is the OPENING backtick, one before the
+        // content range `inlineCodeSpans` returns — hence `range.location - 1`.
+        for span in inlineCodeSpans(in: line) {
+            found.append((span.range.location - 1, .inlineCode(span.content)))
+        }
+
+        return found.sorted { $0.location < $1.location }.map(\.token)
+    }
+
+    /// The one definition of an inline code span — shared by the skeleton diff and
+    /// `InlineCodeRestorer`, so the two can never disagree about what a span is
+    /// (spec §2.2). Per line: parity pairs backticks left to right; an unterminated
+    /// opener emits nothing; an empty pair (``) emits nothing but consumes both.
+    /// NSRange coordinates are UTF-16, matching the rest of `inlineTokens`.
+    /// This scan is fence-blind — it does not know a ``` line from any other — and
+    /// that is safe only because `Chunker`'s all-or-nothing fence rule guarantees a
+    /// model-bound chunk never contains a fence line at all (a fenced block is its
+    /// own passthrough chunk). If that rule is ever relaxed to let fence markers
+    /// reach a chunk this function scans, this scan must learn to recognise fences too.
+    static func inlineCodeSpans(in line: String) -> [(range: NSRange, content: String)] {
+        let ns = line as NSString
+        var spans: [(NSRange, String)] = []
         var openAt: Int? = nil
-        for index in 0..<ns.length where ns.character(at: index) == 0x60 /* "`" */ {
+        for index in 0..<ns.length where ns.character(at: index) == 0x60 {
             if let start = openAt {
-                if index > start + 1 { // non-empty span
-                    let span = ns.substring(with: NSRange(location: start + 1, length: index - start - 1))
-                    found.append((start, .inlineCode(span)))
+                if index > start + 1 {
+                    let content = NSRange(location: start + 1, length: index - start - 1)
+                    spans.append((content, ns.substring(with: content)))
                 }
                 openAt = nil
             } else {
                 openAt = index
             }
         }
-        // An unterminated span (openAt still set here) emits no token, same as before.
-
-        return found.sorted { $0.location < $1.location }.map(\.token)
+        return spans.map { (range: $0.0, content: $0.1) }
     }
 
     // A link target counts as a URL when the detector recognises the whole of it.

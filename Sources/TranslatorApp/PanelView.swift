@@ -82,6 +82,13 @@ struct PanelView: View {
     var onOpenInWindow: () -> Void = {}
     var onRetry: () -> Void = {}
     var onGrantPermission: () -> Void = {}
+    /// The header's «Перевод | Правка» switch. Re-runs the captured selection under the
+    /// chosen operation rather than reading a new one — see
+    /// `HotkeyCoordinator.switchOperation(to:)`.
+    var onSwitchOperation: (TextOperation) -> Void = { _ in }
+    /// «Ещё вариант», offered only for a finished «ошибки и стиль» правка
+    /// (`model.offersAnotherVariant`).
+    var onAnotherVariant: () -> Void = {}
     /// Whether the content must scroll — `PanelSizer` decided the content is taller than the
     /// panel it can be given. It wraps only the rows whose height the content decides; the
     /// header and the button row are pinned outside it. See `scrollingMiddle`.
@@ -301,8 +308,25 @@ struct PanelView: View {
     /// returns nil without it.
     @ViewBuilder private var header: some View {
         HStack(alignment: .firstTextBaseline) {
-            if let line = Self.direction(outcome: model.outcome, target: model.resolvedTarget) {
+            if let line = Self.direction(outcome: model.outcome, target: model.resolvedTarget,
+                                         operation: model.resolvedOperation) {
                 Text(line).font(.caption).foregroundStyle(.secondary)
+            }
+            // Only where there is a captured selection to re-run under the chosen operation.
+            // `header` is also drawn by `permissionPrompt` and `emptyHint`, where the switch
+            // would have nothing to act on — an inert control drawn over «выделите текст» and
+            // the permission prompt.
+            if case .text = selection {
+                Picker("", selection: Binding(get: { model.operation },
+                                              set: { onSwitchOperation($0) })) {
+                    ForEach(TextOperation.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .controlSize(.mini)
+                .labelsHidden()
+                .fixedSize()
+                .disabled(model.state == .running || awaitingRun)
+                .accessibilityLabel("Операция: перевод или правка")
             }
             Spacer(minLength: 0)
             Button(action: onClose) { Image(systemName: "xmark") }
@@ -511,6 +535,9 @@ struct PanelView: View {
                 // than restating.
                 Button("Открыть в окне", action: onOpenInWindow)
                     .disabled(adoptionRefusal != nil)
+                if model.offersAnotherVariant {
+                    Button("Ещё вариант", action: onAnotherVariant)
+                }
                 Spacer()
                 if model.state == .running {
                     // ⌘. is the macOS convention for cancelling an operation in progress,
@@ -584,8 +611,10 @@ struct PanelView: View {
         // `content` builds for that case alone. Restating it here reads as though the
         // «выделите текст» and «нет доступа» panels also draw a status row, and leaves a
         // branch that cannot be false for a later reader to keep in step with the enum.
-        awaitingReply ? Self.status(for: .running, awaitingTerms: model.isAwaitingTerms)
-                      : Self.status(for: model.state, awaitingTerms: model.isAwaitingTerms)
+        awaitingReply ? Self.status(for: .running, awaitingTerms: model.isAwaitingTerms,
+                                    operation: model.operation)
+                      : Self.status(for: model.state, awaitingTerms: model.isAwaitingTerms,
+                                    operation: model.operation)
     }
 
     @ViewBuilder private var statusLine: some View {
@@ -643,15 +672,20 @@ struct PanelView: View {
     ///
     /// `nonisolated`, like `status(for:)` below, and for a reason the Swift 6 language mode
     /// made visible rather than one of taste. `PanelView` is a `View`, so everything on it —
-    /// including a `static func` over two value parameters — is inferred `@MainActor`, and a
+    /// including a `static func` over three value parameters — is inferred `@MainActor`, and a
     /// synchronous test calling it from a nonisolated context is «call to main actor-isolated
     /// static method … in a synchronous nonisolated context»: the one warning left standing
     /// after this target reached `-swift-version 6`. Both functions are pure over
     /// `Sendable` values and touch no view state, so the isolation was never true of them;
     /// declaring that is better than making the tests `@MainActor` to satisfy an inference
     /// that describes nothing.
-    nonisolated static func direction(outcome: TranslationOutcome?, target: Language?) -> String? {
-        guard let outcome, let target else { return nil }
+    nonisolated static func direction(outcome: TranslationOutcome?, target: Language?,
+                                      operation: TextOperation?) -> String? {
+        guard let outcome else { return nil }
+        if operation == .proofread {
+            return RussianCopy.proofreadHeader(language: outcome.detectedSource)
+        }
+        guard let target else { return nil }
         return RussianCopy.direction(from: outcome.detectedSource, to: target)
     }
 
@@ -670,11 +704,14 @@ struct PanelView: View {
     /// `.idle`, which is not a settle.
     ///
     /// Exhaustive with no `default:` for the same reason as everything else here.
-    nonisolated static func announcement(for state: TranslationState) -> String? {
+    nonisolated static func announcement(for state: TranslationState,
+                                         operation: TextOperation = .translate) -> String? {
         switch state {
         case .idle, .running: nil
-        case .finished: "Перевод готов"
-        case .interrupted: "Перевод прерван, показана пришедшая часть"
+        case .finished: operation == .proofread ? "Правка готова" : "Перевод готов"
+        case .interrupted: operation == .proofread
+            ? "Правка прервана, показана пришедшая часть"
+            : "Перевод прерван, показана пришедшая часть"
         // The view model has already put this into Russian and it carries the only
         // instruction the user gets — the same reasoning as `status(for:)`'s failure case.
         case .failed(let message): message
@@ -685,14 +722,15 @@ struct PanelView: View {
     /// fail to compile here instead of leaving the panel silent about a state it has no
     /// words for.
     ///
-    /// `nonisolated` for the reason given on `direction(outcome:target:)` above.
+    /// `nonisolated` for the reason given on `direction(outcome:target:operation:)` above.
     /// - Parameter awaitingTerms: whether the run is suspended on the «Термины документа»
     ///   sheet. A parameter rather than a fifth `TranslationState`, because it is not a
     ///   state the run *reaches* — it is a thing happening inside `.running`, and adding a
     ///   case would make every other switch over `TranslationState` in this app answer a
     ///   question it has no business answering.
     nonisolated static func status(for state: TranslationState,
-                                   awaitingTerms: Bool = false) -> PanelStatus? {
+                                   awaitingTerms: Bool = false,
+                                   operation: TextOperation = .translate) -> PanelStatus? {
         switch state {
         case .idle, .finished:
             // Nothing to add. The panel opens on a translation and closes on Esc; a caption
@@ -706,11 +744,13 @@ struct PanelView: View {
                 return PanelStatus(kind: .awaitingUser, message: "Жду ваших правок…",
                                    offersRetry: false)
             }
-            return PanelStatus(kind: .progress, message: "Перевожу…", offersRetry: false)
+            let message = operation == .proofread ? "Исправляю…" : "Перевожу…"
+            return PanelStatus(kind: .progress, message: message, offersRetry: false)
         case .interrupted:
-            return PanelStatus(kind: .interrupted,
-                               message: "Перевод прерван — показана та часть, что успела прийти",
-                               offersRetry: false)
+            let message = operation == .proofread
+                ? "Правка прервана — показана та часть, что успела прийти"
+                : "Перевод прерван — показана та часть, что успела прийти"
+            return PanelStatus(kind: .interrupted, message: message, offersRetry: false)
         case .failed(let message):
             // Spec 8: a failure offers a retry rather than only an explanation. The message
             // is passed through untouched — `TranslationViewModel.message(for:)` has already

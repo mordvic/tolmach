@@ -264,3 +264,32 @@ private final class FiredFlag: @unchecked Sendable {
     // in the batch path only, and it reaches ⌥⌘T too.
     #expect(!settings.reviewDocumentTerms)
 }
+
+@Test func proofreadingDefaultsAreTheSafeOnes() {
+    let settings = AppSettings(defaults: freshDefaults())
+    // «Только ошибки» and «как в оригинале»: the tool touches someone's finished
+    // text, and no surveyed product defaults to a tone (spec §3, §7).
+    let level: ProofreadingLevel = .errorsOnly
+    let style: RewriteStyle = .original
+    #expect(settings.defaultProofreadingLevel == level)
+    #expect(settings.defaultRewriteStyle == style)
+}
+
+@Test func proofreadingSettingsRoundTripAndSurviveGarbage() {
+    let defaults = freshDefaults()
+    let settings = AppSettings(defaults: defaults)
+    let styleValue: ProofreadingLevel = .errorsAndStyle
+    let rewriteValue: RewriteStyle = .business
+    settings.defaultProofreadingLevel = styleValue
+    settings.defaultRewriteStyle = rewriteValue
+    #expect(settings.defaultProofreadingLevel == styleValue)
+    #expect(settings.defaultRewriteStyle == rewriteValue)
+    // A plist is user-writable; an unreadable value falls back to the default
+    // rather than to a crash or an absent control.
+    defaults.set("nonsense", forKey: "proofreadingLevel")
+    defaults.set("nonsense", forKey: "rewriteStyle")
+    let defaultLevel: ProofreadingLevel = .errorsOnly
+    let defaultStyle: RewriteStyle = .original
+    #expect(settings.defaultProofreadingLevel == defaultLevel)
+    #expect(settings.defaultRewriteStyle == defaultStyle)
+}

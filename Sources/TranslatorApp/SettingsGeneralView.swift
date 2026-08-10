@@ -117,6 +117,31 @@ struct SettingsGeneralView: View {
                 }
             }
 
+            Section("Правка") {
+                Picker("Степень по умолчанию", selection: $settings.defaultProofreadingLevel) {
+                    ForEach(ProofreadingLevel.allCases, id: \.self) { Text($0.russianName).tag($0) }
+                }
+                Text("«Только ошибки» — орфография, пунктуация и грамматика, формулировки не "
+                     + "трогаются. «Ошибки и стиль» — плюс канцелярит, повторы и неуклюжие обороты.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Picker("Стиль по умолчанию", selection: $settings.defaultRewriteStyle) {
+                    ForEach(RewriteStyle.allCases, id: \.self) { Text($0.russianName).tag($0) }
+                }
+                // Disabled, not hidden — the same constructive rule as the toolbar (spec §7),
+                // read from the one property both surfaces share.
+                .disabled(!settings.defaultProofreadingLevel.allowsRewriteStyle)
+                if let description = settings.defaultRewriteStyle.russianDescription {
+                    Text(description)
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Text("Панель по сочетанию клавиш использует эти значения; в окне их можно "
+                     + "переопределить на месте.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             Section("Поведение") {
                 // Naming the shortcut is not padding, and it must stay. `autoCopy` is read in
                 // exactly one place — `HotkeyCoordinator.runTranslation` — so a translation

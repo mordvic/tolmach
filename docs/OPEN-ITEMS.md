@@ -228,6 +228,39 @@ nothing in this environment can see either.
 | The new first menu row (`Text(status.label)`) rendering above the divider, at a sane width, without truncating or pushing the existing items around | Never opened on a real status item | `MenuContent` in `TranslatorApp.swift` |
 | **A launch loop from `.task { await launch() }` re-running.** Before this task the label view had a constant body with no observation dependencies; it now reads `statusModel.status`, and `launch()` — which the same `.task` calls — writes that property via `statusModel.refresh(...)`. SwiftUI's documented contract re-runs `.task` on the *view's identity* changing, not on every body re-evaluation, so this should be safe, and it is exactly the same shape the `Window` and `Settings` scenes already use with their own `.task`s reading and writing through `statusModel`. But nobody has watched it run. If it is not safe, the failure is not cosmetic: a re-triggered `launch()` re-runs `configurePanel()`, re-registers the hotkey through `coordinator.start`, and re-awaits `warmUp()`, on every status change | `TranslatorApp.body` (the `MenuBarExtra` label), `launch()` |
 
+- **The правка quality gate (spec §11.1) has not been run on its designated corpus,
+  and a parallel calibration run on a different corpus came back NOT a clean pass.**
+  The committed `docs/proofreading-gate/` corpus — the one this entry names below —
+  has still not been pasted through the window's «Правка» mode; that run predates
+  this entry's own discovery of that corpus and used a throwaway 11-text scratchpad
+  corpus instead (see «5. Правка prompt calibration — corpus and results
+  (2026-08-10)» below). That run's verdict: protected-span corruption on 4/4
+  code-bearing texts (backticked or fenced code silently rewritten, once overriding
+  an explicit in-line «do not fix this string» comment), two rephrasing failures
+  beyond the seeded errors, and of the four rewrite styles only «деловой» showed a
+  real, consistent register shift — «дружелюбный» and «простой» no-op on the probe
+  text and «профессиональный» neither shifts register nor stays stable across runs.
+  Neither gap was closeable by further prompt wording within this pass; both were
+  escalated at the time. **Closed, 2026-08-10, by the code-protection-and-styles
+  pass**, not by a further prompt guess: the protected-span escalation is moot by
+  construction for fenced code — a fenced block is now a passthrough chunk that
+  never reaches the model, so there is nothing in it for the model to reword — and
+  for inline code the span is restored from the source's own bytes after the model
+  returns, deterministically, rather than asked of the model at all. Re-run against
+  this same corpus: `codeIntact` 12/12 (03/04/08/09 × 3 runs each), both before and
+  after a follow-up prompt fix (§3.1) that dropped «voice» from the level
+  instruction under a named style. The style no-ops (`friendly` on files 11 and 12,
+  `plain`'s grammar defects, `professional`'s instability) persisted unchanged
+  through that fix and are recorded as an honest model limitation with
+  `aya-expanse:8b`, not an open merge question — see «Part A verification and the
+  style matrix (2026-08-10, follow-up)» in §5 below for the full counts.
+- **The 700 pt toolbar minimum is now assumed, not measured.** The translate-mode toolbar
+  gained the «Перевод | Правка» operation switch, and the 650/680 pt fit measurements it
+  rests on — and the 700 pt minimum `MainWindowView.swift` derives from them — predate that
+  switch. Re-measure on the running bundle against `NSToolbar.visibleItems`;
+  `Scripts/toolbar-fit.swift` models the pre-switch row and needs extending to include it.
+  Until then, treat 700 as a carried-over guess rather than a re-confirmed floor.
+
 ---
 
 ## 2. Known and accepted
@@ -414,6 +447,23 @@ Deliberate, with the reason. Do not "fix" these without reading the reason first
   longest Russian language name. Spec §5.3 names the download section «Загрузка»; it ships as
   «Загрузить модель», because this pane says «модель в памяти» and «модель не загружена» a few
   rows above, so the bare noun reads as «loading into memory» as readily as «downloading».
+- **The buffer-whole cost of inline-code restore is measured but not yet weighed against
+  the interactive TTFT bound.** Spec §2.2 accepts, deliberately, that a chunk whose source
+  carries inline code spans buffers its whole reply before emitting anything, rather than
+  streaming incrementally, so restore's equal-count gate can be decided before a byte
+  reaches `onToken`. The price shows in the corpus: techdoc's TTFT moved ~2.9→~4.27 s (en)
+  and ~3.2→~4.3 s (ru) once the re-basing landed (`docs/BASELINE.md`'s 2026-08-10 entries,
+  «after the idiom/proper-noun rule» through «re-based state accepted»). Both are
+  multi-chunk and so outside the <1 s gate — but the gate's own single-chunk corpus files
+  (`email-en.md`, `snippet-en.md`) carry no backticks at all, so a hotkey selection that
+  *does* contain inline code has never actually been measured against the interactive
+  bound; whether buffer-whole can blow it is untested, not cleared.
+- **`aya-expanse:8b` stochastically drops the leading `>` on a blockquote that follows a
+  standalone passthrough fenced chunk, once the following chunk is recomposed.** Accepted
+  2026-08-10 as a known limitation rather than chased further — see `docs/BASELINE.md`'s
+  2026-08-10 entries, from «after pass-through chunks and inline restore (re-basing)»
+  through «re-based state accepted», for the measurements and the reasoning; not retold
+  here.
 - **The smaller findings the UI redesign deferred are listed in its ledger**, not repeated
   here: `docs/history/2026-07-30-ui-redesign-ledger.md`. They are test-coverage gaps and
   comment imprecisions rather than behaviour, with the exception of the resize items above,
@@ -466,3 +516,373 @@ to be.
 keychain. If it is deleted the script silently falls back to ad-hoc signing, and the
 Accessibility grant starts dying on every rebuild — which makes the whole hotkey path
 unverifiable. The recipe for recreating it is in the script's own header.
+
+---
+
+## 5. Правка prompt calibration — corpus and results (2026-08-10)
+
+The §11.1 manual quality gate of the proofreading design, run as the baseline of the
+prompt-improvement pass (specs/2026-08-10-prompt-improvement-design.md §3.2). Corpus:
+11 texts (verbatim below with their seeded errors); runner: throwaway scratchpad script;
+model: aya-expanse:8b, temperature 0.2, 3 runs per text per wording. This corpus is a
+parallel one, assembled before this run noticed that a committed gate corpus already
+exists at `docs/proofreading-gate/` (10 files, named in §1 above); that committed corpus
+was not used by this run and remains un-run.
+
+`01-ru-letter.txt` (seeded: «колега»→коллега; missing comma before «что»; «будующем»→будущем):
+```
+Привет колега! Хочу напомнить что отчёт нужен к пятнице. В будующем постараюсь предупреждать заранее.
+```
+
+`02-ru-bureau.txt` (seeded: «осуществляеться»→осуществляется; канцелярит is style material for Task 5, not an error):
+```
+Осуществляеться процесс согласования документации. В целях обеспечения выполнения плана просим вас направить ваши предложения в кратчайшие сроки.
+```
+
+`03-ru-inline-code.txt` (seeded: «комманду»→команду; «зделайте»→сделайте; `git comit --amend` inside backticks MUST stay byte-identical):
+```
+Чтобы поправить последний коммит, выполните комманду `git comit --amend` — да, именно так называется наш алиас. После этого зделайте `git push --force-with-lease`.
+```
+
+`04-ru-fenced.txt` (seeded: «целеком»→целиком; the fenced block MUST stay byte-identical, including the comment):
+````
+Ниже пример конфига. Скопируйте его целеком в файл настроек.
+
+```yaml
+server:
+  port: 8080 # порт по умолчанию, не менять
+```
+````
+
+`05-ru-grammar.txt` (seeded: «обсудили о планах»→обсудили планы; «более лучше»→лучше):
+```
+Мы обсудили о планах на квартал. Новый подход работает более лучше, чем старый.
+```
+
+`06-en-letter.txt` (seeded: you're→your; recieve→receive; friday→Friday; it's→its):
+```
+Thanks for you're feedback! We will recieve the final report on friday and share it's summary with the team.
+```
+
+`07-en-bureau.txt` (seeded: «The results shows»→show; wordiness is style material for Task 5):
+```
+In order to facilitate the optimization of our workflow, the team decided to utilize a new methodology. The results shows significant improvement.
+```
+
+`08-en-inline-code.txt` (seeded: Dont→Don't; `npm instal` inside backticks MUST stay byte-identical):
+```
+Run `npm instal` first — the alias is intentional. Dont forget to run `npm test` before you commit.
+```
+
+`09-en-fenced.txt` (seeded: folowing→following; the fenced block MUST stay byte-identical, including the misspelled string):
+````
+The folowing snippet prints a greeting. Copy it exactly as is.
+
+```python
+print("helo wrld")  # do not fix this string
+```
+````
+
+`10-en-question.txt` (seeded: i→I; first «.»→«?»; explane→explain — a text that IS a question: the run must correct it, never answer it):
+```
+How do i configure the server. Can you explane the steps briefly.
+```
+
+`11-style-probe-ru.txt` (no seeded errors — the register-shift probe for the four styles):
+```
+Привет! Глянь, пожалуйста, мой черновик, когда будет минутка. Там есть пара сомнительных мест, особенно в начале, — скажи, что думаешь.
+```
+
+### Baseline observations (current instruction wording)
+
+Every text's 3 runs at `.errorsOnly` (or, for 11, 3 runs per style at `.errorsAndStyle`)
+agreed with each other in every case observed — no run-to-run variance was seen anywhere in
+this corpus, so «N/3» below always means N identical runs, not a split.
+
+- **01 — PASS.** «колега»→коллега 3/3, missing comma before «что» added 3/3, «будующем»→будущем
+  3/3. No wording changed outside the three seeded errors. `lang=ru` 3/3.
+- **02 — FAIL (reorder).** «осуществляеться»→осуществляется fixed 3/3, but the model also
+  moved the verb to the end of the sentence in all 3 runs — source «Осуществляеться процесс
+  согласования документации.» became «Процесс согласования документации осуществляется.» —
+  which «только ошибки» explicitly forbids («do not reorder»). Second sentence untouched.
+- **03 — FAIL (protected span corrupted + extra rewording).** «комманду»→команду 3/3,
+  «зделайте»→сделайте 3/3. But the backticked span `git comit --amend` — deliberately
+  misspelled per the text's own claim («да, именно так называется наш алиас») — was silently
+  corrected to `git commit --amend` in all 3 runs (`codeIntact=false` 3/3, `markupDiffs=2`
+  3/3). All 3 runs also swapped two words the seed list never named: «поправить»→«исправить»,
+  «алиас»→«псевдоним».
+- **04 — FAIL (fenced block corrupted).** «целеком»→целиком fixed 3/3. But the fenced YAML
+  comment `# порт по умолчанию, не менять` was rewritten to `# порт по умолчанию, не
+  изменяйте` in all 3 runs (`codeIntact=false` 3/3, `markupDiffs=2` 3/3), despite the brief's
+  requirement that the fenced block stay byte-identical. 1/3 runs (run 2) additionally swapped
+  «конфига»→«конфигурации», a word the seed list never named.
+- **05 — PASS.** «обсудили о планах»→обсудили планы 3/3, «более лучше»→лучше 3/3. No other
+  wording changed. `lang=ru` 3/3.
+- **06 — FAIL (extra rewording despite every seed fixed).** you're→your 3/3, recieve→receive
+  3/3, friday→Friday 3/3, it's→its 3/3 — every seeded error fixed in every run. But «Thanks
+  for» was reworded to «Thank you for» in all 3 runs, a phrasing change outside the seed list
+  that «только ошибки» forbids.
+- **07 — PASS.** «The results shows»→show fixed 3/3; the wordy bureaucratic phrasing («In
+  order to facilitate the optimization of our workflow… utilize a new methodology») was left
+  untouched in all 3 runs, exactly as `.errorsOnly` requires — that wordiness is style
+  material reserved for Task 5. `lang=en` 3/3.
+- **08 — FAIL (protected span corrupted).** Dont→Don't fixed 3/3. But the backticked,
+  deliberately misspelled `npm instal` («the alias is intentional») was silently corrected to
+  `npm install` in all 3 runs (`codeIntact=false` 3/3, `markupDiffs=2` 3/3).
+- **09 — FAIL (protected span corrupted, worst case).** folowing→following fixed 3/3. But the
+  fenced Python string `print("helo wrld")`, annotated in-line «# do not fix this string»,
+  was corrected to `print("hello world")` in all 3 runs (`codeIntact=false` 3/3,
+  `markupDiffs=2` 3/3) — the model overrode an explicit in-text instruction it had to have
+  read to produce the surrounding prose fix.
+- **10 — PASS, with a note.** i→I fixed 3/3, first «.»→«?» fixed 3/3, explane→explain fixed
+  3/3. The output is the corrected question in every run, never an answer — the criterion
+  §11.1 calls out by name for this text is met. All 3 runs also changed the second sentence's
+  closing «.» to «?» («Can you explane the steps briefly.» → «…explain the steps briefly?»);
+  that sentence's own form («Can you…») is already interrogative, so this reads as a second,
+  legitimate punctuation fix rather than a paraphrase, but it sits outside the brief's stated
+  seed list and is worth Task 5 knowing about.
+- **11 — mixed; one style works, three do not shift register at all.** `original` (no style
+  instruction) reproduces the source with one small, stable smoothing 3/3 — «когда будет
+  минутка»→«когда у тебя будет минутка» — and preserves meaning. `business` is the only style
+  that shows a genuine, consistent register shift 3/3: ты→вы address, «Глянь»→«Обратите
+  внимание», «скажи, что думаешь»→«поделитесь своими мыслями» — a formal epistolary register,
+  meaning preserved. `friendly` and `plain` are each **byte-identical** to the `original`-style
+  output in all 3 runs — the friendly and plain-language instructions produced zero observable
+  change on this already-casual, already-short source. `professional` shows only a cosmetic
+  synonym swap («пара»→«несколько») in 2/3 runs, with the third run (run 3) diverging further
+  into a different partial rewrite («дай знать, что ты о них думаешь»); none of the 3 runs
+  shifts into a documentation/workplace register — «Привет!» and ты-address survive in all
+  three. `lang=??` was reported by `LanguageDetector` for the `business` run only (3/3); the
+  output itself is legible, grammatical Russian, so this reads as a detector artifact on a
+  short, formal text rather than a proofreading defect.
+
+Summary for Task 5: 4/10 `errorsOnly` texts pass cleanly (01, 05, 07, 10); the other 6 fail —
+two by rephrasing beyond the seeded errors despite fixing them (02's reorder, 06's «Thanks
+for»→«Thank you for»), and four by corrupting a protected span (03, 04, 08, 09 — every text in
+the corpus that contains backticked or fenced code failed on that code, 4/4). Of the four
+rewrite styles tested beyond `.original`, only `business` reliably shifts register; `friendly`
+and `plain` no-op on this source, and `professional` neither shifts register nor stays stable
+across runs.
+
+### After calibration (final wording)
+
+Task 5 mapped each measured failure above to the decision table's candidate wording, edited
+the source with a failing pin test first, recompiled the scratchpad runner (with the
+`-module-name TranslationCore` fix Task 4 found necessary), and re-ran the full 11-text corpus
+into a fresh out dir (3 runs per text/style, same as the baseline). Every candidate wording was
+then compared against the baseline output text file by text file, not just the runner's
+summary line.
+
+**Result: none of the four candidate edits changed the measured output.** All four are
+reverted; `Sources/TranslationCore/Proofreading.swift` carries the original wording again,
+each site with a comment recording what was tried and what the re-run showed, per the
+"measured/load-bearing" convention. No pin test asserts wording that did not survive.
+
+- **`ProofreadingLevel.errorsOnly.instruction`** — failure: rephrasing beyond seeded errors,
+  02 (reorder) 3/3 and 06 («Thanks for»→«Thank you for») 3/3. Candidate tried: append `" If a
+  sentence contains no error, reproduce it unchanged, word for word."` Re-run: **0/3 fixed on
+  both files** — 02's after-edit output is byte-identical to its baseline output (verb still
+  moved to the sentence's end in all 3 runs), and 06's after-edit output is likewise
+  byte-identical to its baseline (`"Thank you for"` in all 3 runs). **Reverted** — the append
+  had no observable effect; the model does not treat an explicit "reproduce unchanged" clause
+  as overriding whatever makes it rephrase these two sentences.
+- **`RewriteStyle.friendly.instruction`** — failure: byte-identical to `.original`'s output in
+  3/3 runs on file 11 (no observable register shift). Candidate tried: replace with `"...:
+  direct address, light contractions where the language has them, no stiffness."` Re-run:
+  **0/3 fixed** — all 3 after-edit runs remain byte-identical to the `.original` output, exactly
+  as at baseline. **Reverted.**
+- **`RewriteStyle.professional.instruction`** — failure: no reliable register shift on file 11
+  (2/3 runs changed only «пара»→«несколько», 1/3 diverged further — the corpus's only
+  run-to-run instability). This did not literally match the table's stated condition
+  («drifted into bureaucratese or familiarity»), so per the brief's honest-nearest-fix
+  allowance the candidate append was tried anyway: `" Prefer established terminology over
+  invented phrasing."` Re-run: **the same pattern recurred** — 2/3 runs changed only
+  «пара»→«несколько», 1/3 diverged further into a different partial rewrite. No improvement in
+  either the register shift or the run-to-run stability. **Reverted.**
+- **`RewriteStyle.plain.instruction`** — failure: byte-identical to `.original`'s output in 3/3
+  runs on file 11 (no simplification). Candidate tried: replace with `"...: break long
+  sentences into short ones, replace abstract nouns with verbs, choose the simplest common
+  word..."` Re-run: **0/3 fixed** — 2/3 runs remained byte-identical to `.original`'s output,
+  and the 3rd changed only «пара»→«несколько», a cosmetic synonym swap, not a shortened or
+  simplified sentence. **Reverted.**
+- **`RewriteStyle.business.instruction`** — passed baseline (genuine, consistent register
+  shift, 3/3), unchanged. Not touched, per the brief: a wording that produced no failure is
+  not edited.
+- **Output-language rule** (`PromptBuilder.proofreadSystemPrompt` last-rule-line addition) —
+  the language row's condition (output language ≠ input language in any run) was never
+  observed; every run's `lang` matched its input language except the `business` runs' `??`,
+  which Task 4's report already attributed to a `LanguageDetector` artifact on short, formal
+  Russian rather than a translation failure. Row does not trigger; not touched.
+- **Protected-span corruption** (03, 04, 08, 09, 4/4 in the baseline) — confirmed to persist
+  in the after-calibration re-run: `codeIntact=false` and `markupDiffs=2` on all 4 texts, all 3
+  runs each, same as baseline (spot-checked against the actual output text, not just the
+  runner's summary field). Per the decision table, this is a `protectionRules` concern shared
+  with translation, not a правка-specific instruction, and was **not** edited here.
+  **Escalated, not addressed by Task 5** — `protectionRules` in `PromptBuilder.swift` needs a
+  human decision on how (or whether) to strengthen the shared protection instruction, and any
+  such change must be re-verified against the translation prompt's own corpus, not just this
+  one.
+
+Net effect of Task 5 on `Sources/TranslationCore/Proofreading.swift`: **no functional change.**
+The file differs from its Task-4-era version only in comments recording what was tried and
+measured at each site — the four instruction strings themselves are byte-identical to before
+Task 5 began. `swift test` (672 tests) passes and `swift build --build-tests` is warning-clean
+with this reverted state.
+
+### Gate verdict
+
+**§11.1 gate: NOT a clean pass.** Two distinct, unresolved gaps remain after calibration:
+
+1. **Protected-span corruption is unfixed and escalated, not addressed.** `.errorsOnly` on any
+   text containing backticked or fenced code (03, 04, 08, 09 in this corpus — every such text,
+   4/4) does not meet §11.1's byte-identity requirement for code: the model rewrites content
+   inside the protected span in all 3 runs on every one of the four texts, including one case
+   (09) where the fenced code carried an explicit in-line instruction not to touch it. This is
+   a `protectionRules` matter shared with the translation prompt and was deliberately left to
+   the user rather than forked into a правка-only rule.
+2. **Two rephrasing failures (02's reorder, 06's «Thanks for»→«Thank you for») and three
+   style-instruction no-ops (friendly, plain, and — partially — professional) survived a
+   targeted wording edit unchanged.** The candidate wordings from the decision table did not
+   move the measured output at all on any of them, in a full 3-run re-check against the actual
+   text (not just the runner's summary line). This reads as a genuine model limitation with
+   `aya-expanse:8b` at temperature 0.2 rather than a wording defect this pass can close by
+   further rephrasing the instruction — a materially different instruction strategy (e.g.
+   few-shot examples, a stricter decoding setting, or a different model for правка) would be
+   needed to move these, and that decision belongs to the user, not to another guess at prompt
+   wording.
+
+What **does** meet the gate: 4/10 `errorsOnly` texts (01, 05, 07, 10) and the `business` rewrite
+style pass cleanly and unchanged, and nothing regressed anywhere in the corpus between the
+baseline and after-calibration runs (verified file-by-file, not only via the runner's summary
+counts).
+
+### Part A verification and the style matrix (2026-08-10, follow-up)
+
+Engine: pass-through chunks + inline restore (specs/2026-08-10-code-protection-and-styles-design.md).
+Same 12-text corpus and scratchpad runner as the run above, recompiled to pick up §3.1 (a named
+style drops «voice» from the `errorsAndStyle` level instruction — `ProofreadingLevel.instruction
+(styleGovernsVoice:)`), re-run in full (51 calls, one uninterrupted foreground pass, no crash
+this time) into a fresh output directory and diffed file-by-file against this run's own
+pre-§3.1 baseline, not just the runner's summary line.
+
+- **codeIntact: 12/12 true** — 03, 04, 08, 09 × 3 runs each, both before and after §3.1. This is
+  the headline the code-protection design exists for: fenced blocks (04's YAML comment, 09's
+  `print("helo wrld")`) are byte-identical passthrough chunks that never reach the model, and
+  inline spans (03's `git comit --amend`, 08's `npm instal`) are restored from the source's own
+  bytes after the model returns. Confirmed by direct text comparison against the source, not
+  only the summary field.
+- **errorsOnly non-regression: 29/30 byte-identical** (the `.errorsOnly`-tagged files only —
+  01–10 × 3 runs, 30 total; the style probes are a separate denominator, covered above) against
+  the pre-§3.1 matrix — expected, since `.errorsOnly` never reaches the `styleGovernsVoice: true`
+  branch, so no prompt text changed for this level at all. The one exception, 03 run 2, differs
+  at the same spot the baseline's own three runs already disagreed on: the baseline's run 2 read
+  «...называется этот алиас» while its own runs 1 and 3 read «...называется наш псевдоним»; this
+  run's run 2 reads «...называется наш псевдоним», matching the baseline's majority instead of
+  its own run 2 — the identical out-of-seed-list stochastic wobble at temperature 0.2 landing on
+  a different run, not a §3.1 effect. `codeIntact` stayed true throughout. Spot-checked against
+  this section's own older baseline text too: 01/05/07/10 unchanged PASS, 02's verb-reorder and
+  06's «Thanks for»→«Thank you for» persist, and 04's out-of-seed-list «конфига»→«конфигурационного
+  файла» reword persists 3/3 as already recorded above. One more stochastic diff turned up in the
+  full sweep, outside this denominator: `12-style-probe-formal-ru.errorsAndStyle-original.run2.txt`
+  reads «...к пятнице» here against «...до пятницы» in the baseline run. `.original` carries no
+  style instruction (`style.instruction == nil`), so `styleGovernsVoice` is always false for it
+  and §3.1 cannot be the cause — the same wobble is already visible between the baseline's own
+  run 1 («к пятнице») and runs 2/3 («до пятницы») on this file, so this is that identical pattern
+  landing on a different run, not a new defect.
+- **Style matrix, before §3.1** (this run's own pre-fix pass, matching the earlier corpus run's
+  verdicts): 11-business 3/3 register shift; 11-professional 0/3; 12-friendly 0/3; 02-plain 3/3
+  shift with grammar defects (вы/вас accusative error 2/3, «вывести» wrong-sense substitution
+  1/3); 07-friendly (EN) 3/3 shift.
+- **Style matrix, after §3.1**: 11-business 3/3 (unchanged; run 2 only a synonym swap,
+  «неясных»→«спорных»); 11-professional 0/3 by majority — 2/3 runs stay in casual ты-address with
+  only a cosmetic «пара»→«несколько» swap, the 3rd diverges into a differently-worded partial
+  rewrite that borrows business-register phrasing («Обратите внимание», «поделитесь своими
+  мыслями») rather than landing on a stable professional/workplace register, the same
+  instability shape as before; 12-friendly 0/3 — byte-identical to the pre-§3.1 output in all 3
+  runs, formal salutation and вы-address untouched; 02-plain 3/3 shift, same grammar-defect
+  pattern (вы/вас 2/3, «вывести» 1/3), individual runs swapped which defect landed where —
+  stochastic, not a regression; 07-friendly (EN) 3/3 (unchanged; minor cross-run synonym
+  variance, «reveal»/«demonstrate», «process»/«processes»).
+- **Verdict per style: no probe moved.** `business` and English `friendly` were already working
+  and still are. `friendly` on Russian text (files 11 and 12), `plain`'s grammar defects, and
+  `professional`'s instability are unchanged by dropping «voice» from the level instruction under
+  a named style — dead under both the old and the corrected prompt. This is recorded as an
+  honest model limitation with `aya-expanse:8b` at this temperature, matching this section's
+  earlier conclusion (a materially different strategy — few-shot examples, stricter decoding, or
+  a different model for правка — would be needed to move these), not a wording gap this pass can
+  still close.
+- **New probe text 12 (verbatim):**
+  ```
+  Уважаемые коллеги! Настоящим уведомляем вас о необходимости предоставить отчётные материалы в
+  срок до пятницы. При наличии вопросов надлежит обращаться к руководителю подразделения.
+  ```
+
+### Model benchmark — gpt-oss:20b and qwen3:8b (2026-08-10)
+
+Facts for a future model-policy decision about правка; no policy change here. Same runner and
+12-text corpus as the two subsections above, parameterised to take a model as a third argument
+(`CommandLine.arguments[3]`, default `aya-expanse:8b`, into `ChatOptions(model:)`) and recompiled
+with the same command as the follow-up run above. `gpt-oss:20b` is required by the task that asked
+for this benchmark; `qwen3:8b` was time-permitting.
+
+- **codeIntact: 12/12 true for `gpt-oss:20b`**, verified against the source text directly, not
+  only the summary field: 03's and 08's backticked spans (`git comit --amend`, `npm instal`)
+  restored byte-identical in all 3 runs each; 04's and 09's fenced blocks (the YAML comment, the
+  Python string) byte-identical passthrough in all 3 runs each. Confirms the structural guarantee
+  (pass-through + inline restore) holds regardless of model, as the guarantee's design intends —
+  not a restorer bug, no STOP needed.
+- **errorsOnly: aya-expanse:8b's two minimal-diff violations disappear under `gpt-oss:20b`.**
+  02's verb reorder (source «Осуществляеться процесс…»; aya moved the verb to the end 3/3, both
+  before and after the voice fix) does not recur — `gpt-oss:20b` keeps the source's own word
+  order in all 3 runs, only the seeded typo fixed. 06's «Thanks for»→«Thank you for» rewording
+  (present 3/3 under aya) also does not recur — all 3 `gpt-oss:20b` runs keep «Thanks for»
+  verbatim, only the four seeded errors fixed. Elsewhere: 04, 05, 07, 08, 09 clean 3/3 (no wording
+  outside the seed list); 01 clean 2/3 (run 2 adds an unseeded comma and swaps «к пятнице»→«до
+  пятницы» — the same stochastic wobble already on record for this file under aya); 03 clean 2/3
+  (run 1 swaps «зделайте»→«выполните» instead of the literal «сделайте» fix — an unseeded
+  synonym, the same shape as aya's own extra-reword pattern on this file, just a different word);
+  10 regresses on 1/3 (run 3 fixes «i»→«I» and «explane»→«explain» but leaves the first sentence's
+  «.» unconverted to «?», missing a seeded fix aya caught 3/3; run 2 shows the pre-existing,
+  already-documented non-seed artifact of also converting the second sentence's «.» to «?»). Net:
+  26/30 clean runs, 3/30 minor unseeded wording (same shape as aya's own wobble), 1/30 a missed
+  seeded fix — no protected-span corruption anywhere.
+- **Style matrix, `gpt-oss:20b` vs. the aya-expanse:8b after-voice-fix comparison point (this
+  section's prior subsection):** `business` 3/3 (matches aya — genuine formal-register shift,
+  meaning preserved; wording varies run-to-run rather than aya's byte-identical repetition, but
+  the direction is stable). English `friendly` (file 07) 3/3 (matches aya — de-jargonized,
+  meaning preserved). Russian `friendly` (file 12) **2/3 — a genuine shift where aya was a stable
+  0/3 across two separate corpus runs**: 2 of 3 runs replace the formal salutation «Уважаемые
+  коллеги!» with a casual «Привет, коллеги!» and reframe the notice in first person
+  («Напоминаю»/«Напоминаем» vs. «Настоящим уведомляем»); the 3rd run stays a near-no-op.
+  `professional` (file 11) **2/3 attempt a shift where aya was a stable 0/3**: one run moves
+  cleanly into вы-address with a formal opening («Здравствуйте! Пожалуйста, посмотрите…»); a
+  second run mixes an informal ты-imperative («Проверь») into an otherwise formal frame — an
+  internally inconsistent partial shift, not a clean one; the 3rd run stays a near-no-op (only the
+  same cosmetic synonym swap aya showed). `plain` (file 02) **0/3 — a no-op, where aya showed 3/3
+  with grammar defects**: `gpt-oss:20b`'s output is byte-similar to its own errorsOnly reference
+  (only a comma added in 2/3 runs), with none of aya's plainer-vocabulary substitutions and,
+  consequently, none of aya's вы/вас case defect or «вывести» sense-drift either — the defect
+  disappears because the style instruction is not acted on at all, not because it is honoured
+  correctly.
+- **Timing (warm-call wall-clock, the TTFT proxy this bounded benchmark can measure without
+  parsing the JSON stream): ~4–5 s per call for `gpt-oss:20b`**, derived from output-file
+  timestamps across the run (range ~2–9 s depending on chunk size — 04's and 09's fenced texts,
+  which skip the model for their code block, land at the fast end). The first call (cold load)
+  took ~9 s and is excluded per the operational note. This wall-clock carries the cost of
+  `message.thinking`, which `OllamaKit` reads and discards by standing rule — `gpt-oss:20b` is
+  reasoning-prone, so part of every one of these seconds is reasoning tokens the caller never
+  sees, not just the visible reply. All 51 calls completed in one uninterrupted foreground pass,
+  ~4 minutes end to end, exit 0.
+- **`qwen3:8b`: attempted, aborted, inconclusive — recorded as a fact, not a verdict.** The first
+  7 of 51 calls (01 ×3, 02 errorsOnly ×3, 02 `plain` run 1) completed with a warm-call proxy of
+  ~9–20 s each — already 2–4× `gpt-oss:20b`'s pace on short, code-free text. The 8th call
+  (03-ru-inline-code, the first text carrying backticked code) then ran for 13+ minutes at ~3%
+  CPU with no output — not merely slow, unproductive — and was killed rather than let run
+  indefinitely, consistent with this task's «time permitting» allowance for this candidate. The
+  run's stdout log came back empty: the process was ended by `kill`, not by its own exit, and
+  Swift's stdio fully buffers when stdout is piped to `tee`, so the buffered `print` lines never
+  flushed; the 7 output files themselves (written directly, not through stdout) are the only
+  record. No codeIntact or style-matrix conclusion is drawn for `qwen3:8b` — it did not reach a
+  single code-bearing or style-probe text before the abort. Whether the stall is specific to
+  backticked content in the prompt, to this quantization, or to machine load at the time is
+  undiagnosed and out of this task's scope.

@@ -931,7 +931,8 @@ private func resizablePanel(text: String)
             MarkupDiff(expected: nil, actual: nil, note: "потеряно: граница абзаца")
         },
         stats: [], timeToFirstTokenMS: 12, totalMS: 34,
-        documentGlossaryFailure: nil, documentGlossaryAttempted: false)
+        documentGlossaryFailure: nil, documentGlossaryAttempted: false,
+        modelChunkCount: 1)
 
     let controller = PanelController { variant in
         AnyView(PanelView(model: model, selection: .text(text),

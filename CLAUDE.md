@@ -137,6 +137,15 @@ Facts that will bite you if you "tidy" them:
   only protected forms, indented text is prose and is translated, and its indentation survives
   because `Block.range` moves edge whitespace into the separators. See
   `docs/superpowers/specs/2026-08-07-lossless-chunking-design.md` and its correction note.
+- **The model never sees fenced code, and inline code is restored by construction.**
+  A fenced block is its own pass-through chunk (`Chunk.passthrough`) — emitted from
+  source bytes with no model call, on both routes; inline spans are restored
+  positionally from the source under an equal-count gate, on the cleaned reply, and a
+  span-bearing chunk buffers whole so `final` and the stream stay byte-identical.
+  `TranslationOutcome.modelChunkCount` is what «multi-chunk» means now — the
+  document-glossary trigger, the empty-reply ending and the acceptance classification
+  all count model-bound chunks. See
+  docs/superpowers/specs/2026-08-10-code-protection-and-styles-design.md.
 - **`translate(source:)` is how a caller states the language, and every caller does** — the
   window, the queue and `translate-cli --from`. Nil still
   means «detect it», but a stated source governs everything downstream — the prompt, the tagger
@@ -154,6 +163,14 @@ Facts that will bite you if you "tidy" them:
 - `timeToFirstTokenMS` is `nil` when nothing was ever emitted — that nil *is* the empty-reply
   signal. Do not substitute a sentinel; it makes an absent response read as a slow one.
 - `stats` covers the per-chunk translation calls only, never the term-list call.
+- **Правка is a second route through the same pipeline, not a second pipeline.**
+  `Translator.proofread` shares the chunking, the per-chunk streaming
+  (`streamChunkReply`), the cancellation discipline and `ChunkPlan.assembled(from:)`
+  with `translate`, and runs **no** glossary stage: no term-list call, no review hook,
+  no `GlossaryVerifier`. It returns `TranslationOutcome` with honestly empty glossary
+  fields (`documentGlossaryAttempted == false` is the marker). The style instruction
+  reaches the prompt only under `.errorsAndStyle` — `PromptBuilder` enforces it and the
+  UI disables the control. See `docs/superpowers/specs/2026-08-10-proofreading-design.md`.
 
 ### Ollama rules (empirical, non-negotiable)
 

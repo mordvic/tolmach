@@ -40,6 +40,13 @@ func isCodeBlockDiff(_ diff: MarkupDiff) -> Bool {
     return false
 }
 
+/// Only the drop direction (`.blockquote` expected, nothing rendered) — a diff where the
+/// model *adds* a `>` the source never had is a different, unaccepted defect and must not
+/// match here.
+func isBlockquoteDropDiff(_ diff: MarkupDiff) -> Bool {
+    diff.expected == .blockquote && diff.actual == nil
+}
+
 /// Identity for deduplicating unaccepted markup diffs across a file's repeated runs.
 /// `MarkupDiff.note` is derived entirely from which side is nil, so the
 /// (expected, actual) pair alone is the diff's identity.
@@ -59,7 +66,42 @@ let knownFileLimitations: [String: String] = [
         + "Sharpening the prompt rule was attempted and did not change it.",
 ]
 
+// Measured 2026-08-10 (BASELINE.md, "after pass-through chunks and inline restore
+// (re-basing)"): once a file's fenced block became its own standalone passthrough chunk,
+// the chunk immediately after it recomposed, and aya-expanse:8b began stochastically
+// dropping the leading ">" on the blockquote in that chunk — 2/3 runs per file. Two
+// dedicated-rule attempts to fix it (BASELINE.md, "blockquote rule after the re-basing
+// failure" and its revert) both made the model's structure preservation worse elsewhere
+// (spurious ">" insertion on lines with no source blockquote at all, a new deterministic
+// drop of the level-2 heading before the fence) without reliably stopping the drop itself.
+// Accepted by the user 2026-08-10: a stochastic marker loss that `WarningsView` already
+// surfaces to the user is the better trade against the deterministic code corruption the
+// same pass-through/inline-restore change fixed 4/4 (the codeBlock limitation this dict's
+// other entry used to record, and which no longer occurs).
+let knownBlockquoteDropReason = "aya-expanse:8b stochastically drops the leading \">\" on the "
+    + "blockquote that follows a fenced code block, now that the fence is a standalone "
+    + "passthrough chunk and the following chunk recomposed. Two prompt-rule attempts to "
+    + "fix it made the model's structure preservation worse elsewhere and were reverted. "
+    + "Accepted by the user 2026-08-10 as a stochastic marker loss WarningsView already "
+    + "surfaces, traded against the deterministic code corruption the same change fixed 4/4."
+let knownBlockquoteDropLimitations: [String: String] = [
+    "techdoc-en.md": knownBlockquoteDropReason,
+    "techdoc-ru.md": knownBlockquoteDropReason,
+]
+
 func target(for name: String) -> Language { name.hasSuffix("-ru.md") ? .en : .ru }
+
+/// "N chunks" when every chunk reached the model, else "N chunks (M model-bound)" —
+/// the re-basing format the brief asks the entry to record per file. A raw chunk
+/// count alone no longer says how many model calls a code-bearing file paid for,
+/// now that a fenced block is a standalone passthrough chunk the model never sees.
+func chunkSummary(_ outcome: TranslationOutcome) -> String {
+    let raw = outcome.chunks.count
+    let noun = raw == 1 ? "chunk" : "chunks"
+    return raw == outcome.modelChunkCount
+        ? "\(raw) \(noun)"
+        : "\(raw) \(noun) (\(outcome.modelChunkCount) model-bound)"
+}
 
 func translate(_ text: String, to target: Language) async throws -> TranslationOutcome {
     try await translator.translate(
@@ -76,10 +118,19 @@ func translate(_ text: String, to target: Language) async throws -> TranslationO
 /// pass threshold; nil forces the caller to exclude it from that average instead.
 func adherence(_ outcome: TranslationOutcome, target: Language) -> (honoured: Int, applicable: Int, pct: Double?) {
     var honoured = 0, applicable = 0
-    if outcome.chunks.count > 1, let source = outcome.detectedSource {
+    // Model-bound, not raw: this asks "did the model see more than one chunk of this
+    // document?" — the same question the engine itself gates the document-glossary
+    // stage on (`Translator.translate`'s `modelChunks.count > 1`). A passthrough
+    // (fenced-code) chunk never gets a glossary-consistency check because it never
+    // reaches the model — so the loop below excludes them too, or a term that only
+    // ever appears inside fenced code would count as `applicable` while being
+    // structurally unhonourable, penalising the metric for the protection itself
+    // (measured: techdoc-en's `applicable` moved 49→51 with `honoured` unchanged at
+    // 42–44, once inline/fenced protection started matching this document's code).
+    if outcome.modelChunkCount > 1, let source = outcome.detectedSource {
         for entry in outcome.documentGlossary {
             guard let expected = entry.requiredTranslation(for: target) else { continue }
-            for (index, chunk) in outcome.chunks.enumerated() {
+            for (index, chunk) in outcome.chunks.enumerated() where !chunk.passthrough {
                 guard LemmaMatcher.matches(expected: entry.term, in: chunk.text, language: source) == true
                 else { continue }
                 applicable += 1
@@ -124,6 +175,8 @@ for name in corpus {
                 print("    known\(label): expected \(expected) actual \(actual)")
             } else if isCodeBlockDiff(diff), let reason = knownFileLimitations[name] {
                 print("    known-limitation\(label): \(reason) (expected \(expected) actual \(actual))")
+            } else if isBlockquoteDropDiff(diff), let reason = knownBlockquoteDropLimitations[name] {
+                print("    known-limitation\(label): \(reason) (expected \(expected) actual \(actual))")
             } else {
                 print("    markup\(label): expected \(expected) actual \(actual)")
                 let key = MarkupDiffKey(expected: diff.expected, actual: diff.actual)
@@ -157,7 +210,13 @@ for name in corpus {
         // Chunking is decided by input length alone, not by anything the model does,
         // so whether a file is "chunked-shaped" or "hotkey-shaped" is already known
         // from this first run and never changes across repeats of the same file.
-        if first.chunks.count > 1 {
+        //
+        // Gated on model-bound chunks, not raw chunks: a code-bearing file can now
+        // have more than one raw chunk (prose plus a standalone passthrough fenced
+        // block) while still paying for only one model call, in which case it is
+        // "hotkey-shaped" — TTFT-gated, not adherence-measured — exactly like a file
+        // with one raw chunk always was.
+        if first.modelChunkCount > 1 {
             var outcomes = [first]
             for _ in 0..<2 { outcomes.append(try await translate(text, to: dest)) }
 
@@ -177,7 +236,7 @@ for name in corpus {
             let averageDescription = average.map { String(format: "%.1f%%", $0) } ?? "n/a"
 
             print("\(name): \(runsDescription) · average \(averageDescription) · " +
-                  "\(first.chunks.count) chunks · \(first.documentGlossary.count) terms · " +
+                  "\(chunkSummary(first)) · \(first.documentGlossary.count) terms · " +
                   "TTFT \(ttftDescription) ms (info only — multi-chunk, not asserted)")
             for (i, outcome) in outcomes.enumerated() { checkMarkup(outcome, label: " run\(i + 1)") }
             flushMarkupFailures(totalRuns: outcomes.count)
@@ -187,15 +246,29 @@ for name in corpus {
             // nothing at all — checked on every run, not just the first. This is the
             // failure that covers the every-run-nil case below, not a division by zero.
             for (i, m) in measurements.enumerated() where m.applicable == 0 {
-                failures.append("\(name) run\(i + 1): chunked into \(outcomes[i].chunks.count) but no term was measurable — document glossary did nothing")
+                failures.append("\(name) run\(i + 1): chunked into \(chunkSummary(outcomes[i])) but no term was measurable — document glossary did nothing")
             }
             if let average, average < 80 {
                 failures.append("\(name): average adherence \(String(format: "%.1f%%", average)) < 80%")
             }
+        } else if first.modelChunkCount == 0 {
+            // The whole document is code: every chunk is a standalone passthrough
+            // fenced block, so no model call happened at all. `timeToFirstTokenMS`
+            // is nil here WITHOUT meaning "empty reply" — see
+            // `TranslationOutcome.modelChunkCount`'s doc comment, which names this
+            // exact case as the one a naive consumer misreads as a failure.
+            print("\(name): adherence n/a (no model-bound chunk — the whole document is code) · " +
+                  "\(chunkSummary(first)) · \(first.documentGlossary.count) terms · " +
+                  "TTFT — ms (no model call, not gated)")
+            checkMarkup(first, label: "")
+            flushMarkupFailures(totalRuns: 1)
         } else {
+            // Single model-bound chunk: TTFT-gated, whether or not the document also
+            // carried a passthrough chunk alongside it (chunkSummary reports both
+            // counts when they differ).
             let ttftDescription = first.timeToFirstTokenMS.map { String(Int($0)) } ?? "—"
-            print("\(name): adherence n/a (single chunk, document glossary not applicable) · 1 chunk · " +
-                  "\(first.documentGlossary.count) terms · TTFT \(ttftDescription) ms")
+            print("\(name): adherence n/a (single model-bound chunk, document glossary not applicable) · " +
+                  "\(chunkSummary(first)) · \(first.documentGlossary.count) terms · TTFT \(ttftDescription) ms")
             checkMarkup(first, label: "")
             flushMarkupFailures(totalRuns: 1)
             // Absent and slow are different failures. Before, a nil TTFT was measured

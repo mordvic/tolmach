@@ -229,7 +229,7 @@ struct TranslatorApp: App {
                 // have it. What changed is that «running» now means the visible mode's run
                 // rather than the text model's.
                 let action = PrimaryAction.forMode(mode, text: translation, queue: queue)
-                Button("Перевести") { Task { await action.start() } }
+                Button(action.startTitle) { Task { await action.start() } }
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(action.isRunning || !action.canStart || !statusModel.status.isHealthy)
                 Button("Отмена") { action.cancel() }
@@ -490,6 +490,8 @@ struct TranslatorApp: App {
                     PermissionsGate.requestTrust()
                     PermissionsGate.openSettings()
                 },
+                onSwitchOperation: { op in Task { await coordinator.switchOperation(to: op) } },
+                onAnotherVariant: { Task { await coordinator.anotherVariant() } },
                 onContentChange: { settling in panel.contentDidChange(settling: settling) },
                 // Gated on `variant`, not unconditional: `PanelController` builds *two* live
                 // hosts from this same closure — `hosting` (installed) and `measuring`
@@ -516,7 +518,9 @@ struct TranslatorApp: App {
                     //
                     // What to say is `PanelView.announcement(for:)`, which is a value and is
                     // tested; posting it is all that happens here.
-                    if let said = PanelView.announcement(for: coordinator.panelModel.state) {
+                    if let said = PanelView.announcement(
+                        for: coordinator.panelModel.state,
+                        operation: coordinator.panelModel.resolvedOperation ?? .translate) {
                         AccessibilityNotification.Announcement(said).post()
                     }
                     await statusModel.refresh(interactiveModel: settings.interactiveModel)
@@ -653,6 +657,11 @@ private struct PanelHost: View {
     let onOpenInWindow: () -> Void
     let onClose: () -> Void
     let onGrantPermission: () -> Void
+    /// The header's «Перевод | Правка» switch, threaded to `PanelView` like every other
+    /// callback here — see `HotkeyCoordinator.switchOperation(to:)`.
+    let onSwitchOperation: (TextOperation) -> Void
+    /// «Ещё вариант», threaded the same way — see `HotkeyCoordinator.anotherVariant()`.
+    let onAnotherVariant: () -> Void
     let onContentChange: (Bool) -> Void
     /// Refreshes `OllamaStatusModel` after a hotkey run settles. Folded into the
     /// `panelModel.state` hook below rather than a second `.onChange` on the same value —
@@ -668,6 +677,8 @@ private struct PanelHost: View {
                   onOpenInWindow: onOpenInWindow,
                   onRetry: { Task { await coordinator.retry() } },
                   onGrantPermission: onGrantPermission,
+                  onSwitchOperation: onSwitchOperation,
+                  onAnotherVariant: onAnotherVariant,
                   scrolls: scrolls,
                   onClose: onClose,
                   fillsPanel: fillsPanel)

@@ -96,13 +96,15 @@ private func model() -> TranslationViewModel {
     model.sourceText = english
     await model.translate()
     #expect(model.state == .finished)
-    #expect(PanelView.direction(outcome: model.outcome, target: model.resolvedTarget)
+    #expect(PanelView.direction(outcome: model.outcome, target: model.resolvedTarget,
+                                operation: .translate)
             == "английский → русский")
 
     model.sourceText = russian
     await model.translate()
     #expect(model.state == .finished)
-    #expect(PanelView.direction(outcome: model.outcome, target: model.resolvedTarget)
+    #expect(PanelView.direction(outcome: model.outcome, target: model.resolvedTarget,
+                                operation: .translate)
             == "русский → английский")
 }
 
@@ -145,13 +147,15 @@ private func model() -> TranslationViewModel {
     #expect(model.outcome == nil)
     // Which is why nothing is shown. `RussianCopy.direction(from: nil, to: .ru)` would have
     // produced «язык не определён → русский» from exactly these two values.
-    #expect(PanelView.direction(outcome: model.outcome, target: model.resolvedTarget) == nil)
+    #expect(PanelView.direction(outcome: model.outcome, target: model.resolvedTarget,
+                                operation: .translate) == nil)
 
     model.cancel()
     await run.value
     #expect(model.state == .interrupted)
     // Still withheld: an interrupted run leaves partial text and no outcome to describe it.
-    #expect(PanelView.direction(outcome: model.outcome, target: model.resolvedTarget) == nil)
+    #expect(PanelView.direction(outcome: model.outcome, target: model.resolvedTarget,
+                                operation: .translate) == nil)
 }
 
 // MARK: - The close control
@@ -282,4 +286,53 @@ private func model() -> TranslationViewModel {
     // longer answers here — it is drawn as its own always-visible row, in both modes, so a
     // summary of «1 предупреждение» would be a chevron over a sentence already on screen.
     #expect(RunStatusBar.summary(outcome: nil) == nil)
+}
+
+// MARK: - «Перевод | Правка»
+
+/// A finished outcome, built directly rather than through a run — same shape as
+/// `WarningsViewTests`'s `quietOutcome`, and for the same reason: only `detectedSource` is
+/// what `direction(outcome:target:operation:)` reads, so a fixture that runs a whole
+/// translation to produce one would be testing the engine to test a formatter.
+private func makeFinishedOutcome(detected: Language?) -> TranslationOutcome {
+    TranslationOutcome(final: "Готово.",
+                       chunks: [],
+                       translatedChunks: ["Готово."],
+                       documentGlossary: [],
+                       detectedSource: detected,
+                       checks: [],
+                       markupDiffs: [],
+                       stats: [],
+                       timeToFirstTokenMS: 12,
+                       totalMS: 34,
+                       documentGlossaryFailure: nil,
+                       documentGlossaryAttempted: false,
+                       modelChunkCount: 1)
+}
+
+@Test func theHeaderLineSaysПравкаForAProofreadOutcome() {
+    // Build any finished outcome fixture the file already uses; only these three
+    // parameters decide the line.
+    let outcome = makeFinishedOutcome(detected: .ru)
+    #expect(PanelView.direction(outcome: outcome, target: nil, operation: .proofread)
+            == "правка · русский")
+    #expect(PanelView.direction(outcome: outcome, target: .en, operation: .translate)
+            == RussianCopy.direction(from: outcome.detectedSource, to: .en))
+}
+
+@Test func theProgressRowAndTheAnnouncementSpeakTheOperationsLanguage() {
+    #expect(PanelView.status(for: .running, operation: .proofread)?.message == "Исправляю…")
+    #expect(PanelView.status(for: .running, operation: .translate)?.message == "Перевожу…")
+    #expect(PanelView.announcement(for: .finished, operation: .proofread) == "Правка готова")
+    #expect(PanelView.announcement(for: .finished, operation: .translate) == "Перевод готов")
+    // The interrupted case must vary the same way: «Перевод прерван…» over a stopped правка
+    // would name the wrong operation, and translate's own strings must stay byte-identical.
+    #expect(PanelView.status(for: .interrupted, operation: .proofread)?.message
+            == "Правка прервана — показана та часть, что успела прийти")
+    #expect(PanelView.status(for: .interrupted, operation: .translate)?.message
+            == "Перевод прерван — показана та часть, что успела прийти")
+    #expect(PanelView.announcement(for: .interrupted, operation: .proofread)
+            == "Правка прервана, показана пришедшая часть")
+    #expect(PanelView.announcement(for: .interrupted, operation: .translate)
+            == "Перевод прерван, показана пришедшая часть")
 }

@@ -24,6 +24,9 @@ import TranslationCore
 struct PrimaryAction {
     let isRunning: Bool
     let canStart: Bool
+    /// «Перевести» or «Исправить» — read by the toolbar button and the «Перевод» menu
+    /// item both, so the two cannot disagree (spec §6).
+    let startTitle: String
     let start: () async -> Void
     let cancel: () -> Void
     let canCopy: Bool
@@ -52,13 +55,15 @@ struct PrimaryAction {
                 // the mode switch no longer stands between the user and a second run.
                 canStart: !text.sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     && !queue.isRunning,
-                start: { await text.translate() },
+                startTitle: text.operation == .proofread ? "Исправить" : "Перевести",
+                start: { await text.run() },
                 cancel: { text.cancel() },
                 canCopy: !text.translatedText.isEmpty,
                 copy: { await text.copyToPasteboard() },
                 canClear: !text.sourceText.isEmpty && text.state != .running,
                 clear: { text.sourceText = "" },
-                canSwap: text.canSwapLanguages,
+                // There is nothing to exchange in правка: it has no target language.
+                canSwap: text.operation == .translate && text.canSwapLanguages,
                 swap: { text.swapLanguages() })
         case .files:
             PrimaryAction(
@@ -69,6 +74,9 @@ struct PrimaryAction {
                 // a copy of the condition is how a seventh `FileJob.State` gets remembered
                 // in one place and forgotten in the other.
                 canStart: queue.hasWorkLeft && text.state != .running,
+                // «Файлы» is translation-only — the queue never proofs — so unlike `.text`
+                // this title never varies with the text model's switch.
+                startTitle: "Перевести",
                 // The toolbar's three pickers are drawn on this screen and must configure
                 // this run. They are read from the text model because that is what the
                 // toolbar binds to — one owner for those values, passed in per run.
@@ -194,10 +202,19 @@ struct MainWindowView: View {
                 // Dispatches on mode like the primary action does. Wiring this to the text
                 // model in «Файлы» — or to the queue's live stream rather than its selection
                 // — puts one document's text under another document's name.
-                TranslationPane(title: mode == .text ? "Перевод" : queue.selectedTitle,
+                TranslationPane(title: mode == .text
+                                    ? (model.operation == .proofread ? "Правка" : "Перевод")
+                                    : queue.selectedTitle,
                                 text: mode == .text ? model.translatedText : queue.selectedText,
                                 isRunning: mode == .text ? action.isRunning : queue.selectedIsRunning,
-                                onCopy: { Task { await action.copy() } })
+                                onCopy: { Task { await action.copy() } },
+                                // Not while the queue is running, the same guard `canStart`
+                                // already applies: one model lives in Ollama's memory, and
+                                // «Ещё вариант» is a second run just as much as the toolbar
+                                // button is.
+                                onAnotherVariant: mode == .text && model.offersAnotherVariant
+                                    && !queue.isRunning
+                                    ? { Task { await model.run() } } : nil)
             }
             Divider()
             RunStatusBar(model: model, status: status,
@@ -306,38 +323,101 @@ struct MainWindowView: View {
         // the selection: the rows must read «русский», while the button reads «В русский».
         // The selection itself is still a `Picker`, inline, so the menu keeps its check mark
         // and the binding stays exactly what it was.
+        // The operation switch — «Перевод»/«Правка». Text mode only: «Файлы» is
+        // translation-only (spec §6), and the switch answers a question that mode never asks.
         ToolbarItem(placement: .navigation) {
-            languageMenu(label: "Из", selection: $model.sourceOverride,
-                         placeholder: "Определить", help: "С какого языка переводить")
-        }
-        ToolbarItem(placement: .navigation) {
-            Button {
-                action.swap()
-            } label: {
-                Image(systemName: "arrow.left.arrow.right")
+            if mode == .text {
+                Picker("", selection: $model.operation) {
+                    ForEach(TextOperation.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .controlSize(.small)
+                .fixedSize()
+                .help("Что сделать с текстом: перевести или исправить на его же языке")
+                .disabled(action.isRunning)
             }
-            .disabled(!action.canSwap)
-            .help("Перевести в обратную сторону")
+        }
+        // The four translation controls, hidden — not disabled — under «Правка»: they answer
+        // questions правка does not ask (spec §6). «Файлы» keeps them always, being
+        // translation-only.
+        ToolbarItem(placement: .navigation) {
+            if mode == .files || model.operation == .translate {
+                languageMenu(label: "Из", selection: $model.sourceOverride,
+                             placeholder: "Определить", help: "С какого языка переводить")
+            }
         }
         ToolbarItem(placement: .navigation) {
-            languageMenu(label: "В", selection: $model.targetOverride,
-                         placeholder: "По правилу", help: "На какой язык переводить")
+            if mode == .files || model.operation == .translate {
+                Button {
+                    action.swap()
+                } label: {
+                    Image(systemName: "arrow.left.arrow.right")
+                }
+                .disabled(!action.canSwap)
+                .help("Перевести в обратную сторону")
+            }
+        }
+        ToolbarItem(placement: .navigation) {
+            if mode == .files || model.operation == .translate {
+                languageMenu(label: "В", selection: $model.targetOverride,
+                             placeholder: "По правилу", help: "На какой язык переводить")
+            }
         }
         ToolbarItem(placement: .navigation) {
             // The tone picker is not a language picker: its rows are `Tone`, and folding the
             // two into one generic helper would buy a type parameter and cost the reader the
             // one line that says which enum this control chooses from.
-            directionMenu(label: "Тон",
-                          value: model.toneOverride?.russianName ?? Self.toneDefault,
-                          help: "Насколько вольно переводить") {
-                Picker("Тон", selection: $model.toneOverride) {
-                    Text(Self.toneDefault).tag(Tone?.none)
-                    ForEach(Tone.allCases, id: \.self) {
-                        Text($0.russianName).tag(Tone?.some($0))
+            if mode == .files || model.operation == .translate {
+                directionMenu(label: "Тон",
+                              value: model.toneOverride?.russianName ?? Self.toneDefault,
+                              help: "Насколько вольно переводить") {
+                    Picker("Тон", selection: $model.toneOverride) {
+                        Text(Self.toneDefault).tag(Tone?.none)
+                        ForEach(Tone.allCases, id: \.self) {
+                            Text($0.russianName).tag(Tone?.some($0))
+                        }
                     }
+                    .pickerStyle(.inline)
+                    .labelsHidden()
                 }
-                .pickerStyle(.inline)
-                .labelsHidden()
+            }
+        }
+        // The two правка menus, text mode's «Правка» only.
+        ToolbarItem(placement: .navigation) {
+            if mode == .text, model.operation == .proofread {
+                directionMenu(label: "Степень",
+                              value: model.proofreadingLevelOverride?.russianName ?? Self.toneDefault,
+                              help: "Насколько свободно менять формулировки") {
+                    Picker("Степень", selection: $model.proofreadingLevelOverride) {
+                        Text(Self.toneDefault).tag(ProofreadingLevel?.none)
+                        ForEach(ProofreadingLevel.allCases, id: \.self) {
+                            Text($0.russianName).tag(ProofreadingLevel?.some($0))
+                        }
+                    }
+                    .pickerStyle(.inline)
+                    .labelsHidden()
+                }
+            }
+        }
+        ToolbarItem(placement: .navigation) {
+            if mode == .text, model.operation == .proofread {
+                directionMenu(label: "Стиль",
+                              value: model.rewriteStyleOverride?.russianName ?? Self.toneDefault,
+                              help: "В какой стиль переписать; доступно при «ошибки и стиль»") {
+                    Picker("Стиль", selection: $model.rewriteStyleOverride) {
+                        Text(Self.toneDefault).tag(RewriteStyle?.none)
+                        ForEach(RewriteStyle.allCases, id: \.self) { style in
+                            Text(style.russianName).tag(RewriteStyle?.some(style))
+                                .help(style.russianDescription ?? "")
+                        }
+                    }
+                    .pickerStyle(.inline)
+                    .labelsHidden()
+                }
+                // Disabled, not hidden: the DeepL/Apple rule — an inapplicable control says
+                // so instead of silently ignoring input (spec §3, §6).
+                .disabled(!model.rewriteStyleSelectable)
             }
         }
 
@@ -361,7 +441,7 @@ struct MainWindowView: View {
                 Button {
                     Task { await action.start() }
                 } label: {
-                    PrimaryButtonColour.label("Перевести")
+                    PrimaryButtonColour.label(action.startTitle)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(PrimaryButtonColour.fill)

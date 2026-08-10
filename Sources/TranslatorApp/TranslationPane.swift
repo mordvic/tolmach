@@ -19,10 +19,18 @@ struct TranslationPane: View {
     let text: String
     let isRunning: Bool
     let onCopy: () -> Void
+    /// «Ещё вариант» — present only when the window offers it (a finished правка whose
+    /// степень was «ошибки и стиль», spec §6). Nil hides the button entirely, so the
+    /// queue's use of this pane never shows it.
+    var onAnotherVariant: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             PaneHeader(title: title) {
+                if let onAnotherVariant {
+                    Button("Ещё вариант", action: onAnotherVariant)
+                        .buttonStyle(.link)
+                }
                 Button("Скопировать", action: onCopy)
                     .buttonStyle(.link)
                     // Enabled the moment the first token lands, not only at the end: an

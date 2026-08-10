@@ -7,8 +7,10 @@ public struct TranslationOutcome: Sendable {
     /// Cleaned translation of each chunk, index-aligned with `chunks`. Needed to measure
     /// whether a term renders the same way in every chunk — see the acceptance task.
     public let translatedChunks: [String]
+    /// Empty/false for a правка run — правка builds no glossary (spec §4.3).
     public let documentGlossary: [GlossaryEntry]
     public let detectedSource: Language?
+    /// Empty/false for a правка run — правка builds no glossary (spec §4.3).
     public let checks: [GlossaryCheck]
     public let markupDiffs: [MarkupDiff]
     /// One entry per translation call — the per-chunk calls only. The internal
@@ -22,7 +24,7 @@ public struct TranslationOutcome: Sendable {
     /// actual chunk content — i.e. the first moment a consumer of `onToken`
     /// could have shown the user something. This is deliberately NOT the first
     /// raw token off the wire: a chunk whose whole-answer shape is undecided
-    /// (see `Translator.streamChunkTranslation`) is buffered until its first
+    /// (see `Translator.streamChunkReply`) is buffered until its first
     /// line settles or its stream ends, so timing the wire instead would
     /// measure an event nobody watching `onToken` can ever observe. The chunk
     /// separator (the source's own bytes, restored verbatim) and the internal
@@ -71,7 +73,14 @@ public struct TranslationOutcome: Sendable {
     /// them is a failure. Without this the app told a user who had turned the gate on that
     /// terms «не удалось подготовить» for every prose document whose tagger yielded no
     /// candidates — asserting a failure that never happened.
+    /// Empty/false for a правка run — правка builds no glossary (spec §4.3).
     public let documentGlossaryAttempted: Bool
+    /// How many chunks were model-bound. Pass-through (fenced-code) chunks are excluded.
+    /// Zero means the whole document was code: a trivially successful run in which
+    /// `timeToFirstTokenMS` is nil WITHOUT meaning «empty reply» — consumers must check
+    /// this count before reading that nil as a failure (spec §2.1, the renegotiated
+    /// contract; `TranslationViewModel` is the consumer that got this wrong first).
+    public let modelChunkCount: Int
 }
 
 // Every other public value type in this API is already Sendable; the entry point
@@ -137,6 +146,16 @@ public struct DocumentTermsDraft: Sendable {
     }
 }
 
+/// Mutable per-run accumulators for the chunk streaming shared by `translate` and
+/// `proofread`: when the first *content* token reached the consumer, and the stats of
+/// every per-chunk call. A reference type so the shared helper can write what the
+/// calling run then reads; it never leaves the run's task, so it needs no
+/// synchronisation.
+private final class ChunkRunAccumulators {
+    var firstTokenAt: Date? = nil
+    var stats: [ChatStats] = []
+}
+
 public struct Translator: Sendable {
     let client: LLMClient
     public init(client: LLMClient) { self.client = client }
@@ -166,8 +185,7 @@ public struct Translator: Sendable {
         reviewDocumentTerms: (@Sendable (DocumentTermsDraft) async throws -> [GlossaryEntry])? = nil
     ) async throws -> TranslationOutcome {
         let started = Date()
-        var firstTokenAt: Date? = nil
-        var stats: [ChatStats] = []
+        let acc = ChunkRunAccumulators()
 
         let detected = source ?? LanguageDetector.detect(text)
         let plan = Chunker.plan(text, maxCharacters: maxChunkCharacters)
@@ -182,134 +200,6 @@ public struct Translator: Sendable {
                 if case .token(let token) = event { buffer += token }
             }
             return buffer
-        }
-
-        // Streams one chunk's translation call, delivering content to `onToken` as
-        // early as it safely can instead of only after the whole chunk finishes.
-        //
-        // `ResponseCleaner` changes exactly two things about a raw reply: the first
-        // line (a preamble) and the outermost fence markers (the whole-answer
-        // unwrap, which only ever applies when the *entire* reply is one fenced
-        // block). Everything between is passed through untouched — which is what
-        // makes incremental delivery safe: once the first line is settled, nothing
-        // later in the reply can change what should have already been sent.
-        //
-        // Tokens are buffered in `.buffering` mode, on every token, checked in
-        // this order:
-        //   - ahead of everything else: does the buffer open a fence ("```...")?
-        //     The whole-answer unwrap might apply, and deciding it needs the
-        //     *end* of the response — so this wins regardless of length or
-        //     whether a "\n" has appeared, and the chunk abandons incremental
-        //     delivery entirely, falling back to buffering to the end and then a
-        //     single full `ResponseCleaner.clean` call, exactly as before
-        //     incremental delivery existed.
-        // Absent a fence, buffering ends the moment any of these three holds:
-        //   1. a "\n" appears — the preamble decision is made right there, on
-        //      the completed first line, using the same
-        //      `ResponseCleaner.isPreambleLine` rule the buffered cleaner uses
-        //      (so the two can't drift) — the line is dropped if it's a
-        //      preamble, and everything from here on is forwarded to `onToken`
-        //      as it arrives;
-        //   2. the buffer's normalised length (`ResponseCleaner.normalizedForPreambleCheck`)
-        //      exceeds `ResponseCleaner.preambleLineMaxLength` before condition 1
-        //      has fired: `isPreambleLine` rejects anything past that length
-        //      before it even checks patterns, and normalisation only ever
-        //      removes characters, so once the buffered text crosses the
-        //      threshold no later token can turn it back into something that
-        //      length would still accept — the buffer can no longer be a
-        //      preamble no matter what follows, so it's safe to flush
-        //      immediately rather than wait for a "\n" that a single long,
-        //      newline-free chunk (the most hotkey-like input there is) might
-        //      never produce at all;
-        //   3. the stream ends without either of the above ever firing (a
-        //      short, single-line reply) — falls back to the same buffered
-        //      path used for the fence case.
-        //
-        // On the incremental path, no unwrap is ever applied — but that's not a
-        // loss: a chunk that reaches the incremental path did not open with a
-        // fence, so the unwrap could never have applied to it anyway. Its
-        // contribution to `final` is therefore exactly what was sent to `onToken`,
-        // which is the invariant `theStreamReconstructsExactlyWhatFinalContains`
-        // pins for every path.
-        func streamChunkTranslation(_ messages: [ChatMessage], chunk: Chunk) async throws -> String {
-            enum Mode: Equatable { case buffering, bufferedFence, incremental }
-            var mode = Mode.buffering
-            var buffer = ""    // raw text seen so far; meaningful only outside .incremental
-            var collected = "" // exactly what has been handed to `onToken` for this chunk
-
-            func emit(_ text: String) {
-                guard !text.isEmpty else { return }
-                // Measures perceived latency, so it is stamped here — the moment
-                // content actually reaches the consumer — not at the first raw
-                // wire token, which on the buffered paths can arrive well before
-                // anything is decided to be worth showing.
-                if firstTokenAt == nil { firstTokenAt = Date() }
-                onToken(text)
-                collected += text
-            }
-
-            for try await event in client.chat(messages: messages, options: options) {
-                switch event {
-                case .token(let token):
-                    if mode == .incremental { emit(token); continue }
-                    buffer += token
-                    guard mode == .buffering else { continue } // .bufferedFence: keep accumulating only
-
-                    // Ahead of the three conditions below, on every token: once the
-                    // buffer opens a fence, the whole-answer unwrap might apply,
-                    // and that can only be decided at the end of the response — so
-                    // this must win regardless of how long the buffer is or
-                    // whether a "\n" has appeared yet.
-                    if buffer.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
-                        mode = .bufferedFence
-                        continue
-                    }
-
-                    if let newline = buffer.firstIndex(of: "\n") {
-                        // Condition 1: the first line is complete — decide the
-                        // preamble on it. Only a genuine preamble line is dropped.
-                        // Anything else on the first line is real content and must
-                        // be emitted along with it — not just the text after the
-                        // newline, which would silently lose the first line
-                        // whenever it wasn't a preamble.
-                        mode = .incremental
-                        let firstLine = String(buffer[buffer.startIndex..<newline])
-                        let rest: String
-                        if ResponseCleaner.isPreambleLine(firstLine) {
-                            rest = String(buffer[buffer.index(after: newline)...])
-                                .trimmingCharacters(in: .whitespacesAndNewlines)
-                        } else {
-                            rest = buffer
-                        }
-                        emit(rest)
-                    } else if ResponseCleaner.normalizedForPreambleCheck(buffer).count
-                                > ResponseCleaner.preambleLineMaxLength {
-                        // Condition 2: no "\n" yet, but the buffer's normalised
-                        // length has permanently ruled out a preamble (see the
-                        // comment above `streamChunkTranslation`) — flush what's
-                        // accumulated so far and go incremental, rather than
-                        // waiting for a newline this chunk may never produce.
-                        mode = .incremental
-                        emit(buffer)
-                    }
-                    // Condition 3 (the stream ends without either firing) is
-                    // handled after the loop, below.
-                case .done(let chatStats):
-                    // `streamChunkTranslation` is only ever used for the per-chunk
-                    // translation calls, so — unlike the term-list call — every
-                    // call here contributes to `stats`.
-                    stats.append(chatStats)
-                }
-            }
-
-            if mode == .incremental { return collected }
-            // Either the reply's first line opened a fence (unwrap deferred to the
-            // end, exactly as documented above), or the stream ended without ever
-            // producing a "\n" (a single-line reply). Both fall back to the same
-            // buffered path: one full clean, emitted in one `onToken` call.
-            let cleaned = ResponseCleaner.clean(buffer, allowFenceUnwrap: !chunk.containsCodeFence).text
-            emit(cleaned)
-            return collected
         }
 
         // The part count as soon as it is known, before anything is asked of the model.
@@ -333,7 +223,12 @@ public struct Translator: Sendable {
         var documentGlossaryAttempted = false
         /// Seconds spent waiting for a human in the review hook. See where it is subtracted.
         var reviewWait: TimeInterval = 0
-        if chunks.count > 1, let source = detected {
+        // Model-bound chunks, not raw chunks: a passthrough (fenced-code) chunk never
+        // reaches the model, so a document of one paragraph plus one code fence is two
+        // chunks but only one worth building cross-chunk consistency for — the case
+        // `aDocumentGlossaryIsNeverAttemptedBelowTwoModelBoundChunks` pins.
+        let modelChunks = chunks.filter { !$0.passthrough }
+        if modelChunks.count > 1, let source = detected {
             let terms = TermExtractor.extract(from: text, language: source)
             if !terms.isEmpty {
                 documentGlossaryAttempted = true
@@ -442,7 +337,7 @@ public struct Translator: Sendable {
         var translatedChunks: [String] = []
         for chunk in chunks {
             // Checked at the top of every iteration, not just after
-            // `streamChunkTranslation` returns, so a cancellation that lands in the
+            // `streamChunkReply` returns, so a cancellation that lands in the
             // synchronous work between chunks (or before the very first request) is
             // caught too, instead of issuing one more request it will just throw away.
             try Task.checkCancellation()
@@ -452,14 +347,32 @@ public struct Translator: Sendable {
             // hard-coded "\n\n" did. The consumer contract is unchanged: whitespace-only
             // pieces are not "output" (TranslationViewModel holds them in `pending`).
             if !chunk.separatorBefore.isEmpty { onToken(chunk.separatorBefore) }
-            // Every chunk goes to the model. An indented chunk was briefly reproduced
-            // here instead, with no call at all — which returned tab-indented plain
+            // Protection by construction (spec §2.1): a passthrough chunk IS a fenced
+            // code block standing alone, so its bytes go straight through — no
+            // request, no `PromptBuilder`, no `ResponseCleaner`. This is a different
+            // guarantee from the one below: an indented chunk was briefly reproduced
+            // the same way, with no call at all — which returned tab-indented plain
             // text and Markdown loose-list continuations untranslated (nothing in a
             // selection carries format context), and stamped `firstTokenAt` without a
             // single token of model content, defeating the "nil TTFT == empty reply"
-            // contract this outcome documents. Indentation is preserved by the
-            // verbatim separators instead; fenced and inline code stay the only forms
-            // the prompt protects.
+            // contract this outcome documents. Indentation is therefore still sent to
+            // the model and preserved by the verbatim separators instead; fenced code
+            // is categorically different — a lone fence chunk's content is never prose
+            // to translate at all, so skipping the call loses nothing a model could
+            // have added, and progress still counts the part.
+            if chunk.passthrough {
+                // Redundant for every chunk but the last — the top-of-loop check above
+                // already catches a cancellation before any but the final pass-through
+                // emission — but cheap, and it closes that one window instead of
+                // leaving it to a traced argument that the emission is byte-correct anyway.
+                try Task.checkCancellation()
+                onToken(chunk.text)
+                translatedChunks.append(chunk.text)
+                onProgress(TranslationProgress(partsDone: translatedChunks.count,
+                                               partsTotal: chunks.count,
+                                               documentTermCount: documentTermCount))
+                continue
+            }
             //
             // Filter over code-stripped text, not the raw chunk. `Glossary.relevantEntries`
             // is a plain occurrence check, so a term that only ever appears inside a fenced
@@ -473,12 +386,13 @@ public struct Translator: Sendable {
             let merged = GlossaryMerge.merge(user: relevantUser, document: documentEntries)
             let request = TranslationRequest(text: chunk.text, source: detected, target: target,
                                              tone: tone, glossaryEntries: merged)
-            // `streamChunkTranslation` delivers this chunk's content to `onToken`
+            // `streamChunkReply` delivers this chunk's content to `onToken`
             // itself — incrementally once its first line is settled, or in one
             // call on the buffered paths (see its doc comment) — so `final` and
             // the stream agree by construction: whatever this returns IS what
             // `onToken` was just called with for this chunk, concatenated.
-            let cleaned = try await streamChunkTranslation(PromptBuilder.messages(for: request), chunk: chunk)
+            let cleaned = try await streamChunkReply(PromptBuilder.messages(for: request), chunk: chunk,
+                                                      options: options, into: acc, onToken: onToken)
             // See the comment on the term-list call above: the underlying stream
             // can end silently instead of throwing when cancellation lands
             // mid-stream, so this must be checked explicitly rather than trusted
@@ -527,15 +441,262 @@ public struct Translator: Sendable {
             // that separators reassemble byte for byte, so the source the model saw
             // and the source on disk are the same document again.
             markupDiffs: MarkupSkeleton.diff(source: text, translation: final),
-            stats: stats,
+            stats: acc.stats,
             // `reviewWait` comes off this too, and it has to: the review point is before the
             // per-часть loop, so every millisecond a reader spent in the sheet sits between
             // `started` and the first token. Subtracting it from `totalMS` alone left the
             // two measuring different clocks — TTFT of 248 000 ms against a total of 8 000,
             // which inverts the relationship the outcome documents.
-            timeToFirstTokenMS: firstTokenAt.map { ($0.timeIntervalSince(started) - reviewWait) * 1000 },
+            timeToFirstTokenMS: acc.firstTokenAt.map { ($0.timeIntervalSince(started) - reviewWait) * 1000 },
             totalMS: (Date().timeIntervalSince(started) - reviewWait) * 1000,
             documentGlossaryFailure: documentGlossaryFailure,
-            documentGlossaryAttempted: documentGlossaryAttempted)
+            documentGlossaryAttempted: documentGlossaryAttempted,
+            modelChunkCount: modelChunks.count)
+    }
+
+    /// Правка: the same route as `translate` — detect → chunk → per-chunk streamed calls →
+    /// clean → skeleton diff → byte-for-byte assembly — with **no** glossary stages: no
+    /// `TermExtractor`, no term-list call, no review hook, no user glossary, no
+    /// `GlossaryVerifier`. The dangerous machinery is `streamChunkReply`, shared with
+    /// `translate`, so «`final` and the `onToken` stream agree exactly» holds here by
+    /// construction (spec §4.3).
+    ///
+    /// Returns `TranslationOutcome` rather than a parallel type: every consumer speaks it,
+    /// and the glossary fields come back honest and empty. `detectedSource` is the text's
+    /// own language; `timeToFirstTokenMS` keeps its nil-means-empty-reply contract.
+    public func proofread(
+        text: String, level: ProofreadingLevel, style: RewriteStyle = .original,
+        source: Language? = nil,
+        options: ChatOptions, maxChunkCharacters: Int,
+        onToken: @escaping @Sendable (String) -> Void = { _ in },
+        onProgress: @escaping @Sendable (TranslationProgress) -> Void = { _ in }
+    ) async throws -> TranslationOutcome {
+        let started = Date()
+        let acc = ChunkRunAccumulators()
+        let detected = source ?? LanguageDetector.detect(text)
+        let plan = Chunker.plan(text, maxCharacters: maxChunkCharacters)
+        let chunks = plan.chunks
+
+        onProgress(TranslationProgress(partsDone: 0, partsTotal: chunks.count,
+                                       documentTermCount: 0))
+
+        var correctedChunks: [String] = []
+        for chunk in chunks {
+            // Same discipline as `translate`: checked at the top of every iteration, and
+            // again after the stream returns, because `AsyncThrowingStream` finishes
+            // silently on cancellation instead of throwing.
+            try Task.checkCancellation()
+            // The separator is the source's own bytes, restored verbatim — straight to
+            // `onToken`, never through the helper's emit, so it cannot stamp the
+            // first-token time (same rule and reason as `translate`).
+            if !chunk.separatorBefore.isEmpty { onToken(chunk.separatorBefore) }
+            // Protection by construction (spec §2.1), shared with `translate`: a
+            // passthrough chunk is a fenced code block standing alone, so правка's own
+            // "fix the prose, leave the code" rule is enforced structurally here rather
+            // than trusted to the model — the bytes go straight through, no request.
+            if chunk.passthrough {
+                // Same trace as `translate`: the top-of-loop check already catches a
+                // cancellation before any but the final pass-through emission — this
+                // closes that last window rather than leaving it to that argument.
+                try Task.checkCancellation()
+                onToken(chunk.text)
+                correctedChunks.append(chunk.text)
+                onProgress(TranslationProgress(partsDone: correctedChunks.count,
+                                               partsTotal: chunks.count, documentTermCount: 0))
+                continue
+            }
+            let messages = PromptBuilder.proofreadMessages(text: chunk.text, language: detected,
+                                                           level: level, style: style)
+            let cleaned = try await streamChunkReply(messages, chunk: chunk, options: options,
+                                                     into: acc, onToken: onToken)
+            try Task.checkCancellation()
+            correctedChunks.append(cleaned)
+            onProgress(TranslationProgress(partsDone: correctedChunks.count,
+                                           partsTotal: chunks.count, documentTermCount: 0))
+        }
+
+        let final = plan.assembled(from: correctedChunks)
+        if !chunks.isEmpty, !plan.trailingSeparator.isEmpty { onToken(plan.trailingSeparator) }
+
+        return TranslationOutcome(
+            final: final,
+            chunks: chunks,
+            translatedChunks: correctedChunks,
+            documentGlossary: [],
+            detectedSource: detected,
+            checks: [],
+            markupDiffs: MarkupSkeleton.diff(source: text, translation: final),
+            stats: acc.stats,
+            timeToFirstTokenMS: acc.firstTokenAt.map { $0.timeIntervalSince(started) * 1000 },
+            totalMS: Date().timeIntervalSince(started) * 1000,
+            documentGlossaryFailure: nil,
+            documentGlossaryAttempted: false,
+            modelChunkCount: chunks.lazy.filter { !$0.passthrough }.count)
+    }
+
+    // Streams one chunk's translation call, delivering content to `onToken` as
+    // early as it safely can instead of only after the whole chunk finishes.
+    //
+    // `ResponseCleaner` changes exactly two things about a raw reply: the first
+    // line (a preamble) and the outermost fence markers (the whole-answer
+    // unwrap, which only ever applies when the *entire* reply is one fenced
+    // block). Everything between is passed through untouched — which is what
+    // makes incremental delivery safe: once the first line is settled, nothing
+    // later in the reply can change what should have already been sent.
+    //
+    // Tokens are buffered in `.buffering` mode, on every token, checked in
+    // this order:
+    //   - ahead of everything else: does the buffer open a fence ("```...")
+    //     or the user prompt's own "<text>" marker? Either whole-answer
+    //     unwrap might apply, and deciding it needs the
+    //     *end* of the response — so this wins regardless of length or
+    //     whether a "\n" has appeared, and the chunk abandons incremental
+    //     delivery entirely, falling back to buffering to the end and then a
+    //     single full `ResponseCleaner.clean` call, exactly as before
+    //     incremental delivery existed.
+    // Absent a fence or marker, buffering ends the moment any of these three holds:
+    //   1. a "\n" appears — the preamble decision is made right there, on
+    //      the completed first line, using the same
+    //      `ResponseCleaner.isPreambleLine` rule the buffered cleaner uses
+    //      (so the two can't drift) — the line is dropped if it's a
+    //      preamble, and everything from here on is forwarded to `onToken`
+    //      as it arrives;
+    //   2. the buffer's normalised length (`ResponseCleaner.normalizedForPreambleCheck`)
+    //      exceeds `ResponseCleaner.preambleLineMaxLength` before condition 1
+    //      has fired: `isPreambleLine` rejects anything past that length
+    //      before it even checks patterns, and normalisation only ever
+    //      removes characters, so once the buffered text crosses the
+    //      threshold no later token can turn it back into something that
+    //      length would still accept — the buffer can no longer be a
+    //      preamble no matter what follows, so it's safe to flush
+    //      immediately rather than wait for a "\n" that a single long,
+    //      newline-free chunk (the most hotkey-like input there is) might
+    //      never produce at all;
+    //   3. the stream ends without either of the above ever firing (a
+    //      short, single-line reply) — falls back to the same buffered
+    //      path used for the fence case.
+    //
+    // On the incremental path, no unwrap is ever applied — but that's not a
+    // loss: a chunk that reaches the incremental path opened with neither a
+    // fence nor the "<text>" marker, so no unwrap could have applied to it
+    // anyway. Its contribution to `final` is therefore exactly what was sent
+    // to `onToken`, which is the invariant
+    // `theStreamReconstructsExactlyWhatFinalContains` pins for every path.
+    private func streamChunkReply(_ messages: [ChatMessage], chunk: Chunk,
+                                  options: ChatOptions, into acc: ChunkRunAccumulators,
+                                  onToken: @escaping @Sendable (String) -> Void) async throws -> String {
+        enum Mode: Equatable { case buffering, bufferedToEnd, incremental }
+        let sourceSpanCount = chunk.text.components(separatedBy: "\n")
+            .reduce(0) { $0 + MarkupSkeleton.inlineCodeSpans(in: $1).count }
+        // A chunk whose source carries inline code is buffered whole: the equal-count
+        // restore gate is decidable only on the complete reply, and emitted bytes cannot
+        // be recalled — so incremental emission would break «final and the stream agree
+        // byte-for-byte». Bounded by the chunk budget; measured trade, spec §2.2.
+        var mode = sourceSpanCount > 0 ? Mode.bufferedToEnd : Mode.buffering
+        var buffer = ""    // raw text seen so far; meaningful only outside .incremental
+        var collected = "" // exactly what has been handed to `onToken` for this chunk
+
+        func emit(_ text: String) {
+            guard !text.isEmpty else { return }
+            // Measures perceived latency, so it is stamped here — the moment
+            // content actually reaches the consumer — not at the first raw
+            // wire token, which on the buffered paths can arrive well before
+            // anything is decided to be worth showing.
+            if acc.firstTokenAt == nil { acc.firstTokenAt = Date() }
+            onToken(text)
+            collected += text
+        }
+
+        for try await event in client.chat(messages: messages, options: options) {
+            switch event {
+            case .token(let token):
+                if mode == .incremental { emit(token); continue }
+                buffer += token
+                guard mode == .buffering else { continue } // .bufferedToEnd: keep accumulating only
+
+                // Ahead of the three conditions below, on every token: once the
+                // buffer opens a fence, the whole-answer unwrap might apply,
+                // and that can only be decided at the end of the response — so
+                // this must win regardless of how long the buffer is or
+                // whether a "\n" has appeared yet.
+                if buffer.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+                    mode = .bufferedToEnd
+                    continue
+                }
+                // The same decision for the user prompt's own "<text>" marker,
+                // for the same reason: the whole-answer marker unwrap (an
+                // intermittent echo, observed live 2026-08-10) is only decidable
+                // at the end of the reply. The echo's first "\n" comes after the
+                // six characters of "<text>", so condition 1 below cannot fire
+                // first and commit the marker line to the stream.
+                if buffer.trimmingCharacters(in: .whitespaces).hasPrefix("<text>") {
+                    mode = .bufferedToEnd
+                    continue
+                }
+
+                if let newline = buffer.firstIndex(of: "\n") {
+                    // Condition 1: the first line is complete — decide the
+                    // preamble on it. Only a genuine preamble line is dropped.
+                    // Anything else on the first line is real content and must
+                    // be emitted along with it — not just the text after the
+                    // newline, which would silently lose the first line
+                    // whenever it wasn't a preamble.
+                    mode = .incremental
+                    let firstLine = String(buffer[buffer.startIndex..<newline])
+                    let rest: String
+                    if ResponseCleaner.isPreambleLine(firstLine) {
+                        rest = String(buffer[buffer.index(after: newline)...])
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                    } else {
+                        rest = buffer
+                    }
+                    emit(rest)
+                } else if ResponseCleaner.normalizedForPreambleCheck(buffer).count
+                            > ResponseCleaner.preambleLineMaxLength {
+                    // Condition 2: no "\n" yet, but the buffer's normalised
+                    // length has permanently ruled out a preamble (see the
+                    // comment above `streamChunkReply`) — flush what's
+                    // accumulated so far and go incremental, rather than
+                    // waiting for a newline this chunk may never produce.
+                    mode = .incremental
+                    emit(buffer)
+                }
+                // Condition 3 (the stream ends without either firing) is
+                // handled after the loop, below.
+            case .done(let chatStats):
+                // `streamChunkReply` is only ever used for the per-chunk
+                // translation calls, so — unlike the term-list call — every
+                // call here contributes to `stats`.
+                acc.stats.append(chatStats)
+            }
+        }
+
+        if mode == .incremental { return collected }
+        // Either the reply opened with a fence or the "<text>" marker (unwrap
+        // deferred to the end, exactly as documented above), or the stream ended
+        // without ever producing a "\n" (a single-line reply). All fall back to
+        // the same buffered path: one full clean, emitted in one `onToken` call.
+        // The marker unwrap is suppressed when the source chunk itself opens with
+        // the marker line — the cleaner's erring-toward-not-unwrapping rule. The
+        // fence unwrap has no such suppression to make anymore: both `translate`
+        // and `proofread` skip a passthrough chunk before it ever reaches this
+        // function (spec §2.1), so every chunk `streamChunkReply` sees IS
+        // model-bound and cannot itself be a lone fence — a fence opening the
+        // reply is always the model's own wrapper around real prose, never an
+        // echo of the source. `allowFenceUnwrap: false` used to protect exactly
+        // that echo case; now unreachable, it is gone rather than dead-coded.
+        let cleaned = ResponseCleaner.clean(
+            buffer,
+            allowFenceUnwrap: true,
+            allowMarkerUnwrap: !chunk.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                .hasPrefix("<text>")).text
+        // Restore is a no-op when the source carries no inline-code spans (the
+        // common case, reached from the fence/marker/single-line paths above as
+        // well as the forced-buffered path this function takes whenever
+        // `sourceSpanCount > 0`), so it is always safe to apply here rather than
+        // gated a second time.
+        let restored = InlineCodeRestorer.restore(reply: cleaned, source: chunk.text)
+        emit(restored)
+        return collected
     }
 }

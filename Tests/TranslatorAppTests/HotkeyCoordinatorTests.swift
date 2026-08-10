@@ -339,6 +339,31 @@ private func waitUntil(_ condition: @MainActor () -> Bool,
     #expect(board.string(forType: .string) == "Пока.")
 }
 
+@MainActor
+@Test func autoCopyAlsoFollowsARunStartedByTheOperationSwitch() async {
+    // `switchOperation(to:)` calls the same `runTranslation()` `handlePress()` does, so
+    // `autoCopy`'s guard has to cover it too — a coordinator that only wired the setting
+    // into the press itself would leave the clipboard holding a stale правка after the
+    // switch, right where the panel claims a fresh one just finished.
+    let board = scratchPasteboard()
+    defer { board.releaseGlobally() }
+    board.clearContents()
+    board.setString("буфер пользователя", forType: .string)
+
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "hk"))
+    settings.autoCopy = true
+    let reader = ScriptedReader(["Hello."])
+    let (coordinator, _) = makeCoordinator(reader: reader, replies: ["Привет.", "Исправлено."],
+                                           settings: settings, pasteboard: board)
+    await coordinator.handlePress()
+    #expect(coordinator.panelModel.state == .finished)
+    #expect(board.string(forType: .string) == "Привет.")
+
+    await coordinator.switchOperation(to: .proofread)
+    #expect(coordinator.panelModel.state == .finished)
+    #expect(board.string(forType: .string) == "Исправлено.")
+}
+
 // MARK: - Registration
 
 @MainActor
@@ -420,4 +445,66 @@ private func waitUntil(_ condition: @MainActor () -> Bool,
     #expect(textAtShow == "перевод прошлого нажатия")
     // And the flag does not outlive the press.
     #expect(coordinator.isStartingRun == false)
+}
+
+// MARK: - «Перевод | Правка»
+
+/// A coordinator with one press already run to completion — the fixture every switch test
+/// starts from, since switching operates on a selection that is already captured rather than
+/// on a fresh one. The reader is scripted with two selections rather than one: some tests
+/// press a second time, and a press that reads `nil` would not exercise the reset this task
+/// adds (`handlePress` only resets `operation` on the branch that assigns `sourceText`).
+@MainActor
+private struct PressHarness {
+    let coordinator: HotkeyCoordinator
+    let fake: ScriptedClient
+    private let reader: ScriptedReader
+
+    /// How many times the selection was actually read — the number a switch or «Ещё вариант»
+    /// must not move, since both re-run the selection already captured by the press.
+    var selectionReads: Int { reader.callCount }
+
+    func press() async { await coordinator.handlePress() }
+
+    init(reader: ScriptedReader, responses: [String]) async {
+        self.reader = reader
+        (coordinator, fake) = makeCoordinator(reader: reader, replies: responses)
+        await coordinator.handlePress()
+    }
+}
+
+@MainActor
+private func makePressedCoordinator(responses: [String]) async -> PressHarness {
+    await PressHarness(reader: ScriptedReader(["Hello, world.", "Hello, world."]), responses: responses)
+}
+
+@MainActor
+@Test func switchingTheOperationRerunsTheCapturedSelectionWithoutReadingANewOne() async {
+    // The fake queues one translate reply (consumed by the harness's own press) and one
+    // proofread reply (consumed by the switch).
+    let harness = await makePressedCoordinator(responses: ["перевод", "правка"])
+    await harness.coordinator.switchOperation(to: .proofread)
+    #expect(harness.coordinator.panelModel.operation == .proofread)
+    // The re-run went to the model with the *captured* text — the reader was not asked
+    // again (same reasoning as retry(): the selection may be long gone).
+    #expect(harness.selectionReads == 1)
+    let system = harness.fake.receivedMessages.last!.first!.content
+    #expect(system.contains("copy editor"))
+}
+
+@MainActor
+@Test func aNewPressResetsTheOperationToTranslate() async {
+    let harness = await makePressedCoordinator(responses: ["перевод", "правка", "перевод снова"])
+    await harness.coordinator.switchOperation(to: .proofread)
+    await harness.press()
+    // The hotkey is predictable: every press starts with перевод (spec §8).
+    #expect(harness.coordinator.panelModel.operation == .translate)
+}
+
+@MainActor
+@Test func switchingToTheOperationAlreadyShownDoesNothing() async {
+    let harness = await makePressedCoordinator(responses: ["перевод"])
+    let callsBefore = harness.fake.receivedMessages.count
+    await harness.coordinator.switchOperation(to: .translate)
+    #expect(harness.fake.receivedMessages.count == callsBefore)
 }

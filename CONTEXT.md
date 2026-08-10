@@ -131,6 +131,33 @@ _Avoid_: исходный язык (without saying whether it was recognised)
 
 ---
 
+## Правка
+
+**Правка** — *proofreading*
+The app's second operation: correcting a text in its own language instead of
+translating it. One switch selects between «Перевод» and «Правка».
+→ `Translator.proofread`, `TextOperation`, `ProofreadingLevel`, `RewriteStyle`
+_Avoid_: корректура, редактура, улучшение
+
+**Степень** — *degree*
+How freely правка may change wording: «только ошибки» / «ошибки и стиль».
+→ `ProofreadingLevel`
+_Avoid_: уровень, глубина
+
+**Стиль (правки)** — *rewrite style*
+The register a rewrite aims at: «как в оригинале», «дружеский», «деловой»,
+«профессиональный», «простой и ясный». Meaningful only under «ошибки и стиль».
+→ `RewriteStyle`
+_Avoid_: тон — that word belongs to translation's `Tone`
+
+**«Ещё вариант»** — *another variant*
+Re-run the same правка for a different rendering. Offered only for a finished
+«ошибки и стиль» run — «ещё вариант» of a deterministic minimal diff is a
+contradiction.
+_Avoid_: «Повторить» — that is the failure retry
+
+---
+
 ## A note on writing
 
 Documentation and commit messages are English; the application's UI strings are Russian. When

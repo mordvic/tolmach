@@ -18,7 +18,7 @@ Final paragraph after the code, closing the document out with a few more words.
 
 @Test func fencedCodeBlockIsNeverSplit() {
     let chunks = Chunker.plan(doc, maxCharacters: 120).chunks
-    let codeChunks = chunks.filter(\.containsCodeFence)
+    let codeChunks = chunks.filter(\.passthrough)
     #expect(codeChunks.count == 1)
     let code = codeChunks[0].text
     #expect(code.contains("profile-server publish"))
@@ -36,7 +36,7 @@ Final paragraph after the code, closing the document out with a few more words.
 @Test func shortTextIsOneChunk() {
     let chunks = Chunker.plan("Just a sentence.", maxCharacters: 900).chunks
     #expect(chunks.count == 1)
-    #expect(chunks[0].containsCodeFence == false)
+    #expect(chunks[0].passthrough == false)
 }
 
 @Test func whitespaceOnlyInputYieldsNoChunks() {
@@ -44,6 +44,11 @@ Final paragraph after the code, closing the document out with a few more words.
     #expect(Chunker.plan("", maxCharacters: 900).chunks.isEmpty)
 }
 
+// 2026-08-10: the consequence of this shape, stated plainly — an unterminated fence
+// runs to EOF as `.fencedCode`, so it becomes one passthrough chunk covering the
+// document's entire tail. In `translate`/`proofread` a passthrough chunk never
+// reaches the model, so a stray or unclosed ``` silently leaves everything after it
+// untranslated (or uncorrected) rather than erroring.
 @Test func unterminatedFenceIsKeptWholeAndNotSplit() {
     let doc = """
     Intro paragraph before the code that is long enough to matter here.
@@ -55,7 +60,7 @@ Final paragraph after the code, closing the document out with a few more words.
     let c = 3
     """
     let chunks = Chunker.plan(doc, maxCharacters: 60).chunks
-    let fenceChunks = chunks.filter(\.containsCodeFence)
+    let fenceChunks = chunks.filter(\.passthrough)
     #expect(fenceChunks.count == 1)
     #expect(fenceChunks[0].text.contains("let a = 1"))
     #expect(fenceChunks[0].text.contains("let c = 3"))
@@ -261,4 +266,19 @@ func oneBlankLineInAnyEndingConventionMerges(_ separator: String) {
         $0.text.contains("This looks like a sentence.") && $0.text.contains("fourth one")
     })
     #expect(reassembled(text, maxCharacters: 45) == text)
+}
+
+// MARK: - Code protection: fenced blocks stand alone (spec §2.1).
+
+@Test func aFencedBlockBecomesItsOwnPassthroughChunkAndNeverMerges() {
+    // Today this document packs into ONE chunk (both separators are exactly one blank
+    // line, total under budget). The spec's §2.1 changes that deliberately: the fence
+    // stands alone and never reaches the model.
+    let text = "Пролог.\n\n```swift\nlet x = 1\n```\n\nЭпилог."
+    let plan = Chunker.plan(text, maxCharacters: 900)
+    #expect(plan.chunks.count == 3)
+    #expect(plan.chunks.map(\.passthrough) == [false, true, false])
+    #expect(plan.chunks[1].text == "```swift\nlet x = 1\n```")
+    // The byte-lossless invariant survives the new boundaries.
+    #expect(plan.assembled(from: plan.chunks.map(\.text)) == text)
 }

@@ -1,0 +1,4 @@
+The function `parseDocument()` recieves a file path and returns the parsed document.
+If the file is not found, it throws an eror — but only after three retries.
+Developers should not attemp to rename the function `parseDocument()` for convinience.
+The name of the function `parseDocument()` must never be changed under any circumstances.

@@ -120,34 +120,41 @@ private struct FakeTermListFailure: Error {}
 }
 
 @Test func aChunkConsistingSolelyOfAFenceSurvivesWithMarkersIntact() async throws {
-    // Reachability case from the review: Chunker flushes a fence alone into its own
-    // chunk whenever the preceding prose already fills the budget. The model
-    // reproducing that chunk verbatim is indistinguishable, to ResponseCleaner, from
-    // the "model over-wrapped a plain prose reply" case it exists to fix — unless
-    // Translator tells it the source chunk was itself entirely a fence.
+    // Reachability case from the review, from before CP Task 2: Chunker flushes a fence
+    // alone into its own chunk whenever the preceding prose already fills the budget, and
+    // (then) the model reproducing that chunk verbatim was indistinguishable, to
+    // ResponseCleaner, from the "model over-wrapped a plain prose reply" case it exists to
+    // fix. CP Task 2 makes the guarantee structural instead: a passthrough chunk never
+    // reaches the model at all, so this test now pins the stronger property — the markers
+    // survive because there was never a request to garble them, and the fence's own
+    // fake response is never even offered to `FakeLLMClient` (see the single-element
+    // `responses` below; a second element here would sit unconsumed).
     //
     // Ukrainian: recognised by NLLanguageRecognizer but absent from the nine
     // supported targets (see unrecognisedSourceLanguageSkipsTheGlossaryButStillTranslates),
     // so `detected` comes back nil and the term-list call is skipped — keeping the
-    // FakeLLMClient response order simple, one response per chunk.
+    // FakeLLMClient response order simple, one response for the one model-bound chunk.
     let prose = String(repeating: "Сервер перевіряє ресурс перед публікацією ресурсу. ", count: 12)
     let fence = "```bash\nprofile-server publish --strict --out ./dist\n```"
     let doc = prose + "\n\n" + fence
     // Chosen so the fence doesn't fit alongside the prose in one chunk, forcing
     // Chunker to flush the prose as chunk 0 and the fence alone as chunk 1 — the
-    // exact shape that made ResponseCleaner strip a real code block's markers.
+    // exact shape that made ResponseCleaner strip a real code block's markers, before
+    // the passthrough skip removed the model call for chunk 1 entirely.
     let maxCharacters = prose.trimmingCharacters(in: .whitespacesAndNewlines).count + 20
     let chunks = Chunker.plan(doc, maxCharacters: maxCharacters).chunks
     #expect(chunks.count == 2)
-    #expect(chunks[1].containsCodeFence)
+    #expect(chunks[1].passthrough)
     #expect(chunks[1].text == fence)
 
-    let fake = FakeLLMClient(responses: ["переклад абзацу", fence])
+    let fake = FakeLLMClient(responses: ["переклад абзацу"])
     let translator = Translator(client: fake)
     let outcome = try await translator.translate(
         text: doc, target: .ru, tone: .neutral, userGlossary: nil,
         options: ChatOptions(model: "test"), maxChunkCharacters: maxCharacters)
     #expect(outcome.chunks.count == 2)
+    #expect(fake.receivedMessages.count == 1) // the passthrough chunk never reaches the model
+    #expect(outcome.modelChunkCount == 1)
     #expect(outcome.translatedChunks[1] == fence)
     #expect(outcome.translatedChunks[1].hasPrefix("```"))
     #expect(outcome.translatedChunks[1].hasSuffix("```"))
@@ -186,15 +193,24 @@ private struct FakeTermListFailure: Error {}
     #expect(outcome.checks.allSatisfy { $0.status != .missing })
 }
 
-@Test func aUserGlossaryTermInsideACodeFenceIsNotInjectedOrChecked() async throws {
+@Test func aUserGlossaryTermInsideInlineCodeIsNotInjectedOrChecked() async throws {
     // CC-4: a user term that occurs only inside code must not reach the prompt —
-    // it would contradict the "reproduce fenced code byte for byte" rule in the
-    // same prompt — and must not surface as a GlossaryVerifier check either, since
-    // a model that correctly leaves the fence untranslated would otherwise be
+    // it would contradict the "reproduce code byte for byte" rule in the same
+    // prompt — and must not surface as a GlossaryVerifier check either, since a
+    // model that correctly leaves the code untranslated would otherwise be
     // reported `.missing` for obeying the higher-priority rule.
-    let text = "```bash\nrun --strict\n```"
+    //
+    // Was a fenced block until CP Task 2: a document that is *nothing but* a fenced
+    // block is now a passthrough chunk (spec §2.1) and never reaches the model at
+    // all, which proves this exact guarantee even more strongly but no longer
+    // exercises the per-chunk code-stripping filter this test exists to pin — there
+    // is no prompt left to inspect. Inline code does not force a chunk boundary
+    // (only a whole fenced block does, per CP Task 1), so it still reaches
+    // `PromptBuilder` inside an ordinary model-bound chunk, which is what this test
+    // uses instead.
+    let text = "Run `run --strict` please."
     let glossary = Glossary(entries: [GlossaryEntry(term: "strict", translations: ["ru": "строгий"])])
-    let fake = FakeLLMClient(responses: [text]) // model reproduces the fence verbatim
+    let fake = FakeLLMClient(responses: [text]) // model reproduces the inline code verbatim
     let translator = Translator(client: fake)
     let outcome = try await translator.translate(
         text: text, target: .ru, tone: .neutral, userGlossary: glossary,
@@ -1236,4 +1252,93 @@ final class EmissionClock: @unchecked Sendable {
         text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
         options: ChatOptions(model: "test"), maxChunkCharacters: 900)
     #expect(outcome.detectedSource == .en)
+}
+
+@Test func translationAlsoStripsAnEchoedMarkerWrapper() async throws {
+    // The marker unwrap lives in the shared per-chunk machinery, so the translate
+    // route gets the same guarantee правка needed: both user prompts wrap the text
+    // in <text>…</text>, and either route's model can echo them back.
+    let fake = FakeLLMClient(responses: ["<text>\nПривет, мир.\n</text>"])
+    let outcome = try await Translator(client: fake).translate(
+        text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900)
+    #expect(outcome.final == "Привет, мир.")
+}
+
+// MARK: - CP Task 2: passthrough chunks skip the model; modelChunkCount
+
+@Test func aPassthroughChunkNeverReachesTheModelAndItsBytesArriveVerbatim() async throws {
+    let source = "Пролог.\n\n```swift\nlet зц = 1 // нарочно с опечаткой\n```\n\nЭпилог."
+    let fake = FakeLLMClient(responses: ["Prologue.", "Epilogue."])
+    let translator = Translator(client: fake)
+    // `var streamed = ""` mutated directly from the `@Sendable` `onToken` closure is a
+    // Swift 6 capture error (mutation of a captured var in concurrently-executing code) —
+    // `TokenCollector` is this file's existing answer to exactly that, used by every other
+    // streaming test below.
+    let collector = TokenCollector()
+    let outcome = try await translator.translate(
+        text: source, target: .en, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "fake"), maxChunkCharacters: 900,
+        onToken: collector.onToken)
+    // The strong pin (docs/TESTING.md shape): not merely «two calls», but «no message
+    // ever sent to the model contains the fenced bytes» — a call-count pin alone
+    // survives the defect «called, with the wrong chunk».
+    for messages in fake.receivedMessages {
+        for message in messages {
+            #expect(!message.content.contains("let зц = 1"))
+        }
+    }
+    #expect(fake.receivedMessages.count == 2)
+    #expect(outcome.final.contains("```swift\nlet зц = 1 // нарочно с опечаткой\n```"))
+    #expect(collector.text == outcome.final)
+    #expect(outcome.modelChunkCount == 2)
+}
+
+@Test func anAllCodeDocumentSucceedsWithoutAModelCallAndNilTTFT() async throws {
+    let source = "```sh\nls -la\n```"
+    let fake = FakeLLMClient(responses: [])
+    let translator = Translator(client: fake)
+    let collector = TokenCollector()
+    let outcome = try await translator.translate(
+        text: source, target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "fake"), maxChunkCharacters: 900,
+        onToken: collector.onToken)
+    #expect(fake.receivedMessages.isEmpty)
+    #expect(outcome.final == source)
+    #expect(collector.text == source)
+    #expect(outcome.modelChunkCount == 0)
+    #expect(outcome.timeToFirstTokenMS == nil)   // nil keeps meaning «no model emission»
+    #expect(outcome.stats.isEmpty)
+}
+
+@Test func aDocumentGlossaryIsNeverAttemptedBelowTwoModelBoundChunks() async throws {
+    // Fence + one paragraph = 2 chunks but only 1 model-bound: no term-list call may
+    // fire (Translator.swift's glossary trigger counts model-bound chunks, not raw ones).
+    let source = "```sh\nls\n```\n\nParagraph about the listing command and its flags."
+    let fake = FakeLLMClient(responses: ["Абзац про команду вывода списка."])
+    let translator = Translator(client: fake)
+    let outcome = try await translator.translate(
+        text: source, target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "fake"), maxChunkCharacters: 900)
+    #expect(fake.receivedMessages.count == 1)   // per-chunk call only, no term-list call
+    #expect(outcome.documentGlossaryAttempted == false)
+    #expect(outcome.modelChunkCount == 1)
+}
+
+// MARK: - CP Task 4: inline-code positional restore
+
+@Test func anInlineSpanEditedByTheModelIsRestoredInFinalAndStreamAlike() async throws {
+    let source = "Выполните комманду `git comit --amend` сейчас."
+    let fake = FakeLLMClient(responses: ["Выполните команду `git commit --amend` сейчас."])
+    let translator = Translator(client: fake)
+    // `var streamed = ""` mutated directly from the `@Sendable` `onToken` closure is a
+    // Swift 6 capture error — `TokenCollector` is this file's existing answer, used by
+    // every other streaming test in this file.
+    let collector = TokenCollector()
+    let outcome = try await translator.proofread(
+        text: source, level: .errorsOnly,
+        options: ChatOptions(model: "fake"), maxChunkCharacters: 900,
+        onToken: collector.onToken)
+    #expect(outcome.final == "Выполните команду `git comit --amend` сейчас.")
+    #expect(collector.text == outcome.final)
 }

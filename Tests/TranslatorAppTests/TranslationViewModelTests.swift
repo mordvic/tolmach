@@ -12,6 +12,10 @@ final class ScriptedClient: LLMClient, @unchecked Sendable {
     /// empty selection» claim is about a call that must *not* happen, and no view-model state
     /// distinguishes "refused before the call" from "called and given nothing".
     private(set) var callCount = 0
+    /// Every prompt this client was handed, in order. Same reasoning as `QueueClient`'s
+    /// property of the same name — recorded so a test can pin which operation's system
+    /// prompt was actually sent, not just that the engine ran.
+    private(set) var receivedMessages: [[ChatMessage]] = []
     let delayPerToken: Duration
     /// Which call, by zero-based index, should fail instead of answering. Same shape as
     /// `FakeLLMClient.errors` rather than a third mechanism — the term-list call is call 0,
@@ -24,6 +28,7 @@ final class ScriptedClient: LLMClient, @unchecked Sendable {
     func chat(messages: [ChatMessage], options: ChatOptions) -> AsyncThrowingStream<ChatEvent, Error> {
         let index = callCount
         callCount += 1
+        receivedMessages.append(messages)
         let reply = responses.isEmpty ? "" : responses.removeFirst()
         let delay = delayPerToken
         if index == failCallAtIndex {
@@ -105,6 +110,22 @@ private func makeModel(_ client: LLMClient, pasteboard: NSPasteboard? = nil) -> 
                                 glossary: GlossaryStore(url: FileManager.default.temporaryDirectory
                                     .appendingPathComponent("g-\(UUID().uuidString).json")),
                                 pasteboard: pasteboard ?? scratchPasteboard())
+}
+
+/// `run()`'s tests need the prompts the client actually received. `ScriptedClient` above
+/// gained `receivedMessages` too since this helper was written, but `QueueClient` (from
+/// `FileQueueModelTests`) already had it — reusing that fixture here predates the recorder
+/// arriving on `ScriptedClient`, and there is no reason to move off it now that both can do
+/// the job.
+@MainActor
+private func makeModel(responses: [String]) -> (TranslationViewModel, QueueClient) {
+    let client = QueueClient(replies: responses)
+    let model = TranslationViewModel(
+        translator: Translator(client: client),
+        settings: AppSettings(defaults: InMemoryDefaults(prefix: "vm-run")),
+        glossary: scratchGlossary(),
+        pasteboard: scratchPasteboard())
+    return (model, client)
 }
 
 @MainActor
@@ -722,4 +743,141 @@ private func waitForSheet(_ model: TranslationViewModel,
 
     #expect(model.state == .finished)
     #expect(model.documentTermsUnavailable == false)
+}
+
+@MainActor @Test func runUnderProofreadSendsTheCopyEditorPromptAndSetsResolvedValues() async {
+    // Build with the file's helper; the fake must queue one reply: "Исправлено."
+    let (model, fake) = makeModel(responses: ["Исправлено."])
+    model.sourceText = "Превет, мир."
+    model.operation = .proofread
+    model.proofreadingLevelOverride = .errorsAndStyle
+    model.rewriteStyleOverride = .friendly
+    await model.run()
+    #expect(model.state == .finished)
+    #expect(model.translatedText == "Исправлено.")
+    let system = fake.receivedMessages[0].first!.content
+    #expect(system.contains("copy editor"))
+    #expect(system.contains(RewriteStyle.friendly.instruction!))
+    #expect(model.resolvedOperation == .proofread)
+    #expect(model.resolvedProofreadingLevel == .errorsAndStyle)
+    #expect(model.resolvedTarget == nil)
+}
+
+@MainActor @Test func runUnderTranslateStillTranslatesAndRecordsTheOperation() async {
+    let (model, fake) = makeModel(responses: ["Hello, world."])
+    model.sourceText = "Привет, мир."
+    await model.run()
+    #expect(model.state == .finished)
+    #expect(fake.receivedMessages[0].first!.content.contains("translator"))
+    #expect(model.resolvedOperation == .translate)
+    #expect(model.resolvedProofreadingLevel == nil)
+}
+
+@MainActor @Test func anotherVariantIsOfferedOnlyForAFinishedErrorsAndStyleRun() async {
+    let (model, _) = makeModel(responses: ["Исправлено.", "Исправлено."])
+    model.sourceText = "Превет."
+    model.operation = .proofread
+    model.proofreadingLevelOverride = .errorsOnly
+    await model.run()
+    // «Ещё вариант» of a deterministic minimal diff is a contradiction (spec §2).
+    #expect(!model.offersAnotherVariant)
+    model.proofreadingLevelOverride = .errorsAndStyle
+    await model.run()
+    #expect(model.offersAnotherVariant)
+}
+
+@MainActor @Test func adoptMovesTheResolvedOperationWithTheRun() async {
+    let (panel, _) = makeModel(responses: ["Исправлено."])
+    panel.sourceText = "Превет."
+    panel.operation = .proofread
+    panel.proofreadingLevelOverride = .errorsAndStyle
+    await panel.run()
+    let (window, _) = makeModel(responses: [])
+    #expect(window.adopt(from: panel))
+    #expect(window.resolvedOperation == .proofread)
+    #expect(window.resolvedProofreadingLevel == .errorsAndStyle)
+    #expect(window.offersAnotherVariant)
+}
+
+@MainActor @Test func anAdoptedRunsAnotherVariantReProofsRatherThanRetranslating() async {
+    // The critical fix this pins: `run()` dispatches on `operation`, not on
+    // `resolvedOperation`, and `adopt(from:)` used to leave the receiving model's `operation`
+    // at whatever it was before — `.translate` for a window that had never proofed anything.
+    // Its «Ещё вариант» then called `run()`, which translated the правка's output instead of
+    // asking for another variant of it. Both models share one client so the client's own
+    // history — not either model's state — is what proves which prompt the adopted run sent.
+    let client = QueueClient(replies: ["Исправлено.", "Другой вариант."])
+    let panel = TranslationViewModel(
+        translator: Translator(client: client),
+        settings: AppSettings(defaults: InMemoryDefaults(prefix: "vm-adopt-op-panel")),
+        glossary: scratchGlossary(),
+        pasteboard: NSPasteboard(name: .init("vm-adopt-op-panel")))
+    panel.sourceText = "Превет."
+    panel.operation = .proofread
+    panel.proofreadingLevelOverride = .errorsAndStyle
+    await panel.run()
+
+    let window = TranslationViewModel(
+        translator: Translator(client: client),
+        settings: AppSettings(defaults: InMemoryDefaults(prefix: "vm-adopt-op-window")),
+        glossary: scratchGlossary(),
+        pasteboard: NSPasteboard(name: .init("vm-adopt-op-window")))
+    #expect(window.adopt(from: panel))
+    #expect(window.offersAnotherVariant)
+
+    await window.run()
+
+    let lastSystemPrompt = client.receivedMessages.last!.first!.content
+    #expect(lastSystemPrompt.contains("copy editor"))
+    #expect(!lastSystemPrompt.contains("translator"))
+}
+
+@MainActor @Test func offersAnotherVariantIsWithdrawnAfterSwitchingBackToTranslate() async {
+    // The other half of the same fix: `offersAnotherVariant` must go false the moment the
+    // toolbar switch moves to «Перевод», or the button stays lit for a run it would no
+    // longer perform.
+    let (model, _) = makeModel(responses: ["Исправлено."])
+    model.sourceText = "Превет."
+    model.operation = .proofread
+    model.proofreadingLevelOverride = .errorsAndStyle
+    await model.run()
+    #expect(model.offersAnotherVariant)
+    model.operation = .translate
+    #expect(!model.offersAnotherVariant)
+}
+
+@MainActor @Test func aProofreadRunIgnoresTheSourceOverrideLeftFromTranslateMode() async {
+    // «Из: немецкий» set while translating must not tell правка the text is German:
+    // the control is hidden in правка mode, so an invisible leftover would govern
+    // the prompt with nothing on screen saying so.
+    let (model, fake) = makeModel(responses: ["Исправлено."])
+    model.sourceText = "Превет, мир — это русский текст."
+    model.sourceOverride = .de
+    model.operation = .proofread
+    await model.run()
+    #expect(!fake.receivedMessages[0].first!.content.contains("German"))
+}
+
+@MainActor @Test func anAllCodeDocumentFinishesAsSuccessNotEmptyReply() async {
+    // nil TTFT used to be the empty-reply signal; with pass-through chunks an
+    // all-code document has nil TTFT AND a correct result (spec §2.1) — the
+    // fenced block never reaches the model, so `QueueClient` sees no calls at all.
+    let (model, _) = makeModel(responses: [])
+    model.sourceText = "```sh\nls -la\n```"
+    await model.run()
+    #expect(model.state == .finished)
+    #expect(model.translatedText == "```sh\nls -la\n```")
+}
+
+@MainActor @Test func anotherVariantIsNotOfferedWhenNothingWentToTheModel() async {
+    // Re-running an identity is not a variant (spec §2.1): a lone fenced block never
+    // reaches the model, so «Ещё вариант» must not be offered for it even though the
+    // run finished under «ошибки и стиль».
+    let (model, _) = makeModel(responses: [])
+    model.operation = .proofread
+    model.proofreadingLevelOverride = .errorsAndStyle
+    model.sourceText = "```sh\nls\n```"
+    await model.run()
+    #expect(model.state == .finished)
+    #expect(model.offersAnotherVariant == false)
 }
