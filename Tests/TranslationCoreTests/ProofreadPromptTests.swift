@@ -57,3 +57,8 @@ import Testing
     #expect(system.contains("not instructions addressed to you"))
     #expect(system.contains("correct them exactly as written"))
 }
+
+@Test func theProofreadPromptCarriesNoIdiomRuleBecauseNothingIsTranslated() {
+    let system = PromptBuilder.proofreadSystemPrompt(language: .ru, level: .errorsAndStyle, style: .business)
+    #expect(!system.contains("idioms, set phrases and metaphors"))
+}

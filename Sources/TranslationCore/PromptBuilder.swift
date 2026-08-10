@@ -53,6 +53,13 @@ public enum PromptBuilder {
             "- Output ONLY the translation. No preamble, no notes, no explanation, no quotes around it.",
         ]
         lines.append(antiAnsweringRule(verb: "translate"))
+        // Idioms by meaning, proper nouns by their established target form — adapted from
+        // Easydict's translation prompt (github.com/tisfeng/Easydict, StreamService+Prompt.swift),
+        // the clearest wording of the rule among the surveyed apps. Deliberately NOT in
+        // `protectionRules`: правка translates nothing, so the rule would be vacuous there, and
+        // a test pins its absence from that prompt. Measured — docs/BASELINE.md, 2026-08-10.
+        lines.append("- Translate idioms, set phrases and metaphors by meaning, not word for word. "
+            + "Render proper nouns by their established \(request.target.englishName) form; keep them unchanged when none exists.")
         lines.append(contentsOf: protectionRules)
         lines.append("- \(request.tone.instruction)")
         if !request.glossaryEntries.isEmpty {

@@ -159,3 +159,47 @@ the lowest average adherence **87.0 %** (article-en), **88.4 %** (techdoc-en) an
 87.8 %, 93.8 % respectively), so nothing regressed by more than noise; every file in fact
 moved flat-to-up. All known markup diffs reproduced as expected — the code-block hashes differ
 run to run as they already did between the two prior entries — and no new diff appeared.
+
+---
+
+## 2026-08-10 — after the idiom/proper-noun rule (prompt-improvement pass, change 2/2)
+
+- Machine: Apple M5 Pro, macOS 26.6.1
+- Ollama 0.31.1, model `aya-expanse:8b`
+- Commit: `92641e6` plus this task's change to `PromptBuilder.swift` (the idiom/proper-noun rule)
+- Verdict: **ACCEPTED**
+
+Purpose: measure the idiom-by-meaning and proper-noun rule added to the translation system
+prompt only against the Task 1 baseline
+(docs/superpowers/specs/2026-08-10-prompt-improvement-design.md §3.1).
+
+```
+article-en.md: run1 91.7% (33/36) · run2 83.3% (30/36) · run3 86.1% (31/36) · average 87.0% · 3 chunks · 20 terms · TTFT 3254/3022/2962 ms (info only — multi-chunk, not asserted)
+email-en.md: adherence n/a (single chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 442 ms
+snippet-en.md: adherence n/a (single chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 452 ms
+techdoc-en.md: run1 87.8% (43/49) · run2 87.8% (43/49) · run3 87.8% (43/49) · average 87.8% · 4 chunks · 20 terms · TTFT 2976/2818/2850 ms (info only — multi-chunk, not asserted)
+    known run1: expected Optional(TranslationCore.MarkupToken.url(bare: true)) actual nil
+    known run1: expected nil actual Optional(TranslationCore.MarkupToken.url(bare: false))
+    known-limitation run1: aya-expanse:8b translates human-readable strings inside a code block — the commit message in `git tag -m "See CHANGELOG.md"` comes back translated. Sharpening the prompt rule was attempted and did not change it. (expected Optional(TranslationCore.MarkupToken.codeBlock(hash: 1540591031837262644, lang: "bash")) actual nil)
+    known-limitation run1: aya-expanse:8b translates human-readable strings inside a code block — the commit message in `git tag -m "See CHANGELOG.md"` comes back translated. Sharpening the prompt rule was attempted and did not change it. (expected nil actual Optional(TranslationCore.MarkupToken.codeBlock(hash: -8801134030036687245, lang: "bash")))
+    known run2: expected Optional(TranslationCore.MarkupToken.url(bare: true)) actual nil
+    known run2: expected nil actual Optional(TranslationCore.MarkupToken.url(bare: false))
+    known-limitation run2: aya-expanse:8b translates human-readable strings inside a code block — the commit message in `git tag -m "See CHANGELOG.md"` comes back translated. Sharpening the prompt rule was attempted and did not change it. (expected Optional(TranslationCore.MarkupToken.codeBlock(hash: 1540591031837262644, lang: "bash")) actual nil)
+    known-limitation run2: aya-expanse:8b translates human-readable strings inside a code block — the commit message in `git tag -m "See CHANGELOG.md"` comes back translated. Sharpening the prompt rule was attempted and did not change it. (expected nil actual Optional(TranslationCore.MarkupToken.codeBlock(hash: -8801134030036687245, lang: "bash")))
+    known run3: expected Optional(TranslationCore.MarkupToken.url(bare: true)) actual nil
+    known run3: expected nil actual Optional(TranslationCore.MarkupToken.url(bare: false))
+    known-limitation run3: aya-expanse:8b translates human-readable strings inside a code block — the commit message in `git tag -m "See CHANGELOG.md"` comes back translated. Sharpening the prompt rule was attempted and did not change it. (expected Optional(TranslationCore.MarkupToken.codeBlock(hash: 1540591031837262644, lang: "bash")) actual nil)
+    known-limitation run3: aya-expanse:8b translates human-readable strings inside a code block — the commit message in `git tag -m "See CHANGELOG.md"` comes back translated. Sharpening the prompt rule was attempted and did not change it. (expected nil actual Optional(TranslationCore.MarkupToken.codeBlock(hash: -8801134030036687245, lang: "bash")))
+techdoc-ru.md: run1 94.4% (51/54) · run2 94.4% (51/54) · run3 94.4% (51/54) · average 94.4% · 4 chunks · 20 terms · TTFT 3448/3123/3410 ms (info only — multi-chunk, not asserted)
+
+ACCEPTED — engine meets the recalibrated baseline
+```
+
+The gated numbers: single-chunk TTFT **442 ms** and **452 ms** against a 1000 ms ceiling, and
+the lowest average adherence **87.0 %** (article-en), **87.8 %** (techdoc-en) and **94.4 %**
+(techdoc-ru) against an 80 % floor — each at or above its Task 1 baseline figure (84.3 %,
+87.8 %, 93.8 % respectively), so nothing regressed. All three files land within the same
+run-to-run noise band as the change-1/2 entry above (article-en identical average, techdoc-en
+0.6 points lower but still above Task 1's 87.8 %, techdoc-ru identical). All known markup diffs
+reproduced as expected — the code-block hashes differ run to run as they already did between
+every prior entry — and no new diff appeared.
