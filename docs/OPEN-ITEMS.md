@@ -799,3 +799,73 @@ pre-§3.1 baseline, not just the runner's summary line.
   Уважаемые коллеги! Настоящим уведомляем вас о необходимости предоставить отчётные материалы в
   срок до пятницы. При наличии вопросов надлежит обращаться к руководителю подразделения.
   ```
+
+### Model benchmark — gpt-oss:20b and qwen3:8b (2026-08-10)
+
+Facts for a future model-policy decision about правка; no policy change here. Same runner and
+12-text corpus as the two subsections above, parameterised to take a model as a third argument
+(`CommandLine.arguments[3]`, default `aya-expanse:8b`, into `ChatOptions(model:)`) and recompiled
+with the same command as the follow-up run above. `gpt-oss:20b` is required by the task that asked
+for this benchmark; `qwen3:8b` was time-permitting.
+
+- **codeIntact: 12/12 true for `gpt-oss:20b`**, verified against the source text directly, not
+  only the summary field: 03's and 08's backticked spans (`git comit --amend`, `npm instal`)
+  restored byte-identical in all 3 runs each; 04's and 09's fenced blocks (the YAML comment, the
+  Python string) byte-identical passthrough in all 3 runs each. Confirms the structural guarantee
+  (pass-through + inline restore) holds regardless of model, as the guarantee's design intends —
+  not a restorer bug, no STOP needed.
+- **errorsOnly: aya-expanse:8b's two minimal-diff violations disappear under `gpt-oss:20b`.**
+  02's verb reorder (source «Осуществляеться процесс…»; aya moved the verb to the end 3/3, both
+  before and after the voice fix) does not recur — `gpt-oss:20b` keeps the source's own word
+  order in all 3 runs, only the seeded typo fixed. 06's «Thanks for»→«Thank you for» rewording
+  (present 3/3 under aya) also does not recur — all 3 `gpt-oss:20b` runs keep «Thanks for»
+  verbatim, only the four seeded errors fixed. Elsewhere: 04, 05, 07, 08, 09 clean 3/3 (no wording
+  outside the seed list); 01 clean 2/3 (run 2 adds an unseeded comma and swaps «к пятнице»→«до
+  пятницы» — the same stochastic wobble already on record for this file under aya); 03 clean 2/3
+  (run 1 swaps «зделайте»→«выполните» instead of the literal «сделайте» fix — an unseeded
+  synonym, the same shape as aya's own extra-reword pattern on this file, just a different word);
+  10 regresses on 1/3 (run 3 fixes «i»→«I» and «explane»→«explain» but leaves the first sentence's
+  «.» unconverted to «?», missing a seeded fix aya caught 3/3; run 2 shows the pre-existing,
+  already-documented non-seed artifact of also converting the second sentence's «.» to «?»). Net:
+  26/30 clean runs, 3/30 minor unseeded wording (same shape as aya's own wobble), 1/30 a missed
+  seeded fix — no protected-span corruption anywhere.
+- **Style matrix, `gpt-oss:20b` vs. the aya-expanse:8b after-voice-fix comparison point (this
+  section's prior subsection):** `business` 3/3 (matches aya — genuine formal-register shift,
+  meaning preserved; wording varies run-to-run rather than aya's byte-identical repetition, but
+  the direction is stable). English `friendly` (file 07) 3/3 (matches aya — de-jargonized,
+  meaning preserved). Russian `friendly` (file 12) **2/3 — a genuine shift where aya was a stable
+  0/3 across two separate corpus runs**: 2 of 3 runs replace the formal salutation «Уважаемые
+  коллеги!» with a casual «Привет, коллеги!» and reframe the notice in first person
+  («Напоминаю»/«Напоминаем» vs. «Настоящим уведомляем»); the 3rd run stays a near-no-op.
+  `professional` (file 11) **2/3 attempt a shift where aya was a stable 0/3**: one run moves
+  cleanly into вы-address with a formal opening («Здравствуйте! Пожалуйста, посмотрите…»); a
+  second run mixes an informal ты-imperative («Проверь») into an otherwise formal frame — an
+  internally inconsistent partial shift, not a clean one; the 3rd run stays a near-no-op (only the
+  same cosmetic synonym swap aya showed). `plain` (file 02) **0/3 — a no-op, where aya showed 3/3
+  with grammar defects**: `gpt-oss:20b`'s output is byte-similar to its own errorsOnly reference
+  (only a comma added in 2/3 runs), with none of aya's plainer-vocabulary substitutions and,
+  consequently, none of aya's вы/вас case defect or «вывести» sense-drift either — the defect
+  disappears because the style instruction is not acted on at all, not because it is honoured
+  correctly.
+- **Timing (warm-call wall-clock, the TTFT proxy this bounded benchmark can measure without
+  parsing the JSON stream): ~4–5 s per call for `gpt-oss:20b`**, derived from output-file
+  timestamps across the run (range ~2–9 s depending on chunk size — 04's and 09's fenced texts,
+  which skip the model for their code block, land at the fast end). The first call (cold load)
+  took ~9 s and is excluded per the operational note. This wall-clock carries the cost of
+  `message.thinking`, which `OllamaKit` reads and discards by standing rule — `gpt-oss:20b` is
+  reasoning-prone, so part of every one of these seconds is reasoning tokens the caller never
+  sees, not just the visible reply. All 51 calls completed in one uninterrupted foreground pass,
+  ~4 minutes end to end, exit 0.
+- **`qwen3:8b`: attempted, aborted, inconclusive — recorded as a fact, not a verdict.** The first
+  7 of 51 calls (01 ×3, 02 errorsOnly ×3, 02 `plain` run 1) completed with a warm-call proxy of
+  ~9–20 s each — already 2–4× `gpt-oss:20b`'s pace on short, code-free text. The 8th call
+  (03-ru-inline-code, the first text carrying backticked code) then ran for 13+ minutes at ~3%
+  CPU with no output — not merely slow, unproductive — and was killed rather than let run
+  indefinitely, consistent with this task's «time permitting» allowance for this candidate. The
+  run's stdout log came back empty: the process was ended by `kill`, not by its own exit, and
+  Swift's stdio fully buffers when stdout is piped to `tee`, so the buffered `print` lines never
+  flushed; the 7 output files themselves (written directly, not through stdout) are the only
+  record. No codeIntact or style-matrix conclusion is drawn for `qwen3:8b` — it did not reach a
+  single code-bearing or style-probe text before the abort. Whether the stall is specific to
+  backticked content in the prompt, to this quantization, or to machine load at the time is
+  undiagnosed and out of this task's scope.
