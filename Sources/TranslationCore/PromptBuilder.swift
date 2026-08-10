@@ -122,7 +122,7 @@ public enum PromptBuilder {
         [ChatMessage(role: "system",
                      content: proofreadSystemPrompt(language: language, level: level, style: style)),
          ChatMessage(role: "user", content: """
-         Correct the text between the markers.
+         Correct the text between the markers. Output only the corrected text, without the markers.
 
          <text>
          \(text)

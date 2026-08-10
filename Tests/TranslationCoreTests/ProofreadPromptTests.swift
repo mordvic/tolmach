@@ -13,6 +13,10 @@ import Testing
     let user = messages.last!.content
     #expect(user.contains("<text>"))
     #expect(user.contains("Превет, мир."))
+    // The live model intermittently echoed the markers around its reply (observed
+    // 2026-08-10); the cleaner now guarantees removal, and this clause is the
+    // prompt-side half that lowers how often the guarantee is needed.
+    #expect(user.contains("without the markers"))
 }
 
 @Test func theStyleInstructionReachesThePromptOnlyUnderErrorsAndStyle() {

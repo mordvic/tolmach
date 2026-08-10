@@ -84,3 +84,32 @@ private final class StreamCollector: @unchecked Sendable {
     run.cancel()
     await #expect(throws: CancellationError.self) { try await run.value }
 }
+
+@Test func anEchoedMarkerWrapperIsStrippedAndTheStreamStillMatchesFinal() async throws {
+    // The live failure of 2026-08-10: aya-expanse:8b intermittently returns the
+    // reply wrapped in the user prompt's own <text>…</text> markers. The wrapper
+    // must come off — and the stream must carry the same bytes as `final`, which
+    // forces the buffered path: an unwrap is only decidable at the end of the reply.
+    let fake = FakeLLMClient(responses: ["<text>\nHi, how are you?\n</text>"])
+    let translator = Translator(client: fake)
+    let collector = StreamCollector()
+    let outcome = try await translator.proofread(
+        text: "Hi, how are you?", level: .errorsAndStyle, style: .friendly,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900,
+        onToken: { collector.append($0) })
+    #expect(outcome.final == "Hi, how are you?")
+    #expect(collector.value == outcome.final)
+}
+
+@Test func aSourceThatItselfOpensWithTheMarkerLineIsNotUnwrapped() async throws {
+    // The erring-toward-not-unwrapping rule: when the document being corrected
+    // starts with a literal <text> line, a verbatim reproduction is content, and
+    // stripping it would destroy the user's own text.
+    let source = "<text>\nGenuine content.\n</text>"
+    let fake = FakeLLMClient(responses: [source])
+    let translator = Translator(client: fake)
+    let outcome = try await translator.proofread(
+        text: source, level: .errorsOnly,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900)
+    #expect(outcome.final == source)
+}

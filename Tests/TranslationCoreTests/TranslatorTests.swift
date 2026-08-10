@@ -1237,3 +1237,14 @@ final class EmissionClock: @unchecked Sendable {
         options: ChatOptions(model: "test"), maxChunkCharacters: 900)
     #expect(outcome.detectedSource == .en)
 }
+
+@Test func translationAlsoStripsAnEchoedMarkerWrapper() async throws {
+    // The marker unwrap lives in the shared per-chunk machinery, so the translate
+    // route gets the same guarantee правка needed: both user prompts wrap the text
+    // in <text>…</text>, and either route's model can echo them back.
+    let fake = FakeLLMClient(responses: ["<text>\nПривет, мир.\n</text>"])
+    let outcome = try await Translator(client: fake).translate(
+        text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900)
+    #expect(outcome.final == "Привет, мир.")
+}

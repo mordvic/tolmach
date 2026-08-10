@@ -500,14 +500,15 @@ public struct Translator: Sendable {
     //
     // Tokens are buffered in `.buffering` mode, on every token, checked in
     // this order:
-    //   - ahead of everything else: does the buffer open a fence ("```...")?
-    //     The whole-answer unwrap might apply, and deciding it needs the
+    //   - ahead of everything else: does the buffer open a fence ("```...")
+    //     or the user prompt's own "<text>" marker? Either whole-answer
+    //     unwrap might apply, and deciding it needs the
     //     *end* of the response — so this wins regardless of length or
     //     whether a "\n" has appeared, and the chunk abandons incremental
     //     delivery entirely, falling back to buffering to the end and then a
     //     single full `ResponseCleaner.clean` call, exactly as before
     //     incremental delivery existed.
-    // Absent a fence, buffering ends the moment any of these three holds:
+    // Absent a fence or marker, buffering ends the moment any of these three holds:
     //   1. a "\n" appears — the preamble decision is made right there, on
     //      the completed first line, using the same
     //      `ResponseCleaner.isPreambleLine` rule the buffered cleaner uses
@@ -530,15 +531,15 @@ public struct Translator: Sendable {
     //      path used for the fence case.
     //
     // On the incremental path, no unwrap is ever applied — but that's not a
-    // loss: a chunk that reaches the incremental path did not open with a
-    // fence, so the unwrap could never have applied to it anyway. Its
-    // contribution to `final` is therefore exactly what was sent to `onToken`,
-    // which is the invariant `theStreamReconstructsExactlyWhatFinalContains`
-    // pins for every path.
+    // loss: a chunk that reaches the incremental path opened with neither a
+    // fence nor the "<text>" marker, so no unwrap could have applied to it
+    // anyway. Its contribution to `final` is therefore exactly what was sent
+    // to `onToken`, which is the invariant
+    // `theStreamReconstructsExactlyWhatFinalContains` pins for every path.
     private func streamChunkReply(_ messages: [ChatMessage], chunk: Chunk,
                                   options: ChatOptions, into acc: ChunkRunAccumulators,
                                   onToken: @escaping @Sendable (String) -> Void) async throws -> String {
-        enum Mode: Equatable { case buffering, bufferedFence, incremental }
+        enum Mode: Equatable { case buffering, bufferedToEnd, incremental }
         var mode = Mode.buffering
         var buffer = ""    // raw text seen so far; meaningful only outside .incremental
         var collected = "" // exactly what has been handed to `onToken` for this chunk
@@ -559,7 +560,7 @@ public struct Translator: Sendable {
             case .token(let token):
                 if mode == .incremental { emit(token); continue }
                 buffer += token
-                guard mode == .buffering else { continue } // .bufferedFence: keep accumulating only
+                guard mode == .buffering else { continue } // .bufferedToEnd: keep accumulating only
 
                 // Ahead of the three conditions below, on every token: once the
                 // buffer opens a fence, the whole-answer unwrap might apply,
@@ -567,7 +568,17 @@ public struct Translator: Sendable {
                 // this must win regardless of how long the buffer is or
                 // whether a "\n" has appeared yet.
                 if buffer.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
-                    mode = .bufferedFence
+                    mode = .bufferedToEnd
+                    continue
+                }
+                // The same decision for the user prompt's own "<text>" marker,
+                // for the same reason: the whole-answer marker unwrap (an
+                // intermittent echo, observed live 2026-08-10) is only decidable
+                // at the end of the reply. The echo's first "\n" comes after the
+                // six characters of "<text>", so condition 1 below cannot fire
+                // first and commit the marker line to the stream.
+                if buffer.trimmingCharacters(in: .whitespaces).hasPrefix("<text>") {
+                    mode = .bufferedToEnd
                     continue
                 }
 
@@ -609,11 +620,18 @@ public struct Translator: Sendable {
         }
 
         if mode == .incremental { return collected }
-        // Either the reply's first line opened a fence (unwrap deferred to the
-        // end, exactly as documented above), or the stream ended without ever
-        // producing a "\n" (a single-line reply). Both fall back to the same
-        // buffered path: one full clean, emitted in one `onToken` call.
-        let cleaned = ResponseCleaner.clean(buffer, allowFenceUnwrap: !chunk.containsCodeFence).text
+        // Either the reply opened with a fence or the "<text>" marker (unwrap
+        // deferred to the end, exactly as documented above), or the stream ended
+        // without ever producing a "\n" (a single-line reply). All fall back to
+        // the same buffered path: one full clean, emitted in one `onToken` call.
+        // The marker unwrap is suppressed when the source chunk itself opens
+        // with the marker line — the cleaner's erring-toward-not-unwrapping
+        // rule, same as `containsCodeFence` suppresses the fence unwrap.
+        let cleaned = ResponseCleaner.clean(
+            buffer,
+            allowFenceUnwrap: !chunk.containsCodeFence,
+            allowMarkerUnwrap: !chunk.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                .hasPrefix("<text>")).text
         emit(cleaned)
         return collected
     }
