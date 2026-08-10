@@ -12,6 +12,10 @@ final class ScriptedClient: LLMClient, @unchecked Sendable {
     /// empty selection» claim is about a call that must *not* happen, and no view-model state
     /// distinguishes "refused before the call" from "called and given nothing".
     private(set) var callCount = 0
+    /// Every prompt this client was handed, in order. Same reasoning as `QueueClient`'s
+    /// property of the same name — recorded so a test can pin which operation's system
+    /// prompt was actually sent, not just that the engine ran.
+    private(set) var receivedMessages: [[ChatMessage]] = []
     let delayPerToken: Duration
     /// Which call, by zero-based index, should fail instead of answering. Same shape as
     /// `FakeLLMClient.errors` rather than a third mechanism — the term-list call is call 0,
@@ -24,6 +28,7 @@ final class ScriptedClient: LLMClient, @unchecked Sendable {
     func chat(messages: [ChatMessage], options: ChatOptions) -> AsyncThrowingStream<ChatEvent, Error> {
         let index = callCount
         callCount += 1
+        receivedMessages.append(messages)
         let reply = responses.isEmpty ? "" : responses.removeFirst()
         let delay = delayPerToken
         if index == failCallAtIndex {

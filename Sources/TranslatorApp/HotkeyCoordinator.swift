@@ -229,6 +229,9 @@ final class HotkeyCoordinator {
         // promising «a handful of milliseconds» is now true of the code as well.
         isStartingRun = false
         guard case .text(let text) = captured else { return }
+        // Every press starts with перевод, whatever the previous presentation's switch
+        // said: the hotkey is predictable, the switch is per-presentation (spec §8).
+        panelModel.operation = .translate
         panelModel.sourceText = text
         await runTranslation()
     }
@@ -242,8 +245,27 @@ final class HotkeyCoordinator {
         await runTranslation()
     }
 
+    /// The panel's «Перевод | Правка» switch. Re-runs the **already captured** selection
+    /// under the other operation — it never reads a new one: the user's selection may be
+    /// long gone, and silently operating on something else would be worse than a control
+    /// that does nothing (retry()'s reasoning, verbatim; spec §8).
+    func switchOperation(to operation: TextOperation) async {
+        guard case .text = selection, panelModel.state != .running,
+              panelModel.operation != operation else { return }
+        panelModel.operation = operation
+        await runTranslation()
+    }
+
+    /// «Ещё вариант» — the same re-run under the same operation; temperature is what
+    /// varies the rendering. Offered by the view only for a finished «ошибки и стиль»
+    /// правка (`offersAnotherVariant`).
+    func anotherVariant() async {
+        guard case .text = selection, panelModel.state != .running else { return }
+        await runTranslation()
+    }
+
     private func runTranslation() async {
-        await panelModel.translate()
+        await panelModel.run()
         // Spec 6 is emphatic that capturing a selection must leave the clipboard as the user
         // left it, so this is the *only* path in the app that writes to it without the user
         // asking — and it is behind a setting that is off by default.
