@@ -377,3 +377,17 @@ rather than a general correspondence rule, or one scoped only to the line immedi
 after a fenced block) is a decision left to the controller; this entry records why the
 first attempt does not clear the bar, per the measurement discipline this file exists to
 keep.
+
+**Closing note, same day:** the rule above was reverted. It is worse on `aya-expanse:8b`
+than the regression it targeted — spurious `>` insertions on lines that were never
+blockquotes (9/3 runs on `article-en.md`, a file with zero source blockquotes and zero
+diffs in every prior entry), a new deterministic drop of the level-2 heading before the
+code fence (3/3 runs on both `techdoc-*` files), and the targeted defect itself unmoved
+on `techdoc-ru.md` (6/3 runs, identical before and after). `protectionRules` in
+`Sources/TranslationCore/PromptBuilder.swift` returns to its exact pre-rule content — no
+acceptance run was repeated for this revert, because the code is now byte-identical to
+what the «after pass-through chunks and inline restore (re-basing)» entry above already
+measured; a third pair of live runs would remeasure the same FAILED state, not a new one.
+The engine's state is that entry's: the stochastic blockquote-marker drop on both
+`techdoc-*` files is an open regression, escalated to the user as an accept-or-not
+decision rather than fixed by this attempt.

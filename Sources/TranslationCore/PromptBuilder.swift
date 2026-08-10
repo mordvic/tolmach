@@ -22,13 +22,6 @@ public enum PromptBuilder {
     /// per-route.
     private static let protectionRules = [
         "- Preserve the original structure exactly: line breaks, blank lines, list markers, blockquote markers (>), heading levels.",
-        // Added 2026-08-10: after fenced blocks became pass-through chunks, the corpus's
-        // quote-bearing chunks recomposed and aya-expanse:8b began dropping the leading ">"
-        // in 2/3 acceptance runs on both techdoc files (docs/BASELINE.md, the FAILED
-        // re-basing entry). The general structure line above was not enough on the
-        // recomposed chunks; this dedicated line is the measured strengthening the
-        // GlossaryVerifier escalation contemplated for these shared rules.
-        "- Every output line that corresponds to a source line beginning with \">\" must itself begin with \">\". Never drop a blockquote marker.",
         // Fenced and inline code only. A clause covering "lines indented by four
         // or more spaces" was added and removed the same day: inside a prose
         // chunk it left indented prose — a nested list item, a quoted email —
