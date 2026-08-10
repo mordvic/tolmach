@@ -60,6 +60,8 @@ From the throwaway prototype that preceded the engine. See the note below about 
 | **20 terms** | Document-glossary cap. Chosen against an originally-intended 40 for the reason recorded in the ADR. | `TermExtractor.swift`, `docs/adr/0001` |
 | **900 characters** | Default chunk size. Larger means a more coherent long translation and a longer wait for the first result. | `AppSettings.swift`, and the same default at each call site |
 | **120 s** | Request timeout. | `OllamaClient.swift` |
+| **162–670 ms** vs **221–808 ms**, **~50** vs **~46 tok/s** | Fresh-prompt TTFT (231 B → 4.5 KB prompts) and generation rate for the 4-bit aya conversion on `mlx_lm.server` against `aya-expanse:8b` (GGUF q4) on Ollama 0.31.1, identical prompts, warm model, Apple M5 Pro. MLX leads by ~20–25 % on prefill and ~8–9 % on decode — both runtimes far inside the 1000 ms gate, which is the measured half of why the runtime stays Ollama. Repeat requests hit both servers' prefix caches (~150 ms flat); the fresh-prompt figures are the honest ones. | `docs/BASELINE.md` (2026-08-10 entry) |
+| parity on the corpus | The 2024-era `mlx-community/aya-expanse-8b-4bit` conversion through the full acceptance harness via an NDJSON↔SSE proxy: **ACCEPTED** — `techdoc-en` adherence identical to GGUF to the digit (43/49), the same two known markup diffs and no new one. Why the MLX conversion's translation quality is no longer an open question *for this corpus* — and the other half of staying on Ollama: parity plus a modest speed win does not pay for losing `keep_alive` and the model-management API. | `docs/BASELINE.md` (2026-08-10 entry) |
 
 ### The prototype is not in this repository
 

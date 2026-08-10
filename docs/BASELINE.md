@@ -67,6 +67,65 @@ three runs of the same input, which is the normal spread at temperature 0.2 and 
 single low run is not a regression. `techdoc-en` and `techdoc-ru` were identical across all
 three runs.
 
+### 2026-08-10 — MLX runtime experiment (not the shipping configuration)
+
+- Machine: Apple M5 Pro, 48 GB, macOS 26.6.1
+- Runtime: `mlx_lm.server` 0.31.3 (Python 3.14) serving `mlx-community/aya-expanse-8b-4bit`
+  (the Oct-2024 community conversion, affine 4-bit, group size 64), reached through a local
+  NDJSON↔SSE proxy on 127.0.0.1:11435. `OllamaClient`'s base URL was pointed at the proxy for
+  the run; the one-line change was reverted and never committed. The proxy dropped
+  `delta.reasoning` — parity with `OllamaStreamParser` discarding `message.thinking`.
+- Commit: `01525ec`, engine code unchanged
+- Purpose: close the open question from the Ollama-vs-MLX research — whether the unvalidated
+  MLX conversion of aya translates as well as the GGUF the app ships against
+- Verdict: **ACCEPTED**
+
+```
+article-en.md: run1 87.5% (28/32) · run2 87.5% (28/32) · run3 87.5% (28/32) · average 87.5% · 3 chunks · 18 terms · TTFT 2905/2372/2410 ms (info only — multi-chunk, not asserted)
+email-en.md:   adherence n/a (single chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 358 ms
+snippet-en.md: adherence n/a (single chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 346 ms
+techdoc-en.md: run1 87.8% (43/49) · run2 87.8% (43/49) · run3 87.8% (43/49) · average 87.8% · 4 chunks · 20 terms · TTFT 2693/2320/2299 ms (info only — multi-chunk, not asserted)
+techdoc-ru.md: run1 96.3% (52/54) · run2 96.3% (52/54) · run3 96.3% (52/54) · average 96.3% · 4 chunks · 20 terms · TTFT 3144/2554/2563 ms (info only — multi-chunk, not asserted)
+```
+
+Both known markup diffs reproduced on all three runs of `techdoc-en` — the bare URL rewritten
+into link syntax and the translated commit message inside the bash fence — and no new diff
+appeared. The quantisation did not change the model's character even in its known defects.
+
+Against the 2026-07-29 GGUF entry on the same machine: `techdoc-en` identical to the digit
+(43/49), `techdoc-ru` one point better (52/54 vs 51/54), `article-en` inside that entry's own
+83.3–91.7 % spread — though its term-list call produced 18 terms against 20, so the averages
+stand on slightly different denominators. Single-chunk TTFT **346 ms** and **358 ms** through
+the proxy, against the 1000 ms ceiling.
+
+Two things this entry does *not* show. Repeat runs were token-identical on every file —
+`mlx_lm.server`'s prefix cache makes repeats far less independent than Ollama's, so ×3 here
+demonstrates reproducibility, not sampling spread. And the comparison covers this corpus on
+this machine only.
+
+#### Companion measurement: fresh-prompt TTFT, same day, same machine
+
+Same prompts (a verbatim `PromptBuilder` replica, tone technical, temperature 0.2) sent to both
+runtimes by one client, TTFT stamped at the first non-empty content token, warm model, three
+runs per file. Run 1 of each file is the honest figure — runs 2–3 hit both servers' prefix
+caches and collapse to ~145–155 ms regardless of size.
+
+```
+file (bytes)        mlx_lm.server    Ollama 0.31.1 (GGUF q4)    gen tok/s (mlx / ollama)
+snippet-en (231)    162 ms           221 ms                     50.8 / 46.5
+email-en (538)      274 ms           358 ms                     50.7 / 46.2
+article-en (2326)   409 ms           504 ms                     50.0 / 45.7
+techdoc-en (2847)   503 ms           610 ms                     49.6 / 45.7
+techdoc-ru (4488)   670 ms           808 ms                     49.4 / 45.5
+```
+
+MLX prefill ~20–25 % ahead, decode ~8–9 % — real but modest, and both runtimes sit far inside
+the gate even at ten times the app's 900-character chunk budget. Together with the ACCEPTED
+verdict above, this is the measured basis for staying on Ollama: the win does not pay for
+losing `keep_alive`, the two-model scheduler and the `/api/pull`+`/api/ps` management surface.
+Note the machine: an M5 Pro, where MLX already uses the GPU neural accelerators — the gap may
+differ in either direction on M1–M4.
+
 ---
 
 ## What a regression looks like
