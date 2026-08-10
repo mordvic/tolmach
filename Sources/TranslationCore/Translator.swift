@@ -137,6 +137,16 @@ public struct DocumentTermsDraft: Sendable {
     }
 }
 
+/// Mutable per-run accumulators for the chunk streaming shared by `translate` and
+/// `proofread`: when the first *content* token reached the consumer, and the stats of
+/// every per-chunk call. A reference type so the shared helper can write what the
+/// calling run then reads; it never leaves the run's task, so it needs no
+/// synchronisation.
+private final class ChunkRunAccumulators {
+    var firstTokenAt: Date? = nil
+    var stats: [ChatStats] = []
+}
+
 public struct Translator: Sendable {
     let client: LLMClient
     public init(client: LLMClient) { self.client = client }
@@ -166,8 +176,7 @@ public struct Translator: Sendable {
         reviewDocumentTerms: (@Sendable (DocumentTermsDraft) async throws -> [GlossaryEntry])? = nil
     ) async throws -> TranslationOutcome {
         let started = Date()
-        var firstTokenAt: Date? = nil
-        var stats: [ChatStats] = []
+        let acc = ChunkRunAccumulators()
 
         let detected = source ?? LanguageDetector.detect(text)
         let plan = Chunker.plan(text, maxCharacters: maxChunkCharacters)
@@ -182,134 +191,6 @@ public struct Translator: Sendable {
                 if case .token(let token) = event { buffer += token }
             }
             return buffer
-        }
-
-        // Streams one chunk's translation call, delivering content to `onToken` as
-        // early as it safely can instead of only after the whole chunk finishes.
-        //
-        // `ResponseCleaner` changes exactly two things about a raw reply: the first
-        // line (a preamble) and the outermost fence markers (the whole-answer
-        // unwrap, which only ever applies when the *entire* reply is one fenced
-        // block). Everything between is passed through untouched — which is what
-        // makes incremental delivery safe: once the first line is settled, nothing
-        // later in the reply can change what should have already been sent.
-        //
-        // Tokens are buffered in `.buffering` mode, on every token, checked in
-        // this order:
-        //   - ahead of everything else: does the buffer open a fence ("```...")?
-        //     The whole-answer unwrap might apply, and deciding it needs the
-        //     *end* of the response — so this wins regardless of length or
-        //     whether a "\n" has appeared, and the chunk abandons incremental
-        //     delivery entirely, falling back to buffering to the end and then a
-        //     single full `ResponseCleaner.clean` call, exactly as before
-        //     incremental delivery existed.
-        // Absent a fence, buffering ends the moment any of these three holds:
-        //   1. a "\n" appears — the preamble decision is made right there, on
-        //      the completed first line, using the same
-        //      `ResponseCleaner.isPreambleLine` rule the buffered cleaner uses
-        //      (so the two can't drift) — the line is dropped if it's a
-        //      preamble, and everything from here on is forwarded to `onToken`
-        //      as it arrives;
-        //   2. the buffer's normalised length (`ResponseCleaner.normalizedForPreambleCheck`)
-        //      exceeds `ResponseCleaner.preambleLineMaxLength` before condition 1
-        //      has fired: `isPreambleLine` rejects anything past that length
-        //      before it even checks patterns, and normalisation only ever
-        //      removes characters, so once the buffered text crosses the
-        //      threshold no later token can turn it back into something that
-        //      length would still accept — the buffer can no longer be a
-        //      preamble no matter what follows, so it's safe to flush
-        //      immediately rather than wait for a "\n" that a single long,
-        //      newline-free chunk (the most hotkey-like input there is) might
-        //      never produce at all;
-        //   3. the stream ends without either of the above ever firing (a
-        //      short, single-line reply) — falls back to the same buffered
-        //      path used for the fence case.
-        //
-        // On the incremental path, no unwrap is ever applied — but that's not a
-        // loss: a chunk that reaches the incremental path did not open with a
-        // fence, so the unwrap could never have applied to it anyway. Its
-        // contribution to `final` is therefore exactly what was sent to `onToken`,
-        // which is the invariant `theStreamReconstructsExactlyWhatFinalContains`
-        // pins for every path.
-        func streamChunkTranslation(_ messages: [ChatMessage], chunk: Chunk) async throws -> String {
-            enum Mode: Equatable { case buffering, bufferedFence, incremental }
-            var mode = Mode.buffering
-            var buffer = ""    // raw text seen so far; meaningful only outside .incremental
-            var collected = "" // exactly what has been handed to `onToken` for this chunk
-
-            func emit(_ text: String) {
-                guard !text.isEmpty else { return }
-                // Measures perceived latency, so it is stamped here — the moment
-                // content actually reaches the consumer — not at the first raw
-                // wire token, which on the buffered paths can arrive well before
-                // anything is decided to be worth showing.
-                if firstTokenAt == nil { firstTokenAt = Date() }
-                onToken(text)
-                collected += text
-            }
-
-            for try await event in client.chat(messages: messages, options: options) {
-                switch event {
-                case .token(let token):
-                    if mode == .incremental { emit(token); continue }
-                    buffer += token
-                    guard mode == .buffering else { continue } // .bufferedFence: keep accumulating only
-
-                    // Ahead of the three conditions below, on every token: once the
-                    // buffer opens a fence, the whole-answer unwrap might apply,
-                    // and that can only be decided at the end of the response — so
-                    // this must win regardless of how long the buffer is or
-                    // whether a "\n" has appeared yet.
-                    if buffer.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
-                        mode = .bufferedFence
-                        continue
-                    }
-
-                    if let newline = buffer.firstIndex(of: "\n") {
-                        // Condition 1: the first line is complete — decide the
-                        // preamble on it. Only a genuine preamble line is dropped.
-                        // Anything else on the first line is real content and must
-                        // be emitted along with it — not just the text after the
-                        // newline, which would silently lose the first line
-                        // whenever it wasn't a preamble.
-                        mode = .incremental
-                        let firstLine = String(buffer[buffer.startIndex..<newline])
-                        let rest: String
-                        if ResponseCleaner.isPreambleLine(firstLine) {
-                            rest = String(buffer[buffer.index(after: newline)...])
-                                .trimmingCharacters(in: .whitespacesAndNewlines)
-                        } else {
-                            rest = buffer
-                        }
-                        emit(rest)
-                    } else if ResponseCleaner.normalizedForPreambleCheck(buffer).count
-                                > ResponseCleaner.preambleLineMaxLength {
-                        // Condition 2: no "\n" yet, but the buffer's normalised
-                        // length has permanently ruled out a preamble (see the
-                        // comment above `streamChunkTranslation`) — flush what's
-                        // accumulated so far and go incremental, rather than
-                        // waiting for a newline this chunk may never produce.
-                        mode = .incremental
-                        emit(buffer)
-                    }
-                    // Condition 3 (the stream ends without either firing) is
-                    // handled after the loop, below.
-                case .done(let chatStats):
-                    // `streamChunkTranslation` is only ever used for the per-chunk
-                    // translation calls, so — unlike the term-list call — every
-                    // call here contributes to `stats`.
-                    stats.append(chatStats)
-                }
-            }
-
-            if mode == .incremental { return collected }
-            // Either the reply's first line opened a fence (unwrap deferred to the
-            // end, exactly as documented above), or the stream ended without ever
-            // producing a "\n" (a single-line reply). Both fall back to the same
-            // buffered path: one full clean, emitted in one `onToken` call.
-            let cleaned = ResponseCleaner.clean(buffer, allowFenceUnwrap: !chunk.containsCodeFence).text
-            emit(cleaned)
-            return collected
         }
 
         // The part count as soon as it is known, before anything is asked of the model.
@@ -473,12 +354,13 @@ public struct Translator: Sendable {
             let merged = GlossaryMerge.merge(user: relevantUser, document: documentEntries)
             let request = TranslationRequest(text: chunk.text, source: detected, target: target,
                                              tone: tone, glossaryEntries: merged)
-            // `streamChunkTranslation` delivers this chunk's content to `onToken`
+            // `streamChunkReply` delivers this chunk's content to `onToken`
             // itself — incrementally once its first line is settled, or in one
             // call on the buffered paths (see its doc comment) — so `final` and
             // the stream agree by construction: whatever this returns IS what
             // `onToken` was just called with for this chunk, concatenated.
-            let cleaned = try await streamChunkTranslation(PromptBuilder.messages(for: request), chunk: chunk)
+            let cleaned = try await streamChunkReply(PromptBuilder.messages(for: request), chunk: chunk,
+                                                      options: options, into: acc, onToken: onToken)
             // See the comment on the term-list call above: the underlying stream
             // can end silently instead of throwing when cancellation lands
             // mid-stream, so this must be checked explicitly rather than trusted
@@ -527,15 +409,145 @@ public struct Translator: Sendable {
             // that separators reassemble byte for byte, so the source the model saw
             // and the source on disk are the same document again.
             markupDiffs: MarkupSkeleton.diff(source: text, translation: final),
-            stats: stats,
+            stats: acc.stats,
             // `reviewWait` comes off this too, and it has to: the review point is before the
             // per-часть loop, so every millisecond a reader spent in the sheet sits between
             // `started` and the first token. Subtracting it from `totalMS` alone left the
             // two measuring different clocks — TTFT of 248 000 ms against a total of 8 000,
             // which inverts the relationship the outcome documents.
-            timeToFirstTokenMS: firstTokenAt.map { ($0.timeIntervalSince(started) - reviewWait) * 1000 },
+            timeToFirstTokenMS: acc.firstTokenAt.map { ($0.timeIntervalSince(started) - reviewWait) * 1000 },
             totalMS: (Date().timeIntervalSince(started) - reviewWait) * 1000,
             documentGlossaryFailure: documentGlossaryFailure,
             documentGlossaryAttempted: documentGlossaryAttempted)
+    }
+
+    // Streams one chunk's translation call, delivering content to `onToken` as
+    // early as it safely can instead of only after the whole chunk finishes.
+    //
+    // `ResponseCleaner` changes exactly two things about a raw reply: the first
+    // line (a preamble) and the outermost fence markers (the whole-answer
+    // unwrap, which only ever applies when the *entire* reply is one fenced
+    // block). Everything between is passed through untouched — which is what
+    // makes incremental delivery safe: once the first line is settled, nothing
+    // later in the reply can change what should have already been sent.
+    //
+    // Tokens are buffered in `.buffering` mode, on every token, checked in
+    // this order:
+    //   - ahead of everything else: does the buffer open a fence ("```...")?
+    //     The whole-answer unwrap might apply, and deciding it needs the
+    //     *end* of the response — so this wins regardless of length or
+    //     whether a "\n" has appeared, and the chunk abandons incremental
+    //     delivery entirely, falling back to buffering to the end and then a
+    //     single full `ResponseCleaner.clean` call, exactly as before
+    //     incremental delivery existed.
+    // Absent a fence, buffering ends the moment any of these three holds:
+    //   1. a "\n" appears — the preamble decision is made right there, on
+    //      the completed first line, using the same
+    //      `ResponseCleaner.isPreambleLine` rule the buffered cleaner uses
+    //      (so the two can't drift) — the line is dropped if it's a
+    //      preamble, and everything from here on is forwarded to `onToken`
+    //      as it arrives;
+    //   2. the buffer's normalised length (`ResponseCleaner.normalizedForPreambleCheck`)
+    //      exceeds `ResponseCleaner.preambleLineMaxLength` before condition 1
+    //      has fired: `isPreambleLine` rejects anything past that length
+    //      before it even checks patterns, and normalisation only ever
+    //      removes characters, so once the buffered text crosses the
+    //      threshold no later token can turn it back into something that
+    //      length would still accept — the buffer can no longer be a
+    //      preamble no matter what follows, so it's safe to flush
+    //      immediately rather than wait for a "\n" that a single long,
+    //      newline-free chunk (the most hotkey-like input there is) might
+    //      never produce at all;
+    //   3. the stream ends without either of the above ever firing (a
+    //      short, single-line reply) — falls back to the same buffered
+    //      path used for the fence case.
+    //
+    // On the incremental path, no unwrap is ever applied — but that's not a
+    // loss: a chunk that reaches the incremental path did not open with a
+    // fence, so the unwrap could never have applied to it anyway. Its
+    // contribution to `final` is therefore exactly what was sent to `onToken`,
+    // which is the invariant `theStreamReconstructsExactlyWhatFinalContains`
+    // pins for every path.
+    private func streamChunkReply(_ messages: [ChatMessage], chunk: Chunk,
+                                  options: ChatOptions, into acc: ChunkRunAccumulators,
+                                  onToken: @escaping @Sendable (String) -> Void) async throws -> String {
+        enum Mode: Equatable { case buffering, bufferedFence, incremental }
+        var mode = Mode.buffering
+        var buffer = ""    // raw text seen so far; meaningful only outside .incremental
+        var collected = "" // exactly what has been handed to `onToken` for this chunk
+
+        func emit(_ text: String) {
+            guard !text.isEmpty else { return }
+            // Measures perceived latency, so it is stamped here — the moment
+            // content actually reaches the consumer — not at the first raw
+            // wire token, which on the buffered paths can arrive well before
+            // anything is decided to be worth showing.
+            if acc.firstTokenAt == nil { acc.firstTokenAt = Date() }
+            onToken(text)
+            collected += text
+        }
+
+        for try await event in client.chat(messages: messages, options: options) {
+            switch event {
+            case .token(let token):
+                if mode == .incremental { emit(token); continue }
+                buffer += token
+                guard mode == .buffering else { continue } // .bufferedFence: keep accumulating only
+
+                // Ahead of the three conditions below, on every token: once the
+                // buffer opens a fence, the whole-answer unwrap might apply,
+                // and that can only be decided at the end of the response — so
+                // this must win regardless of how long the buffer is or
+                // whether a "\n" has appeared yet.
+                if buffer.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+                    mode = .bufferedFence
+                    continue
+                }
+
+                if let newline = buffer.firstIndex(of: "\n") {
+                    // Condition 1: the first line is complete — decide the
+                    // preamble on it. Only a genuine preamble line is dropped.
+                    // Anything else on the first line is real content and must
+                    // be emitted along with it — not just the text after the
+                    // newline, which would silently lose the first line
+                    // whenever it wasn't a preamble.
+                    mode = .incremental
+                    let firstLine = String(buffer[buffer.startIndex..<newline])
+                    let rest: String
+                    if ResponseCleaner.isPreambleLine(firstLine) {
+                        rest = String(buffer[buffer.index(after: newline)...])
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                    } else {
+                        rest = buffer
+                    }
+                    emit(rest)
+                } else if ResponseCleaner.normalizedForPreambleCheck(buffer).count
+                            > ResponseCleaner.preambleLineMaxLength {
+                    // Condition 2: no "\n" yet, but the buffer's normalised
+                    // length has permanently ruled out a preamble (see the
+                    // comment above `streamChunkReply`) — flush what's
+                    // accumulated so far and go incremental, rather than
+                    // waiting for a newline this chunk may never produce.
+                    mode = .incremental
+                    emit(buffer)
+                }
+                // Condition 3 (the stream ends without either firing) is
+                // handled after the loop, below.
+            case .done(let chatStats):
+                // `streamChunkReply` is only ever used for the per-chunk
+                // translation calls, so — unlike the term-list call — every
+                // call here contributes to `stats`.
+                acc.stats.append(chatStats)
+            }
+        }
+
+        if mode == .incremental { return collected }
+        // Either the reply's first line opened a fence (unwrap deferred to the
+        // end, exactly as documented above), or the stream ended without ever
+        // producing a "\n" (a single-line reply). Both fall back to the same
+        // buffered path: one full clean, emitted in one `onToken` call.
+        let cleaned = ResponseCleaner.clean(buffer, allowFenceUnwrap: !chunk.containsCodeFence).text
+        emit(cleaned)
+        return collected
     }
 }
