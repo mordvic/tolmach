@@ -62,3 +62,15 @@ import Testing
     let system = PromptBuilder.proofreadSystemPrompt(language: .ru, level: .errorsAndStyle, style: .business)
     #expect(!system.contains("idioms, set phrases and metaphors"))
 }
+
+@Test func aNamedStyleDropsVoiceFromTheLevelInstruction() {
+    // «Preserve the voice» and «rewrite the register» were mutually exclusive; the
+    // model resolved the conflict by doing nothing (spec §3.1, measured 3/3 no-ops).
+    let withStyle = PromptBuilder.proofreadSystemPrompt(language: .ru, level: .errorsAndStyle, style: .friendly)
+    #expect(!withStyle.contains("voice"))
+    #expect(withStyle.contains("Preserve the author's meaning and overall structure."))
+    let original = PromptBuilder.proofreadSystemPrompt(language: .ru, level: .errorsAndStyle, style: .original)
+    #expect(original.contains("meaning, voice, and overall structure"))
+    let errorsOnly = PromptBuilder.proofreadSystemPrompt(language: .ru, level: .errorsOnly, style: .friendly)
+    #expect(errorsOnly.contains("only where an error was corrected"))   // untouched
+}

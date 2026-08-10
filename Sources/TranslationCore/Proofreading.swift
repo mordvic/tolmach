@@ -32,6 +32,18 @@ public enum ProofreadingLevel: String, CaseIterable, Sendable {
     /// the settings pane both read this rather than restating the comparison — a restated
     /// condition is how two surfaces come to disagree (spec §7).
     public var allowsRewriteStyle: Bool { self == .errorsAndStyle }
+
+    /// The style-aware variant. When a named style accompanies this level, «voice»
+    /// leaves the preservation list — the style owns the voice, and keeping both
+    /// instructions produced measured 3/3 no-ops on «дружеский» and «простой»
+    /// (spec §3.1; docs/OPEN-ITEMS.md §5). `errorsOnly` ignores the flag: no style
+    /// ever accompanies it.
+    public func instruction(styleGovernsVoice: Bool) -> String {
+        guard self == .errorsAndStyle, styleGovernsVoice else { return instruction }
+        return "Fix spelling, punctuation, and grammatical errors, and also smooth awkward phrasing: "
+            + "remove bureaucratic constructions, needless repetition, and clumsy word order. "
+            + "Preserve the author's meaning and overall structure."
+    }
 }
 
 /// The register a rewrite aims at. `.original` — «как в оригинале» — is a case rather

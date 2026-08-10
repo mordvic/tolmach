@@ -134,7 +134,8 @@ public enum PromptBuilder {
         ]
         lines.append(antiAnsweringRule(verb: "correct"))
         lines.append(contentsOf: protectionRules)
-        lines.append("- \(level.instruction)")
+        let styleGovernsVoice = level.allowsRewriteStyle && style.instruction != nil
+        lines.append("- \(level.instruction(styleGovernsVoice: styleGovernsVoice))")
         // The engine-side enforcement of the availability rule: the UI disables the style
         // control under «только ошибки», and this guard holds even for a caller that
         // bypasses the UI (spec §4.1). `.original`'s instruction is nil either way.
