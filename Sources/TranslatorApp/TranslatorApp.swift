@@ -229,7 +229,7 @@ struct TranslatorApp: App {
                 // have it. What changed is that «running» now means the visible mode's run
                 // rather than the text model's.
                 let action = PrimaryAction.forMode(mode, text: translation, queue: queue)
-                Button("Перевести") { Task { await action.start() } }
+                Button(action.startTitle) { Task { await action.start() } }
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(action.isRunning || !action.canStart || !statusModel.status.isHealthy)
                 Button("Отмена") { action.cancel() }
