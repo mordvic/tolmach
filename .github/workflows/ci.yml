@@ -19,16 +19,25 @@ concurrency:
 
 jobs:
   build-and-test:
-    runs-on: macos-15
+    # macos-26, not macos-15, so that CI compiles with the same toolchain the work is done on.
+    # Measured against the runner images of 2026-07-28: the newest Xcode on macos-15 is 26.3
+    # (17C529), which carries Swift 6.2.4, while macos-26 ships 26.6 (17F113) — Swift 6.3.3, the
+    # version on the development machine. The package itself parses under either; the gap matters
+    # because a dependency may declare a tools-version this side of 6.3, and SwiftPM then fails
+    # to read its manifest rather than warning. Note the platform floor stays macOS 14: building
+    # against a newer SDK is what the warning gate below now watches for.
+    runs-on: macos-26
     timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
 
       # Pinned to the runner image's newest Xcode rather than left to the default, which is not
-      # always the newest installed. The package is `swift-tools-version: 6.0` with
-      # `.swiftLanguageMode(.v6)` on every target, so a Swift 5 toolchain does not merely warn —
-      # it fails to parse the manifest.
+      # always the newest installed — on macos-15 the default was 16.4 with 26.3 sitting beside
+      # it. On macos-26 the default *is* the newest, so this step currently changes nothing; it
+      # stays because that coincidence is the image's choice and not a promise. The package is
+      # `swift-tools-version: 6.0` with `.swiftLanguageMode(.v6)` on every target, so a Swift 5
+      # toolchain does not merely warn — it fails to parse the manifest.
       - name: Select the newest installed Xcode
         run: |
           set -euo pipefail
