@@ -9,6 +9,14 @@ public enum ProofreadingLevel: String, CaseIterable, Sendable {
     public var instruction: String {
         switch self {
         case .errorsOnly:
+            // 2026-08-10 calibration: the baseline corpus run (docs/OPEN-ITEMS.md, правка
+            // calibration section) showed this wording rephrasing beyond seeded errors on
+            // file 02 (verb reordered, 3/3) and file 06 ("Thanks for" → "Thank you for",
+            // 3/3). A candidate append — "If a sentence contains no error, reproduce it
+            // unchanged, word for word." — was tried and re-measured: both failures
+            // persisted 3/3, byte-identical to the pre-edit output, so the append changed
+            // nothing observable. Reverted; the failure is recorded as a model limitation
+            // in docs/OPEN-ITEMS.md rather than left as a silent, ineffective prompt edit.
             "Fix only objective errors: spelling, punctuation, and clear grammatical mistakes. "
             + "Do not rephrase, do not reorder, do not restyle — keep every wording choice the "
             + "author made. The result must differ from the original only where an error was corrected."
@@ -40,12 +48,33 @@ public enum RewriteStyle: String, CaseIterable, Sendable {
         case .original:
             nil
         case .friendly:
+            // 2026-08-10 calibration: the baseline corpus run showed this wording produced
+            // output byte-identical to `.original`'s in 3/3 runs on file 11 — no observable
+            // register shift. A more specific candidate ("direct address, light
+            // contractions... no stiffness") was tried and re-measured: still
+            // byte-identical to `.original` in 3/3 runs. Reverted; recorded as a model
+            // limitation in docs/OPEN-ITEMS.md rather than left as an ineffective edit.
             "Rewrite in a warm, friendly, informal register — the way one writes to a colleague one knows well."
         case .business:
             "Rewrite in a formal, polite business register, suitable for letters, applications, and official correspondence."
         case .professional:
+            // 2026-08-10 calibration: the baseline corpus run showed no reliable register
+            // shift on file 11 (2/3 runs changed only «пара»→«несколько»; the 3rd diverged
+            // further — the only text-level instability in the corpus). A candidate append
+            // ("Prefer established terminology over invented phrasing.") was tried, as the
+            // nearest fix available though the observed failure was not literally the
+            // "bureaucratese or familiarity" the decision table names; re-measured: the
+            // same 2-of-3-no-shift/1-of-3-partial-shift pattern recurred. Reverted; recorded
+            // as a model limitation in docs/OPEN-ITEMS.md.
             "Rewrite in a precise, professional working register, suitable for documentation, reports, and workplace communication: established terminology, no bureaucratese, no familiarity."
         case .plain:
+            // 2026-08-10 calibration: the baseline corpus run showed this wording produced
+            // output byte-identical to `.original`'s in 3/3 runs on file 11 — no
+            // simplification observed. A more specific candidate ("break long sentences...
+            // replace abstract nouns with verbs...") was tried and re-measured: 2/3 runs
+            // still byte-identical to `.original`, the 3rd only a cosmetic synonym swap —
+            // no sentence was actually shortened or simplified. Reverted; recorded as a
+            // model limitation in docs/OPEN-ITEMS.md.
             "Rewrite in plain language: short sentences, simple words, maximum readability — changing nothing else about the register."
         }
     }

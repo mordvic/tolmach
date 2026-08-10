@@ -626,3 +626,95 @@ the corpus that contains backticked or fenced code failed on that code, 4/4). Of
 rewrite styles tested beyond `.original`, only `business` reliably shifts register; `friendly`
 and `plain` no-op on this source, and `professional` neither shifts register nor stays stable
 across runs.
+
+### After calibration (final wording)
+
+Task 5 mapped each measured failure above to the decision table's candidate wording, edited
+the source with a failing pin test first, recompiled the scratchpad runner (with the
+`-module-name TranslationCore` fix Task 4 found necessary), and re-ran the full 11-text corpus
+into a fresh out dir (3 runs per text/style, same as the baseline). Every candidate wording was
+then compared against the baseline output text file by text file, not just the runner's
+summary line.
+
+**Result: none of the four candidate edits changed the measured output.** All four are
+reverted; `Sources/TranslationCore/Proofreading.swift` carries the original wording again,
+each site with a comment recording what was tried and what the re-run showed, per the
+"measured/load-bearing" convention. No pin test asserts wording that did not survive.
+
+- **`ProofreadingLevel.errorsOnly.instruction`** — failure: rephrasing beyond seeded errors,
+  02 (reorder) 3/3 and 06 («Thanks for»→«Thank you for») 3/3. Candidate tried: append `" If a
+  sentence contains no error, reproduce it unchanged, word for word."` Re-run: **0/3 fixed on
+  both files** — 02's after-edit output is byte-identical to its baseline output (verb still
+  moved to the sentence's end in all 3 runs), and 06's after-edit output is likewise
+  byte-identical to its baseline (`"Thank you for"` in all 3 runs). **Reverted** — the append
+  had no observable effect; the model does not treat an explicit "reproduce unchanged" clause
+  as overriding whatever makes it rephrase these two sentences.
+- **`RewriteStyle.friendly.instruction`** — failure: byte-identical to `.original`'s output in
+  3/3 runs on file 11 (no observable register shift). Candidate tried: replace with `"...:
+  direct address, light contractions where the language has them, no stiffness."` Re-run:
+  **0/3 fixed** — all 3 after-edit runs remain byte-identical to the `.original` output, exactly
+  as at baseline. **Reverted.**
+- **`RewriteStyle.professional.instruction`** — failure: no reliable register shift on file 11
+  (2/3 runs changed only «пара»→«несколько», 1/3 diverged further — the corpus's only
+  run-to-run instability). This did not literally match the table's stated condition
+  («drifted into bureaucratese or familiarity»), so per the brief's honest-nearest-fix
+  allowance the candidate append was tried anyway: `" Prefer established terminology over
+  invented phrasing."` Re-run: **the same pattern recurred** — 2/3 runs changed only
+  «пара»→«несколько», 1/3 diverged further into a different partial rewrite. No improvement in
+  either the register shift or the run-to-run stability. **Reverted.**
+- **`RewriteStyle.plain.instruction`** — failure: byte-identical to `.original`'s output in 3/3
+  runs on file 11 (no simplification). Candidate tried: replace with `"...: break long
+  sentences into short ones, replace abstract nouns with verbs, choose the simplest common
+  word..."` Re-run: **0/3 fixed** — 2/3 runs remained byte-identical to `.original`'s output,
+  and the 3rd changed only «пара»→«несколько», a cosmetic synonym swap, not a shortened or
+  simplified sentence. **Reverted.**
+- **`RewriteStyle.business.instruction`** — passed baseline (genuine, consistent register
+  shift, 3/3), unchanged. Not touched, per the brief: a wording that produced no failure is
+  not edited.
+- **Output-language rule** (`PromptBuilder.proofreadSystemPrompt` last-rule-line addition) —
+  the language row's condition (output language ≠ input language in any run) was never
+  observed; every run's `lang` matched its input language except the `business` runs' `??`,
+  which Task 4's report already attributed to a `LanguageDetector` artifact on short, formal
+  Russian rather than a translation failure. Row does not trigger; not touched.
+- **Protected-span corruption** (03, 04, 08, 09, 4/4 in the baseline) — confirmed to persist
+  in the after-calibration re-run: `codeIntact=false` and `markupDiffs=2` on all 4 texts, all 3
+  runs each, same as baseline (spot-checked against the actual output text, not just the
+  runner's summary field). Per the decision table, this is a `protectionRules` concern shared
+  with translation, not a правка-specific instruction, and was **not** edited here.
+  **Escalated, not addressed by Task 5** — `protectionRules` in `PromptBuilder.swift` needs a
+  human decision on how (or whether) to strengthen the shared protection instruction, and any
+  such change must be re-verified against the translation prompt's own corpus, not just this
+  one.
+
+Net effect of Task 5 on `Sources/TranslationCore/Proofreading.swift`: **no functional change.**
+The file differs from its Task-4-era version only in comments recording what was tried and
+measured at each site — the four instruction strings themselves are byte-identical to before
+Task 5 began. `swift test` (672 tests) passes and `swift build --build-tests` is warning-clean
+with this reverted state.
+
+### Gate verdict
+
+**§11.1 gate: NOT a clean pass.** Two distinct, unresolved gaps remain after calibration:
+
+1. **Protected-span corruption is unfixed and escalated, not addressed.** `.errorsOnly` on any
+   text containing backticked or fenced code (03, 04, 08, 09 in this corpus — every such text,
+   4/4) does not meet §11.1's byte-identity requirement for code: the model rewrites content
+   inside the protected span in all 3 runs on every one of the four texts, including one case
+   (09) where the fenced code carried an explicit in-line instruction not to touch it. This is
+   a `protectionRules` matter shared with the translation prompt and was deliberately left to
+   the user rather than forked into a правка-only rule.
+2. **Two rephrasing failures (02's reorder, 06's «Thanks for»→«Thank you for») and three
+   style-instruction no-ops (friendly, plain, and — partially — professional) survived a
+   targeted wording edit unchanged.** The candidate wordings from the decision table did not
+   move the measured output at all on any of them, in a full 3-run re-check against the actual
+   text (not just the runner's summary line). This reads as a genuine model limitation with
+   `aya-expanse:8b` at temperature 0.2 rather than a wording defect this pass can close by
+   further rephrasing the instruction — a materially different instruction strategy (e.g.
+   few-shot examples, a stricter decoding setting, or a different model for правка) would be
+   needed to move these, and that decision belongs to the user, not to another guess at prompt
+   wording.
+
+What **does** meet the gate: 4/10 `errorsOnly` texts (01, 05, 07, 10) and the `business` rewrite
+style pass cleanly and unchanged, and nothing regressed anywhere in the corpus between the
+baseline and after-calibration runs (verified file-by-file, not only via the runner's summary
+counts).
