@@ -107,6 +107,20 @@ private func makeModel(_ client: LLMClient, pasteboard: NSPasteboard? = nil) -> 
                                 pasteboard: pasteboard ?? scratchPasteboard())
 }
 
+/// `run()`'s tests need the prompts the client actually received, which `ScriptedClient`
+/// above does not record — `QueueClient` (from `FileQueueModelTests`) already does, so this
+/// reuses that fixture rather than teaching a second client the same bookkeeping.
+@MainActor
+private func makeModel(responses: [String]) -> (TranslationViewModel, QueueClient) {
+    let client = QueueClient(replies: responses)
+    let model = TranslationViewModel(
+        translator: Translator(client: client),
+        settings: AppSettings(defaults: InMemoryDefaults(prefix: "vm-run")),
+        glossary: scratchGlossary(),
+        pasteboard: scratchPasteboard())
+    return (model, client)
+}
+
 @MainActor
 @Test func aSuccessfulRunFinishesAndKeepsTheOutcome() async {
     let model = makeModel(ScriptedClient(responses: ["Привет, мир."]))
@@ -722,4 +736,70 @@ private func waitForSheet(_ model: TranslationViewModel,
 
     #expect(model.state == .finished)
     #expect(model.documentTermsUnavailable == false)
+}
+
+@MainActor @Test func runUnderProofreadSendsTheCopyEditorPromptAndSetsResolvedValues() async {
+    // Build with the file's helper; the fake must queue one reply: "Исправлено."
+    let (model, fake) = makeModel(responses: ["Исправлено."])
+    model.sourceText = "Превет, мир."
+    model.operation = .proofread
+    model.proofreadingLevelOverride = .errorsAndStyle
+    model.rewriteStyleOverride = .friendly
+    await model.run()
+    #expect(model.state == .finished)
+    #expect(model.translatedText == "Исправлено.")
+    let system = fake.receivedMessages[0].first!.content
+    #expect(system.contains("copy editor"))
+    #expect(system.contains(RewriteStyle.friendly.instruction!))
+    #expect(model.resolvedOperation == .proofread)
+    #expect(model.resolvedProofreadingLevel == .errorsAndStyle)
+    #expect(model.resolvedTarget == nil)
+}
+
+@MainActor @Test func runUnderTranslateStillTranslatesAndRecordsTheOperation() async {
+    let (model, fake) = makeModel(responses: ["Hello, world."])
+    model.sourceText = "Привет, мир."
+    await model.run()
+    #expect(model.state == .finished)
+    #expect(fake.receivedMessages[0].first!.content.contains("translator"))
+    #expect(model.resolvedOperation == .translate)
+    #expect(model.resolvedProofreadingLevel == nil)
+}
+
+@MainActor @Test func anotherVariantIsOfferedOnlyForAFinishedErrorsAndStyleRun() async {
+    let (model, _) = makeModel(responses: ["Исправлено.", "Исправлено."])
+    model.sourceText = "Превет."
+    model.operation = .proofread
+    model.proofreadingLevelOverride = .errorsOnly
+    await model.run()
+    // «Ещё вариант» of a deterministic minimal diff is a contradiction (spec §2).
+    #expect(!model.offersAnotherVariant)
+    model.proofreadingLevelOverride = .errorsAndStyle
+    await model.run()
+    #expect(model.offersAnotherVariant)
+}
+
+@MainActor @Test func adoptMovesTheResolvedOperationWithTheRun() async {
+    let (panel, _) = makeModel(responses: ["Исправлено."])
+    panel.sourceText = "Превет."
+    panel.operation = .proofread
+    panel.proofreadingLevelOverride = .errorsAndStyle
+    await panel.run()
+    let (window, _) = makeModel(responses: [])
+    #expect(window.adopt(from: panel))
+    #expect(window.resolvedOperation == .proofread)
+    #expect(window.resolvedProofreadingLevel == .errorsAndStyle)
+    #expect(window.offersAnotherVariant)
+}
+
+@MainActor @Test func aProofreadRunIgnoresTheSourceOverrideLeftFromTranslateMode() async {
+    // «Из: немецкий» set while translating must not tell правка the text is German:
+    // the control is hidden in правка mode, so an invisible leftover would govern
+    // the prompt with nothing on screen saying so.
+    let (model, fake) = makeModel(responses: ["Исправлено."])
+    model.sourceText = "Превет, мир — это русский текст."
+    model.sourceOverride = .de
+    model.operation = .proofread
+    await model.run()
+    #expect(!fake.receivedMessages[0].first!.content.contains("German"))
 }

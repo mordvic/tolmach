@@ -53,10 +53,21 @@ final class TranslationViewModel {
     /// `GlossaryEntry.translations` is keyed by language, so without this the warnings
     /// panel could only guess which translation of a term to show.
     private(set) var resolvedTarget: Language?
+    /// Which operation and — for правка — which степень produced `outcome`. Assigned and
+    /// cleared with `outcome`/`resolvedTarget` (the pairing rule those two already obey):
+    /// a header or an «Ещё вариант» must never describe another operation's result.
+    private(set) var resolvedOperation: TextOperation?
+    private(set) var resolvedProofreadingLevel: ProofreadingLevel?
     /// Overridden in the main window when the user picks a source explicitly.
     var sourceOverride: Language?
     var targetOverride: Language?
     var toneOverride: Tone?
+    /// Which operation the next `run()` performs, and the two per-run overrides that only
+    /// matter under правка. Mirrors `sourceOverride`/`targetOverride`/`toneOverride`'s shape:
+    /// `nil` means «follow the setting».
+    var operation: TextOperation = .translate
+    var proofreadingLevelOverride: ProofreadingLevel?
+    var rewriteStyleOverride: RewriteStyle?
     /// The «Термины документа» sheet this run is waiting on, or nil.
     ///
     /// Cleared in the same `defer` that ends the wait, so a cancelled or failed run cannot
@@ -156,6 +167,8 @@ final class TranslationViewModel {
         translatedText = other.translatedText
         outcome = other.outcome
         resolvedTarget = other.resolvedTarget
+        resolvedOperation = other.resolvedOperation
+        resolvedProofreadingLevel = other.resolvedProofreadingLevel
         // Moved with the rest, for this function's own reason: a value that outlives the run
         // it describes is rendered under the next one. Left behind, the window's orange
         // «Термины документа не удалось подготовить» stayed under an adopted translation it
@@ -215,6 +228,8 @@ final class TranslationViewModel {
         // glossary checks under whatever is on screen now.
         outcome = nil
         resolvedTarget = nil
+        resolvedOperation = nil
+        resolvedProofreadingLevel = nil
         state = .idle
     }
 
@@ -234,6 +249,30 @@ final class TranslationViewModel {
         guard let source = sourceOverride, let target = targetOverride else { return }
         sourceOverride = target
         targetOverride = source
+    }
+
+    /// «Ещё вариант» is offered only where variance is the point: a finished run whose
+    /// степень allowed wording to move. Under «только ошибки» the promise is a
+    /// deterministic minimal diff — another variant of that promise is a contradiction
+    /// (spec §2, product review 2026-08-10).
+    var offersAnotherVariant: Bool {
+        state == .finished && resolvedProofreadingLevel == .errorsAndStyle
+    }
+
+    /// The availability rule for the style controls, resolved the way the next run would
+    /// resolve the level. Both the toolbar and the settings pane read the rule from
+    /// `ProofreadingLevel.allowsRewriteStyle` rather than restating the comparison.
+    var rewriteStyleSelectable: Bool {
+        (proofreadingLevelOverride ?? settings.defaultProofreadingLevel).allowsRewriteStyle
+    }
+
+    /// Dispatches on `operation` — the toolbar's and the panel's one entry point, so neither
+    /// has to know which method a given operation runs.
+    func run() async {
+        switch operation {
+        case .translate: await translate()
+        case .proofread: await proofread()
+        }
     }
 
     func translate() async {
@@ -260,6 +299,125 @@ final class TranslationViewModel {
         documentTermsUnavailable = false
         raisedTermsSheet = false
 
+        // Only when asked for. A nil hook is byte-for-byte the behaviour that shipped,
+        // which is what the engine's pinning test guarantees.
+        //
+        // Built with an `if` and not a ternary: a ternary infers a non-`@Sendable` closure,
+        // and converting one to this parameter's `@Sendable` type is refused — with a
+        // «failed to produce diagnostic» from the compiler rather than a useful message.
+        // Read **once**, for the hook and for the notice below alike. Read twice, turning
+        // the gate on mid-translation made this run report that terms «не удалось
+        // подготовить» when it had never asked for them.
+        let gateRequested = settings.reviewDocumentTerms
+        var review: (@Sendable (DocumentTermsDraft) async throws -> [GlossaryEntry])?
+        if gateRequested {
+            review = { [weak self] draft in
+                guard let self else { throw CancellationError() }
+                return try await self.askAboutTerms(draft)
+            }
+        }
+
+        await execute(start: { onToken in
+            Task { [translator, glossary, settings] in
+                try await translator.translate(
+                    text: text, target: target, tone: tone,
+                    userGlossary: glossary.glossary,
+                    // The picker reaches the engine now. It used to pick the target and stop
+                    // there, so a user correcting a misdetection changed where the text was
+                    // going and not what it was read as.
+                    source: detected,
+                    options: options,
+                    maxChunkCharacters: settings.chunkSize,
+                    ignoredTerms: glossary.mutedSet,
+                    onToken: onToken,
+                    reviewDocumentTerms: review)
+            }
+        }, finish: { result in
+            // Written here rather than beside the `let target` that computes it, for the
+            // same reason `clearedPrevious` is written where it is. The warnings panel
+            // renders these two as a pair — the checks come from `outcome`, the translation
+            // to show for each term is looked up by `resolvedTarget` — so a moment where
+            // one is this run's and the other is the last run's is a moment the panel can
+            // render a wrong translation. Assigning at the top of `translate()` is not
+            // observably wrong today, only because no `await` sits between there and
+            // `state = .running`; that is a fact about this function's body, not an
+            // invariant. Assigned together, the pair cannot come apart.
+            // The gate was asked for and could not be prepared. Recorded here rather than
+            // logged, unlike the swallowed failure itself: the user is waiting for
+            // something that will never appear.
+            // «The gate was asked for, terms were actually sought, and no sheet appeared».
+            //
+            // Not `documentGlossaryFailure != nil`: that is nil when the term-list call
+            // succeeded and parsed to nothing, which still leaves the user waiting for a
+            // table that never comes. And not «more than one часть» either — that claimed a
+            // failure for every prose document `TermExtractor` found no candidates in, where
+            // nothing was attempted and nothing went wrong.
+            documentTermsUnavailable = gateRequested
+                && result.documentGlossaryAttempted && !raisedTermsSheet
+            resolvedTarget = target
+            resolvedOperation = .translate
+            resolvedProofreadingLevel = nil
+            outcome = result
+            // The one place the engine's swallowed document-glossary failure is recorded. The
+            // user is deliberately not told — it is a diagnostic about an enhancement, not a
+            // warning about their translation — but «this long document was translated without
+            // the terminology pass» is exactly the invisible difference that shows up later as
+            // inconsistent terminology and cannot otherwise be traced. See
+            // `TranslationOutcome.documentGlossaryFailure`.
+            if let failure = result.documentGlossaryFailure {
+                Log.engine.error("""
+                    document glossary abandoned; this run translated \
+                    \(result.chunks.count, privacy: .public) chunks without the terminology \
+                    pass: \(failure, privacy: .public)
+                    """)
+            }
+        })
+    }
+
+    /// Правка's run: same shared machinery as `translate()` (see `execute`), no glossary,
+    /// no gate.
+    private func proofread() async {
+        guard state != .running else { return }
+        let text = sourceText
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        // Detected fresh, deliberately ignoring `sourceOverride`: that picker is hidden in
+        // правка mode, so a value left over from translate mode would govern the prompt
+        // with nothing on screen saying so.
+        let detected = LanguageDetector.detect(text)
+        let level = proofreadingLevelOverride ?? settings.defaultProofreadingLevel
+        let style = rewriteStyleOverride ?? settings.defaultRewriteStyle
+        let options = ChatOptions(model: settings.interactiveModel,
+                                  temperature: settings.temperature,
+                                  keepAlive: settings.keepAlive)
+        state = .running
+        // Правка never raises the terms sheet, but the notice must not outlive its run
+        // either — same reset `translate()` performs.
+        documentTermsUnavailable = false
+        raisedTermsSheet = false
+        await execute(start: { onToken in
+            Task { [translator, settings] in
+                try await translator.proofread(
+                    text: text, level: level, style: style, source: detected,
+                    options: options, maxChunkCharacters: settings.chunkSize,
+                    onToken: onToken)
+            }
+        }, finish: { result in
+            resolvedTarget = nil
+            resolvedOperation = .proofread
+            resolvedProofreadingLevel = level
+            outcome = result
+        })
+    }
+
+    /// The shared half of every run: the ordered token stream, the spec-8 clear-on-first-
+    /// content rule, the `await consumer.value` barrier, the empty-reply guard, and the
+    /// three endings. `translate()` and `proofread()` differ only in the config they
+    /// compute, the engine call inside `start`, and the resolved values `finish` assigns
+    /// — everything here is the code `translate()` always ran, moved without change.
+    private func execute(
+        start: (@escaping @Sendable (String) -> Void) -> Task<TranslationOutcome, Error>,
+        finish: (TranslationOutcome) -> Void
+    ) async {
         // Reset before the consumer exists, not after. Today the ordering could not
         // actually be observed the other way round — `translate()` is @MainActor and
         // runs straight from the `Task` creation to here without suspending, so the
@@ -323,38 +481,7 @@ final class TranslationViewModel {
         // Hold the translating task itself, not a wrapper around it. Cancelling a wrapper
         // would leave the inner unstructured task running — `Task {}` does not inherit
         // cancellation from the task that created it.
-        // Only when asked for. A nil hook is byte-for-byte the behaviour that shipped,
-        // which is what the engine's pinning test guarantees.
-        //
-        // Built with an `if` and not a ternary: a ternary infers a non-`@Sendable` closure,
-        // and converting one to this parameter's `@Sendable` type is refused — with a
-        // «failed to produce diagnostic» from the compiler rather than a useful message.
-        // Read **once**, for the hook and for the notice below alike. Read twice, turning
-        // the gate on mid-translation made this run report that terms «не удалось
-        // подготовить» when it had never asked for them.
-        let gateRequested = settings.reviewDocumentTerms
-        var review: (@Sendable (DocumentTermsDraft) async throws -> [GlossaryEntry])?
-        if gateRequested {
-            review = { [weak self] draft in
-                guard let self else { throw CancellationError() }
-                return try await self.askAboutTerms(draft)
-            }
-        }
-
-        let run = Task { [translator, glossary, settings] in
-            try await translator.translate(
-                text: text, target: target, tone: tone,
-                userGlossary: glossary.glossary,
-                // The picker reaches the engine now. It used to pick the target and stop
-                // there, so a user correcting a misdetection changed where the text was
-                // going and not what it was read as.
-                source: detected,
-                options: options,
-                maxChunkCharacters: settings.chunkSize,
-                ignoredTerms: glossary.mutedSet,
-                onToken: { continuation.yield($0) },
-                reviewDocumentTerms: review)
-        }
+        let run = start({ continuation.yield($0) })
         task = run
 
         do {
@@ -367,44 +494,9 @@ final class TranslationViewModel {
                 state = .failed("Модель вернула пустой ответ. Попробуйте ещё раз.")
                 return
             }
-            // Written here rather than beside the `let target` that computes it, for the
-            // same reason `clearedPrevious` is written where it is. The warnings panel
-            // renders these two as a pair — the checks come from `outcome`, the translation
-            // to show for each term is looked up by `resolvedTarget` — so a moment where
-            // one is this run's and the other is the last run's is a moment the panel can
-            // render a wrong translation. Assigning at the top of `translate()` is not
-            // observably wrong today, only because no `await` sits between there and
-            // `state = .running`; that is a fact about this function's body, not an
-            // invariant. Assigned together, the pair cannot come apart.
-            // The gate was asked for and could not be prepared. Recorded here rather than
-            // logged, unlike the swallowed failure itself: the user is waiting for
-            // something that will never appear.
-            // «The gate was asked for, terms were actually sought, and no sheet appeared».
-            //
-            // Not `documentGlossaryFailure != nil`: that is nil when the term-list call
-            // succeeded and parsed to nothing, which still leaves the user waiting for a
-            // table that never comes. And not «more than one часть» either — that claimed a
-            // failure for every prose document `TermExtractor` found no candidates in, where
-            // nothing was attempted and nothing went wrong.
-            documentTermsUnavailable = gateRequested
-                && result.documentGlossaryAttempted && !raisedTermsSheet
-            resolvedTarget = target
-            outcome = result
+            finish(result)
             translatedText = result.final
             state = .finished
-            // The one place the engine's swallowed document-glossary failure is recorded. The
-            // user is deliberately not told — it is a diagnostic about an enhancement, not a
-            // warning about their translation — but «this long document was translated without
-            // the terminology pass» is exactly the invisible difference that shows up later as
-            // inconsistent terminology and cannot otherwise be traced. See
-            // `TranslationOutcome.documentGlossaryFailure`.
-            if let failure = result.documentGlossaryFailure {
-                Log.engine.error("""
-                    document glossary abandoned; this run translated \
-                    \(result.chunks.count, privacy: .public) chunks without the terminology \
-                    pass: \(failure, privacy: .public)
-                    """)
-            }
         } catch is CancellationError {
             continuation.finish()
             await consumer.value
@@ -433,8 +525,8 @@ final class TranslationViewModel {
         task?.cancel()
     }
 
-    /// Only `translate()` and `adopt(from:)` write this in the app; a test needs to set up
-    /// the state one run leaves behind without running one.
+    /// Only `translate()`, `proofread()` and `adopt(from:)` write this in the app; a test
+    /// needs to set up the state one run leaves behind without running one.
     ///
     /// Below `cancel()` and not above it: inserted between that function and its own doc
     /// comment, it captured a load-bearing explanation of cancellation ordering and left
