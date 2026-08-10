@@ -84,3 +84,37 @@ three runs.
   run green.
 - Run-to-run variation of two or three points in adherence is normal — the model is sampled at
   temperature 0.2, not zero. A single low run is not a regression; three are.
+
+---
+
+## 2026-08-10 — baseline before the prompt-improvement pass
+
+- Machine: Apple M5 Pro, macOS 26.6.1
+- Ollama 0.31.1, model `aya-expanse:8b`
+- Commit: `5c6ca62` (prompt-improvement design plan, no engine changes yet)
+- Verdict: **ACCEPTED**
+
+Purpose: the «before» for the targeted prompt changes
+(docs/superpowers/specs/2026-08-10-prompt-improvement-design.md §3.1).
+
+```
+article-en.md: run1 86.1% (31/36) · run2 83.3% (30/36) · run3 83.3% (30/36) · average 84.3% · 3 chunks · 20 terms · TTFT 3114/3021/2951 ms (info only — multi-chunk, not asserted)
+email-en.md: adherence n/a (single chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 453 ms
+snippet-en.md: adherence n/a (single chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 515 ms
+techdoc-en.md: run1 87.8% (43/49) · run2 87.8% (43/49) · run3 87.8% (43/49) · average 87.8% · 4 chunks · 20 terms · TTFT 2886/2795/2951 ms (info only — multi-chunk, not asserted)
+    known run1: expected Optional(TranslationCore.MarkupToken.url(bare: true)) actual nil
+    known run1: expected nil actual Optional(TranslationCore.MarkupToken.url(bare: false))
+    known-limitation run1: aya-expanse:8b translates human-readable strings inside a code block — the commit message in `git tag -m "See CHANGELOG.md"` comes back translated. Sharpening the prompt rule was attempted and did not change it. (expected Optional(TranslationCore.MarkupToken.codeBlock(hash: -562926936420698314, lang: "bash")) actual nil)
+    known-limitation run1: aya-expanse:8b translates human-readable strings inside a code block — the commit message in `git tag -m "See CHANGELOG.md"` comes back translated. Sharpening the prompt rule was attempted and did not change it. (expected nil actual Optional(TranslationCore.MarkupToken.codeBlock(hash: -903210525200679666, lang: "bash")))
+    known run2: expected Optional(TranslationCore.MarkupToken.url(bare: true)) actual nil
+    known run2: expected nil actual Optional(TranslationCore.MarkupToken.url(bare: false))
+    known-limitation run2: aya-expanse:8b translates human-readable strings inside a code block — the commit message in `git tag -m "See CHANGELOG.md"` comes back translated. Sharpening the prompt rule was attempted and did not change it. (expected Optional(TranslationCore.MarkupToken.codeBlock(hash: -562926936420698314, lang: "bash")) actual nil)
+    known-limitation run2: aya-expanse:8b translates human-readable strings inside a code block — the commit message in `git tag -m "See CHANGELOG.md"` comes back translated. Sharpening the prompt rule was attempted and did not change it. (expected nil actual Optional(TranslationCore.MarkupToken.codeBlock(hash: -903210525200679666, lang: "bash")))
+    known run3: expected Optional(TranslationCore.MarkupToken.url(bare: true)) actual nil
+    known run3: expected nil actual Optional(TranslationCore.MarkupToken.url(bare: false))
+    known-limitation run3: aya-expanse:8b translates human-readable strings inside a code block — the commit message in `git tag -m "See CHANGELOG.md"` comes back translated. Sharpening the prompt rule was attempted and did not change it. (expected Optional(TranslationCore.MarkupToken.codeBlock(hash: -562926936420698314, lang: "bash")) actual nil)
+    known-limitation run3: aya-expanse:8b translates human-readable strings inside a code block — the commit message in `git tag -m "See CHANGELOG.md"` comes back translated. Sharpening the prompt rule was attempted and did not change it. (expected nil actual Optional(TranslationCore.MarkupToken.codeBlock(hash: -903210525200679666, lang: "bash")))
+techdoc-ru.md: run1 94.4% (51/54) · run2 94.4% (51/54) · run3 92.6% (50/54) · average 93.8% · 4 chunks · 20 terms · TTFT 3045/3084/3081 ms (info only — multi-chunk, not asserted)
+```
+
+The gated numbers: single-chunk TTFT **453 ms** and **515 ms** against a 1000 ms ceiling, and the lowest average adherence **84.3 %** (article-en) and **87.8 %** (techdoc-en and techdoc-ru) against an 80 % floor. All known markup diffs reproduced as expected; no new diff appeared.
