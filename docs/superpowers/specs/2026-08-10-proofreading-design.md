@@ -44,7 +44,10 @@ were gathered on 2026-08-10; products change. Everything else is intent.
   ignored (§3, DeepL/Apple precedent).
 - The result is the corrected text, streamed like a translation. No change highlighting in
   this iteration (§10.1).
-- «Ещё вариант» on a finished правка re-runs the same input for a different rendering.
+- «Ещё вариант» on a finished правка re-runs the same input for a different rendering —
+  offered only when the finished run's степень was «ошибки и стиль»: under «только ошибки»
+  the promise is a deterministic minimal diff, and "another variant" of that promise is a
+  contradiction (product review, 2026-08-10).
 - The output language is the input language, always. Detection failing does not block the
   run; the prompt then forbids translating instead of naming the language.
 
@@ -175,7 +178,8 @@ docs gain one line each saying so.
   re-entrancy guard, the `AsyncStream` consumer and its `await consumer.value` barrier,
   spec 8 (the previous result survives until the first real token), the
   empty-reply/`CancellationError`/failure endings and their Russian messages.
-- `resolvedOperation: TextOperation?` is assigned beside `resolvedTarget` and `outcome`, and
+- `resolvedOperation: TextOperation?` and `resolvedProofreadingLevel: ProofreadingLevel?`
+  (nil for a translation) are assigned beside `resolvedTarget` and `outcome`, and
   cleared with them — the same pairing rule those two already obey, for the same reason: a
   header or warning must never describe another operation's result. For правка,
   `resolvedTarget` stays nil (there is no target) and the header line comes from
@@ -183,8 +187,9 @@ docs gain one line each saying so.
   language went undetected.
 - Each instance carries its own `operation`; the window and the panel stay independent, as
   their models already are.
-- `adopt(from:)` moves `resolvedOperation` with the rest of the five-value unit it already
-  moves — the panel can hand a правка to the window like it hands a translation.
+- `adopt(from:)` moves `resolvedOperation` and `resolvedProofreadingLevel` with the rest of
+  the five-value unit it already moves — the panel can hand a правка to the window like it
+  hands a translation, and the window's «Ещё вариант» then answers about the adopted run.
 
 ## 6. The window
 
@@ -205,9 +210,9 @@ docs gain one line each saying so.
 - `TranslationPane`'s title follows the operation in «Текст»: «Правка» instead of
   «Перевод».
 - «Ещё вариант» appears in the pane header beside «Скопировать» when
-  `resolvedOperation == .proofread && state == .finished`, and calls `run()` again on the
-  unchanged source. Spec 8 already makes that safe: the previous rendering stays until the
-  new one's first token.
+  `resolvedProofreadingLevel == .errorsAndStyle && state == .finished` (§2's rule: never
+  under «только ошибки»), and calls `run()` again on the unchanged source. Spec 8 already
+  makes that safe: the previous rendering stays until the new one's first token.
 - `operation` lives on the view model, not in `MainWindowView` `@State`, for the same
   reason `mode` lives in `TranslatorApp`: the «Перевод» menu must read it, and the app owns
   the models.
@@ -244,7 +249,8 @@ docs gain one line each saying so.
   pickers. `autoCopy` applies to a finished правка exactly as to a translation — it is the
   same `runTranslation()` path.
 - «Ещё вариант» appears in the panel's pinned button row under the same condition as in
-  the window and calls the coordinator's re-run.
+  the window (степень of the finished run was «ошибки и стиль») and calls the
+  coordinator's re-run.
 - The switch and the button add fixed-height chrome to `PanelView`; the measuring copy
   picks them up automatically because it renders the same view. No `PanelSizer` rule
   changes. If the panel opens visibly short during implementation, the reservation path in
@@ -266,10 +272,12 @@ docs gain one line each saying so.
 
 ## 10. Deliberately deferred (with the precedent that argues for each)
 
-1. **Change highlighting with explanations.** Apple's Proofread underlines each fix and
-   explains it. Requires structured output from the model — a separate quality
-   investigation for a local 8b model, and a diff presentation this design already chose
-   to postpone.
+1. **Change highlighting with explanations — the designated first fast-follow.** Apple's
+   Proofread underlines each fix and explains it; that underlining is a *trust* mechanism,
+   not decoration, and «только ошибки» without it asks the user to take a minimal diff on
+   faith. Deferred on effort (structured output is a separate quality investigation for a
+   local 8b model), but deliberately first in this list: when правка ships and holds, this
+   is the next piece of it, ahead of anything else here (product review, 2026-08-10).
 2. **A length axis («короче / длиннее»).** Teams `Make it: concise/longer`, QuillBot
    `Expand/Shorten`, Notion. Always a separate axis in the wild; would be a third control
    here, added only if wanted after the feature lands.
@@ -309,6 +317,34 @@ Offline, Swift Testing, `FakeLLMClient`, `InMemoryDefaults` — the standing rul
 - **Settings**: defaults and storage round-trips for both keys; an unreadable stored value
   falls back to the default, as every enum-backed setting here does.
 - **RussianCopy**: labels exhaustive; `proofreadHeader` with and without a language.
+
+### 11.1 The manual quality gate (live model, before merge)
+
+The offline suite proves the prompt is assembled right and says nothing about whether the
+pinned interactive model can actually proofread — it is pinned for translation TTFT
+(`ModelPolicy`), and its editing quality in any language is unmeasured. Two failures the
+offline tests structurally cannot catch: the model **translating** despite the ban, and the
+model **paraphrasing under «только ошибки»**, which breaks the minimal-diff promise that
+mode is named for.
+
+So the feature does not merge on green tests alone. Before merge, a manual corpus run
+against the live default model (`aya-expanse:8b`):
+
+- ~10 short texts — Russian and English, mixed — each seeded with known spelling,
+  punctuation and grammar errors, at least one containing inline code and one a fenced
+  block.
+- Pass criteria, per text: the output language equals the input language, every seeded
+  error is fixed or at minimum untouched-but-not-worsened, code/URLs/identifiers are byte
+  identical, and under «только ошибки» the wording outside the seeded errors is unchanged
+  (eyeball diff — this gate is exactly the manual check the deferred highlighting will one
+  day automate).
+- Each rewrite style run once on one text, checked for register shift without meaning
+  drift.
+- The corpus and the observed results are recorded in `docs/OPEN-ITEMS.md` (a manual check
+  owed to a human — that file's stated purpose) or, if the corpus proves worth keeping, as
+  a new acceptance-harness task later. If the model fails the gate, the feature waits on
+  prompt calibration or a model decision — it does not ship on the strength of the offline
+  suite.
 
 ## 12. Documentation updates shipped with the code
 
