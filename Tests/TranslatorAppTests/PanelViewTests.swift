@@ -324,4 +324,14 @@ private func makeFinishedOutcome(detected: Language?) -> TranslationOutcome {
     #expect(PanelView.status(for: .running, operation: .translate)?.message == "Перевожу…")
     #expect(PanelView.announcement(for: .finished, operation: .proofread) == "Правка готова")
     #expect(PanelView.announcement(for: .finished, operation: .translate) == "Перевод готов")
+    // The interrupted case must vary the same way: «Перевод прерван…» over a stopped правка
+    // would name the wrong operation, and translate's own strings must stay byte-identical.
+    #expect(PanelView.status(for: .interrupted, operation: .proofread)?.message
+            == "Правка прервана — показана та часть, что успела прийти")
+    #expect(PanelView.status(for: .interrupted, operation: .translate)?.message
+            == "Перевод прерван — показана та часть, что успела прийти")
+    #expect(PanelView.announcement(for: .interrupted, operation: .proofread)
+            == "Правка прервана, показана пришедшая часть")
+    #expect(PanelView.announcement(for: .interrupted, operation: .translate)
+            == "Перевод прерван, показана пришедшая часть")
 }

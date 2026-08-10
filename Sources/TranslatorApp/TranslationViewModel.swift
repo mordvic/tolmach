@@ -169,6 +169,10 @@ final class TranslationViewModel {
         resolvedTarget = other.resolvedTarget
         resolvedOperation = other.resolvedOperation
         resolvedProofreadingLevel = other.resolvedProofreadingLevel
+        // `run()` dispatches on `operation`, not on `resolvedOperation` — so the adopted
+        // run's own «Ещё вариант» and a toolbar switch left on the wrong setting must both
+        // describe the run now on screen, not whatever this model was doing before.
+        operation = other.operation
         // Moved with the rest, for this function's own reason: a value that outlives the run
         // it describes is rendered under the next one. Left behind, the window's orange
         // «Термины документа не удалось подготовить» stayed under an adopted translation it
@@ -251,12 +255,16 @@ final class TranslationViewModel {
         targetOverride = source
     }
 
-    /// «Ещё вариант» is offered only where variance is the point: a finished run whose
-    /// степень allowed wording to move. Under «только ошибки» the promise is a
+    /// «Ещё вариант» is offered only where variance is the point: a finished правка run
+    /// whose степень allowed wording to move. Under «только ошибки» the promise is a
     /// deterministic minimal diff — another variant of that promise is a contradiction
-    /// (spec §2, product review 2026-08-10).
+    /// (spec §2, product review 2026-08-10). The `operation == .proofread` conjunct is not
+    /// redundant with `resolvedProofreadingLevel`: without it, flipping the toolbar switch
+    /// to «Перевод» after a finished правка left the button lit and re-running it would
+    /// translate rather than re-proof — the button must disappear rather than lie about
+    /// which operation it is about to run.
     var offersAnotherVariant: Bool {
-        state == .finished && resolvedProofreadingLevel == .errorsAndStyle
+        state == .finished && operation == .proofread && resolvedProofreadingLevel == .errorsAndStyle
     }
 
     /// The availability rule for the style controls, resolved the way the next run would
@@ -380,10 +388,11 @@ final class TranslationViewModel {
         guard state != .running else { return }
         let text = sourceText
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        // Detected fresh, deliberately ignoring `sourceOverride`: that picker is hidden in
-        // правка mode, so a value left over from translate mode would govern the prompt
-        // with nothing on screen saying so.
-        let detected = LanguageDetector.detect(text)
+        // Deliberately ignoring `sourceOverride`: that picker is hidden in правка mode, so a
+        // value left over from translate mode would govern the prompt with nothing on screen
+        // saying so. Passed as nil rather than detected here — `translator.proofread`'s own
+        // `source ?? LanguageDetector.detect(text)` then runs off the main actor instead of on
+        // it, with identical behaviour.
         let level = proofreadingLevelOverride ?? settings.defaultProofreadingLevel
         let style = rewriteStyleOverride ?? settings.defaultRewriteStyle
         let options = ChatOptions(model: settings.interactiveModel,
@@ -397,7 +406,7 @@ final class TranslationViewModel {
         await execute(start: { onToken in
             Task { [translator, settings] in
                 try await translator.proofread(
-                    text: text, level: level, style: style, source: detected,
+                    text: text, level: level, style: style, source: nil,
                     options: options, maxChunkCharacters: settings.chunkSize,
                     onToken: onToken)
             }

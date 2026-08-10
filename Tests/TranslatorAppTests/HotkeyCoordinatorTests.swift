@@ -339,6 +339,31 @@ private func waitUntil(_ condition: @MainActor () -> Bool,
     #expect(board.string(forType: .string) == "Пока.")
 }
 
+@MainActor
+@Test func autoCopyAlsoFollowsARunStartedByTheOperationSwitch() async {
+    // `switchOperation(to:)` calls the same `runTranslation()` `handlePress()` does, so
+    // `autoCopy`'s guard has to cover it too — a coordinator that only wired the setting
+    // into the press itself would leave the clipboard holding a stale правка after the
+    // switch, right where the panel claims a fresh one just finished.
+    let board = scratchPasteboard()
+    defer { board.releaseGlobally() }
+    board.clearContents()
+    board.setString("буфер пользователя", forType: .string)
+
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "hk"))
+    settings.autoCopy = true
+    let reader = ScriptedReader(["Hello."])
+    let (coordinator, _) = makeCoordinator(reader: reader, replies: ["Привет.", "Исправлено."],
+                                           settings: settings, pasteboard: board)
+    await coordinator.handlePress()
+    #expect(coordinator.panelModel.state == .finished)
+    #expect(board.string(forType: .string) == "Привет.")
+
+    await coordinator.switchOperation(to: .proofread)
+    #expect(coordinator.panelModel.state == .finished)
+    #expect(board.string(forType: .string) == "Исправлено.")
+}
+
 // MARK: - Registration
 
 @MainActor

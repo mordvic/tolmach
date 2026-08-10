@@ -112,9 +112,11 @@ private func makeModel(_ client: LLMClient, pasteboard: NSPasteboard? = nil) -> 
                                 pasteboard: pasteboard ?? scratchPasteboard())
 }
 
-/// `run()`'s tests need the prompts the client actually received, which `ScriptedClient`
-/// above does not record — `QueueClient` (from `FileQueueModelTests`) already does, so this
-/// reuses that fixture rather than teaching a second client the same bookkeeping.
+/// `run()`'s tests need the prompts the client actually received. `ScriptedClient` above
+/// gained `receivedMessages` too since this helper was written, but `QueueClient` (from
+/// `FileQueueModelTests`) already had it — reusing that fixture here predates the recorder
+/// arriving on `ScriptedClient`, and there is no reason to move off it now that both can do
+/// the job.
 @MainActor
 private func makeModel(responses: [String]) -> (TranslationViewModel, QueueClient) {
     let client = QueueClient(replies: responses)
@@ -795,6 +797,53 @@ private func waitForSheet(_ model: TranslationViewModel,
     #expect(window.resolvedOperation == .proofread)
     #expect(window.resolvedProofreadingLevel == .errorsAndStyle)
     #expect(window.offersAnotherVariant)
+}
+
+@MainActor @Test func anAdoptedRunsAnotherVariantReProofsRatherThanRetranslating() async {
+    // The critical fix this pins: `run()` dispatches on `operation`, not on
+    // `resolvedOperation`, and `adopt(from:)` used to leave the receiving model's `operation`
+    // at whatever it was before — `.translate` for a window that had never proofed anything.
+    // Its «Ещё вариант» then called `run()`, which translated the правка's output instead of
+    // asking for another variant of it. Both models share one client so the client's own
+    // history — not either model's state — is what proves which prompt the adopted run sent.
+    let client = QueueClient(replies: ["Исправлено.", "Другой вариант."])
+    let panel = TranslationViewModel(
+        translator: Translator(client: client),
+        settings: AppSettings(defaults: InMemoryDefaults(prefix: "vm-adopt-op-panel")),
+        glossary: scratchGlossary(),
+        pasteboard: NSPasteboard(name: .init("vm-adopt-op-panel")))
+    panel.sourceText = "Превет."
+    panel.operation = .proofread
+    panel.proofreadingLevelOverride = .errorsAndStyle
+    await panel.run()
+
+    let window = TranslationViewModel(
+        translator: Translator(client: client),
+        settings: AppSettings(defaults: InMemoryDefaults(prefix: "vm-adopt-op-window")),
+        glossary: scratchGlossary(),
+        pasteboard: NSPasteboard(name: .init("vm-adopt-op-window")))
+    #expect(window.adopt(from: panel))
+    #expect(window.offersAnotherVariant)
+
+    await window.run()
+
+    let lastSystemPrompt = client.receivedMessages.last!.first!.content
+    #expect(lastSystemPrompt.contains("copy editor"))
+    #expect(!lastSystemPrompt.contains("translator"))
+}
+
+@MainActor @Test func offersAnotherVariantIsWithdrawnAfterSwitchingBackToTranslate() async {
+    // The other half of the same fix: `offersAnotherVariant` must go false the moment the
+    // toolbar switch moves to «Перевод», or the button stays lit for a run it would no
+    // longer perform.
+    let (model, _) = makeModel(responses: ["Исправлено."])
+    model.sourceText = "Превет."
+    model.operation = .proofread
+    model.proofreadingLevelOverride = .errorsAndStyle
+    await model.run()
+    #expect(model.offersAnotherVariant)
+    model.operation = .translate
+    #expect(!model.offersAnotherVariant)
 }
 
 @MainActor @Test func aProofreadRunIgnoresTheSourceOverrideLeftFromTranslateMode() async {

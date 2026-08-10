@@ -237,6 +237,12 @@ nothing in this environment can see either.
   text and check register shift without meaning drift. Record the results here. If
   the model fails, the feature waits on prompt calibration or a model decision — it
   does not ship on the offline suite alone.
+- **The 700 pt toolbar minimum is now assumed, not measured.** The translate-mode toolbar
+  gained the «Перевод | Правка» operation switch, and the 650/680 pt fit measurements it
+  rests on — and the 700 pt minimum `MainWindowView.swift` derives from them — predate that
+  switch. Re-measure on the running bundle against `NSToolbar.visibleItems`;
+  `Scripts/toolbar-fit.swift` models the pre-switch row and needs extending to include it.
+  Until then, treat 700 as a carried-over guess rather than a re-confirmed floor.
 
 ---
 

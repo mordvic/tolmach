@@ -208,7 +208,12 @@ struct MainWindowView: View {
                                 text: mode == .text ? model.translatedText : queue.selectedText,
                                 isRunning: mode == .text ? action.isRunning : queue.selectedIsRunning,
                                 onCopy: { Task { await action.copy() } },
+                                // Not while the queue is running, the same guard `canStart`
+                                // already applies: one model lives in Ollama's memory, and
+                                // «Ещё вариант» is a second run just as much as the toolbar
+                                // button is.
                                 onAnotherVariant: mode == .text && model.offersAnotherVariant
+                                    && !queue.isRunning
                                     ? { Task { await model.run() } } : nil)
             }
             Divider()
