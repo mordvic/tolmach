@@ -39,6 +39,19 @@ this document is the authority on why**.
   design does not fix those; §5 bounds what is done about them now, and the structured-
   edits investigation (proofreading spec §10.1) remains the designated real fix.
 
+## 1a. Sequencing — where this lands, said out loud
+
+Part A fixes a defect of the **shipped** translation route (§11a's
+inside-code-translation limitation), yet this design builds on `worktree-proofreading` —
+inside PR #21, whose merge is gated on the правка quality decision. That coupling is
+accepted knowingly, not by accident: the shared streaming machinery this design extends
+(`streamChunkReply`, the правка route, the calibration corpus and its records) exists
+only on that branch, and landing Part A on `main` separately would fork `Translator`
+into a guaranteed conflict. The consequence is stated plainly: **if PR #21 stalls, the
+translation-route fix stalls with it** — and that trade is the user's to reverse (a
+`main`-first split is possible at the cost of the conflict work) rather than a surprise
+to discover at merge time.
+
 ## 2. Part A — protect code by construction
 
 Two mechanisms, one per protected form. The prompt's protection rules stay as they are —
@@ -91,6 +104,12 @@ nothing to mangle.
 - The §11a limitation «the model translates human-readable text inside code» becomes
   structurally impossible for fenced blocks on both routes; §11a is updated to say the
   mechanism removed it (and what remains for inline spans).
+- **An all-code selection comes back byte-identical, instantly — stated so nobody reads
+  it as a defect.** A user who presses ⌥⌘T on a pure code block gets their own bytes
+  under a «перевод» header with no model call. That is the protection rules' own
+  long-stated contract (code, including its comments and string literals, is never
+  translated) finally enforced rather than hoped for. Consistently, «Ещё вариант» is
+  offered only when `modelChunkCount > 0` — re-running an identity is not a variant.
 
 ### 2.2 Inline code: positional restore
 
@@ -117,10 +136,16 @@ restore handles.
   counts known per line — the reply's spans on a line are restored against the source
   spans assigned to that line's positions; the exact bookkeeping is the plan's to pin,
   the invariant «`final` and the stream agree byte-for-byte» is not negotiable.)
+- **Restore operates on the cleaned reply**, downstream of `ResponseCleaner`'s decisions
+  (preamble strip, whole-answer fence unwrap) in both `final` and the stream — cleaning
+  shifts bytes, and a restore that ran before it would misplace every span after the
+  shift. The order is: clean, then restore, then emit; one order, both paths.
 - The span definition is **`MarkupSkeleton`'s** (`inlineTokens`) — shared, not a new
   regex, so restore and diff cannot disagree about what an inline span is. Whatever that
   definition says about double-backtick spans (`` `code with a ` inside` `` exists in the
-  wild) is what restore does — pinned by a test that goes through the shared definition.
+  wild) and about odd backtick parity **in the source itself** («don't use ` alone»
+  shifts span boundaries before the model is even involved) is what restore does —
+  pinned by tests that go through the shared definition, not a restatement of it.
 - A span-count mismatch is already visible through `MarkupSkeleton.diff` (inline tokens
   are part of the skeleton); no new warning surface.
 
@@ -225,8 +250,10 @@ Offline, Swift Testing, `FakeLLMClient`, the standing rules and `docs/TESTING.md
   pass-through chunk; prose-only merging across one blank line is byte-identical to
   today (the existing pins must keep passing untouched); the whitespace-only separator
   assertion holds around the new boundaries.
-- **Translator, both routes**: a pass-through chunk issues no model call (the fake
-  counts); its bytes reach `final` and the stream verbatim; `final` equals
+- **Translator, both routes**: a pass-through chunk issues no model call — pinned in the
+  strong form: **no message ever sent to the fake client contains the fenced block's
+  bytes** (a call-count pin alone survives the defect «called, with the wrong chunk» —
+  `docs/TESTING.md`'s shape); its bytes reach `final` and the stream verbatim; `final` equals
   `plan.assembled(from:)`; the stream reconstructs `final` byte-for-byte; an all-code
   document yields `timeToFirstTokenMS == nil`, empty `stats`, `modelChunkCount == 0` —
   and the **view model treats it as success, not «пустой ответ»** (the renegotiated
@@ -241,7 +268,9 @@ Offline, Swift Testing, `FakeLLMClient`, the standing rules and `docs/TESTING.md
   skeleton would not count is not restored).
 - **Prompt**: `errorsAndStyle` wording with and without «voice» switches exactly on a
   non-nil style instruction; `errorsOnly` and the translation prompt byte-unchanged.
-- **RussianCopy/UI**: untouched — nothing user-visible changes shape.
+- **App layer**: the «Ещё вариант» condition additionally requires `modelChunkCount > 0`
+  (pinned); everything else — `RussianCopy`, panes, panel chrome — untouched, and nothing
+  else user-visible changes shape.
 
 ## 7. Documentation updates shipped with the code
 
