@@ -1324,3 +1324,21 @@ final class EmissionClock: @unchecked Sendable {
     #expect(outcome.documentGlossaryAttempted == false)
     #expect(outcome.modelChunkCount == 1)
 }
+
+// MARK: - CP Task 4: inline-code positional restore
+
+@Test func anInlineSpanEditedByTheModelIsRestoredInFinalAndStreamAlike() async throws {
+    let source = "Выполните комманду `git comit --amend` сейчас."
+    let fake = FakeLLMClient(responses: ["Выполните команду `git commit --amend` сейчас."])
+    let translator = Translator(client: fake)
+    // `var streamed = ""` mutated directly from the `@Sendable` `onToken` closure is a
+    // Swift 6 capture error — `TokenCollector` is this file's existing answer, used by
+    // every other streaming test in this file.
+    let collector = TokenCollector()
+    let outcome = try await translator.proofread(
+        text: source, level: .errorsOnly,
+        options: ChatOptions(model: "fake"), maxChunkCharacters: 900,
+        onToken: collector.onToken)
+    #expect(outcome.final == "Выполните команду `git comit --amend` сейчас.")
+    #expect(collector.text == outcome.final)
+}

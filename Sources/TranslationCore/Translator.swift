@@ -577,7 +577,13 @@ public struct Translator: Sendable {
                                   options: ChatOptions, into acc: ChunkRunAccumulators,
                                   onToken: @escaping @Sendable (String) -> Void) async throws -> String {
         enum Mode: Equatable { case buffering, bufferedToEnd, incremental }
-        var mode = Mode.buffering
+        let sourceSpanCount = chunk.text.components(separatedBy: "\n")
+            .reduce(0) { $0 + MarkupSkeleton.inlineCodeSpans(in: $1).count }
+        // A chunk whose source carries inline code is buffered whole: the equal-count
+        // restore gate is decidable only on the complete reply, and emitted bytes cannot
+        // be recalled — so incremental emission would break «final and the stream agree
+        // byte-for-byte». Bounded by the chunk budget; measured trade, spec §2.2.
+        var mode = sourceSpanCount > 0 ? Mode.bufferedToEnd : Mode.buffering
         var buffer = ""    // raw text seen so far; meaningful only outside .incremental
         var collected = "" // exactly what has been handed to `onToken` for this chunk
 
@@ -675,7 +681,13 @@ public struct Translator: Sendable {
             allowFenceUnwrap: true,
             allowMarkerUnwrap: !chunk.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 .hasPrefix("<text>")).text
-        emit(cleaned)
+        // Restore is a no-op when the source carries no inline-code spans (the
+        // common case, reached from the fence/marker/single-line paths above as
+        // well as the forced-buffered path this function takes whenever
+        // `sourceSpanCount > 0`), so it is always safe to apply here rather than
+        // gated a second time.
+        let restored = InlineCodeRestorer.restore(reply: cleaned, source: chunk.text)
+        emit(restored)
         return collected
     }
 }
