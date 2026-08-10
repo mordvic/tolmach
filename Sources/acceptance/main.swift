@@ -40,6 +40,13 @@ func isCodeBlockDiff(_ diff: MarkupDiff) -> Bool {
     return false
 }
 
+/// Only the drop direction (`.blockquote` expected, nothing rendered) — a diff where the
+/// model *adds* a `>` the source never had is a different, unaccepted defect and must not
+/// match here.
+func isBlockquoteDropDiff(_ diff: MarkupDiff) -> Bool {
+    diff.expected == .blockquote && diff.actual == nil
+}
+
 /// Identity for deduplicating unaccepted markup diffs across a file's repeated runs.
 /// `MarkupDiff.note` is derived entirely from which side is nil, so the
 /// (expected, actual) pair alone is the diff's identity.
@@ -57,6 +64,29 @@ let knownFileLimitations: [String: String] = [
     "techdoc-en.md": "aya-expanse:8b translates human-readable strings inside a code block — "
         + "the commit message in `git tag -m \"See CHANGELOG.md\"` comes back translated. "
         + "Sharpening the prompt rule was attempted and did not change it.",
+]
+
+// Measured 2026-08-10 (BASELINE.md, "after pass-through chunks and inline restore
+// (re-basing)"): once a file's fenced block became its own standalone passthrough chunk,
+// the chunk immediately after it recomposed, and aya-expanse:8b began stochastically
+// dropping the leading ">" on the blockquote in that chunk — 2/3 runs per file. Two
+// dedicated-rule attempts to fix it (BASELINE.md, "blockquote rule after the re-basing
+// failure" and its revert) both made the model's structure preservation worse elsewhere
+// (spurious ">" insertion on lines with no source blockquote at all, a new deterministic
+// drop of the level-2 heading before the fence) without reliably stopping the drop itself.
+// Accepted by the user 2026-08-10: a stochastic marker loss that `WarningsView` already
+// surfaces to the user is the better trade against the deterministic code corruption the
+// same pass-through/inline-restore change fixed 4/4 (the codeBlock limitation this dict's
+// other entry used to record, and which no longer occurs).
+let knownBlockquoteDropReason = "aya-expanse:8b stochastically drops the leading \">\" on the "
+    + "blockquote that follows a fenced code block, now that the fence is a standalone "
+    + "passthrough chunk and the following chunk recomposed. Two prompt-rule attempts to "
+    + "fix it made the model's structure preservation worse elsewhere and were reverted. "
+    + "Accepted by the user 2026-08-10 as a stochastic marker loss WarningsView already "
+    + "surfaces, traded against the deterministic code corruption the same change fixed 4/4."
+let knownBlockquoteDropLimitations: [String: String] = [
+    "techdoc-en.md": knownBlockquoteDropReason,
+    "techdoc-ru.md": knownBlockquoteDropReason,
 ]
 
 func target(for name: String) -> Language { name.hasSuffix("-ru.md") ? .en : .ru }
@@ -140,6 +170,8 @@ for name in corpus {
             if isKnownModelBehaviour(diff) {
                 print("    known\(label): expected \(expected) actual \(actual)")
             } else if isCodeBlockDiff(diff), let reason = knownFileLimitations[name] {
+                print("    known-limitation\(label): \(reason) (expected \(expected) actual \(actual))")
+            } else if isBlockquoteDropDiff(diff), let reason = knownBlockquoteDropLimitations[name] {
                 print("    known-limitation\(label): \(reason) (expected \(expected) actual \(actual))")
             } else {
                 print("    markup\(label): expected \(expected) actual \(actual)")
