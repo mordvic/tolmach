@@ -7,8 +7,10 @@ public struct TranslationOutcome: Sendable {
     /// Cleaned translation of each chunk, index-aligned with `chunks`. Needed to measure
     /// whether a term renders the same way in every chunk — see the acceptance task.
     public let translatedChunks: [String]
+    /// Empty/false for a правка run — правка builds no glossary (spec §4.3).
     public let documentGlossary: [GlossaryEntry]
     public let detectedSource: Language?
+    /// Empty/false for a правка run — правка builds no glossary (spec §4.3).
     public let checks: [GlossaryCheck]
     public let markupDiffs: [MarkupDiff]
     /// One entry per translation call — the per-chunk calls only. The internal
@@ -71,6 +73,7 @@ public struct TranslationOutcome: Sendable {
     /// them is a failure. Without this the app told a user who had turned the gate on that
     /// terms «не удалось подготовить» for every prose document whose tagger yielded no
     /// candidates — asserting a failure that never happened.
+    /// Empty/false for a правка run — правка builds no glossary (spec §4.3).
     public let documentGlossaryAttempted: Bool
 }
 
@@ -419,6 +422,70 @@ public struct Translator: Sendable {
             totalMS: (Date().timeIntervalSince(started) - reviewWait) * 1000,
             documentGlossaryFailure: documentGlossaryFailure,
             documentGlossaryAttempted: documentGlossaryAttempted)
+    }
+
+    /// Правка: the same route as `translate` — detect → chunk → per-chunk streamed calls →
+    /// clean → skeleton diff → byte-for-byte assembly — with **no** glossary stages: no
+    /// `TermExtractor`, no term-list call, no review hook, no user glossary, no
+    /// `GlossaryVerifier`. The dangerous machinery is `streamChunkReply`, shared with
+    /// `translate`, so «`final` and the `onToken` stream agree exactly» holds here by
+    /// construction (spec §4.3).
+    ///
+    /// Returns `TranslationOutcome` rather than a parallel type: every consumer speaks it,
+    /// and the glossary fields come back honest and empty. `detectedSource` is the text's
+    /// own language; `timeToFirstTokenMS` keeps its nil-means-empty-reply contract.
+    public func proofread(
+        text: String, level: ProofreadingLevel, style: RewriteStyle = .original,
+        source: Language? = nil,
+        options: ChatOptions, maxChunkCharacters: Int,
+        onToken: @escaping @Sendable (String) -> Void = { _ in },
+        onProgress: @escaping @Sendable (TranslationProgress) -> Void = { _ in }
+    ) async throws -> TranslationOutcome {
+        let started = Date()
+        let acc = ChunkRunAccumulators()
+        let detected = source ?? LanguageDetector.detect(text)
+        let plan = Chunker.plan(text, maxCharacters: maxChunkCharacters)
+        let chunks = plan.chunks
+
+        onProgress(TranslationProgress(partsDone: 0, partsTotal: chunks.count,
+                                       documentTermCount: 0))
+
+        var correctedChunks: [String] = []
+        for chunk in chunks {
+            // Same discipline as `translate`: checked at the top of every iteration, and
+            // again after the stream returns, because `AsyncThrowingStream` finishes
+            // silently on cancellation instead of throwing.
+            try Task.checkCancellation()
+            // The separator is the source's own bytes, restored verbatim — straight to
+            // `onToken`, never through the helper's emit, so it cannot stamp the
+            // first-token time (same rule and reason as `translate`).
+            if !chunk.separatorBefore.isEmpty { onToken(chunk.separatorBefore) }
+            let messages = PromptBuilder.proofreadMessages(text: chunk.text, language: detected,
+                                                           level: level, style: style)
+            let cleaned = try await streamChunkReply(messages, chunk: chunk, options: options,
+                                                     into: acc, onToken: onToken)
+            try Task.checkCancellation()
+            correctedChunks.append(cleaned)
+            onProgress(TranslationProgress(partsDone: correctedChunks.count,
+                                           partsTotal: chunks.count, documentTermCount: 0))
+        }
+
+        let final = plan.assembled(from: correctedChunks)
+        if !chunks.isEmpty, !plan.trailingSeparator.isEmpty { onToken(plan.trailingSeparator) }
+
+        return TranslationOutcome(
+            final: final,
+            chunks: chunks,
+            translatedChunks: correctedChunks,
+            documentGlossary: [],
+            detectedSource: detected,
+            checks: [],
+            markupDiffs: MarkupSkeleton.diff(source: text, translation: final),
+            stats: acc.stats,
+            timeToFirstTokenMS: acc.firstTokenAt.map { $0.timeIntervalSince(started) * 1000 },
+            totalMS: Date().timeIntervalSince(started) * 1000,
+            documentGlossaryFailure: nil,
+            documentGlossaryAttempted: false)
     }
 
     // Streams one chunk's translation call, delivering content to `onToken` as
