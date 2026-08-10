@@ -22,7 +22,7 @@ public struct TranslationOutcome: Sendable {
     /// actual chunk content — i.e. the first moment a consumer of `onToken`
     /// could have shown the user something. This is deliberately NOT the first
     /// raw token off the wire: a chunk whose whole-answer shape is undecided
-    /// (see `Translator.streamChunkTranslation`) is buffered until its first
+    /// (see `Translator.streamChunkReply`) is buffered until its first
     /// line settles or its stream ends, so timing the wire instead would
     /// measure an event nobody watching `onToken` can ever observe. The chunk
     /// separator (the source's own bytes, restored verbatim) and the internal
@@ -323,7 +323,7 @@ public struct Translator: Sendable {
         var translatedChunks: [String] = []
         for chunk in chunks {
             // Checked at the top of every iteration, not just after
-            // `streamChunkTranslation` returns, so a cancellation that lands in the
+            // `streamChunkReply` returns, so a cancellation that lands in the
             // synchronous work between chunks (or before the very first request) is
             // caught too, instead of issuing one more request it will just throw away.
             try Task.checkCancellation()
