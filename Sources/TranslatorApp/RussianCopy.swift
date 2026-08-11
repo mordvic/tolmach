@@ -102,6 +102,20 @@ extension RewriteStyle {
     }
 }
 
+extension ThinkRequest.Level {
+    /// «Глубина», not «степень»: правка has already spent that word on how freely wording may
+    /// change, and two settings sharing one noun is how a pane stops being readable.
+    ///
+    /// Exhaustive with no `default:`, for `Tone.russianName`'s reason.
+    var russianName: String {
+        switch self {
+        case .low: "Кратко"
+        case .medium: "Средне"
+        case .high: "Подробно"
+        }
+    }
+}
+
 enum RussianCopy {
     /// Russian nouns after a number take one of three forms, chosen by the last two
     /// digits of the count:

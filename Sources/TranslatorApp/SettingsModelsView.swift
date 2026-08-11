@@ -1,6 +1,7 @@
 // Sources/TranslatorApp/SettingsModelsView.swift
 import SwiftUI
 import OllamaKit
+import TranslationCore
 
 struct SettingsModelsView: View {
     /// `@Bindable` for the same reason as in `SettingsGeneralView`: the pickers write back
@@ -205,6 +206,28 @@ struct SettingsModelsView: View {
                      + "Ниже — предсказуемее и ближе к оригиналу. По умолчанию 0,2.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Toggle("Отключать рассуждение модели", isOn: $settings.quietThinking)
+                // The caption says what the app does with the trace, because that is the fact
+                // that makes the default defensible: a discarded trace costs only time.
+                // Measured 2026-08-11: qwen3:8b writes 2621 characters of it before the first
+                // character of translation.
+                Text("Некоторые модели сначала рассуждают вслух. В перевод это не попадает — "
+                     + "приложение отбрасывает такой текст, — но тратит время до первого слова.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if settings.usesGptOss {
+                    Picker("Глубина у gpt-oss:", selection: $settings.gptOssThinkingLevel) {
+                        ForEach(ThinkRequest.Level.allCases, id: \.self) { level in
+                            Text(level.russianName).tag(level)
+                        }
+                    }
+                    // Disabled rather than hidden: a control that vanished when an unrelated
+                    // switch moved would read as a bug rather than as a dependency.
+                    .disabled(!settings.quietThinking)
+                    Text("gpt-oss не умеет выключать рассуждение — только укоротить.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .settingsPane()
