@@ -197,6 +197,14 @@ Facts that will bite you if you "tidy" them:
   pays for a trace it discards whenever the chosen model can reason: `aya-expanse:8b` cannot, so
   the interactive path is unaffected, but the recommended background model `gpt-oss:20b` can.
   The table with every figure is in `docs/PLATFORM-TRAPS.md`.
+- **The control over it is `AppSettings.quietThinking` plus `gptOssThinkingLevel`, and the
+  decision is `ModelPolicy.thinkRequest(for:quiet:level:)`.** `AppSettings.chatOptions(model:)`
+  is the only place in the app that builds `ChatOptions`, precisely so a new call site cannot
+  opt out of it; `acceptance` and `translate-cli` stay outside it on purpose, the first because
+  a harness that followed a user setting would move its own baseline and the second because
+  `--think` is how a measurement is re-taken. `ThinkRequest` has no «on» case: that is what
+  makes every request the app can build one Ollama accepts, and it is why there is still no
+  `/api/show` call anywhere in `OllamaKit`.
 - Ollama reports durations in nanoseconds; convert to ms at the client boundary.
 - `ModelPolicy` pins `aya-expanse:8b` for the interactive path (TTFT < 1 s is a hard requirement)
   and `gpt-oss:20b` for the background path, and carries a blacklist with measured reasons. Those
@@ -295,7 +303,9 @@ Facts that will bite you if you "tidy" them:
   the main window. Its label says so; do not widen one without the other.
 - `AppSettings` reads and writes `UserDefaults` directly in every accessor (no stored properties),
   so `@Observable`'s synthesis does not apply — each accessor calls `access(keyPath:)` /
-  `withMutation(keyPath:_:)` by hand. Keep that shape when adding a setting.
+  `withMutation(keyPath:_:)` by hand. Keep that shape when adding a setting. Two of its keys
+  are `"quietThinking"` (default **true** — a deliberate change to what the app does, see the
+  Ollama rules above) and `"gptOssThinkingLevel"` (default `low`).
 - `GlossaryStore` persists `~/Library/Application Support/LocalTranslator/glossary.json` (hand-editable,
   git-trackable by design). `save()` is gated on a successful `load()` and on a file stamp check, so
   the app cannot overwrite a file edited behind its back.

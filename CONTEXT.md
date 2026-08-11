@@ -98,6 +98,20 @@ by nothing.
 → `ModelRole.background`, `ModelPolicy.defaultModel(for: .background)`
 _Avoid_: медленный режим, качественный режим
 
+**Рассуждение** — *reasoning, thinking*
+What a model emits into `message.thinking` before its answer. The app reads it and
+throws it away, so its only effect here is delay — which is why «Отключать
+рассуждение модели» is on by default.
+→ `ThinkRequest`, `ModelPolicy.thinkRequest`, `AppSettings.quietThinking`
+_Avoid_: размышление, мышление, thinking
+
+**Длина рассуждения** — *reasoning length*
+How long a `gpt-oss` trace may run before the answer starts: «Кратко» / «Средне» /
+«Подробно». Only `gpt-oss` has this control, because it is the one family that
+ignores being switched off.
+→ `ThinkRequest.Level`, `AppSettings.gptOssThinkingLevel`
+_Avoid_: глубина, степень — that word belongs to правка; уровень
+
 ---
 
 ## Markup

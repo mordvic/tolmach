@@ -1,7 +1,7 @@
 # Controlling a model's reasoning («think») — design
 
 Date: 2026-08-11
-Status: designed, not implemented
+Status: implemented 2026-08-11, except the pane's visual check (see §7)
 
 ## Status of this document
 
@@ -22,11 +22,13 @@ documentation, though §2 notes where the two agree.
 | Word | Means | Never |
 |---|---|---|
 | **рассуждение** | what a model emits into `message.thinking` before its answer | «размышление», «мышление», «thinking» |
-| **глубина** | how long a `gpt-oss` trace is allowed to be: «Кратко» / «Средне» / «Подробно» | «уровень» (that word belongs to правка's «степень»), «длина» |
+| **длина рассуждения** | how long a `gpt-oss` trace is allowed to run before the answer starts: «Кратко» / «Средне» / «Подробно» | «глубина», «степень» (правка owns that one), «уровень» |
 
-«Глубина» is deliberately not «степень»: `docs/superpowers/specs/2026-08-10-proofreading-design.md`
-has already spent that word on how freely wording may change, and two settings sharing one noun is
-how a pane stops being readable.
+**Corrected during implementation.** This section first chose «глубина», on the grounds that
+правка had already spent «степень». It had — and `CONTEXT.md` also lists «глубина» among the words
+*not* to use for «степень», so the new term would have made that avoid-list ambiguous instead of
+avoiding a collision. «Длина рассуждения» names what the setting governs and collides with nothing:
+the pane's other «длина» is qualified as «длина одного запроса к модели».
 
 ---
 
@@ -65,7 +67,7 @@ One section in Settings → «Модели», below «Качество пере�
    Рассуждение не попадает в перевод — приложение его отбрасывает, —
    но тратит время до первого слова.
 
-Глубина у gpt-oss:  [ Кратко ⌄ ]
+Длина рассуждения у gpt-oss:  [ Кратко ⌄ ]
    gpt-oss не умеет выключать рассуждение, только укоротить.
 ```
 
@@ -73,7 +75,7 @@ The checkbox is **on by default**. That is a behaviour change for anyone whose c
 reason, and it is the right default for the reason in §2: the trace is discarded either way, so
 its only effect on this app is delay.
 
-The «Глубина» row is drawn only when `interactiveModel` or `resolvedBatchModel` has the `gpt-oss`
+The «Длина рассуждения» row is drawn only when `interactiveModel` or `resolvedBatchModel` has the `gpt-oss`
 prefix, and is enabled only while the checkbox is on. Nothing in the pane mentions `qwen3:30b` or
 any other model the policy treats specially — like the blacklist, that is a rule of the engine
 rather than a choice offered to the user.
@@ -220,7 +222,7 @@ baseline.
 The row is disabled — not hidden — while the checkbox is off, because a control that vanished when
 an unrelated switch moved would read as a bug rather than as a dependency.
 
-The «Глубина» row's visibility reads `settings.usesGptOss` — a derived property on `AppSettings`
+The «Длина рассуждения» row's visibility reads `settings.usesGptOss` — a derived property on `AppSettings`
 next to `batchModelDiffersFromInteractive`, for that property's stated reason: a view that restated
 the prefix comparison would keep drawing the row after the rule changed.
 

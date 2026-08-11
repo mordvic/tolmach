@@ -216,7 +216,7 @@ struct SettingsModelsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if settings.usesGptOss {
-                    Picker("Глубина у gpt-oss:", selection: $settings.gptOssThinkingLevel) {
+                    Picker("Длина рассуждения у gpt-oss:", selection: $settings.gptOssThinkingLevel) {
                         ForEach(ThinkRequest.Level.allCases, id: \.self) { level in
                             Text(level.russianName).tag(level)
                         }

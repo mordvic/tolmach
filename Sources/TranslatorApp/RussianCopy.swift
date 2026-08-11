@@ -103,8 +103,11 @@ extension RewriteStyle {
 }
 
 extension ThinkRequest.Level {
-    /// «Глубина», not «степень»: правка has already spent that word on how freely wording may
-    /// change, and two settings sharing one noun is how a pane stops being readable.
+    /// The control these label is «длина рассуждения», not «глубина» and not «степень».
+    /// `CONTEXT.md` gives «степень» to правка and lists «глубина» among the words *not* to use
+    /// for it — so naming this one «глубина» would have made that avoid-list ambiguous rather
+    /// than avoided a collision. «Длина» is what the setting actually governs: how long the
+    /// trace runs before the answer starts.
     ///
     /// Exhaustive with no `default:`, for `Tone.russianName`'s reason.
     var russianName: String {

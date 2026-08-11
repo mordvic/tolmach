@@ -380,7 +380,10 @@ sent to a model whose `/api/show` `capabilities` lack `thinking`, is **HTTP 400*
 `"<model>" does not support thinking` — a failed translation, not a degraded one. `think: false`
 is accepted by every model with HTTP 200, including those four. So a control that only ever sends
 `false` needs no capability check and a control that can send `true` cannot do without one, and
-`OllamaClient` has no `/api/show` call to answer with today.
+`OllamaClient` has no `/api/show` call to answer with. That is why `ThinkRequest` has no «on»
+case: with no way to spell it, no request the app builds can be refused.
+→ `ThinkRequest` in `Sources/TranslationCore/LLMClient.swift`, `ModelPolicy.thinkRequest`,
+`Sources/OllamaKit/OllamaChatBody.swift`
 
 **Levels are a `gpt-oss` feature that other models accept without honouring.** `low`/`medium`/`high`
 grade `gpt-oss:20b` monotonically and are its only lever, since it ignores `false`. `qwen3` and
