@@ -293,3 +293,57 @@ private final class FiredFlag: @unchecked Sendable {
     #expect(settings.defaultProofreadingLevel == defaultLevel)
     #expect(settings.defaultRewriteStyle == defaultStyle)
 }
+
+@Test func thinkingIsQuietOnAFreshInstall() {
+    let settings = AppSettings(defaults: freshDefaults())
+    #expect(settings.quietThinking == true)
+    #expect(settings.gptOssThinkingLevel == .low)
+}
+
+@Test func aStoredThinkingLevelSurvivesAReloadAndAnUnrecognisedOneReadsBackAsLow() {
+    let defaults = freshDefaults()
+    let first = AppSettings(defaults: defaults)
+    first.gptOssThinkingLevel = .high
+    #expect(AppSettings(defaults: defaults).gptOssThinkingLevel == .high)
+
+    // Hand-edited or written by a future version: a raw value this build does not know must
+    // not trap and must not silently mean «high».
+    defaults.set("exhaustive", forKey: "gptOssThinkingLevel")
+    #expect(AppSettings(defaults: defaults).gptOssThinkingLevel == .low)
+}
+
+@Test func chatOptionsCarryTheThinkDecisionForWhicheverModelIsAskedFor() {
+    let settings = AppSettings(defaults: freshDefaults())
+    settings.interactiveModel = "qwen3:8b"
+    settings.batchModel = "gpt-oss:20b"
+    #expect(settings.chatOptions(model: settings.interactiveModel).think == .off)
+    #expect(settings.chatOptions(model: settings.resolvedBatchModel).think == .level(.low))
+
+    settings.quietThinking = false
+    #expect(settings.chatOptions(model: settings.interactiveModel).think == nil)
+    #expect(settings.chatOptions(model: settings.resolvedBatchModel).think == nil)
+}
+
+@Test func chatOptionsStillCarryTheTemperatureAndKeepAliveTheUserSet() {
+    let settings = AppSettings(defaults: freshDefaults())
+    settings.temperature = 0.45
+    settings.keepAlive = "5m"
+    let options = settings.chatOptions(model: "aya-expanse:8b")
+    #expect(options.model == "aya-expanse:8b")
+    #expect(options.temperature == 0.45)
+    #expect(options.keepAlive == "5m")
+}
+
+@Test func theDepthRowIsOfferedOnlyWhileAGptOssModelIsSelectedOnEitherPath() {
+    let settings = AppSettings(defaults: freshDefaults())
+    settings.interactiveModel = "aya-expanse:8b"
+    settings.batchModel = nil
+    #expect(settings.usesGptOss == false)
+
+    settings.batchModel = "gpt-oss:20b"
+    #expect(settings.usesGptOss == true)
+
+    settings.batchModel = nil
+    settings.interactiveModel = "gpt-oss:20b"
+    #expect(settings.usesGptOss == true)
+}

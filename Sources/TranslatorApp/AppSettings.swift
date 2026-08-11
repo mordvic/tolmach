@@ -135,6 +135,51 @@ final class AppSettings {
     /// property above.
     var resolvedBatchModel: String { batchModel ?? interactiveModel }
 
+    /// Whether the app asks a model not to reason.
+    ///
+    /// **On by default, which is a change in what the app does and is meant to be.** Ollama
+    /// turns reasoning on by default for a capable model and `OllamaStreamParser` discards
+    /// `message.thinking` by standing rule, so before this setting existed the app paid for a
+    /// trace it threw away: measured 2026-08-11, `qwen3:8b` produced 2621 characters of it
+    /// before the first character of translation. Which models may actually be told, and how,
+    /// is `ModelPolicy.thinkRequest(for:quiet:level:)`.
+    var quietThinking: Bool {
+        get {
+            access(keyPath: \.quietThinking)
+            return bool("quietThinking", true)
+        }
+        set { withMutation(keyPath: \.quietThinking) { defaults.set(newValue, forKey: "quietThinking") } }
+    }
+
+    /// How much reasoning `gpt-oss` is allowed, for the one family that cannot be switched off.
+    ///
+    /// Defaults to `.low` rather than to the model's own default for the same reason
+    /// `quietThinking` defaults to on: measured 15 characters of trace at 0.49 s to first token
+    /// against 478 characters when nothing is sent.
+    var gptOssThinkingLevel: ThinkRequest.Level {
+        get {
+            access(keyPath: \.gptOssThinkingLevel)
+            return ThinkRequest.Level(rawValue: string("gptOssThinkingLevel", "low")) ?? .low
+        }
+        set {
+            withMutation(keyPath: \.gptOssThinkingLevel) {
+                defaults.set(newValue.rawValue, forKey: "gptOssThinkingLevel")
+            }
+        }
+    }
+
+    /// Whether either path would run a `gpt-oss` model — i.e. whether the depth control has
+    /// anything to govern.
+    ///
+    /// A derived property rather than a comparison written in the pane, for
+    /// `batchModelDiffersFromInteractive`'s stated reason: a view that restated the prefix rule
+    /// would go on drawing the row after the rule changed.
+    var usesGptOss: Bool {
+        ModelPolicy.thinkingLevelsOnly.contains {
+            interactiveModel.hasPrefix($0) || resolvedBatchModel.hasPrefix($0)
+        }
+    }
+
     /// Whether the queue and the hotkey would use two different models — i.e. whether a
     /// hotkey press during a queue run costs a model swap in Ollama's memory.
     ///
@@ -299,5 +344,23 @@ final class AppSettings {
     /// pasting foreign text.
     func targetLanguage(forDetected detected: Language?) -> Language {
         detected == primaryLanguage ? workingLanguage : primaryLanguage
+    }
+}
+
+extension AppSettings {
+    /// The only place in the app that builds `ChatOptions`.
+    ///
+    /// It was four places, all passing the identical triple of model, temperature and
+    /// keep-alive. Collapsing them is not tidying: after it, an app-layer `ChatOptions` cannot
+    /// be built without the think decision having been made, so a fifth call site added later
+    /// cannot silently opt out of the setting.
+    ///
+    /// `acceptance` and `translate-cli` deliberately do **not** come through here — the first
+    /// measures the engine against fixed thresholds and must not follow a user's setting, and
+    /// the second states its own with `--think`.
+    func chatOptions(model: String) -> ChatOptions {
+        ChatOptions(model: model, temperature: temperature, keepAlive: keepAlive,
+                    think: ModelPolicy.thinkRequest(for: model, quiet: quietThinking,
+                                                    level: gptOssThinkingLevel))
     }
 }

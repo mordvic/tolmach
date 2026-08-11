@@ -299,9 +299,7 @@ final class TranslationViewModel {
         let detected = sourceOverride ?? LanguageDetector.detect(text)
         let target = targetOverride ?? settings.targetLanguage(forDetected: detected)
         let tone = toneOverride ?? settings.defaultTone
-        let options = ChatOptions(model: settings.interactiveModel,
-                                  temperature: settings.temperature,
-                                  keepAlive: settings.keepAlive)
+        let options = settings.chatOptions(model: settings.interactiveModel)
 
         state = .running
         // Reset beside the other per-run state: a notice that outlived its run would say
@@ -397,9 +395,7 @@ final class TranslationViewModel {
         // it, with identical behaviour.
         let level = proofreadingLevelOverride ?? settings.defaultProofreadingLevel
         let style = rewriteStyleOverride ?? settings.defaultRewriteStyle
-        let options = ChatOptions(model: settings.interactiveModel,
-                                  temperature: settings.temperature,
-                                  keepAlive: settings.keepAlive)
+        let options = settings.chatOptions(model: settings.interactiveModel)
         state = .running
         // Правка never raises the terms sheet, but the notice must not outlive its run
         // either — same reset `translate()` performs.
