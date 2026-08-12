@@ -367,10 +367,51 @@ letting a write reach the daemon. → `Tests/TranslatorAppTests/InMemoryDefaults
 
 Not macOS, but the same category — behaviour established by experiment rather than by reading:
 
-**`"think": false` does not disable reasoning.** It moves it out of `message.thinking` and into
-`message.content`, i.e. straight into the translation. Verified on `qwen3:30b`. The parameter is
-therefore never sent, and `message.thinking` is read and discarded.
+**`"think": false` does not disable reasoning — on one model.** It moves it out of
+`message.thinking` and into `message.content`, i.e. straight into the translation. Verified on
+`qwen3:30b`, and that model is the whole of the finding: the rule used to be written as a fact
+about Ollama, and re-measuring it across every locally installed model showed it is a fact about
+`qwen3:30b`. The parameter is still not sent, `message.thinking` is still read and discarded, and
+the two reasons are now different from each other — see the asymmetry below.
 → `Sources/OllamaKit/OllamaClient.swift`, and §3.1 of the design spec
+
+**Turning reasoning on is capability-gated; turning it off is not.** `think: true` or a level,
+sent to a model whose `/api/show` `capabilities` lack `thinking`, is **HTTP 400**
+`"<model>" does not support thinking` — a failed translation, not a degraded one. `think: false`
+is accepted by every model with HTTP 200, including those four. So a control that only ever sends
+`false` needs no capability check and a control that can send `true` cannot do without one, and
+`OllamaClient` has no `/api/show` call to answer with. That is why `ThinkRequest` has no «on»
+case: with no way to spell it, no request the app builds can be refused.
+→ `ThinkRequest` in `Sources/TranslationCore/LLMClient.swift`, `ModelPolicy.thinkRequest`,
+`Sources/OllamaKit/OllamaChatBody.swift`
+
+**Levels are a `gpt-oss` feature that other models accept without honouring.** `low`/`medium`/`high`
+grade `gpt-oss:20b` monotonically and are its only lever, since it ignores `false`. `qwen3` and
+`gemma4` read any level as «on» and vary non-monotonically. Ollama's own documentation says as
+much — «GPT-OSS requires `think` to be set to `low`/`medium`/`high`. Passing `true`/`false` is
+ignored for that model», and «Thinking is enabled by default in the CLI and API for supported
+models», which is why a capable model costs its trace whether or not the app asked for one.
+
+The sweep behind all three, 2026-08-11, Ollama server 0.31.1, one-sentence RU→EN prompt,
+`temperature 0.2`, each model unloaded before the next. Cells are characters of `message.thinking`;
+**TTFT is quoted only for warm rows** — each model's first row paid a cold load and its time is
+not comparable.
+
+| model | `capabilities` | omitted | `false` | `true` | `low` / `medium` / `high` |
+|---|---|---|---|---|---|
+| `aya-expanse:8b` | no `thinking` | 0 | 0 | **400** | **400** |
+| `gemma3n:e4b` | no `thinking` | 0 | 0 | **400** | **400** |
+| `qwen3-coder:30b` | no `thinking` | 0 | 0 | **400** | **400** |
+| `qwen2.5-coder:7b-base` | no `thinking` | 0 | 0 | **400** | **400** |
+| `qwen3:8b` | `thinking` | 2621 | **0** (0.16 s) | 1526 (9.34 s) | 1754 / 1361 / 1361 |
+| `qwen3:30b` | `thinking` | 2671 | **0 — 2798 characters of reasoning in `content` instead** | 1931 (7.28 s) | 1896 / 1335 / 6189 |
+| `gemma4:26b` | `thinking` | 721 | **0** (0.33 s) | 1418 (6.17 s) | 812 / 956 / 884 |
+| `gpt-oss:20b` | `thinking` | 478 | 563 — **not disabled** | 474 | 15 (0.49 s) / 441 (1.99 s) / 889 (3.77 s) |
+
+`qwen2.5-coder:7b-base` is a base model with no chat template and rambles past the answer at any
+setting; its two 200 rows say nothing about `think` and are kept only so the 400s have a fourth
+witness.
+→ `Sources/OllamaKit/OllamaClient.swift`
 
 **Durations are nanoseconds.** Converted at the client boundary.
 → `Sources/OllamaKit/OllamaClient.swift`

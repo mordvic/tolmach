@@ -570,9 +570,7 @@ final class FileQueueModel {
         // `settings` from there is what Swift 6 flags as sending a non-Sendable value, and
         // the value is a fact about the moment the run started anyway.
         let tone = overrideTone ?? settings.defaultTone
-        let options = ChatOptions(model: settings.resolvedBatchModel,
-                                  temperature: settings.temperature,
-                                  keepAlive: settings.keepAlive)
+        let options = settings.chatOptions(model: settings.resolvedBatchModel)
         let started = Date()
         raisedTermsSheet = false
         termsWait = 0

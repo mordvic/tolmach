@@ -175,8 +175,40 @@ Facts that will bite you if you "tidy" them:
 ### Ollama rules (empirical, non-negotiable)
 
 - `message.thinking` in a response is read and **discarded**.
-- The `think` parameter is **never sent**. `"think": false` does not disable reasoning, it moves it
-  into `message.content`, i.e. straight into the translation.
+- **In the app, whether the `think` parameter is sent, and what value, is decided per model by
+  `ModelPolicy.thinkRequest` — never sent as a bare, unconditional `false` or `true`.**
+  `translate-cli --think` and `acceptance` are the deliberate exceptions: the CLI's flag exists
+  precisely to force a bare value past that policy and re-take a measurement like the one below.
+  Re-measured 2026-08-11 against Ollama 0.31.1 across all eight locally installed models, four
+  to six values of `think` each. `"think": false` genuinely silences `qwen3:8b` (2621 → 0
+  characters of trace) and `gemma4:26b` (721 → 0); it is **ignored** by `gpt-oss:20b` (563
+  characters with it); and on **`qwen3:30b` — the model the original rule was taken on — it puts
+  2798 characters of Russian reasoning into `message.content`**, i.e. straight into the
+  translation. So the trap is real and is a property of a model, not of Ollama, and the old
+  spelling of this rule as a fact about the protocol was wrong. See the `AppSettings.quietThinking`
+  bullet below for the control that now decides this per request.
+- **The two directions are asymmetric, which is what any future control has to respect.** `false`
+  is safe on the wire everywhere — HTTP 200 on all eight, including the four that cannot reason
+  at all — and unsafe in meaning on `qwen3:30b`. Turning reasoning *on* is the opposite: `true`
+  or a level sent to a model whose `/api/show` capabilities lack `thinking` is **HTTP 400**
+  `"…" does not support thinking`, i.e. a failed translation, 4 of 4 such models. Anything that
+  enables it must be gated on `capabilities`, which this client cannot read yet — it calls
+  `/api/tags`, `/api/ps`, `/api/pull` and `/api/chat` and nothing else.
+- **Levels grade `gpt-oss:20b` and nothing else here.** `low`/`medium`/`high` give it 15 / 441 /
+  889 characters of trace at 0.49 / 1.99 / 3.77 s to first token, warm — and they are its only
+  lever, since it ignores `false`. On `qwen3` and `gemma4` a level means no more than «on» and
+  is not monotonic. Ollama enables thinking by default for a capable model, so the app already
+  pays for a trace it discards whenever the chosen model can reason: `aya-expanse:8b` cannot, so
+  the interactive path is unaffected, but the recommended background model `gpt-oss:20b` can.
+  The table with every figure is in `docs/PLATFORM-TRAPS.md`.
+- **The control over it is `AppSettings.quietThinking` plus `gptOssThinkingLevel`, and the
+  decision is `ModelPolicy.thinkRequest(for:quiet:level:)`.** `AppSettings.chatOptions(model:)`
+  is the only place in the app that builds `ChatOptions`, precisely so a new call site cannot
+  opt out of it; `acceptance` and `translate-cli` stay outside it on purpose, the first because
+  a harness that followed a user setting would move its own baseline and the second because
+  `--think` is how a measurement is re-taken. `ThinkRequest` has no «on» case: that is what
+  makes every request the app can build one Ollama accepts, and it is why there is still no
+  `/api/show` call anywhere in `OllamaKit`.
 - Ollama reports durations in nanoseconds; convert to ms at the client boundary.
 - `ModelPolicy` pins `aya-expanse:8b` for the interactive path (TTFT < 1 s is a hard requirement)
   and `gpt-oss:20b` for the background path, and carries a blacklist with measured reasons. Those
@@ -275,7 +307,9 @@ Facts that will bite you if you "tidy" them:
   the main window. Its label says so; do not widen one without the other.
 - `AppSettings` reads and writes `UserDefaults` directly in every accessor (no stored properties),
   so `@Observable`'s synthesis does not apply — each accessor calls `access(keyPath:)` /
-  `withMutation(keyPath:_:)` by hand. Keep that shape when adding a setting.
+  `withMutation(keyPath:_:)` by hand. Keep that shape when adding a setting. Two of its keys
+  are `"quietThinking"` (default **true** — a deliberate change to what the app does, see the
+  Ollama rules above) and `"gptOssThinkingLevel"` (default `low`).
 - `GlossaryStore` persists `~/Library/Application Support/LocalTranslator/glossary.json` (hand-editable,
   git-trackable by design). `save()` is gated on a successful `load()` and on a file stamp check, so
   the app cannot overwrite a file edited behind its back.

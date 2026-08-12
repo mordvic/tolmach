@@ -13,8 +13,9 @@ recorder, a Markdown parser, an HTTP client — and each was written by hand ins
   that API is the property recorded in `docs/adr/0002`, and a wrapper would hide it behind a
   convenience type at exactly the moment someone needs to know it.
 - **The HTTP client.** `OllamaKit` is one endpoint family over `URLSession` with NDJSON
-  streaming. The two rules that make it correct — never send `think`, discard
-  `message.thinking` — are empirical facts about Ollama that no general client would encode.
+  streaming. The two rules that make it correct — discard `message.thinking`, and treat `think`
+  as per-model rather than per-protocol (`docs/PLATFORM-TRAPS.md` has the sweep) — are empirical
+  facts about particular models that no general client would encode.
 - **Markup handling.** `MarkupSkeleton` does not parse Markdown; it extracts the structural
   tokens the model is allowed to change and compares before against after. A real parser would
   do far more, and none of the more is wanted.

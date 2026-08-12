@@ -13,6 +13,7 @@ struct Options {
     var tone = "neutral"
     var model: String?
     var chunk = 900
+    var think: ThinkRequest?
     var text: [String] = []
 }
 
@@ -46,6 +47,20 @@ func parse(_ args: [String]) -> Result<Options, ParseFailure> {
                 return .failure(ParseFailure(message: "--chunk needs a positive integer, got \"\(value)\""))
             }
             options.chunk = parsed
+        case "--think":
+            guard let value = takeValue() else { return .failure(ParseFailure(message: "--think needs a value")) }
+            if value == "off" {
+                options.think = .off
+            } else if let level = ThinkRequest.Level(rawValue: value) {
+                // Read through `Level(rawValue:)` rather than matching the three strings a
+                // second time: a fourth level added to `ThinkRequest` is then accepted here
+                // without an edit, and cannot be accepted by the enum but refused by the flag.
+                options.think = .level(level)
+            } else {
+                // Rejected rather than defaulted, for `--chunk`'s reason: a silent fallback
+                // would make a mistyped flag look like a measurement.
+                return .failure(ParseFailure(message: "--think needs one of off|low|medium|high, got \"\(value)\""))
+            }
         default:
             // Everything not consumed as a flag value is text — including a word
             // that happens to equal a default, and including text starting with "--".
@@ -59,7 +74,7 @@ func parse(_ args: [String]) -> Result<Options, ParseFailure> {
     return .success(options)
 }
 
-let usage = "usage: translate-cli --to <ru|en|de|fr|es|pt|it|zh|ja> [--from L] [--tone neutral|formal|casual|technical|literal] [--model NAME] [--chunk N] [text]\n"
+let usage = "usage: translate-cli --to <ru|en|de|fr|es|pt|it|zh|ja> [--from L] [--tone neutral|formal|casual|technical|literal] [--model NAME] [--chunk N] [--think off|low|medium|high] [text]\n"
 
 func fail(_ message: String) -> Never {
     FileHandle.standardError.write(Data((message + "\n").utf8))
@@ -106,7 +121,11 @@ if let reason = ModelPolicy.blacklistReason(for: model) {
 }
 
 let translator = Translator(client: OllamaClient())
-let chatOptions = ChatOptions(model: model, temperature: 0.2, keepAlive: "30m")
+// Straight into `ChatOptions`, deliberately bypassing `ModelPolicy.thinkRequest`: this flag
+// exists to reproduce measurements, and a harness that refused to send `false` to `qwen3:30b`
+// could not reproduce the leak that policy is built around. The app is where a user is
+// protected; this is where a measurement is taken.
+let chatOptions = ChatOptions(model: model, temperature: 0.2, keepAlive: "30m", think: parsed.think)
 
 do {
     let outcome = try await translator.translate(

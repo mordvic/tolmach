@@ -602,9 +602,9 @@ struct TranslatorApp: App {
     /// which is the entire job.
     private func warmUp() async {
         guard settings.warmUpOnLaunch else { return }
-        let options = ChatOptions(model: settings.interactiveModel,
-                                  temperature: settings.temperature,
-                                  keepAlive: settings.keepAlive)
+        // The same options a real run gets, think decision included: a warm-up that reasoned
+        // while the run did not would page the model in under a regime nothing else uses.
+        let options = settings.chatOptions(model: settings.interactiveModel)
         do {
             // Drained rather than abandoned after the first event: dropping the stream runs
             // `onTermination`, which cancels the request, and there is nothing to save by

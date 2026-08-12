@@ -144,11 +144,8 @@ public struct OllamaClient: LLMClient {
                     var request = request("api/chat", timeout: Timeout.interactive,
                                          method: "POST")
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                    request.httpBody = try JSONSerialization.data(withJSONObject: [
-                        "model": options.model, "stream": true, "keep_alive": options.keepAlive,
-                        "messages": messages.map { ["role": $0.role, "content": $0.content] },
-                        "options": ["temperature": options.temperature],
-                    ])
+                    request.httpBody = try JSONSerialization.data(
+                        withJSONObject: OllamaChatBody.json(messages: messages, options: options))
                     let (bytes, response) = try await session.bytes(for: request)
                     guard let http = response as? HTTPURLResponse else { throw OllamaError.notRunning }
                     guard http.statusCode == 200 else { throw OllamaError.httpStatus(http.statusCode, "see ollama logs") }

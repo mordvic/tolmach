@@ -331,3 +331,12 @@ func pullStatusesAreShownInRussian(raw: String, expected: String) {
     #expect(TextOperation.translate.label == "Перевод")
     #expect(TextOperation.proofread.label == "Правка")
 }
+
+@Test func everyThinkingLevelHasARussianName() {
+    #expect(ThinkRequest.Level.low.russianName == "Кратко")
+    #expect(ThinkRequest.Level.medium.russianName == "Средне")
+    #expect(ThinkRequest.Level.high.russianName == "Подробно")
+    // No `default:` anywhere in the switch, so a new case is a compile error rather than a
+    // row rendering as its raw English value.
+    #expect(Set(ThinkRequest.Level.allCases.map(\.russianName)).count == ThinkRequest.Level.allCases.count)
+}
