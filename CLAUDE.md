@@ -175,8 +175,10 @@ Facts that will bite you if you "tidy" them:
 ### Ollama rules (empirical, non-negotiable)
 
 - `message.thinking` in a response is read and **discarded**.
-- **Whether the `think` parameter is sent, and what value, is decided per model by
+- **In the app, whether the `think` parameter is sent, and what value, is decided per model by
   `ModelPolicy.thinkRequest` — never sent as a bare, unconditional `false` or `true`.**
+  `translate-cli --think` and `acceptance` are the deliberate exceptions: the CLI's flag exists
+  precisely to force a bare value past that policy and re-take a measurement like the one below.
   Re-measured 2026-08-11 against Ollama 0.31.1 across all eight locally installed models, four
   to six values of `think` each. `"think": false` genuinely silences `qwen3:8b` (2621 → 0
   characters of trace) and `gemma4:26b` (721 → 0); it is **ignored** by `gpt-oss:20b` (563
