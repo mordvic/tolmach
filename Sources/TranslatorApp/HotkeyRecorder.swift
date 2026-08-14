@@ -11,6 +11,10 @@ import TextCapture
 /// `RegisterEventHotKey` wants the physical code.
 struct HotkeyRecorder: NSViewRepresentable {
     @Binding var combo: HotkeyCombo
+    /// Combinations this recorder must refuse because something else in this app already
+    /// holds them. An array rather than a `Set`, so `HotkeyCombo` does not have to gain
+    /// `Hashable` for a list that is one element long.
+    var reserved: [HotkeyCombo] = []
 
     func makeNSView(context: Context) -> RecorderView { RecorderView() }
 
@@ -23,11 +27,15 @@ struct HotkeyRecorder: NSViewRepresentable {
     /// control, and a caller that bound to `@State` would silently record into a dead copy.
     func updateNSView(_ view: RecorderView, context: Context) {
         view.combo = combo
+        view.reserved = reserved
         view.onRecord = { combo = $0 }
     }
 
     final class RecorderView: NSView {
         var combo: HotkeyCombo = .default { didSet { needsDisplay = true } }
+        /// See the property of the same name above. No `didSet`: this changes only when the
+        /// *other* shortcut changes, and the drawing does not show it.
+        var reserved: [HotkeyCombo] = []
         var onRecord: ((HotkeyCombo) -> Void)?
         private var isRecording = false { didSet { needsDisplay = true } }
 
@@ -71,6 +79,12 @@ struct HotkeyRecorder: NSViewRepresentable {
             // Refused here as well as in `HotkeyManager`, so the user sees the recorder
             // stay open rather than watching a combination be accepted and then not work.
             guard candidate.isValid else { NSSound.beep(); return }
+            // Refused for the same reason and in the same way as an invalid combination:
+            // Carbon refuses a combination already held in this process (-9878), and
+            // `HotkeyCoordinator.apply` answers a refusal by restoring the previous one. So
+            // accepting this here would leave the pane showing a shortcut the app does not
+            // answer to, with nothing to say why.
+            guard !reserved.contains(candidate) else { NSSound.beep(); return }
             combo = candidate
             isRecording = false
             onRecord?(candidate)

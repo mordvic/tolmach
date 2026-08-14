@@ -190,3 +190,47 @@ private func press(_ view: HotkeyRecorder.RecorderView,
     #expect(recorded == HotkeyCombo(keyCode: 0x11,
                                     modifiers: NSEvent.ModifierFlags([.option, .command]).rawValue))
 }
+
+/// A combination the other shortcut already holds is refused here, and the recorder stays
+/// armed — the same shape, and the same reason, as the no-modifier refusal above.
+///
+/// The reason is sharper for this one. Accepting it would store a value the app cannot
+/// register: Carbon refuses a combination already held in this process (-9878), and
+/// `HotkeyCoordinator.apply` answers a refusal by putting the previous combination back. The
+/// pane would then show one shortcut while the app answered to another, with nothing on
+/// screen to say so.
+@MainActor @Test func aCombinationTheOtherShortcutHoldsIsRefusedAndTheRecorderStaysArmed() {
+    let view = makeRecorder()
+    var recorded: HotkeyCombo?
+    view.onRecord = { recorded = $0 }
+    let taken = HotkeyCombo(keyCode: 0x23,
+                            modifiers: NSEvent.ModifierFlags([.option, .command]).rawValue)
+    view.reserved = [taken]
+    click(view)
+
+    press(view, 0x23, [.option, .command])
+    #expect(recorded == nil)
+    #expect(view.combo == HotkeyCombo.default)   // nothing was written down
+
+    // Still listening: the next combination that is not taken is recorded without a second
+    // click. A recorder that disarmed on a refusal would make every attempt cost a click.
+    press(view, 0x23, [.control, .option])
+    #expect(recorded == HotkeyCombo(keyCode: 0x23,
+                                    modifiers: NSEvent.ModifierFlags([.control, .option]).rawValue))
+}
+
+/// The refusal compares the *masked* candidate, not the raw event. A recorder that compared
+/// `event.modifierFlags` against a stored combination would let the same visible combination
+/// through whenever caps lock or the numeric pad set a stray bit, store it masked, and produce
+/// the collision it had just refused.
+@MainActor @Test func theCollisionCheckComparesTheMaskedCombination() {
+    let view = makeRecorder()
+    var recorded: HotkeyCombo?
+    view.onRecord = { recorded = $0 }
+    view.reserved = [HotkeyCombo(keyCode: 0x23,
+                                 modifiers: NSEvent.ModifierFlags([.option, .command]).rawValue)]
+    click(view)
+
+    press(view, 0x23, [.option, .command, .capsLock, .numericPad])
+    #expect(recorded == nil)
+}

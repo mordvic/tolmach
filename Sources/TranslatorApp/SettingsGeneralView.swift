@@ -59,12 +59,31 @@ struct SettingsGeneralView: View {
                 }
             }
 
-            Section("Сочетание клавиш") {
-                LabeledContent("Сочетание клавиш") { HotkeyRecorder(combo: $settings.hotkey) }
+            Section("Сочетания клавиш") {
+                // Two rows, labelled by what they do rather than «первое» и «второе»: each
+                // shortcut opens the panel already performing its own operation, and that is
+                // the only difference between them.
+                //
+                // Each recorder is told what the other holds, so a collision is refused at
+                // the keystroke instead of being stored and then refused by Carbon — see
+                // `HotkeyRecorder.reserved`.
+                LabeledContent("Перевод") {
+                    HotkeyRecorder(combo: $settings.hotkey,
+                                   reserved: [settings.proofreadHotkey])
+                }
+                LabeledContent("Правка") {
+                    HotkeyRecorder(combo: $settings.proofreadHotkey,
+                                   reserved: [settings.hotkey])
+                }
                 Text("Нажмите на поле и наберите новое сочетание. Нужен хотя бы один из "
                      + "модификаторов ⌃, ⌥ или ⌘ — иначе сочетание отняло бы обычную клавишу "
-                     + "у всех остальных программ.")
+                     + "у всех остальных программ. Сочетания должны различаться: одно и то же "
+                     + "система не отдаст дважды.")
                     .font(.caption).foregroundStyle(.secondary)
+                    // The caption is three sentences now, and a `Text` given less width than
+                    // it wants truncates rather than wrapping — the clause that would go is
+                    // the one explaining the refusal.
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Section("Языки") {
