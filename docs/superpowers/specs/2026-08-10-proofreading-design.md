@@ -234,6 +234,16 @@ docs gain one line each saying so.
 
 ## 8. The panel
 
+> **Corrected 2026-08-15.** The first bullet below no longer describes the code, and neither
+> does the «the panel gets no pickers» one. There are two shortcuts now — ⌥⌘T перевод and
+> ⌥⌘R правка by default — each carrying its own operation into the same press, and the panel
+> has the степень/стиль controls this section predicted as «the expected first ask». Those
+> controls write the settings rather than per-run overrides, so «правка in the panel uses the
+> settings defaults» still holds — the user can now change those defaults from the panel. See
+> `docs/superpowers/specs/2026-08-15-proofread-hotkey-design.md`. Everything else in this
+> section — the switch, `switchOperation(to:)`'s refusal to read a new selection, «Ещё
+> вариант», `autoCopy` — is unchanged.
+
 - A press of ⌥⌘T behaves exactly as today: capture → перевод. The panel gains the
   «Перевод | Правка» switch in its pinned chrome (by the header). The panel stays a
   readout: the switch only calls a new callback, and `HotkeyCoordinator` decides.

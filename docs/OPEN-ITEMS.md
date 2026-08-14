@@ -210,6 +210,18 @@ The toggle ships **off**, so none of this is on a default install's path.
 | «Добавить в пользовательский глоссарий» and then the «Глоссарий» tab | The promotion rule is tested; that the terms actually appear in the pane, and that the file on disk gains them, is not | `GlossaryPromotion`, `GlossaryStore.replaceEntries` |
 | The «термины не удалось подготовить» notice | Only reachable with the toggle on and a term-list call that fails, which needs a live Ollama misbehaving | `TranslationViewModel.documentTermsUnavailable`, `FileJob.documentTermsUnavailable` |
 
+**Owed by the правка shortcut (2026-08-15).** The whole path from a key press to a panel in
+правка mode is unobservable from here — nothing in a test process can press a Carbon hot key,
+so the wiring is pinned at `pressAction(for:)` and the rest is eyes-only.
+
+| What to check | Why it needs eyes | Code |
+|---|---|---|
+| **A press of ⌥⌘R over a selection** | The feature. Select a sentence with a mistake in another application and press it: the panel must open already saying «правка · …», with the segment on «Правка» and the степень/стиль row under it. This is also the only check that ⌥⌘R is actually free — `Scripts/hotkey-availability.swift` can only rule out a shortcut the user has *customised*, because `com.apple.symbolichotkeys` stores deviations from the factory set rather than the set (measured: Spotlight's own entry is absent from it) | `HotkeyCoordinator.apply`, `TranslatorApp.launch()` |
+| **A pop-up menu inside the panel** | Open either picker in the row. The panel is a `.nonactivatingPanel` — key while the application stays inactive — and no measurement in this project covers `NSMenu` in that state. If it does not open, the fallback is the stacked layout `Scripts/panel-proofread-row.swift` already measures at 122 × 36 | `PanelView.proofreadingControls` |
+| The row at the panel's narrowest | Drag the panel to its 300 pt floor with правка showing. The row measures 242 pt against the 272 the floor leaves, so it should fit with ~30 pt to spare — what no probe can say is whether it *reads* right that tight, or whether the ⨯ ends up crowded | `PanelSizer`, `PanelView.proofreadingControls` |
+| Two recorders in «Основные» | The section is two rows and a three-sentence caption now, inside a pane with a fixed 560 × 480 frame. The refusal on a duplicate combination is a beep with no words: check that the caption's last sentence is visible without scrolling, since it is the only thing that explains the beep | `SettingsGeneralView.swift` |
+| A степень changed from the panel | Change it and watch two things: the правка re-runs on the same text, and «Основные» shows the new value afterwards. The setting is written deliberately (design §6) — if that ever reads as surprising, this is where the complaint will start | `HotkeyCoordinator.setProofreadingLevel` |
+
 **Owed by the settings/accessibility/CI wave.**
 
 | What to check | Why it needs eyes | Code |

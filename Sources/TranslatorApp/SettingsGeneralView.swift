@@ -172,7 +172,11 @@ struct SettingsGeneralView: View {
                 // this one is called «Сочетание клавиш». One concept under two names is the
                 // drift `CONTEXT.md` exists to stop, and «хоткей» was also the only English
                 // word in a window that is otherwise entirely Russian.
-                Toggle("Копировать перевод по сочетанию клавиш", isOn: $settings.autoCopy)
+                //
+                // «результат» and no longer «перевод»: `runTranslation()` serves both
+                // operations now, so a press of the правка shortcut copies a правка. The label
+                // promised one of the two things the setting governs.
+                Toggle("Копировать результат по сочетанию клавиш", isOn: $settings.autoCopy)
                 // «Прогревать модель при запуске» used to sit here. It moved to «Модели», next
                 // to «Держать модель в памяти»: both settings govern the same thing — whether
                 // the model is resident when the user presses the shortcut — and having them
