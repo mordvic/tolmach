@@ -338,6 +338,42 @@ final class AppSettings {
         }
     }
 
+    /// The правка shortcut, stored exactly as `hotkey` is: one JSON value under one key,
+    /// `isValid` re-checked on the way out because a plist is user-writable and a value that
+    /// decodes cleanly can still be unusable.
+    ///
+    /// **One piece of `hotkey`'s reasoning does not transfer, and the difference is worth
+    /// stating.** That property falls back to its default rather than to «no hotkey» because
+    /// the shortcut is the only way in to the panel, so an unset value would be an
+    /// unrecoverable state reached by a typo. That door stays open here whatever this
+    /// property holds — правка is still reachable from the panel's own switch. The fallback
+    /// is kept anyway, for the weaker but sufficient reason: a setting whose stored state and
+    /// behaviour disagree is a setting the user cannot reason about.
+    var proofreadHotkey: HotkeyCombo {
+        get {
+            access(keyPath: \.proofreadHotkey)
+            guard let data = defaults.data(forKey: "proofreadHotkey"),
+                  let decoded = try? JSONDecoder().decode(HotkeyCombo.self, from: data),
+                  decoded.isValid
+            else { return .proofreadDefault }
+            return decoded
+        }
+        set {
+            withMutation(keyPath: \.proofreadHotkey) {
+                guard let encoded = try? JSONEncoder().encode(newValue) else {
+                    Log.settings.error("""
+                        could not encode the правка combination; it was not stored and the \
+                        default remains in force \
+                        (combination: \(newValue.displayString, privacy: .public))
+                        """)
+                    defaults.removeObject(forKey: "proofreadHotkey")
+                    return
+                }
+                defaults.set(encoded, forKey: "proofreadHotkey")
+            }
+        }
+    }
+
     /// Spec 6.2: if the detected source is the primary language, translate into the
     /// working one; otherwise into the primary one. An undetected source is not the
     /// primary language, so it also goes to the primary one — the common case of

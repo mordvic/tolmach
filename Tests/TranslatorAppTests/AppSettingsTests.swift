@@ -347,3 +347,52 @@ private final class FiredFlag: @unchecked Sendable {
     settings.interactiveModel = "gpt-oss:20b"
     #expect(settings.usesGptOss == true)
 }
+
+@Test func theProofreadHotkeyDefaultsToOptionCommandRAndSurvivesARelaunch() {
+    let defaults = freshDefaults()
+    #expect(AppSettings(defaults: defaults).proofreadHotkey == HotkeyCombo.proofreadDefault)
+    // The two factory shortcuts must differ, or the app ships a collision it then refuses
+    // to let the user record.
+    #expect(HotkeyCombo.proofreadDefault != HotkeyCombo.default)
+
+    let custom = HotkeyCombo(keyCode: 0x23,
+                             modifiers: NSEvent.ModifierFlags([.control, .shift]).rawValue)
+    AppSettings(defaults: defaults).proofreadHotkey = custom
+    // A second instance over the same suite is what a relaunch looks like from here.
+    #expect(AppSettings(defaults: defaults).proofreadHotkey == custom)
+    // …and the перевод shortcut is untouched by it, which is the whole point of a second key.
+    #expect(AppSettings(defaults: defaults).hotkey == HotkeyCombo.default)
+}
+
+@Test func aCorruptStoredProofreadHotkeyFallsBackToItsOwnDefault() {
+    // Same threat as `hotkey`'s: the value is JSON in a single user-writable key. The
+    // consequence differs — правка losing its shortcut leaves перевод's working — but a
+    // setting whose stored state and behaviour disagree is the defect either way.
+    let defaults = freshDefaults()
+    defaults.set(Data("{ not json".utf8), forKey: "proofreadHotkey")
+    #expect(defaults.data(forKey: "proofreadHotkey") != nil)
+    #expect(AppSettings(defaults: defaults).proofreadHotkey == HotkeyCombo.proofreadDefault)
+
+    // A value that decodes cleanly and is still unusable — a bare letter — is the quieter
+    // half, and it is the one that would reach `HotkeyManager.register` and be refused.
+    let bareLetter = HotkeyCombo(keyCode: 0x0F, modifiers: 0)
+    #expect(!bareLetter.isValid)   // the premise, not the claim
+    defaults.set(try? JSONEncoder().encode(bareLetter), forKey: "proofreadHotkey")
+    #expect(AppSettings(defaults: defaults).proofreadHotkey == HotkeyCombo.proofreadDefault)
+}
+
+@Test func changingTheProofreadHotkeyNotifiesObservers() {
+    // Neither test above can see a missing `access(keyPath:)` / `withMutation(keyPath:_:)`
+    // — a round trip through `UserDefaults` succeeds just as well without them, and this
+    // class has shipped that defect once already.
+    let settings = AppSettings(defaults: freshDefaults())
+    let fired = FiredFlag()
+    withObservationTracking {
+        _ = settings.proofreadHotkey
+    } onChange: {
+        fired.value = true
+    }
+    settings.proofreadHotkey = HotkeyCombo(keyCode: 0x23,
+                                           modifiers: NSEvent.ModifierFlags.control.rawValue)
+    #expect(fired.value)
+}

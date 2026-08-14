@@ -39,9 +39,27 @@ public struct HotkeyCombo: Equatable, Sendable, Codable {
                   modifiers: try container.decode(UInt.self, forKey: .modifiers))
     }
 
-    /// Spec 6.2's default.
+    /// Spec 6.2's default — the перевод shortcut.
     public static let `default` = HotkeyCombo(
         keyCode: UInt16(kVK_ANSI_T),
+        modifiers: NSEvent.ModifierFlags([.option, .command]).rawValue)
+
+    /// The правка shortcut's default.
+    ///
+    /// A constant of its own rather than «`default` plus ⇧» computed at the call site: the
+    /// two settings are independent, so a derived value would stop being the factory one the
+    /// instant the user changed the first — and the factory value is what an unreadable
+    /// stored value falls back to.
+    ///
+    /// ⌥⌘R because a Carbon hot key takes its combination from every application on the
+    /// machine. Measured with `Scripts/hotkey-availability.swift` (2026-08-15):
+    /// `RegisterEventHotKey` accepts it, and no customised entry in
+    /// `com.apple.symbolichotkeys` holds it. **That second half is narrower than it sounds**
+    /// — the plist stores deviations from the factory set, not the set, so it cannot see a
+    /// stock system shortcut; `docs/MEASUREMENTS.md` carries the demonstration and
+    /// `docs/OPEN-ITEMS.md` carries the press on a real bundle that is the actual proof.
+    public static let proofreadDefault = HotkeyCombo(
+        keyCode: UInt16(kVK_ANSI_R),
         modifiers: NSEvent.ModifierFlags([.option, .command]).rawValue)
 
     private var flags: NSEvent.ModifierFlags { NSEvent.ModifierFlags(rawValue: modifiers) }
