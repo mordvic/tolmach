@@ -12,7 +12,15 @@ import TextCapture
 final class HotkeyCoordinator {
     private let settings: AppSettings
     private let selectionReader: SelectionReader
-    private let manager: HotkeyManager
+    /// One manager per operation. **Two managers rather than one holding two registrations,
+    /// and that is not an arbitrary split.** `HotkeyManager`'s own event handler already
+    /// distinguishes registrations by `signature` and `hotKeyID`, and its comment records —
+    /// measured — that a second manager in this process installs a second handler on the same
+    /// dispatcher target and that every handler there is offered every hot-key event.
+    /// Teaching one manager to hold several would edit the file where Carbon,
+    /// `nonisolated(unsafe)` and a C callback live, to buy what that file was already
+    /// written for.
+    private let managers: [TextOperation: HotkeyManager]
     /// Injected so the tests can write to a board of their own. The user's clipboard is not
     /// the suite's to spend, and `NSPasteboard` is only safe concurrently across *distinct*
     /// names — see the lock inside `GeneralPasteboard`, which is where that serialisation
@@ -22,7 +30,10 @@ final class HotkeyCoordinator {
     /// Kept so a re-registration after a settings change can reinstall the same action.
     /// Without it, `refreshRegistration()` would have nothing to hand `HotkeyManager` and the
     /// new combination would register a hotkey that did nothing.
-    @ObservationIgnored private var onPress: (@MainActor () -> Void)?
+    ///
+    /// Takes the operation, so one closure serves both registrations and the app does not
+    /// have to keep two of them in step.
+    @ObservationIgnored private var onPress: (@MainActor (TextOperation) -> Void)?
 
     /// True from the instant a press is accepted until its translation has settled.
     ///
@@ -47,15 +58,18 @@ final class HotkeyCoordinator {
          glossary: GlossaryStore,
          translator: Translator,
          selectionReader: SelectionReader = SelectionReader(),
-         manager: HotkeyManager? = nil,
+         managers: [TextOperation: HotkeyManager]? = nil,
          pasteboard: NSPasteboard = .general) {
         self.settings = settings
         self.selectionReader = selectionReader
-        // Optional rather than `= HotkeyManager()` as a default argument: a default argument
-        // is evaluated in a nonisolated context, and `HotkeyManager` is `@MainActor`, so the
-        // obvious spelling does not compile («call to main actor-isolated initializer in a
-        // synchronous nonisolated context»). Built here instead, where the isolation holds.
-        self.manager = manager ?? HotkeyManager()
+        // Optional rather than a default argument: a default argument is evaluated in a
+        // nonisolated context, and `HotkeyManager` is `@MainActor`, so the obvious spelling
+        // does not compile («call to main actor-isolated initializer in a synchronous
+        // nonisolated context»). Built here instead, where the isolation holds — and built
+        // from `allCases`, so a third operation cannot arrive with no shortcut and no
+        // complaint from the compiler.
+        self.managers = managers ?? Dictionary(
+            uniqueKeysWithValues: TextOperation.allCases.map { ($0, HotkeyManager()) })
         self.pasteboard = pasteboard
         self.panelModel = TranslationViewModel(translator: translator,
                                                settings: settings, glossary: glossary)
@@ -63,32 +77,60 @@ final class HotkeyCoordinator {
 
     // MARK: - Registration
 
-    /// What is registered right now, which is not always what `settings.hotkey` says — see
-    /// `refreshRegistration()`.
-    var registeredCombo: HotkeyCombo? { manager.registered }
-
-    /// Registers the stored combination. Returns false when it is refused, which the caller
-    /// surfaces rather than swallows: the hotkey is the only way into the panel.
-    @discardableResult
-    func start(onPress: @escaping @MainActor () -> Void) -> Bool {
-        self.onPress = onPress
-        return apply(settings.hotkey)
+    /// What is registered right now for this operation, which is not always what the settings
+    /// say — see `refreshRegistration()`.
+    func registeredCombo(for operation: TextOperation) -> HotkeyCombo? {
+        managers[operation]?.registered
     }
 
-    /// Re-registers after the user changes the shortcut. A no-op when nothing changed, so it
-    /// is cheap to call from an observation callback that fires for any reason.
+    /// Which stored combination belongs to which operation. Exhaustive with no `default:`, so
+    /// a third operation fails to compile here rather than silently sharing перевод's key.
+    private func combo(for operation: TextOperation) -> HotkeyCombo {
+        switch operation {
+        case .translate: settings.hotkey
+        case .proofread: settings.proofreadHotkey
+        }
+    }
+
+    /// What a press of this operation's shortcut does.
     ///
-    /// Returns false only when the new combination was refused — in which case the *previous*
-    /// one is still live, because `apply` puts it back.
+    /// Not `private`, so a test can pin the wiring: nothing in a test process can press a
+    /// Carbon hot key, and a coordinator that handed both registrations the same operation
+    /// would otherwise pass every test in the suite.
+    func pressAction(for operation: TextOperation) -> @MainActor () -> Void {
+        { [weak self] in self?.onPress?(operation) }
+    }
+
+    /// Registers both stored combinations. Returns false when **either** was refused, which
+    /// the caller surfaces rather than swallows: перевод's is the only way into the panel.
+    ///
+    /// `reduce` and not `allSatisfy`: `allSatisfy` short-circuits, so a перевод refusal would
+    /// leave правка unregistered as a side effect of how the check was written.
+    @discardableResult
+    func start(onPress: @escaping @MainActor (TextOperation) -> Void) -> Bool {
+        self.onPress = onPress
+        return TextOperation.allCases.reduce(true) { ok, operation in
+            apply(combo(for: operation), for: operation) && ok
+        }
+    }
+
+    /// Re-registers whichever shortcut the user changed. A no-op for one that did not move,
+    /// so it is cheap to call from an observation callback that fires for any reason — and so
+    /// a change to one shortcut does not drop the other for the length of a Carbon round trip.
+    ///
+    /// Returns false only when a new combination was refused — in which case that one's
+    /// *previous* value is still live, because `apply` puts it back.
     @discardableResult
     func refreshRegistration() -> Bool {
-        let wanted = settings.hotkey
-        guard wanted != manager.registered else { return true }
-        return apply(wanted)
+        TextOperation.allCases.reduce(true) { ok, operation in
+            let wanted = combo(for: operation)
+            guard wanted != managers[operation]?.registered else { return ok }
+            return apply(wanted, for: operation) && ok
+        }
     }
 
     func stop() {
-        manager.unregister()
+        for manager in managers.values { manager.unregister() }
         onPress = nil
     }
 
@@ -98,15 +140,44 @@ final class HotkeyCoordinator {
     /// whether the new combination is acceptable — `guard status == noErr else {
     /// unregister(); return false }` — so a refusal does not leave the old shortcut alone, it
     /// leaves the user with no shortcut at all. Carbon refuses with -9878 any combination
-    /// already held anywhere in this process, and the hotkey is the only door to the panel,
-    /// so a failed change must not be able to lock it.
+    /// already held anywhere in this process, and перевод's hotkey is the only door to the
+    /// panel, so a failed change must not be able to lock it.
+    ///
+    /// The failure is logged **here** rather than at the call site, because here is where both
+    /// registration paths meet. `refreshRegistration()` had no logging at all before this, and
+    /// it is the path a user actually reaches — by choosing a combination another program
+    /// holds.
     @discardableResult
-    private func apply(_ combo: HotkeyCombo) -> Bool {
-        guard let onPress else { return false }
+    private func apply(_ combo: HotkeyCombo, for operation: TextOperation) -> Bool {
+        // `onPress != nil` rather than binding it: the action registered is
+        // `pressAction(for:)`, which reads the stored property at press time. Binding a copy
+        // here would freeze whichever action was installed at registration and quietly
+        // survive a later `start(onPress:)`.
+        guard onPress != nil, let manager = managers[operation] else { return false }
+        let press = pressAction(for: operation)
         // Read before the call, not after: `register` clears `registered` on its way in.
         let previous = manager.registered
-        if manager.register(combo, onPress: onPress) { return true }
-        if let previous { manager.register(previous, onPress: onPress) }
+        if manager.register(combo, onPress: press) { return true }
+        if let previous { manager.register(previous, onPress: press) }
+        switch operation {
+        case .translate:
+            // `.fault` and not `.error`: перевод refused leaves the user with no shortcut and
+            // no way into the panel, while the app still looks healthy — which is precisely
+            // what makes it hard to diagnose.
+            Log.hotkey.fault("""
+                hotkey registration refused; the app has no shortcut and no way into the panel \
+                (combination: \(combo.displayString, privacy: .public))
+                """)
+        case .proofread:
+            // `.error` and not `.fault`, deliberately: правка refused costs the user a
+            // shortcut, not the application — the panel's own switch still reaches it.
+            // Copying перевод's level would make the log lie about severity in the one place
+            // a severity is read.
+            Log.hotkey.error("""
+                правка shortcut registration refused; правка stays reachable from the panel's \
+                switch (combination: \(combo.displayString, privacy: .public))
+                """)
+        }
         return false
     }
 
@@ -126,6 +197,9 @@ final class HotkeyCoordinator {
     /// the view stays a readout.
     ///
     /// - Parameters:
+    ///   - operation: which of the two shortcuts was pressed. It governs the whole run — see
+    ///     the assignment below — and defaults to `.translate` so a caller that has only ever
+    ///     known one shortcut still means what it always meant.
     ///   - willCapture: run once the press has been accepted and before anything is read.
     ///     This is where a panel left over from the previous press is taken off screen.
     ///   - afterCapture: run once the selection is known and `selection` has been assigned,
@@ -133,7 +207,8 @@ final class HotkeyCoordinator {
     ///
     /// Both hooks exist for the same reason, and it is a measured one rather than a
     /// preference — see the comment on the `afterCapture()` call below.
-    func handlePress(willCapture: @MainActor () -> Void = {},
+    func handlePress(operation: TextOperation = .translate,
+                     willCapture: @MainActor () -> Void = {},
                      afterCapture: @MainActor () -> Void = {}) async {
         // Two conditions, because they cover different windows. `isCapturing` covers the
         // whole of a press including the read; `state != .running` covers a translation
@@ -229,9 +304,13 @@ final class HotkeyCoordinator {
         // promising «a handful of milliseconds» is now true of the code as well.
         isStartingRun = false
         guard case .text(let text) = captured else { return }
-        // Every press starts with перевод, whatever the previous presentation's switch
-        // said: the hotkey is predictable, the switch is per-presentation (spec §8).
-        panelModel.operation = .translate
+        // The operation belongs to the shortcut that was pressed, and only to it: a press
+        // never inherits what the previous presentation's switch was left on. That is the
+        // predictability the правка design's §8 asked for, restated now that there is more
+        // than one shortcut — see
+        // docs/superpowers/specs/2026-08-15-proofread-hotkey-design.md, which supersedes that
+        // paragraph and nothing else in it.
+        panelModel.operation = operation
         panelModel.sourceText = text
         await runTranslation()
     }
