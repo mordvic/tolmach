@@ -630,3 +630,63 @@ private func makePressedCoordinator(responses: [String]) async -> PressHarness {
     coordinator.pressAction(for: .translate)()
     #expect(seen == [.proofread, .translate])
 }
+
+// MARK: - The panel's степень and стиль
+
+@MainActor
+@Test func thePanelsDegreePickerWritesTheSettingAndRerunsTheCapturedSelection() async {
+    // The panel's controls *are* the settings (design §6): a user who always proofreads with
+    // style sets it once, where they use it. A per-run override would be forgotten by the next
+    // press and send them to Settings anyway.
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "hk"))
+    #expect(settings.defaultProofreadingLevel == .errorsOnly)   // the premise
+    let reader = ScriptedReader(["Здесь ошибка."])
+    let (coordinator, client) = makeCoordinator(
+        reader: reader, replies: ["Правка.", "Правка со стилем."], settings: settings)
+    await coordinator.handlePress(operation: .proofread)
+    let callsBefore = client.receivedMessages.count
+
+    await coordinator.setProofreadingLevel(.errorsAndStyle)
+    #expect(settings.defaultProofreadingLevel == .errorsAndStyle)
+    #expect(client.receivedMessages.count == callsBefore + 1)
+    // The re-run used the captured text rather than reading a new selection — `retry()`'s
+    // reasoning, verbatim: the user's selection may be long gone.
+    #expect(reader.callCount == 1)
+    // And the model was actually told, which is the whole point of the setting.
+    let system = client.receivedMessages.last!.first!.content
+    #expect(system.contains("smooth awkward phrasing"))
+}
+
+@MainActor
+@Test func aDegreeChangeWithNothingCapturedNeitherWritesNorRuns() async {
+    // The guards are `switchOperation(to:)`'s, and this is the one that would do damage: a
+    // setting written from a panel showing «выделите текст» changes what the *next* press
+    // does, for a click on a control that should not have been there.
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "hk"))
+    let reader = ScriptedReader([nil])
+    let (coordinator, client) = makeCoordinator(reader: reader, settings: settings)
+    await coordinator.handlePress(operation: .proofread)
+    #expect(coordinator.selection == .empty)   // the premise
+
+    await coordinator.setProofreadingLevel(.errorsAndStyle)
+    #expect(settings.defaultProofreadingLevel == .errorsOnly)
+    #expect(client.callCount == 0)
+}
+
+@MainActor
+@Test func aStyleChangeUnderTranslationIsRefusedRatherThanRerunningATranslation() async {
+    // The row is drawn only for правка, so this is unreachable through the UI — and it is
+    // pinned because the failure would be silent and expensive: without the operation guard, a
+    // stray call would re-run a *translation* the user did not ask to repeat, and would change
+    // a правка setting in order to do it.
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "hk"))
+    let reader = ScriptedReader(["Hello."])
+    let (coordinator, client) = makeCoordinator(
+        reader: reader, replies: ["Привет."], settings: settings)
+    await coordinator.handlePress()
+    let callsBefore = client.receivedMessages.count
+
+    await coordinator.setRewriteStyle(.business)
+    #expect(settings.defaultRewriteStyle == .original)
+    #expect(client.receivedMessages.count == callsBefore)
+}

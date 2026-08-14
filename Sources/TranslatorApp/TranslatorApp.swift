@@ -493,6 +493,13 @@ struct TranslatorApp: App {
                 },
                 onSwitchOperation: { op in Task { await coordinator.switchOperation(to: op) } },
                 onAnotherVariant: { Task { await coordinator.anotherVariant() } },
+                settings: settings,
+                onProofreadingLevelChange: { level in
+                    Task { await coordinator.setProofreadingLevel(level) }
+                },
+                onRewriteStyleChange: { style in
+                    Task { await coordinator.setRewriteStyle(style) }
+                },
                 onContentChange: { settling in panel.contentDidChange(settling: settling) },
                 // Gated on `variant`, not unconditional: `PanelController` builds *two* live
                 // hosts from this same closure — `hosting` (installed) and `measuring`
@@ -663,6 +670,16 @@ private struct PanelHost: View {
     let onSwitchOperation: (TextOperation) -> Void
     /// «Ещё вариант», threaded the same way — see `HotkeyCoordinator.anotherVariant()`.
     let onAnotherVariant: () -> Void
+    /// The settings, read **inside `body`** rather than resolved at the call site — the same
+    /// reason `selection` is read here. `PanelController` builds its hosting view once and
+    /// keeps it, so a степень resolved where the content is constructed would freeze at
+    /// whatever it was when the panel was built. Read in the body, it registers observation on
+    /// `@Observable` `AppSettings` and the row redraws when the value changes.
+    let settings: AppSettings
+    /// The степень and стиль pickers, threaded like every other callback here — see
+    /// `HotkeyCoordinator.setProofreadingLevel(_:)`.
+    let onProofreadingLevelChange: (ProofreadingLevel) -> Void
+    let onRewriteStyleChange: (RewriteStyle) -> Void
     let onContentChange: (Bool) -> Void
     /// Refreshes `OllamaStatusModel` after a hotkey run settles. Folded into the
     /// `panelModel.state` hook below rather than a second `.onChange` on the same value —
@@ -680,6 +697,10 @@ private struct PanelHost: View {
                   onGrantPermission: onGrantPermission,
                   onSwitchOperation: onSwitchOperation,
                   onAnotherVariant: onAnotherVariant,
+                  proofreadingLevel: settings.defaultProofreadingLevel,
+                  rewriteStyle: settings.defaultRewriteStyle,
+                  onProofreadingLevelChange: onProofreadingLevelChange,
+                  onRewriteStyleChange: onRewriteStyleChange,
                   scrolls: scrolls,
                   onClose: onClose,
                   fillsPanel: fillsPanel)

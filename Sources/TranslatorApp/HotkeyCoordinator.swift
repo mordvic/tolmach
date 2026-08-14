@@ -335,6 +335,34 @@ final class HotkeyCoordinator {
         await runTranslation()
     }
 
+    /// The panel's «степень» picker.
+    ///
+    /// Writes the **setting**, not a per-run override, and that is the design's choice rather
+    /// than an accident of what was easiest: the panel's controls *are* the settings
+    /// (2026-08-15 design §6), so a степень chosen where правка is actually used survives the
+    /// panel closing. `panelModel.proofreadingLevelOverride` stays nil on this model and keeps
+    /// its single meaning — «the window's toolbar was used for this run».
+    ///
+    /// The guards are `switchOperation(to:)`'s, plus the operation itself: a call arriving
+    /// under перевод would re-run a translation nobody asked to repeat, and would change a
+    /// правка setting to do it.
+    func setProofreadingLevel(_ level: ProofreadingLevel) async {
+        guard case .text = selection, panelModel.state != .running,
+              panelModel.operation == .proofread,
+              settings.defaultProofreadingLevel != level else { return }
+        settings.defaultProofreadingLevel = level
+        await runTranslation()
+    }
+
+    /// The panel's «стиль» picker — `setProofreadingLevel(_:)`'s reasoning, verbatim.
+    func setRewriteStyle(_ style: RewriteStyle) async {
+        guard case .text = selection, panelModel.state != .running,
+              panelModel.operation == .proofread,
+              settings.defaultRewriteStyle != style else { return }
+        settings.defaultRewriteStyle = style
+        await runTranslation()
+    }
+
     /// «Ещё вариант» — the same re-run under the same operation; temperature is what
     /// varies the rendering. Offered by the view only for a finished «ошибки и стиль»
     /// правка (`offersAnotherVariant`).
