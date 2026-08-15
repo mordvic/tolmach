@@ -89,6 +89,17 @@ struct PanelView: View {
     /// «Ещё вариант», offered only for a finished «ошибки и стиль» правка
     /// (`model.offersAnotherVariant`).
     var onAnotherVariant: () -> Void = {}
+    /// The степень and стиль the next правка will use — the *settings*, passed in rather than
+    /// read here, because this view is a readout: `HotkeyCoordinator` owns every decision a
+    /// press makes, and writing a setting is one of them.
+    ///
+    /// Defaulted for the reason `awaitingRun` is: a call site that knows nothing about правка
+    /// draws no row at all — `showsProofreadingControls` gates on the operation — so the
+    /// values it would have passed are never rendered.
+    var proofreadingLevel: ProofreadingLevel = .errorsOnly
+    var rewriteStyle: RewriteStyle = .original
+    var onProofreadingLevelChange: (ProofreadingLevel) -> Void = { _ in }
+    var onRewriteStyleChange: (RewriteStyle) -> Void = { _ in }
     /// Whether the content must scroll — `PanelSizer` decided the content is taller than the
     /// panel it can be given. It wraps only the rows whose height the content decides; the
     /// header and the button row are pinned outside it. See `scrollingMiddle`.
@@ -337,6 +348,51 @@ struct PanelView: View {
         }
     }
 
+    /// Степень and стиль, drawn only for правка.
+    ///
+    /// **Pinned, beside the header rather than inside `scrollingMiddle`**, for the reason the
+    /// header is pinned: the middle region is where the reply and the warnings grow, and a
+    /// control that scrolls away with them is one the user cannot reach at the moment they
+    /// want it.
+    ///
+    /// Both are `.menu` pickers rather than a segmented степень: the panel's width floor is
+    /// 300 pt and `PanelView` pads by 14 a side, so the row has 272 pt for everything in it,
+    /// and «только ошибки» beside «ошибки и стиль» does not fit in that.
+    /// `Scripts/panel-proofread-row.swift` carries the measurement.
+    @ViewBuilder private var proofreadingControls: some View {
+        if Self.showsProofreadingControls(operation: model.operation, selection: selection) {
+            HStack(spacing: 8) {
+                Picker("", selection: Binding(get: { proofreadingLevel },
+                                              set: { onProofreadingLevelChange($0) })) {
+                    ForEach(ProofreadingLevel.allCases, id: \.self) {
+                        Text($0.russianName).tag($0)
+                    }
+                }
+                .fixedSize()
+                .accessibilityLabel("Степень правки")
+                Picker("", selection: Binding(get: { rewriteStyle },
+                                              set: { onRewriteStyleChange($0) })) {
+                    ForEach(RewriteStyle.allCases, id: \.self) {
+                        Text($0.russianName).tag($0)
+                    }
+                }
+                .fixedSize()
+                // One rule, read from the type. The window's toolbar and the settings pane
+                // read the same property; a restated comparison is how two surfaces come to
+                // disagree about what is available (правка design §7).
+                .disabled(!proofreadingLevel.allowsRewriteStyle)
+                .accessibilityLabel("Стиль правки")
+                Spacer(minLength: 0)
+            }
+            .pickerStyle(.menu)
+            .controlSize(.mini)
+            .labelsHidden()
+            // The condition the operation switch already carries: a control that restarts the
+            // run must not be live while a run is in flight.
+            .disabled(model.state == .running || awaitingRun)
+        }
+    }
+
     /// Spec 8's «нет разрешения Accessibility» row, shown at the moment the user pressed
     /// the key rather than at launch — which is when they are actually asking for it.
     ///
@@ -386,6 +442,8 @@ struct PanelView: View {
             // with it — so a header that scrolled away left a long translation with no mouse
             // exit at all.
             header
+            // Pinned with it, and present only for правка — see the property's own comment.
+            proofreadingControls
 
             // The translation and the warnings that describe it, in one scrolling region:
             // they are the two things with no length of their own, and inside here their
@@ -716,6 +774,21 @@ struct PanelView: View {
         // instruction the user gets — the same reasoning as `status(for:)`'s failure case.
         case .failed(let message): message
         }
+    }
+
+    /// Whether the степень/стиль row belongs on screen.
+    ///
+    /// A value rather than a condition written inside the `ViewBuilder`, for `status(for:)`'s
+    /// reason: which controls appear is a decision, and a decision inside a view body can only
+    /// be read by rebuilding the view.
+    ///
+    /// The selection half is not redundant with the operation half: `header` is drawn by the
+    /// permission prompt and the empty hint too, and a control with nothing captured to re-run
+    /// is the inert chrome the operation switch is already gated against.
+    nonisolated static func showsProofreadingControls(operation: TextOperation,
+                                                      selection: SelectionResult) -> Bool {
+        guard case .text = selection else { return false }
+        return operation == .proofread
     }
 
     /// Exhaustive with no `default:` on purpose: a sixth `TranslationState` case should
