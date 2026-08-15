@@ -59,12 +59,48 @@ struct SettingsGeneralView: View {
                 }
             }
 
-            Section("Сочетание клавиш") {
-                LabeledContent("Сочетание клавиш") { HotkeyRecorder(combo: $settings.hotkey) }
+            Section("Сочетания клавиш") {
+                // Two rows, labelled by what they do rather than «первое» и «второе»: each
+                // shortcut opens the panel already performing its own operation, and that is
+                // the only difference between them.
+                //
+                // Each recorder is told what the other holds, so a collision is refused at
+                // the keystroke instead of being stored and then refused by Carbon — see
+                // `HotkeyRecorder.reserved`.
+                LabeledContent("Перевод") {
+                    HotkeyRecorder(combo: $settings.hotkey,
+                                   reserved: [settings.proofreadHotkey])
+                }
+                LabeledContent("Правка") {
+                    HotkeyRecorder(combo: $settings.proofreadHotkey,
+                                   reserved: [settings.hotkey])
+                }
                 Text("Нажмите на поле и наберите новое сочетание. Нужен хотя бы один из "
                      + "модификаторов ⌃, ⌥ или ⌘ — иначе сочетание отняло бы обычную клавишу "
-                     + "у всех остальных программ.")
+                     + "у всех остальных программ. Сочетания должны различаться: одно и то же "
+                     + "система не отдаст дважды.")
                     .font(.caption).foregroundStyle(.secondary)
+                    // The caption is three sentences now, and a `Text` given less width than
+                    // it wants truncates rather than wrapping — the clause that would go is
+                    // the one explaining the refusal.
+                    .fixedSize(horizontal: false, vertical: true)
+                // The recorder refuses a duplicate at the keystroke, so this cannot be typed.
+                // What it can be is inherited: `proofreadHotkey` answers its factory ⌥⌘R until
+                // the key is set, so a user who had already put перевод on ⌥⌘R arrives here
+                // with two identical settings and правка's shortcut declined. Say so, exactly
+                // as the two languages colliding is said — the user is the one who knows which
+                // of the two they meant to change.
+                if settings.shortcutsCollide {
+                    Label {
+                        Text("Оба сочетания одинаковые, поэтому правка по сочетанию клавиш "
+                             + "сейчас не работает: система не отдаёт одну комбинацию дважды. "
+                             + "Задайте для правки другое сочетание.")
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                    }
+                    .font(.caption).foregroundStyle(StatusColour.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             Section("Языки") {
@@ -153,7 +189,11 @@ struct SettingsGeneralView: View {
                 // this one is called «Сочетание клавиш». One concept under two names is the
                 // drift `CONTEXT.md` exists to stop, and «хоткей» was also the only English
                 // word in a window that is otherwise entirely Russian.
-                Toggle("Копировать перевод по сочетанию клавиш", isOn: $settings.autoCopy)
+                //
+                // «результат» and no longer «перевод»: `runTranslation()` serves both
+                // operations now, so a press of the правка shortcut copies a правка. The label
+                // promised one of the two things the setting governs.
+                Toggle("Копировать результат по сочетанию клавиш", isOn: $settings.autoCopy)
                 // «Прогревать модель при запуске» used to sit here. It moved to «Модели», next
                 // to «Держать модель в памяти»: both settings govern the same thing — whether
                 // the model is resident when the user presses the shortcut — and having them

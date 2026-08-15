@@ -336,3 +336,21 @@ private func makeFinishedOutcome(detected: Language?) -> TranslationOutcome {
     #expect(PanelView.announcement(for: .interrupted, operation: .translate)
             == "Перевод прерван, показана пришедшая часть")
 }
+
+// MARK: - Степень and стиль
+
+/// Which controls appear is a decision, and a decision inside a `ViewBuilder` can only be
+/// read by rebuilding the view — the same reasoning that makes `status(for:)` a value.
+@Test func theDegreeAndStyleControlsBelongOnlyToProofreadOverACapturedSelection() {
+    #expect(PanelView.showsProofreadingControls(operation: .proofread,
+                                                selection: .text("что-то")))
+    // Перевод has no степень, so the row would be two controls governing nothing.
+    #expect(!PanelView.showsProofreadingControls(operation: .translate,
+                                                 selection: .text("что-то")))
+    // And with nothing captured there is nothing to re-run: the panel is showing «выделите
+    // текст» or the permission prompt, where an inert control is worse than no control. Both
+    // cases, because `header` is drawn by both.
+    #expect(!PanelView.showsProofreadingControls(operation: .proofread, selection: .empty))
+    #expect(!PanelView.showsProofreadingControls(operation: .proofread,
+                                                 selection: .notPermitted))
+}

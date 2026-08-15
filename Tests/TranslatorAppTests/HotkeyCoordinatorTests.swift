@@ -370,16 +370,19 @@ private func waitUntil(_ condition: @MainActor () -> Bool,
 @Test func theRegistrationFollowsTheStoredCombinationWhenItChanges() {
     let settings = AppSettings(defaults: InMemoryDefaults(prefix: "hk"))
     settings.hotkey = combo(0x2B)
+    // Set too, and obscurely: `start` registers both shortcuts, so leaving this at the
+    // factory ⌥⌘R would take a real shortcut from the developer for the length of the run.
+    settings.proofreadHotkey = combo(0x2D)
     let reader = ScriptedReader([nil])
     let (coordinator, _) = makeCoordinator(reader: reader, settings: settings)
     defer { coordinator.stop() }
 
-    #expect(coordinator.start {})
-    #expect(coordinator.registeredCombo == combo(0x2B))
+    #expect(coordinator.start { _ in })
+    #expect(coordinator.registeredCombo(for: .translate) == combo(0x2B))
 
     settings.hotkey = combo(0x2C)
     #expect(coordinator.refreshRegistration())
-    #expect(coordinator.registeredCombo == combo(0x2C))
+    #expect(coordinator.registeredCombo(for: .translate) == combo(0x2C))
 }
 
 @MainActor
@@ -391,12 +394,13 @@ private func waitUntil(_ condition: @MainActor () -> Bool,
     // combination already held anywhere in this process.
     let settings = AppSettings(defaults: InMemoryDefaults(prefix: "hk"))
     settings.hotkey = combo(0x2B)
+    settings.proofreadHotkey = combo(0x2D)   // see the note in the test above
     let reader = ScriptedReader([nil])
     let (coordinator, _) = makeCoordinator(reader: reader, settings: settings)
     defer { coordinator.stop() }
 
-    #expect(coordinator.start {})
-    #expect(coordinator.registeredCombo == combo(0x2B))
+    #expect(coordinator.start { _ in })
+    #expect(coordinator.registeredCombo(for: .translate) == combo(0x2B))
 
     // Somebody else in this process is already holding what the user just chose.
     let rival = HotkeyManager()
@@ -405,7 +409,7 @@ private func waitUntil(_ condition: @MainActor () -> Bool,
 
     settings.hotkey = combo(0x2C)
     #expect(coordinator.refreshRegistration() == false)
-    #expect(coordinator.registeredCombo == combo(0x2B))
+    #expect(coordinator.registeredCombo(for: .translate) == combo(0x2B))
 }
 
 /// A press must say «a run is starting» without touching anything the panel or the engine
@@ -507,4 +511,339 @@ private func makePressedCoordinator(responses: [String]) async -> PressHarness {
     let callsBefore = harness.fake.receivedMessages.count
     await harness.coordinator.switchOperation(to: .translate)
     #expect(harness.fake.receivedMessages.count == callsBefore)
+}
+
+// MARK: - Two shortcuts
+
+@MainActor
+@Test func aPressOfTheProofreadShortcutOpensThePanelAlreadyProofreading() async {
+    // The whole feature in one assertion: the operation reaching the model is the one the
+    // shortcut carried, not the hard-coded `.translate` every press used to start from.
+    let reader = ScriptedReader(["Здесь ошибка."])
+    let (coordinator, client) = makeCoordinator(reader: reader, replies: ["Здесь ошибки нет."])
+    await coordinator.handlePress(operation: .proofread)
+    #expect(coordinator.panelModel.operation == .proofread)
+    #expect(coordinator.panelModel.sourceText == "Здесь ошибка.")
+    #expect(coordinator.panelModel.translatedText == "Здесь ошибки нет.")
+    // Asserted against the prompt the model actually received, not against the model's own
+    // `operation`: the property could be set correctly and the run still go through
+    // `translate()`, which is the failure this is for.
+    let system = client.receivedMessages.last!.first!.content
+    #expect(system.contains("copy editor"))
+}
+
+@MainActor
+@Test func eachShortcutBringsItsOwnOperationRatherThanInheritingTheLastOne() async {
+    // The rule the правка design's §8 stated as «every press starts with перевод» becomes
+    // «every press starts with its own operation». Both directions, because inheritance in
+    // either one is a press doing something the user did not ask for.
+    let reader = ScriptedReader(["Раз.", "Два.", "Три."])
+    let (coordinator, _) = makeCoordinator(
+        reader: reader, replies: ["Правка.", "Перевод.", "Правка снова."])
+    await coordinator.handlePress(operation: .proofread)
+    #expect(coordinator.panelModel.operation == .proofread)
+    await coordinator.handlePress()
+    #expect(coordinator.panelModel.operation == .translate)
+    await coordinator.handlePress(operation: .proofread)
+    #expect(coordinator.panelModel.operation == .proofread)
+}
+
+@MainActor
+@Test func aProofreadPressArrivingWhileATranslationIsCapturingIsDropped() async {
+    // `isCapturing` is per coordinator, and this is what that buys: two shortcuts cannot put
+    // two synthetic ⌘C fallbacks into the user's application over one pasteboard.
+    let reader = ScriptedReader(["Первый", "Второй"], delay: 0.2)
+    let (coordinator, _) = makeCoordinator(reader: reader, replies: ["Один", "Два"])
+    let first = Task { await coordinator.handlePress() }
+    await waitUntil { reader.callCount == 1 }
+    #expect(coordinator.panelModel.state == .idle)   // the read has not returned yet
+
+    await coordinator.handlePress(operation: .proofread)
+    #expect(reader.callCount == 1)
+
+    await first.value
+    #expect(coordinator.selection == .text("Первый"))
+    #expect(coordinator.panelModel.operation == .translate)
+}
+
+@MainActor
+@Test func bothShortcutsRegisterAndChangingOneLeavesTheOtherAlone() {
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "hk"))
+    settings.hotkey = combo(0x2B)
+    settings.proofreadHotkey = combo(0x2C)
+    let reader = ScriptedReader([nil])
+    let (coordinator, _) = makeCoordinator(reader: reader, settings: settings)
+    defer { coordinator.stop() }
+
+    #expect(coordinator.start { _ in })
+    #expect(coordinator.registeredCombo(for: .translate) == combo(0x2B))
+    #expect(coordinator.registeredCombo(for: .proofread) == combo(0x2C))
+
+    settings.proofreadHotkey = combo(0x2D)
+    #expect(coordinator.refreshRegistration())
+    #expect(coordinator.registeredCombo(for: .proofread) == combo(0x2D))
+    // The one that did not change is still live. A `refreshRegistration()` that re-registered
+    // both would look identical from the setting's side and would drop the other shortcut for
+    // the length of a Carbon round trip.
+    #expect(coordinator.registeredCombo(for: .translate) == combo(0x2B))
+}
+
+@MainActor
+@Test func aRefusedProofreadRegistrationLeavesTheTranslationShortcutAlone() {
+    // The refusal path from the side that matters now that there are two: правка failing to
+    // register must not cost перевод its shortcut, since перевод is the only door to the
+    // panel. Carbon answers -9878 for a combination already held anywhere in this process.
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "hk"))
+    settings.hotkey = combo(0x2B)
+    settings.proofreadHotkey = combo(0x2C)
+    let reader = ScriptedReader([nil])
+    let (coordinator, _) = makeCoordinator(reader: reader, settings: settings)
+    defer { coordinator.stop() }
+    #expect(coordinator.start { _ in })
+
+    let rival = HotkeyManager()
+    defer { rival.unregister() }
+    #expect(rival.register(combo(0x2D)) {})
+
+    settings.proofreadHotkey = combo(0x2D)
+    #expect(coordinator.refreshRegistration() == false)
+    #expect(coordinator.registeredCombo(for: .proofread) == combo(0x2C))
+    #expect(coordinator.registeredCombo(for: .translate) == combo(0x2B))
+}
+
+@MainActor
+@Test func theActionRegisteredForAShortcutCarriesThatShortcutsOperation() {
+    // Nothing in a test process can press a Carbon hot key, so the wiring between a
+    // registration and its operation is pinned at the one place it is decided instead. A
+    // coordinator that built both actions from the same operation — the obvious slip when one
+    // closure becomes two — passes every other test in this file.
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "hk"))
+    settings.hotkey = combo(0x2B)
+    settings.proofreadHotkey = combo(0x2C)
+    let reader = ScriptedReader([nil])
+    let (coordinator, _) = makeCoordinator(reader: reader, settings: settings)
+    defer { coordinator.stop() }
+
+    var seen: [TextOperation] = []
+    #expect(coordinator.start { seen.append($0) })
+    coordinator.pressAction(for: .proofread)()
+    coordinator.pressAction(for: .translate)()
+    #expect(seen == [.proofread, .translate])
+}
+
+// MARK: - The panel's степень and стиль
+
+@MainActor
+@Test func thePanelsDegreePickerWritesTheSettingAndRerunsTheCapturedSelection() async {
+    // The panel's controls *are* the settings (design §6): a user who always proofreads with
+    // style sets it once, where they use it. A per-run override would be forgotten by the next
+    // press and send them to Settings anyway.
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "hk"))
+    #expect(settings.defaultProofreadingLevel == .errorsOnly)   // the premise
+    let reader = ScriptedReader(["Здесь ошибка."])
+    let (coordinator, client) = makeCoordinator(
+        reader: reader, replies: ["Правка.", "Правка со стилем."], settings: settings)
+    await coordinator.handlePress(operation: .proofread)
+    let callsBefore = client.receivedMessages.count
+
+    await coordinator.setProofreadingLevel(.errorsAndStyle)
+    #expect(settings.defaultProofreadingLevel == .errorsAndStyle)
+    #expect(client.receivedMessages.count == callsBefore + 1)
+    // The re-run used the captured text rather than reading a new selection — `retry()`'s
+    // reasoning, verbatim: the user's selection may be long gone.
+    #expect(reader.callCount == 1)
+    // And the model was actually told, which is the whole point of the setting.
+    let system = client.receivedMessages.last!.first!.content
+    #expect(system.contains("smooth awkward phrasing"))
+}
+
+@MainActor
+@Test func aDegreeChangeWithNothingCapturedNeitherWritesNorRuns() async {
+    // The guards are `switchOperation(to:)`'s, and this is the one that would do damage: a
+    // setting written from a panel showing «выделите текст» changes what the *next* press
+    // does, for a click on a control that should not have been there.
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "hk"))
+    let reader = ScriptedReader([nil])
+    let (coordinator, client) = makeCoordinator(reader: reader, settings: settings)
+    await coordinator.handlePress(operation: .proofread)
+    #expect(coordinator.selection == .empty)   // the premise
+
+    await coordinator.setProofreadingLevel(.errorsAndStyle)
+    #expect(settings.defaultProofreadingLevel == .errorsOnly)
+    #expect(client.callCount == 0)
+}
+
+@MainActor
+@Test func aStyleChangeUnderTranslationIsRefusedRatherThanRerunningATranslation() async {
+    // The row is drawn only for правка, so this is unreachable through the UI — and it is
+    // pinned because the failure would be silent and expensive: without the operation guard, a
+    // stray call would re-run a *translation* the user did not ask to repeat, and would change
+    // a правка setting in order to do it.
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "hk"))
+    let reader = ScriptedReader(["Hello."])
+    let (coordinator, client) = makeCoordinator(
+        reader: reader, replies: ["Привет."], settings: settings)
+    await coordinator.handlePress()
+    let callsBefore = client.receivedMessages.count
+
+    await coordinator.setRewriteStyle(.business)
+    #expect(settings.defaultRewriteStyle == .original)
+    #expect(client.receivedMessages.count == callsBefore)
+}
+
+// MARK: - What a refusal says, and the collision nobody can type
+
+/// The message is a claim about the app's state, and the claim depends on whether the restore
+/// happened. It used to be unconditional — «the app has no shortcut and no way into the panel»
+/// at `.fault` — which was true where it was written, in `launch()`, and false where it was
+/// moved to: `apply` puts the previous combination back, so a refused *change* leaves the old
+/// shortcut working.
+@Test func aRefusalOnlyClaimsTheAppIsShortcutlessWhenItActuallyIs() {
+    let lost = HotkeyCoordinator.failure(for: .translate, restored: false, combination: "⌥⌘T")
+    #expect(lost.severity == .fault)
+    #expect(lost.message.contains("no way into the panel"))
+
+    let kept = HotkeyCoordinator.failure(for: .translate, restored: true, combination: "⌥⌘T")
+    #expect(kept.severity == .error)
+    #expect(!kept.message.contains("no way into the panel"))
+    #expect(kept.message.contains("still registered"))
+
+    // Правка is never a fault: the panel's own switch reaches правка whatever happens to its
+    // shortcut, and copying перевод's level would make the log lie about severity.
+    #expect(HotkeyCoordinator.failure(for: .proofread, restored: false,
+                                      combination: "⌥⌘R").severity == .error)
+    #expect(HotkeyCoordinator.failure(for: .proofread, restored: true,
+                                      combination: "⌥⌘R").severity == .error)
+}
+
+@MainActor
+@Test func twoIdenticalCombinationsLeaveПравкаUnregisteredRatherThanFightingCarbon() async {
+    // Not something the user can type — `HotkeyRecorder` refuses a duplicate. It is the
+    // upgrade case: `proofreadHotkey` answers its factory ⌥⌘R until the key is set, so a user
+    // who had already put перевод on ⌥⌘R arrives with two identical settings.
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "hk"))
+    settings.hotkey = combo(0x2B)
+    settings.proofreadHotkey = combo(0x2B)
+    #expect(settings.shortcutsCollide)   // the premise
+    let reader = ScriptedReader([nil])
+    let (coordinator, _) = makeCoordinator(reader: reader, settings: settings)
+    defer { coordinator.stop() }
+
+    // Перевод wins, because it is the only door to the panel — and `start` reports success:
+    // this is a settings conflict the pane explains, not a refusal by the system.
+    #expect(coordinator.start { _ in })
+    #expect(coordinator.registeredCombo(for: .translate) == combo(0x2B))
+    #expect(coordinator.registeredCombo(for: .proofread) == nil)
+
+    // And it recovers the moment the user separates them.
+    settings.proofreadHotkey = combo(0x2C)
+    #expect(coordinator.refreshRegistration())
+    #expect(coordinator.registeredCombo(for: .proofread) == combo(0x2C))
+    #expect(coordinator.registeredCombo(for: .translate) == combo(0x2B))
+}
+
+@MainActor
+@Test func aShortcutMovedOntoTheOtherOneTakesПравкаRegistrationOff() {
+    // The direction that needs `refreshRegistration` to compare against what *should* be
+    // registered rather than against the stored combination: правка's own setting does not
+    // move here, перевод's moves onto it, and правка's live registration has to come off
+    // anyway or the app answers to a shortcut the pane says is not in force.
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "hk"))
+    settings.hotkey = combo(0x2B)
+    settings.proofreadHotkey = combo(0x2C)
+    let reader = ScriptedReader([nil])
+    let (coordinator, _) = makeCoordinator(reader: reader, settings: settings)
+    defer { coordinator.stop() }
+    #expect(coordinator.start { _ in })
+    #expect(coordinator.registeredCombo(for: .proofread) == combo(0x2C))
+
+    settings.hotkey = combo(0x2C)
+    #expect(coordinator.refreshRegistration())
+    #expect(coordinator.registeredCombo(for: .translate) == combo(0x2C))
+    #expect(coordinator.registeredCombo(for: .proofread) == nil)
+}
+
+@MainActor
+@Test func aStaleRegistrationIsReleasedBeforeTheOtherShortcutAsksForItsCombination() {
+    // The hole the first two-pass version left, and the one it was written to close. A manager
+    // can hold a combination its own setting no longer names — `apply` restores the previous
+    // one on refusal — and pass 1 only released registrations forbidden by a *settings*
+    // collision, which this is not.
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "hk"))
+    settings.hotkey = combo(0x2B)
+    settings.proofreadHotkey = combo(0x2C)
+    let reader = ScriptedReader([nil])
+    let (coordinator, _) = makeCoordinator(reader: reader, settings: settings)
+    defer { coordinator.stop() }
+    #expect(coordinator.start { _ in })
+
+    // Something else in this process holds what правка is about to be pointed at, so правка's
+    // change is refused and its manager keeps 0x2C while its setting says 0x2D.
+    let rival = HotkeyManager()
+    defer { rival.unregister() }
+    #expect(rival.register(combo(0x2D)) {})
+    settings.proofreadHotkey = combo(0x2D)
+    #expect(coordinator.refreshRegistration() == false)
+    #expect(coordinator.registeredCombo(for: .proofread) == combo(0x2C))   // stale, on purpose
+
+    // Now перевод is pointed at 0x2C. The settings do not collide — 0x2C against 0x2D — so
+    // nothing here is a duplicate; what stands in the way is a registration nobody's setting
+    // names any more. It has to be let go of before перевод asks Carbon for it.
+    settings.hotkey = combo(0x2C)
+    coordinator.refreshRegistration()
+    #expect(coordinator.registeredCombo(for: .translate) == combo(0x2C))
+}
+
+@MainActor
+@Test func resolvingAnInheritedCollisionNeverLeavesTranslationWithoutAShortcut() {
+    // The regression the release-what-blocks pass introduced, and the guarantee it must not
+    // cost: перевод is the only door to the panel, so no sequence of settings changes may end
+    // with it holding nothing.
+    //
+    // The sequence is the documented upgrade case being *resolved*: both settings hold the
+    // same combination, and the user separates them by moving перевод — onto a combination
+    // something else in this process happens to hold.
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "hk"))
+    settings.hotkey = combo(0x2B)
+    settings.proofreadHotkey = combo(0x2B)
+    let reader = ScriptedReader([nil])
+    let (coordinator, _) = makeCoordinator(reader: reader, settings: settings)
+    defer { coordinator.stop() }
+    #expect(coordinator.start { _ in })
+    #expect(coordinator.registeredCombo(for: .translate) == combo(0x2B))
+    #expect(coordinator.registeredCombo(for: .proofread) == nil)   // declined, not refused
+
+    let rival = HotkeyManager()
+    defer { rival.unregister() }
+    #expect(rival.register(combo(0x2C)) {})
+
+    settings.hotkey = combo(0x2C)
+    coordinator.refreshRegistration()
+    // Перевод keeps a working shortcut. Without the release being undone it ends up with
+    // none — pass 1 lets go of ⌥⌃⌥⌘-0x2B because правка now wants it, and pass 2 has nothing
+    // to restore when Carbon refuses the combination the rival holds.
+    #expect(coordinator.registeredCombo(for: .translate) == combo(0x2B))
+    // And правка does not inherit the combination the user had been pressing for перевод.
+    #expect(coordinator.registeredCombo(for: .proofread) == nil)
+}
+
+@MainActor
+@Test func theOperationIsKnownBeforeThePanelIsMeasured() async {
+    // `PanelController.show(at:)` measures inside `afterCapture()`, and the степень/стиль row
+    // is drawn from `model.operation`. Assigned after that call, the measurement uses the
+    // *previous* press's operation: a перевод press following a правка one is measured with
+    // the row present and keeps the space (the height is monotonic within a presentation),
+    // and a правка press following a перевод one opens without the row and then grows — the
+    // «кнопки прыгают» the reservation exists to remove.
+    let reader = ScriptedReader(["Hello.", "Здесь ошибка."])
+    let (coordinator, _) = makeCoordinator(reader: reader,
+                                           replies: ["Привет.", "Здесь ошибки нет."])
+    await coordinator.handlePress()
+    #expect(coordinator.panelModel.operation == .translate)   // the premise
+
+    var operationAtShow: TextOperation?
+    await coordinator.handlePress(operation: .proofread, afterCapture: {
+        operationAtShow = coordinator.panelModel.operation
+    })
+    #expect(operationAtShow == .proofread)
 }

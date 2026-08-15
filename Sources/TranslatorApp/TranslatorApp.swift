@@ -336,16 +336,17 @@ struct TranslatorApp: App {
         pruneEmptyMenus()
         // The refusal still raises nothing on screen, and that part is unchanged: a
         // user-visible message needs UI that does not exist yet. What it no longer does is
-        // vanish. This is the most expensive of the app's four deliberate swallows — a refused
-        // registration leaves the user with no shortcut, and the shortcut is the only door to
-        // the panel — so «nothing happened and there is no way to find out why» was the wrong
-        // half of the trade to keep. `.fault` rather than `.error`: the app is still running
-        // and still looks healthy, which is precisely what makes it hard to diagnose.
+        // vanish — but the message no longer lives here either. It moved into
+        // `HotkeyCoordinator.apply`, which is where both registration paths meet: this call
+        // registers two combinations now, and `refreshRegistration()` — the path a user
+        // actually reaches, by choosing a combination another program holds — had no logging
+        // at all while it lived here. The two operations also log at different levels, and
+        // only `apply` knows which one it is failing.
         //
-        // Still expected to be unreachable: `AppSettings.hotkey` guarantees a valid
-        // combination, and the only other failure is -9878 for a combination another component
-        // of this process already holds — nothing else in this process registers one.
-        if !coordinator.start(onPress: {
+        // Both registrations are still expected to succeed: `AppSettings` guarantees a valid
+        // combination for each, and the only other failure is -9878 for a combination another
+        // component of this process already holds.
+        coordinator.start(onPress: { operation in
             // The pointer is sampled *here*, at the press, and used after the capture. The
             // read can take up to three quarters of a second and the user's hand is still on
             // the mouse; the panel belongs where they were looking when they pressed.
@@ -355,15 +356,11 @@ struct TranslatorApp: App {
             // key window and the system-wide accessibility focus follows it — see the
             // comment in `HotkeyCoordinator.handlePress`, which carries the measurement.
             Task {
-                await coordinator.handlePress(willCapture: { panel.hide() },
+                await coordinator.handlePress(operation: operation,
+                                              willCapture: { panel.hide() },
                                               afterCapture: { panel.show(at: cursor) })
             }
-        }) {
-            Log.hotkey.fault("""
-                hotkey registration refused; the app has no shortcut and no way into the panel \
-                (combination: \(settings.hotkey.displayString, privacy: .public))
-                """)
-        }
+        })
         observeHotkeyChanges()
         // Spec 6.1's onboarding, in the only shape an `LSUIElement` app can offer it: there is
         // no window at launch to put a screen in, so the system's own dialog is the screen.
@@ -433,7 +430,7 @@ struct TranslatorApp: App {
         }
     }
 
-    /// Re-registers when the user changes the shortcut in settings.
+    /// Re-registers when the user changes either shortcut in settings.
     ///
     /// Observation rather than the brief's other suggestion — «a simple comparison on each
     /// panel show» — because that one cannot work: after a change the *old* combination is
@@ -446,9 +443,13 @@ struct TranslatorApp: App {
     /// *before* the new value is stored, so the re-read happens on a later turn of the main
     /// actor rather than inside the callback, where `settings.hotkey` would still be the old
     /// combination.
+    ///
+    /// Both properties are read in the one tracking block, so a single callback re-arms for
+    /// both — and `refreshRegistration()` re-registers only the one that actually moved.
     private func observeHotkeyChanges() {
         withObservationTracking {
             _ = settings.hotkey
+            _ = settings.proofreadHotkey
         } onChange: {
             Task { @MainActor in
                 coordinator.refreshRegistration()
@@ -492,6 +493,13 @@ struct TranslatorApp: App {
                 },
                 onSwitchOperation: { op in Task { await coordinator.switchOperation(to: op) } },
                 onAnotherVariant: { Task { await coordinator.anotherVariant() } },
+                settings: settings,
+                onProofreadingLevelChange: { level in
+                    Task { await coordinator.setProofreadingLevel(level) }
+                },
+                onRewriteStyleChange: { style in
+                    Task { await coordinator.setRewriteStyle(style) }
+                },
                 onContentChange: { settling in panel.contentDidChange(settling: settling) },
                 // Gated on `variant`, not unconditional: `PanelController` builds *two* live
                 // hosts from this same closure — `hosting` (installed) and `measuring`
@@ -662,6 +670,16 @@ private struct PanelHost: View {
     let onSwitchOperation: (TextOperation) -> Void
     /// «Ещё вариант», threaded the same way — see `HotkeyCoordinator.anotherVariant()`.
     let onAnotherVariant: () -> Void
+    /// The settings, read **inside `body`** rather than resolved at the call site — the same
+    /// reason `selection` is read here. `PanelController` builds its hosting view once and
+    /// keeps it, so a степень resolved where the content is constructed would freeze at
+    /// whatever it was when the panel was built. Read in the body, it registers observation on
+    /// `@Observable` `AppSettings` and the row redraws when the value changes.
+    let settings: AppSettings
+    /// The степень and стиль pickers, threaded like every other callback here — see
+    /// `HotkeyCoordinator.setProofreadingLevel(_:)`.
+    let onProofreadingLevelChange: (ProofreadingLevel) -> Void
+    let onRewriteStyleChange: (RewriteStyle) -> Void
     let onContentChange: (Bool) -> Void
     /// Refreshes `OllamaStatusModel` after a hotkey run settles. Folded into the
     /// `panelModel.state` hook below rather than a second `.onChange` on the same value —
@@ -679,6 +697,10 @@ private struct PanelHost: View {
                   onGrantPermission: onGrantPermission,
                   onSwitchOperation: onSwitchOperation,
                   onAnotherVariant: onAnotherVariant,
+                  proofreadingLevel: settings.defaultProofreadingLevel,
+                  rewriteStyle: settings.defaultRewriteStyle,
+                  onProofreadingLevelChange: onProofreadingLevelChange,
+                  onRewriteStyleChange: onRewriteStyleChange,
                   scrolls: scrolls,
                   onClose: onClose,
                   fillsPanel: fillsPanel)

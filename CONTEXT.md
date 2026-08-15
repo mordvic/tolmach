@@ -88,6 +88,16 @@ Translation by hotkey, where time to the first character matters more than prose
 → `AppSettings.interactiveModel`, `ModelRole.interactive`
 _Avoid_: быстрый режим, режим хоткея
 
+**Сочетание клавиш для перевода / сочетание клавиш для правки** — *the перевод / правка shortcut*
+Two system-wide combinations, ⌥⌘T and ⌥⌘R out of the box, each opening the panel already
+performing its own operation — a press never inherits the operation the previous panel's switch
+was left on. Set separately in «Основные» → «Сочетания клавиш», and they must differ: the
+recorder refuses a duplicate at the keystroke, because Carbon would refuse it afterwards and the
+pane would then show a shortcut the app does not answer to.
+→ `AppSettings.hotkey`, `AppSettings.proofreadHotkey`, `HotkeyCoordinator.handlePress(operation:)`
+_Avoid_: хоткей (in the interface — the settings section is «Сочетания клавиш»), горячая клавиша,
+шорткат
+
 **Фоновый путь** — *background path*
 Translation by button or in batch, where prose quality matters more than speed. **Built** — the
 file queue and the document-terms review gate both ship. `AppSettings.batchModel` selects the

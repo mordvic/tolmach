@@ -261,6 +261,30 @@ Facts that will bite you if you "tidy" them:
   press is measured, not preferred: hide the old panel → read the selection off the main actor →
   show the panel → translate. Showing the panel first breaks the capture, because a
   `.nonactivatingPanel` still becomes *key* and system-wide accessibility focus follows the key window.
+- **There are two shortcuts and one coordinator.** A `HotkeyManager` per `TextOperation`
+  (⌥⌘T перевод, ⌥⌘R правка by default), and `handlePress(operation:)` assigns the pressed
+  shortcut's operation to the panel model — a press never inherits what the previous
+  presentation's switch was left on. Two managers rather than one holding two registrations,
+  because `HotkeyManager`'s handler already tells registrations apart by `signature` +
+  `hotKeyID` and its comment carries that measurement; two *coordinators* are forbidden for the
+  reason the three models must not be merged — that would be a second panel and a second
+  `TranslationViewModel`. Registrations are brought in line in **two passes** — release what
+  blocks (remembering it), then register — because Carbon refuses a combination still held by
+  the other manager. Both halves cost a defect: one pass made «move перевод onto правка's
+  combination» silently keep the old one, and releasing without remembering left перевод
+  registered to *nothing* when the new combination was then refused. `handlePress` assigns
+  `panelModel.operation` **before** `afterCapture()`, because that hook is where the panel is
+  measured and the степень/стиль row is drawn from it. A refused
+  registration is logged inside `apply` through `HotkeyCoordinator.failure(for:restored:
+  combination:)`, which is a value with a test: `.fault` only for перевод with nothing restored
+  — the one case where the app really has no way into the panel — and `.error` otherwise. If
+  both settings hold the same combination (not typable, but inherited by any install whose
+  перевод was already ⌥⌘R), правка's registration is declined rather than attempted and
+  «Основные» says so. The panel's «степень»/«стиль» pickers write
+  `defaultProofreadingLevel` / `defaultRewriteStyle` **directly** — they are the settings, not
+  per-run overrides, so a choice made where правка is used survives the panel closing and the
+  window follows it wherever it has no override of its own. See
+  `docs/superpowers/specs/2026-08-15-proofread-hotkey-design.md`.
 - **The panel sizes itself to its content and is not `.titled`.** Three types share the job and
   none of them may be collapsed into another: `PanelSizer` owns the rules (width clamped to
   300–560 pt and frozen for a whole presentation, height floored at 120 pt, monotonic within a
@@ -309,7 +333,11 @@ Facts that will bite you if you "tidy" them:
   so `@Observable`'s synthesis does not apply — each accessor calls `access(keyPath:)` /
   `withMutation(keyPath:_:)` by hand. Keep that shape when adding a setting. Two of its keys
   are `"quietThinking"` (default **true** — a deliberate change to what the app does, see the
-  Ollama rules above) and `"gptOssThinkingLevel"` (default `low`).
+  Ollama rules above) and `"gptOssThinkingLevel"` (default `low`). Two more are the shortcuts:
+  `"hotkey"` and `"proofreadHotkey"`, each one JSON value re-checked for `isValid` on the way
+  out. They differ in one argument only — `hotkey` falls back to its default because it is the
+  only door to the panel, and `proofreadHotkey` does so for the weaker reason that a setting
+  whose stored state and behaviour disagree cannot be reasoned about.
 - `GlossaryStore` persists `~/Library/Application Support/LocalTranslator/glossary.json` (hand-editable,
   git-trackable by design). `save()` is gated on a successful `load()` and on a file stamp check, so
   the app cannot overwrite a file edited behind its back.
