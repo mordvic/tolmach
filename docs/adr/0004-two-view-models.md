@@ -22,9 +22,17 @@ that occurred: the window kept the previous run's `outcome` and `.finished` stat
 rendered that run's elapsed time and that run's markup and glossary warnings underneath the
 text it had just been handed.
 
-The hand-off is therefore `TranslationViewModel.adopt(from:)`, which moves five values as a
-unit — source, translation, `outcome`, `resolvedTarget`, `state` — and refuses when either model
-is mid-translation. It refuses on the source side too: `state` can move but the `Task` behind it
+The hand-off is therefore `TranslationViewModel.adopt(from:)`, which moves the run as a unit and
+refuses when either model is mid-translation.
+
+> **The list has grown twice since this was written, and the rule is what to read, not the
+> count.** It said «five values — source, translation, `outcome`, `resolvedTarget`, `state`».
+> Правка added `operation`, `resolvedOperation` and `resolvedProofreadingLevel`; the terms gate
+> added `documentTermsUnavailable`; and 2026-08-15 added the five per-run overrides, whose
+> absence was a defect of exactly the kind this ADR exists to describe — the window offered
+> «Ещё вариант» for an adopted правка and ran it under its own toolbar's степень. **Anything
+> that describes the run moves with it**; `adopt(from:)` is the list, and it is the only place
+> the list should be written. It refuses on the source side too: `state` can move but the `Task` behind it
 cannot, so adopting `.running` would hand a model a state it has no way to leave.
 
 `adoptionRefusal(from:)` returns *why* rather than a Bool, because the panel needs two answers

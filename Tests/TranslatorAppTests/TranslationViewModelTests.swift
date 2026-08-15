@@ -881,3 +881,49 @@ private func waitForSheet(_ model: TranslationViewModel,
     #expect(model.state == .finished)
     #expect(model.offersAnotherVariant == false)
 }
+
+@MainActor
+@Test func anAdoptedRunKeepsTheSettingsItWasProducedUnder() async {
+    // The five per-run controls are part of the run, and `adopt` moved everything *except*
+    // them. What that costs is not cosmetic: `offersAnotherVariant` reads
+    // `resolvedProofreadingLevel`, which does move, so the window offers «Ещё вариант» for an
+    // adopted «ошибки и стиль» правка — and then runs it under whatever степень the window's
+    // own toolbar was left on, because `proofread()` resolves
+    // `proofreadingLevelOverride ?? setting`. The button promises another rendering of the
+    // text on screen and delivers a different operation's worth of change.
+    let panelClient = ScriptedClient(responses: ["Панель поправила со стилем."])
+    let panel = makeModel(panelClient)
+    panel.operation = .proofread
+    panel.proofreadingLevelOverride = .errorsAndStyle
+    panel.rewriteStyleOverride = .business
+    panel.sourceText = "Текст, в котором имеется ошибка."
+    await panel.run()
+    #expect(panel.resolvedProofreadingLevel == .errorsAndStyle)
+
+    // A window carrying a full set of its own, all of them wrong for the run it is about to
+    // be handed.
+    let windowClient = ScriptedClient(responses: ["Окно перевело.", "Ещё вариант."])
+    let window = makeModel(windowClient)
+    window.sourceText = "Window source."
+    await window.translate()
+    window.proofreadingLevelOverride = .errorsOnly
+    window.rewriteStyleOverride = .friendly
+    window.toneOverride = .technical
+    window.targetOverride = .de
+
+    #expect(window.adopt(from: panel))
+    #expect(window.proofreadingLevelOverride == .errorsAndStyle)
+    #expect(window.rewriteStyleOverride == .business)
+    // The two the panel never set come across as nil, which is the point: they describe the
+    // adopted run, and that run had no tone override and no target override. Left behind, the
+    // window's «В» would name a language the translation on screen is not in.
+    #expect(window.toneOverride == nil)
+    #expect(window.targetOverride == nil)
+
+    // And the behaviour all of that is for: «Ещё вариант» re-runs what is on screen.
+    #expect(window.offersAnotherVariant)
+    await window.run()
+    let system = windowClient.receivedMessages.last!.first!.content
+    #expect(system.contains("smooth awkward phrasing"))   // «ошибки и стиль», as adopted
+    #expect(system.contains("business register"))          // …in the style it was made with
+}

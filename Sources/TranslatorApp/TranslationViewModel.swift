@@ -173,6 +173,25 @@ final class TranslationViewModel {
         // run's own «Ещё вариант» and a toolbar switch left on the wrong setting must both
         // describe the run now on screen, not whatever this model was doing before.
         operation = other.operation
+        // The five per-run controls move with it, for exactly the reason `operation` does —
+        // and leaving them behind was a defect rather than an omission, because
+        // `offersAnotherVariant` reads `resolvedProofreadingLevel`, which *did* move. So the
+        // window offered «Ещё вариант» for an adopted «ошибки и стиль» правка and then ran it
+        // under whatever степень its own toolbar was left on: `proofread()` resolves
+        // `proofreadingLevelOverride ?? setting`, and the button promising another rendering
+        // of the text on screen delivered a different amount of change. Measured by
+        // `anAdoptedRunKeepsTheSettingsItWasProducedUnder`, which asserts the prompt.
+        //
+        // Taking the other model's values rather than keeping ours means *clearing* whatever
+        // this model held whenever the source had none — which is right, not merely
+        // convenient: `knownTarget` is `targetOverride ?? resolvedTarget`, so a window that
+        // kept its own «В» after adopting named a language the translation on screen is not
+        // in. Every one of these describes the run, and the run is now somebody else's.
+        sourceOverride = other.sourceOverride
+        targetOverride = other.targetOverride
+        toneOverride = other.toneOverride
+        proofreadingLevelOverride = other.proofreadingLevelOverride
+        rewriteStyleOverride = other.rewriteStyleOverride
         // Moved with the rest, for this function's own reason: a value that outlives the run
         // it describes is rendered under the next one. Left behind, the window's orange
         // «Термины документа не удалось подготовить» stayed under an adopted translation it
