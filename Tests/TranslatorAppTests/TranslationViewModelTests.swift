@@ -881,3 +881,66 @@ private func waitForSheet(_ model: TranslationViewModel,
     #expect(model.state == .finished)
     #expect(model.offersAnotherVariant == false)
 }
+
+@MainActor
+@Test func anAdoptedProofreadCanBeRerunWithoutConsultingTheSettings() async {
+    // `offersAnotherVariant` reads `resolvedProofreadingLevel`, which moves with the run — so
+    // the window offers «Ещё вариант» for an adopted «ошибки и стиль» правка. What it then
+    // ran was `proofreadingLevelOverride ?? setting`, and neither of those described the
+    // adopted run: the button promising another rendering of the text on screen delivered a
+    // different amount of change. Adoption therefore pins what the run actually used.
+    let panelClient = ScriptedClient(responses: ["Панель поправила со стилем."])
+    let panel = makeModel(panelClient)
+    panel.operation = .proofread
+    panel.proofreadingLevelOverride = .errorsAndStyle
+    panel.rewriteStyleOverride = .business
+    panel.sourceText = "Текст, в котором имеется ошибка."
+    await panel.run()
+    #expect(panel.resolvedProofreadingLevel == .errorsAndStyle)
+    #expect(panel.resolvedRewriteStyle == .business)
+
+    // The window's own settings say «только ошибки» / «как в оригинале» — the factory pair —
+    // and its toolbar is left on something else again. Neither may decide the re-run.
+    let windowClient = ScriptedClient(responses: ["Окно перевело.", "Ещё вариант."])
+    let window = makeModel(windowClient)
+    window.sourceText = "Window source."
+    await window.translate()
+    window.proofreadingLevelOverride = .errorsOnly
+    window.rewriteStyleOverride = .friendly
+
+    #expect(window.adopt(from: panel))
+    #expect(window.proofreadingLevelOverride == .errorsAndStyle)
+    #expect(window.rewriteStyleOverride == .business)
+
+    #expect(window.offersAnotherVariant)
+    await window.run()
+    let system = windowClient.receivedMessages.last!.first!.content
+    #expect(system.contains("smooth awkward phrasing"))   // «ошибки и стиль», as adopted
+    #expect(system.contains("business register"))         // …in the style it was made with
+}
+
+@MainActor
+@Test func adoptingClearsAPickerTheAdoptedRunNeverUsed() async {
+    // `knownTarget` is `targetOverride ?? resolvedTarget`, so a window that kept its own «В»
+    // after adopting named a language the translation on screen is not in. Clearing is
+    // therefore the point of moving these, not a side effect — and it is only safe because
+    // the queue's pickers are `FileQueueModel`'s own: while both modes bound to this model,
+    // this same assignment reset the language a queue was configured with, and the next
+    // «Перевести» wrote every file in the settings-default one.
+    let panel = makeModel(ScriptedClient(responses: ["Перевод панели."]))
+    panel.sourceText = "Panel source."
+    await panel.translate()
+    #expect(panel.targetOverride == nil)   // the panel has no pickers to set one with
+
+    let window = makeModel(ScriptedClient(responses: ["Перевод окна."]))
+    window.sourceText = "Window source."
+    await window.translate()
+    window.sourceOverride = .en
+    window.targetOverride = .de
+    window.toneOverride = .technical
+
+    #expect(window.adopt(from: panel))
+    #expect(window.sourceOverride == nil)
+    #expect(window.targetOverride == nil)
+    #expect(window.toneOverride == nil)
+}

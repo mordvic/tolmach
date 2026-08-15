@@ -58,6 +58,14 @@ final class TranslationViewModel {
     /// a header or an «Ещё вариант» must never describe another operation's result.
     private(set) var resolvedOperation: TextOperation?
     private(set) var resolvedProofreadingLevel: ProofreadingLevel?
+    /// The степень's other half — the стиль the finished правка was actually rendered in.
+    ///
+    /// Added alongside `resolvedProofreadingLevel` rather than left to be re-derived from
+    /// `rewriteStyleOverride ?? setting`, because that expression answers «what the *next* run
+    /// would use», and after `adopt(from:)` the run on screen is somebody else's. Without it
+    /// an adopted правка could be re-run through «Ещё вариант» in a different register from
+    /// the one the user is looking at.
+    private(set) var resolvedRewriteStyle: RewriteStyle?
     /// Overridden in the main window when the user picks a source explicitly.
     var sourceOverride: Language?
     var targetOverride: Language?
@@ -169,10 +177,42 @@ final class TranslationViewModel {
         resolvedTarget = other.resolvedTarget
         resolvedOperation = other.resolvedOperation
         resolvedProofreadingLevel = other.resolvedProofreadingLevel
+        resolvedRewriteStyle = other.resolvedRewriteStyle
         // `run()` dispatches on `operation`, not on `resolvedOperation` — so the adopted
         // run's own «Ещё вариант» and a toolbar switch left on the wrong setting must both
         // describe the run now on screen, not whatever this model was doing before.
         operation = other.operation
+        // The правка pair moves too, and it moves *resolved* rather than copied: what the
+        // adopted run actually used, falling back to nothing only when there was no правка.
+        //
+        // Leaving them behind was a defect rather than an omission, because
+        // `offersAnotherVariant` reads `resolvedProofreadingLevel`, which *did* move. So the
+        // window offered «Ещё вариант» for an adopted «ошибки и стиль» правка and then ran it
+        // under whatever степень its own toolbar was left on — `proofread()` resolves
+        // `proofreadingLevelOverride ?? setting` — and the button promising another rendering
+        // of the text on screen delivered a different amount of change. Copying the *other
+        // model's overrides* would only half-fix it: the panel sets none, so the re-run would
+        // fall through to this window's settings, which are equally not what produced the text
+        // on screen. Pinning what the run resolved is what makes an adopted правка
+        // self-describing. `anAdoptedProofreadCanBeRerunWithoutConsultingTheSettings` asserts
+        // the prompt, not the properties.
+        //
+        proofreadingLevelOverride = other.proofreadingLevelOverride ?? other.resolvedProofreadingLevel
+        rewriteStyleOverride = other.rewriteStyleOverride ?? other.resolvedRewriteStyle
+        // «Из», «В» and «Тон» move too, and for a while they could not: the toolbar bound both
+        // of the window's modes to this model, so these three doubled as the *queue's*
+        // configuration and clearing them here reset a queue's language — the next «Перевести»
+        // then wrote every file in the settings-default one. They are `FileQueueModel`'s own
+        // now, which is what makes moving them safe as well as right: they describe this
+        // model's run, and this model's run is now somebody else's.
+        //
+        // Taking the other's values means *clearing* ours whenever the source had none, which
+        // is the direction that matters: `knownTarget` is `targetOverride ?? resolvedTarget`,
+        // so a window that kept its own «В» after adopting named a language the translation on
+        // screen is not in.
+        sourceOverride = other.sourceOverride
+        targetOverride = other.targetOverride
+        toneOverride = other.toneOverride
         // Moved with the rest, for this function's own reason: a value that outlives the run
         // it describes is rendered under the next one. Left behind, the window's orange
         // «Термины документа не удалось подготовить» stayed under an adopted translation it
@@ -234,25 +274,8 @@ final class TranslationViewModel {
         resolvedTarget = nil
         resolvedOperation = nil
         resolvedProofreadingLevel = nil
+        resolvedRewriteStyle = nil
         state = .idle
-    }
-
-    /// Whether the two toolbar pickers hold explicit languages to exchange.
-    ///
-    /// Separate from `canSwapLanguages`, which also consults the last run's detected source
-    /// and moves the text. In «Файлы» there is no text in this model to move and no run of
-    /// its own to learn a language from — the pickers are all there is.
-    var canSwapOverrides: Bool { sourceOverride != nil && targetOverride != nil }
-
-    /// Exchange the two pickers and **nothing else**.
-    ///
-    /// `swapLanguages()` also moves the translation into the source pane, which is right in
-    /// «Текст» and destructive in «Файлы»: that pane is not on screen, so the move happens
-    /// unseen and there is nothing to undo it with.
-    func swapOverrides() {
-        guard let source = sourceOverride, let target = targetOverride else { return }
-        sourceOverride = target
-        targetOverride = source
     }
 
     /// «Ещё вариант» is offered only where variance is the point: a finished правка run
@@ -365,6 +388,7 @@ final class TranslationViewModel {
             resolvedTarget = target
             resolvedOperation = .translate
             resolvedProofreadingLevel = nil
+            resolvedRewriteStyle = nil
             outcome = result
             // The one place the engine's swallowed document-glossary failure is recorded. The
             // user is deliberately not told — it is a diagnostic about an enhancement, not a
@@ -412,6 +436,7 @@ final class TranslationViewModel {
             resolvedTarget = nil
             resolvedOperation = .proofread
             resolvedProofreadingLevel = level
+            resolvedRewriteStyle = style
             outcome = result
         })
     }

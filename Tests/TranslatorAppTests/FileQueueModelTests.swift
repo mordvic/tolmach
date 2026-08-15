@@ -764,7 +764,9 @@ private func savingModel(_ prefix: String,
     let model = makeQueueModel(client, prefix: "queue-override-target")
     model.add([queueJob("a.md", "The resource is published.")])
 
-    await model.run(source: nil, target: .de, tone: .technical)
+    model.targetOverride = .de
+    model.toneOverride = .technical
+    await model.run()
 
     #expect(model.jobs[0].resolvedTarget == .de)
 }
@@ -786,7 +788,8 @@ private func savingModel(_ prefix: String,
     let model = makeQueueModel(client, prefix: "queue-override-name")
     model.add([queueJob("a.md", "The resource is published.")])
 
-    await model.run(source: nil, target: .de, tone: nil)
+    model.targetOverride = .de
+    await model.run()
 
     #expect(model.suggestedName(for: model.jobs[0].id) == "a.de.md")
 }
@@ -865,7 +868,8 @@ private func savingModel(_ prefix: String,
                                saveAs: { _, url in .saved(url) })
     model.add([queueJob("a.md", "The resource is published.")])
 
-    await model.run(source: nil, target: .de, tone: nil)
+    model.targetOverride = .de
+    await model.run()
 
     #expect(seen.target == .de)
 }
@@ -882,7 +886,8 @@ private func savingModel(_ prefix: String,
                                },
                                saveAs: { _, url in .saved(url) })
     model.add([queueJob("a.md", "The resource is published.")])
-    await model.run(source: nil, target: .de, tone: nil)
+    model.targetOverride = .de
+    await model.run()
 
     await model.saveBesideSource(model.jobs[0].id)
 
@@ -1177,21 +1182,26 @@ private final class SaveCall: @unchecked Sendable {
 }
 
 @MainActor @Test func swappingInFilesModeTouchesThePickersAndNotTheHiddenPanes() {
-    // `swapLanguages()` moves the translation into the source pane, which is right in
-    // «Текст» and destructive in «Файлы»: that pane is off screen, so the move happens
-    // unseen and nothing undoes it.
-    let text = makeTextModel("swap-files")
+    // `TranslationViewModel.swapLanguages()` moves the translation into the source pane,
+    // which is right in «Текст» and destructive in «Файлы»: that pane is off screen, so the
+    // move happens unseen and nothing undoes it. The queue's own swap exchanges the pickers
+    // and stops there — and the text model, whose panes are not on screen, is not touched at
+    // all now that the pickers are the queue's.
+    let queue = makeQueueModel(QueueClient(replies: []), prefix: "swap-files")
+    let text = makeTextModel("swap-files-text")
     text.sourceText = "исходник"
     text.translatedText = "перевод"
-    text.sourceOverride = .en
-    text.targetOverride = .ru
+    queue.sourceOverride = .en
+    queue.targetOverride = .ru
 
-    text.swapOverrides()
+    queue.swapOverrides()
 
-    #expect(text.sourceOverride == .ru)
-    #expect(text.targetOverride == .en)
+    #expect(queue.sourceOverride == .ru)
+    #expect(queue.targetOverride == .en)
     #expect(text.sourceText == "исходник")
     #expect(text.translatedText == "перевод")
+    #expect(text.sourceOverride == nil)
+    #expect(text.targetOverride == nil)
 }
 
 @MainActor @Test func swappingIsOfferedInFilesModeOnlyWhenBothPickersAreSet() {
@@ -1199,8 +1209,8 @@ private final class SaveCall: @unchecked Sendable {
     let text = makeTextModel("swap-offer-text")
     #expect(!PrimaryAction.forMode(.files, text: text, queue: queue).canSwap)
 
-    text.sourceOverride = .en
-    text.targetOverride = .de
+    queue.sourceOverride = .en
+    queue.targetOverride = .de
     #expect(PrimaryAction.forMode(.files, text: text, queue: queue).canSwap)
 }
 
@@ -1625,7 +1635,8 @@ private final class SaveCall: @unchecked Sendable {
     let stated = makeQueueModel(second, prefix: "queue-source-wiring-de")
     stated.add([queueJob("b.md", "The server validates the request.")])
 
-    await stated.run(source: .de)
+    stated.sourceOverride = .de
+    await stated.run()
 
     let statedPrompts = second.receivedMessages.flatMap { $0 }.map(\.content)
     #expect(statedPrompts.contains { $0.contains("German") })
@@ -1666,18 +1677,22 @@ private final class SaveCall: @unchecked Sendable {
     let text = makeTextModel("round30-swap-text")
     text.sourceText = "исходник"
     text.translatedText = "перевод"
-    text.sourceOverride = .en
-    text.targetOverride = .ru
+    queue.sourceOverride = .en
+    queue.targetOverride = .ru
 
     let action = PrimaryAction.forMode(.files, text: text, queue: queue)
     #expect(action.canSwap)
     action.swap()
 
-    #expect(text.sourceOverride == .ru)
-    #expect(text.targetOverride == .en)
+    #expect(queue.sourceOverride == .ru)
+    #expect(queue.targetOverride == .en)
     // The panes are untouched — they are not on screen, and this action never claimed them.
     #expect(text.sourceText == "исходник")
     #expect(text.translatedText == "перевод")
+    // Nor are the *text* mode's own pickers, which is what the two owners buy: «Файлы» and
+    // «Текст» each configure their own run now.
+    #expect(text.sourceOverride == nil)
+    #expect(text.targetOverride == nil)
 }
 
 @MainActor @Test func swappingIsRefusedInFilesModeWhileTheQueueRuns() async {
@@ -1687,8 +1702,8 @@ private final class SaveCall: @unchecked Sendable {
     let queue = makeQueueModel(client, prefix: "round30-swap-running")
     queue.add([queueJob("a.md", "first")])
     let text = makeTextModel("round30-swap-running-text")
-    text.sourceOverride = .en
-    text.targetOverride = .ru
+    queue.sourceOverride = .en
+    queue.targetOverride = .ru
 
     #expect(PrimaryAction.forMode(.files, text: text, queue: queue).canSwap)
 
@@ -1829,4 +1844,31 @@ private final class SaveCall: @unchecked Sendable {
     // between the two with room on both sides. Measured under sixteen busy loops, five runs
     // each: clean −237…−7, mutated 875…986.
     #expect(long - brief < 500)
+}
+
+@MainActor @Test func aHandOffIntoTheTextPaneCannotResetTheQueuesLanguage() async {
+    // The end-to-end shape of what two owners buy, and the defect that bought them: while the
+    // toolbar bound both modes to the text model, «Открыть в окне» ran `adopt(from:)`, which
+    // moves every value describing a run — and those three *were* the queue's configuration.
+    // Choose «В: немецкий» in «Файлы», press the shortcut elsewhere, hand the panel's result
+    // to the window, and the next «Перевести» wrote every file in the settings-default
+    // language, with the picker showing «По правилу» to say so only if the user looked.
+    let queue = makeQueueModel(QueueClient(replies: []), prefix: "handoff-queue")
+    queue.sourceOverride = .en
+    queue.targetOverride = .de
+    queue.toneOverride = .technical
+
+    let panel = makeTextModel("handoff-panel", client: QueueClient(replies: ["Перевод панели."]))
+    panel.sourceText = "Panel source."
+    await panel.translate()
+
+    let text = makeTextModel("handoff-text")
+    #expect(text.adopt(from: panel))
+
+    // The window's own pickers cleared with the adoption — they describe its run — and the
+    // queue's did not move at all.
+    #expect(text.targetOverride == nil)
+    #expect(queue.sourceOverride == .en)
+    #expect(queue.targetOverride == .de)
+    #expect(queue.toneOverride == .technical)
 }
