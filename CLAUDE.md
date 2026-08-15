@@ -268,9 +268,13 @@ Facts that will bite you if you "tidy" them:
   because `HotkeyManager`'s handler already tells registrations apart by `signature` +
   `hotKeyID` and its comment carries that measurement; two *coordinators* are forbidden for the
   reason the three models must not be merged — that would be a second panel and a second
-  `TranslationViewModel`. Registrations are brought in line in **two passes** — release, then
-  register — because Carbon refuses a combination still held by the other manager, and one pass
-  made «move перевод onto правка's combination» silently keep the old one. A refused
+  `TranslationViewModel`. Registrations are brought in line in **two passes** — release what
+  blocks (remembering it), then register — because Carbon refuses a combination still held by
+  the other manager. Both halves cost a defect: one pass made «move перевод onto правка's
+  combination» silently keep the old one, and releasing without remembering left перевод
+  registered to *nothing* when the new combination was then refused. `handlePress` assigns
+  `panelModel.operation` **before** `afterCapture()`, because that hook is where the panel is
+  measured and the степень/стиль row is drawn from it. A refused
   registration is logged inside `apply` through `HotkeyCoordinator.failure(for:restored:
   combination:)`, which is a value with a test: `.fault` only for перевод with nothing restored
   — the one case where the app really has no way into the panel — and `.error` otherwise. If

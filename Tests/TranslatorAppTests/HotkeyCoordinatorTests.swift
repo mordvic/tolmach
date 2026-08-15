@@ -793,3 +793,57 @@ private func makePressedCoordinator(responses: [String]) async -> PressHarness {
     coordinator.refreshRegistration()
     #expect(coordinator.registeredCombo(for: .translate) == combo(0x2C))
 }
+
+@MainActor
+@Test func resolvingAnInheritedCollisionNeverLeavesTranslationWithoutAShortcut() {
+    // The regression the release-what-blocks pass introduced, and the guarantee it must not
+    // cost: перевод is the only door to the panel, so no sequence of settings changes may end
+    // with it holding nothing.
+    //
+    // The sequence is the documented upgrade case being *resolved*: both settings hold the
+    // same combination, and the user separates them by moving перевод — onto a combination
+    // something else in this process happens to hold.
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "hk"))
+    settings.hotkey = combo(0x2B)
+    settings.proofreadHotkey = combo(0x2B)
+    let reader = ScriptedReader([nil])
+    let (coordinator, _) = makeCoordinator(reader: reader, settings: settings)
+    defer { coordinator.stop() }
+    #expect(coordinator.start { _ in })
+    #expect(coordinator.registeredCombo(for: .translate) == combo(0x2B))
+    #expect(coordinator.registeredCombo(for: .proofread) == nil)   // declined, not refused
+
+    let rival = HotkeyManager()
+    defer { rival.unregister() }
+    #expect(rival.register(combo(0x2C)) {})
+
+    settings.hotkey = combo(0x2C)
+    coordinator.refreshRegistration()
+    // Перевод keeps a working shortcut. Without the release being undone it ends up with
+    // none — pass 1 lets go of ⌥⌃⌥⌘-0x2B because правка now wants it, and pass 2 has nothing
+    // to restore when Carbon refuses the combination the rival holds.
+    #expect(coordinator.registeredCombo(for: .translate) == combo(0x2B))
+    // And правка does not inherit the combination the user had been pressing for перевод.
+    #expect(coordinator.registeredCombo(for: .proofread) == nil)
+}
+
+@MainActor
+@Test func theOperationIsKnownBeforeThePanelIsMeasured() async {
+    // `PanelController.show(at:)` measures inside `afterCapture()`, and the степень/стиль row
+    // is drawn from `model.operation`. Assigned after that call, the measurement uses the
+    // *previous* press's operation: a перевод press following a правка one is measured with
+    // the row present and keeps the space (the height is monotonic within a presentation),
+    // and a правка press following a перевод one opens without the row and then grows — the
+    // «кнопки прыгают» the reservation exists to remove.
+    let reader = ScriptedReader(["Hello.", "Здесь ошибка."])
+    let (coordinator, _) = makeCoordinator(reader: reader,
+                                           replies: ["Привет.", "Здесь ошибки нет."])
+    await coordinator.handlePress()
+    #expect(coordinator.panelModel.operation == .translate)   // the premise
+
+    var operationAtShow: TextOperation?
+    await coordinator.handlePress(operation: .proofread, afterCapture: {
+        operationAtShow = coordinator.panelModel.operation
+    })
+    #expect(operationAtShow == .proofread)
+}

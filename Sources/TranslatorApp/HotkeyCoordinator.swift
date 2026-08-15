@@ -181,18 +181,30 @@ final class HotkeyCoordinator {
         // `aStaleRegistrationIsReleasedBeforeTheOtherShortcutAsksForItsCombination`: перевод's
         // move onto a combination правка was *stale* on came back -9878, and перевод kept its
         // old shortcut while the pane showed the new one.
+        //
+        // What is released is **remembered**, and pass 2 hands it to `apply` as the thing to
+        // fall back to. Without that the release destroys the very guarantee this method
+        // protects, and not in theory: measured by
+        // `resolvingAnInheritedCollisionNeverLeavesTranslationWithoutAShortcut`, resolving an
+        // inherited collision by moving перевод onto a combination another component holds
+        // ended with перевод registered to **nothing** — pass 1 let go of its live shortcut
+        // because правка's setting still named it, and `apply` found `manager.registered` nil
+        // and had nothing to put back. Правка then took the combination the user had been
+        // pressing for перевод.
+        var released: [TextOperation: HotkeyCombo] = [:]
         for operation in TextOperation.allCases {
             guard let held = managers[operation]?.registered else { continue }
             let mustNotExist = wanted[operation] == nil
             let blocksTheOther = wanted.contains { $0.key != operation && $0.value == held }
             guard mustNotExist || blocksTheOther else { continue }
+            released[operation] = held
             managers[operation]?.unregister()
         }
         // Pass 2: register what should be, skipping whatever already is.
         return TextOperation.allCases.reduce(true) { ok, operation in
             guard let combination = wanted[operation],
                   combination != managers[operation]?.registered else { return ok }
-            return apply(combination, for: operation) && ok
+            return apply(combination, for: operation, fallback: released[operation]) && ok
         }
     }
 
@@ -214,8 +226,14 @@ final class HotkeyCoordinator {
     /// registration paths meet. `refreshRegistration()` had no logging at all before this, and
     /// it is the path a user actually reaches — by choosing a combination another program
     /// holds.
+    /// - Parameter fallback: what to restore to when this manager's own registration was
+    ///   already released by `bringRegistrationsInLine`'s first pass. Without it a release
+    ///   makes the restore above impossible — `manager.registered` is nil by then — and a
+    ///   refused change leaves the user with nothing, which is the one outcome this function
+    ///   exists to prevent.
     @discardableResult
-    private func apply(_ combo: HotkeyCombo, for operation: TextOperation) -> Bool {
+    private func apply(_ combo: HotkeyCombo, for operation: TextOperation,
+                       fallback: HotkeyCombo? = nil) -> Bool {
         // `onPress != nil` rather than binding it: the action registered is
         // `pressAction(for:)`, which reads the stored property at press time. Binding a copy
         // here would freeze whichever action was installed at registration and quietly
@@ -223,7 +241,7 @@ final class HotkeyCoordinator {
         guard onPress != nil, let manager = managers[operation] else { return false }
         let press = pressAction(for: operation)
         // Read before the call, not after: `register` clears `registered` on its way in.
-        let previous = manager.registered
+        let previous = manager.registered ?? fallback
         if manager.register(combo, onPress: press) { return true }
         // Whether the restore actually happened is what the message below turns on, so it is
         // read rather than assumed. On `refreshRegistration()` there is a working shortcut to
@@ -392,6 +410,27 @@ final class HotkeyCoordinator {
         // A flag on this coordinator touches neither. `PanelView` reads it for the two things
         // that must know — the room it reserves and the row that says «Перевожу…» — and the
         // model is left exactly as `translate()` expects to find it.
+        // The operation belongs to the shortcut that was pressed, and only to it: a press never
+        // inherits what the previous presentation's switch was left on. That is the
+        // predictability the правка design's §8 asked for, restated now that there is more than
+        // one shortcut — see docs/superpowers/specs/2026-08-15-proofread-hotkey-design.md,
+        // which supersedes that paragraph and nothing else in it.
+        //
+        // **Assigned before `afterCapture()`, and that placement is the point.** The panel is measured
+        // inside that call — `PanelController.show(at:)` → `measure` — and the степень/стиль
+        // row is drawn from this property, so assigning it afterwards measured the panel with
+        // the *previous* press's operation: a перевод press following a правка one was
+        // measured with the row present and kept the space, because the height is monotonic
+        // within a presentation, and a правка press following a перевод one opened without the
+        // row and then grew. That growth is «кнопки прыгают», the defect the reservation below
+        // exists to remove.
+        //
+        // Neither of the two defects the comment above records applies to it: this is not
+        // `state`, so `PanelHost` reads no settle from it, and it is not `translatedText`, so
+        // nothing a failed run would need is cleared. It is assigned outside the `.text` guard
+        // for the same reason — an empty or unpermitted capture draws neither the row nor the
+        // switch, so there is nothing for a stale value to be right or wrong about.
+        panelModel.operation = operation
         isStartingRun = true
         afterCapture()
         // Cleared **here**, not after the run. `afterCapture()` is the whole of what the flag
@@ -407,13 +446,6 @@ final class HotkeyCoordinator {
         // promising «a handful of milliseconds» is now true of the code as well.
         isStartingRun = false
         guard case .text(let text) = captured else { return }
-        // The operation belongs to the shortcut that was pressed, and only to it: a press
-        // never inherits what the previous presentation's switch was left on. That is the
-        // predictability the правка design's §8 asked for, restated now that there is more
-        // than one shortcut — see
-        // docs/superpowers/specs/2026-08-15-proofread-hotkey-design.md, which supersedes that
-        // paragraph and nothing else in it.
-        panelModel.operation = operation
         panelModel.sourceText = text
         await runTranslation()
     }
