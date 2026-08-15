@@ -411,3 +411,64 @@ private final class FiredFlag: @unchecked Sendable {
         keyCode: 0x23, modifiers: NSEvent.ModifierFlags([.option, .command]).rawValue)
     #expect(!settings.shortcutsCollide)
 }
+
+/// A fresh install renders exactly as the app did before «Шрифт текста» existed.
+///
+/// The factory value is not «a sensible default» — it is the one that reproduces `.body`, and
+/// `ContentFontTests` pins that equivalence against the system. Here it is only pinned that
+/// nothing in the settings layer moves it.
+@Test func theContentFontStartsAtTheSizeTheAppAlwaysUsed() {
+    let settings = AppSettings(defaults: freshDefaults())
+    #expect(settings.contentFont == ContentFont.default)
+    #expect(settings.contentTypeface == .system)
+    #expect(settings.contentFontSize == ContentFont.defaultSize)
+}
+
+@Test func theContentFontSurvivesAReload() {
+    let defaults = freshDefaults()
+    let first = AppSettings(defaults: defaults)
+    first.contentFont = ContentFont(typeface: .serif, size: 19)
+    let second = AppSettings(defaults: defaults)
+    #expect(second.contentFont == ContentFont(typeface: .serif, size: 19))
+}
+
+/// The two keys are read defensively, because this app is not their only writer.
+///
+/// `defaults write` and a hand-edited plist reach them just as the settings pane does — the
+/// reasoning `hotkey` gives for re-checking `isValid` on the way *out* rather than trusting
+/// what the setter stored. A face that no longer exists falls back to the system one; a size
+/// from beyond the range is clamped rather than sizing a pane nobody can use.
+@Test func nonsenseStoredByHandIsCorrectedOnTheWayOut() {
+    let defaults = freshDefaults()
+    defaults.set("copperplate", forKey: "contentTypeface")
+    defaults.set(400.0, forKey: "contentFontSize")
+    let settings = AppSettings(defaults: defaults)
+    #expect(settings.contentTypeface == .system)
+    #expect(settings.contentFontSize == ContentFont.sizes.upperBound)
+
+    defaults.set(0.0, forKey: "contentFontSize")
+    #expect(AppSettings(defaults: defaults).contentFontSize == ContentFont.sizes.lowerBound)
+}
+
+/// Both halves notify, and this is the only kind of test that can see it: a round trip through
+/// `UserDefaults` succeeds just as well with the hand-written `access(keyPath:)` /
+/// `withMutation(keyPath:_:)` missing, and this class has shipped that defect once already.
+///
+/// It matters more here than for most settings: the panel re-measures itself from an
+/// `.onChange` on this value, and the window's two panes redraw from reading it inside a body.
+/// A missing `withMutation` would leave both surfaces on the old font until something else
+/// happened to invalidate them.
+@Test func changingTheContentFontNotifiesObservers() {
+    for change in [ContentFont(typeface: .monospaced, size: ContentFont.defaultSize),
+                   ContentFont(typeface: .system, size: 20)] {
+        let settings = AppSettings(defaults: freshDefaults())
+        let fired = FiredFlag()
+        withObservationTracking {
+            _ = settings.contentFont
+        } onChange: {
+            fired.value = true
+        }
+        settings.contentFont = change
+        #expect(fired.value)
+    }
+}

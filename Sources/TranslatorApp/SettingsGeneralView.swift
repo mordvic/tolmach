@@ -178,6 +178,38 @@ struct SettingsGeneralView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
+            // «Текст», not «Шрифт»: the section governs a face *and* a size, and it governs
+            // them for the text being translated rather than for the window. The caption is
+            // what draws that boundary, because the section title cannot.
+            Section("Текст") {
+                Picker("Шрифт", selection: $settings.contentTypeface) {
+                    ForEach(ContentTypeface.allCases) { Text($0.russianName).tag($0) }
+                }
+                // A `Stepper` and not a `Slider`: the value is a number the user may want to
+                // state exactly, and it is shown in the label because a slider with no readout
+                // makes «13» unreachable once you have left it.
+                Stepper(value: $settings.contentFontSize,
+                        in: ContentFont.sizes,
+                        step: ContentFont.step) {
+                    // «пт», not «pt»: every user-facing string in this app is Russian, and a
+                    // unit of measure is neither an identifier (`aya-expanse:8b`) nor a key
+                    // glyph (⌥⌘T), which are the two things that rule exempts.
+                    Text("Размер: \(Int(settings.contentFontSize)) пт")
+                }
+                // The one place the difference between the faces is visible before the settings
+                // window is closed. `lineLimit(1)` so the row cannot grow a second line at
+                // 32 pt and push the section about — the pane's 560 × 480 is fixed.
+                Text("Съешь ещё этих мягких булок")
+                    .font(settings.contentFont.font)
+                    .lineLimit(1)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Образец выбранного шрифта")
+                Text("Шрифт исходника, перевода и текста в панели по сочетанию клавиш. "
+                     + "Подписи, кнопки и таблицы остаются системного размера.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             Section("Поведение") {
                 // Naming the shortcut is not padding, and it must stay. `autoCopy` is read in
                 // exactly one place — `HotkeyCoordinator.runTranslation` — so a translation

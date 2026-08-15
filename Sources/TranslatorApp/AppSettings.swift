@@ -233,6 +233,58 @@ final class AppSettings {
         set { withMutation(keyPath: \.reviewDocumentTerms) { defaults.set(newValue, forKey: "reviewDocumentTerms") } }
     }
 
+    /// The face the user's own text is drawn in. See `ContentFont` and `docs/adr/0008`.
+    ///
+    /// An unreadable value falls back to the system face rather than to nothing, for the reason
+    /// `hotkey` falls back to its default: a plist is user-writable, and a setting whose stored
+    /// state and behaviour disagree cannot be reasoned about.
+    var contentTypeface: ContentTypeface {
+        get {
+            access(keyPath: \.contentTypeface)
+            return ContentTypeface(rawValue: string("contentTypeface", "system")) ?? .system
+        }
+        set {
+            withMutation(keyPath: \.contentTypeface) {
+                defaults.set(newValue.rawValue, forKey: "contentTypeface")
+            }
+        }
+    }
+
+    /// Clamped **on the way out**, not only on the way in. The setter is not the only writer —
+    /// `defaults write` is — and `ContentFont.sizes` is what stops a hand-edited plist from
+    /// producing a translation pane nobody can read or a panel measured at a size
+    /// `NSWindow.setFrame` cannot take.
+    var contentFontSize: CGFloat {
+        get {
+            access(keyPath: \.contentFontSize)
+            return ContentFont.clamped(CGFloat(double("contentFontSize",
+                                                      Double(ContentFont.defaultSize))))
+        }
+        set {
+            withMutation(keyPath: \.contentFontSize) {
+                defaults.set(Double(ContentFont.clamped(newValue)), forKey: "contentFontSize")
+            }
+        }
+    }
+
+    /// The pair, as the one value every reader actually wants.
+    ///
+    /// Two keys rather than one JSON value, which is where `hotkey` went the other way. That
+    /// property is one value because two keys can be observed half-written and produce a
+    /// combination the user never chose; here every pair of a face and a size is a usable
+    /// setting, so there is nothing to be half-way through.
+    ///
+    /// Derived rather than stored, so the observation the two accessors above register by hand
+    /// is the only mechanism — a third `access(keyPath:)` on a computed property would be a
+    /// second one to keep in step.
+    var contentFont: ContentFont {
+        get { ContentFont(typeface: contentTypeface, size: contentFontSize) }
+        set {
+            contentTypeface = newValue.typeface
+            contentFontSize = newValue.size
+        }
+    }
+
     var keepAlive: String {
         get {
             access(keyPath: \.keepAlive)

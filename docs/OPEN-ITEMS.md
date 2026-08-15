@@ -113,6 +113,19 @@ numbers the controller computes; none of them can say what the panel looks like.
 | **Re-measure `hosting.sizingOptions = []`** | Its evidence — 380 × 120 before, 380 × 260 after, on the running bundle — was taken on a `.titled` panel against a fixed size, and **neither condition exists any more**, so the numbers cannot be reproduced from here. The mechanism it records is sound and the line stays on that basis; someone with the bundle on a screen should take the number again, or delete it | `PanelController.init` |
 | **A hand-dragged panel taller than the screen** | `PanelSizer.fit`'s `userSized` branch now honours the user on both axes — floors only, no ceilings — so nothing stops a drag from producing a frame taller than `maxHeightFraction` would allow, and `PanelPlacement.clamp` only moves the origin, it does not shrink the frame. The one mitigation is that `show(at:)` clears `userSized` on the next press. Whether an over-tall hand-dragged panel actually reads as a problem worth a shrink-back is a thing only someone looking at a screen can judge | `PanelSizer.fit`, `PanelPlacement.clamp` |
 
+**Owed by «Шрифт текста».** The setting reaches three text sites, a settings section and three
+menu items. What the suite can hold is that the panel is *measured* in the chosen font and that
+the reservation shares it; everything below needs a screen or a physical key.
+
+| What to check | Why it needs eyes | Code |
+|---|---|---|
+| **⌘+ and ⌘− actually firing** | `Scripts/view-menu.swift` records what SwiftUI stores: key `'+'` with mask `⌘`, i.e. the shifted character with no ⇧ in the mask. Whether AppKit then matches a physical ⇧⌘= is a question about key-equivalent matching that no dump can answer and no keystroke can be sent from here. If it does not fire, the fallback spelling is `"="` — displayed as ⌘=, matched unshifted | `TranslatorApp.commands` |
+| **⌘+ reaching the панель while the app is inactive** | The panel is key without its process being active, which is the whole point of `.nonactivatingPanel` — but menu key equivalents are dispatched through `NSApp.mainMenu`, and whether that happens for an inactive application is exactly the routing this project refuses to assert. Decided in advance: if it does not, the answer is to leave it, because the panel is read for seconds and the setting is changed rarely. A size control *inside* the panel is the open branch, and it would need the 272 pt row measured the way `Scripts/panel-proofread-row.swift` measured правка's | `TranslatorApp.commands`, `PanelView` |
+| The three faces at a large size, and whether «Моноширинный» reads as a translation pane or as a terminal | Metrics are measured; legibility is not. The one thing already known is that CJK ignores the choice — measured, `zh`/`ja` come out at the same width under `default`, `monospaced` and `rounded` | `ContentTypeface` |
+| The «Текст» section at 32 pt, with the sample line | The sample is `lineLimit(1)` so it cannot grow a second line and push the section about, which means at a large size it will *truncate*. Whether a cut-off sample still does its job is a judgement | `SettingsGeneralView` |
+| The исходник pane at a large size, with the placeholder | The placeholder now takes the editor's font so the two share a baseline. That pairing was reasoned from the same defect the 8 pt inset fixed, and rendered by nobody | `SourceEditor` |
+| **Re-take the reservation's cost figure** | `PanelView.reservation(for:font:)` still carries «16 000 characters → 43.1 ms», measured on the assembled bundle. A stand-in probe could not reproduce it — it reports fractions of a millisecond — so the font-derived cap rests on «the same answer for less work» rather than on a measured saving. Someone with the bundle should re-take it at 13 and at 32 pt, or the sentence should be deleted | `ContentFont.reservationLimit` |
+
 **Owed by the UI redesign, Task 3 — the panel's content.** The header, the ⨯ and the material
 are all new, and the suite can only prove the closure is stored, not that the button calls it.
 
@@ -278,6 +291,23 @@ nothing in this environment can see either.
 ---
 
 ## 2. Known and accepted
+
+- **Making the text smaller while the панель is open leaves a gap under it.** The panel
+  re-measures on a font change, but `PanelSizer`'s height is monotonic within a presentation —
+  only the settle may shrink it — so the reply gets smaller and the window stays the height it
+  was until the panel is dismissed. Growing works immediately.
+  *Chosen rather than worked around.* The one call that shrinks is the settle, and a settle also
+  freezes the presentation's width; a font change has no business deciding that. The cost lasts
+  one presentation.
+
+- **A large «Шрифт текста» makes the панель a narrow column.** `PanelSizer.maxWidth` stays 560,
+  which is 75 characters of Russian prose at 13 pt — the classic reading measure, and the reason
+  the number is what it is. Holding that measure at 22 pt would need a 947 pt panel, which is a
+  second window floating over the document rather than a panel. So at large sizes the measure is
+  lost in the direction of «too narrow», and long replies scroll more.
+  *Considered and declined.* Growing `maxWidth` with the size was the first recommendation and
+  was withdrawn once the arithmetic was done: the width needed to keep the measure outgrows what
+  a panel can be before the largest sizes are reached. `docs/adr/0008` carries it.
 
 - **The two shortcuts cannot be swapped in one step.** Each recorder refuses what the other
   holds (`HotkeyRecorder.reserved`), so a user who wants перевод on ⌥⌘R and правка on ⌥⌘T —

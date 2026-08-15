@@ -23,6 +23,11 @@ struct TranslationPane: View {
     /// степень was «ошибки и стиль», spec §6). Nil hides the button entirely, so the
     /// queue's use of this pane never shows it.
     var onAnotherVariant: (() -> Void)? = nil
+    /// «Шрифт текста», a fifth value alongside the four this pane already renders — and it
+    /// reaches both surfaces at once, because the file queue's right-hand pane is this same
+    /// view. Defaulted so a call site that knows nothing about the setting renders what the
+    /// app rendered before it existed.
+    var font: ContentFont = .default
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -50,7 +55,7 @@ struct TranslationPane: View {
             } else {
                 ScrollView {
                     Text(text)
-                        .font(.body)
+                        .font(font.font)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(8)

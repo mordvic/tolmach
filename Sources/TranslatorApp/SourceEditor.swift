@@ -12,6 +12,16 @@ import SwiftUI
 /// second one under it.
 struct SourceEditor: View {
     @Bindable var model: TranslationViewModel
+    /// «Шрифт текста» — the one the user chose, or the system's if they never opened the
+    /// setting. Passed in rather than read from `AppSettings` here, like the four values
+    /// `TranslationPane` takes: this pane renders a model and a font, and a view that needs no
+    /// settings object should not acquire one.
+    ///
+    /// Measured before it was wired: the font does reach the hosted `NSTextView` —
+    /// `.SFNS-Regular 22.0`, `.AppleSystemUIFontMonospaced-Regular 22.0` and `.NewYork-Regular
+    /// 22.0` for the three faces at 22 pt (`Scripts/content-font.swift`, section 5). `TextEditor`
+    /// exposes no font of its own, so had it not, there would have been no route to one.
+    var font: ContentFont = .default
     /// So a click in the pane's top margin can still put the caret in the editor. See the
     /// `contentShape` on the stack below.
     @FocusState private var editorFocused: Bool
@@ -25,7 +35,7 @@ struct SourceEditor: View {
         VStack(alignment: .leading, spacing: 0) {
             ZStack(alignment: .topLeading) {
                 TextEditor(text: $model.sourceText)
-                    .font(.body)
+                    .font(font.font)
                     .scrollContentBackground(.hidden)
                     // **The editor's own top margin, and the reason the caret used to look
                     // misplaced.** Asked of the text view on the running bundle:
@@ -47,7 +57,12 @@ struct SourceEditor: View {
                 // be translated if they did not.
                 if model.sourceText.isEmpty {
                     Text("Вставьте или наберите текст")
-                        .font(.body).foregroundStyle(.tertiary)
+                        // The editor's font, not the system's: the placeholder stands where the
+                        // first line of text will, and the two used to be pinned together by
+                        // both saying `.body`. A placeholder left behind at 13 pt would sit at a
+                        // different baseline from the caret in front of it — the same defect the
+                        // 8 pt inset above was written to fix, arriving through the font instead.
+                        .font(font.font).foregroundStyle(.tertiary)
                         // The same constant the editor is padded by, so the two cannot drift.
                         // The 5 is `lineFragmentPadding`, measured, not chosen.
                         .padding(.top, Self.textTopInset).padding(.leading, 5)

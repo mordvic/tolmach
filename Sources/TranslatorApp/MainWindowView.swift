@@ -126,6 +126,13 @@ struct MainWindowView: View {
     /// The ⌥⌘T panel's model. Read for one thing only: its terms sheet, which is presented
     /// here rather than in the panel — see `TranslatorApp`'s escalation.
     var panelModel: TranslationViewModel?
+    /// The settings, for one value: «Шрифт текста», handed to both panes below.
+    ///
+    /// The whole object rather than a resolved `ContentFont`, and read **inside `body`**, for
+    /// `PanelHost`'s reason: `AppSettings` is `@Observable`, so a font resolved at the call site
+    /// would be frozen at whatever it was when the scene body last ran. Read here, both panes
+    /// redraw when the setting changes.
+    let settings: AppSettings
 
     /// Which half the left pane is showing.
     ///
@@ -198,7 +205,7 @@ struct MainWindowView: View {
                         }
                     }
                     if mode == .text {
-                        SourceEditor(model: model)
+                        SourceEditor(model: model, font: settings.contentFont)
                     } else {
                         FileQueuePane(queue: queue, canStart: status.isHealthy && action.canStart)
                     }
@@ -218,7 +225,10 @@ struct MainWindowView: View {
                                 // button is.
                                 onAnotherVariant: mode == .text && model.offersAnotherVariant
                                     && !queue.isRunning
-                                    ? { Task { await model.run() } } : nil)
+                                    ? { Task { await model.run() } } : nil,
+                                // Both modes, one font: the queue's translations are read in
+                                // this same pane.
+                                font: settings.contentFont)
             }
             Divider()
             RunStatusBar(model: model, status: status,
