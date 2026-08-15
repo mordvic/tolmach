@@ -163,17 +163,36 @@ final class HotkeyCoordinator {
     /// written.
     @discardableResult
     private func bringRegistrationsInLine() -> Bool {
-        // Pass 1: let go of everything that must not be registered, before anything asks for a
-        // combination it might be holding.
-        for operation in TextOperation.allCases where !shouldRegister(operation) {
+        // What each operation should end up holding. Absent means «nothing» — the shortcut
+        // that loses a collision.
+        let wanted = TextOperation.allCases.reduce(into: [TextOperation: HotkeyCombo]()) {
+            if shouldRegister($1) { $0[$1] = combo(for: $1) }
+        }
+        // Pass 1: let go of every registration that stands in the way — either because it must
+        // not exist at all, or because the *other* operation is about to ask Carbon for exactly
+        // the combination this one is still holding.
+        //
+        // **«In the way» and not «out of date», and the difference is the whole care here.**
+        // A manager can hold a combination its own setting no longer names: `apply` restores
+        // the previous one on refusal, which is the guarantee that a rejected change never
+        // leaves the user with no shortcut. Releasing every such registration up front would
+        // throw that guarantee away — there would be nothing left to restore to — so only the
+        // ones actually blocking someone else are released. Found by review, reproduced by
+        // `aStaleRegistrationIsReleasedBeforeTheOtherShortcutAsksForItsCombination`: перевод's
+        // move onto a combination правка was *stale* on came back -9878, and перевод kept its
+        // old shortcut while the pane showed the new one.
+        for operation in TextOperation.allCases {
+            guard let held = managers[operation]?.registered else { continue }
+            let mustNotExist = wanted[operation] == nil
+            let blocksTheOther = wanted.contains { $0.key != operation && $0.value == held }
+            guard mustNotExist || blocksTheOther else { continue }
             managers[operation]?.unregister()
         }
         // Pass 2: register what should be, skipping whatever already is.
         return TextOperation.allCases.reduce(true) { ok, operation in
-            guard shouldRegister(operation) else { return ok }
-            let wanted = combo(for: operation)
-            guard wanted != managers[operation]?.registered else { return ok }
-            return apply(wanted, for: operation) && ok
+            guard let combination = wanted[operation],
+                  combination != managers[operation]?.registered else { return ok }
+            return apply(combination, for: operation) && ok
         }
     }
 

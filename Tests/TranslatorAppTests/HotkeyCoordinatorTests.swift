@@ -762,3 +762,34 @@ private func makePressedCoordinator(responses: [String]) async -> PressHarness {
     #expect(coordinator.registeredCombo(for: .translate) == combo(0x2C))
     #expect(coordinator.registeredCombo(for: .proofread) == nil)
 }
+
+@MainActor
+@Test func aStaleRegistrationIsReleasedBeforeTheOtherShortcutAsksForItsCombination() {
+    // The hole the first two-pass version left, and the one it was written to close. A manager
+    // can hold a combination its own setting no longer names — `apply` restores the previous
+    // one on refusal — and pass 1 only released registrations forbidden by a *settings*
+    // collision, which this is not.
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "hk"))
+    settings.hotkey = combo(0x2B)
+    settings.proofreadHotkey = combo(0x2C)
+    let reader = ScriptedReader([nil])
+    let (coordinator, _) = makeCoordinator(reader: reader, settings: settings)
+    defer { coordinator.stop() }
+    #expect(coordinator.start { _ in })
+
+    // Something else in this process holds what правка is about to be pointed at, so правка's
+    // change is refused and its manager keeps 0x2C while its setting says 0x2D.
+    let rival = HotkeyManager()
+    defer { rival.unregister() }
+    #expect(rival.register(combo(0x2D)) {})
+    settings.proofreadHotkey = combo(0x2D)
+    #expect(coordinator.refreshRegistration() == false)
+    #expect(coordinator.registeredCombo(for: .proofread) == combo(0x2C))   // stale, on purpose
+
+    // Now перевод is pointed at 0x2C. The settings do not collide — 0x2C against 0x2D — so
+    // nothing here is a duplicate; what stands in the way is a registration nobody's setting
+    // names any more. It has to be let go of before перевод asks Carbon for it.
+    settings.hotkey = combo(0x2C)
+    coordinator.refreshRegistration()
+    #expect(coordinator.registeredCombo(for: .translate) == combo(0x2C))
+}

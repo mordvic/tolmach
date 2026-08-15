@@ -279,6 +279,19 @@ nothing in this environment can see either.
 
 ## 2. Known and accepted
 
+- **The two shortcuts cannot be swapped in one step.** Each recorder refuses what the other
+  holds (`HotkeyRecorder.reserved`), so a user who wants перевод on ⌥⌘R and правка on ⌥⌘T —
+  their current values, exchanged — has to route one of them through a third combination
+  first. Both directions beep, and the beep says nothing about which one is blocked; the
+  caption's «Сочетания должны различаться» is the only hint on screen.
+  *Raised by review, accepted rather than fixed.* The alternatives are worse than the friction:
+  accepting a candidate that equals the other's current value would store a duplicate and rely
+  on the user completing the swap, and a duplicate is the state
+  `AppSettings.shortcutsCollide` exists to report as broken. A swap is a rare gesture; a stored
+  collision is a shortcut that silently does nothing. If this is ever revisited, the shape to
+  look at is a two-field editor that validates the pair on commit rather than each field on
+  its own keystroke.
+
 - **Esc in the «Термины документа» sheet ends the whole queue, not just that file.**
   *Flagged by three separate reviews, which is why it stopped being defended and got a
   control instead.* The scope is unchanged and deliberate — «Перевести» already **is** «skip
