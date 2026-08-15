@@ -25,14 +25,22 @@ text it had just been handed.
 The hand-off is therefore `TranslationViewModel.adopt(from:)`, which moves the run as a unit and
 refuses when either model is mid-translation.
 
-> **The list has grown twice since this was written, and the rule is what to read, not the
-> count.** It said «five values — source, translation, `outcome`, `resolvedTarget`, `state`».
-> Правка added `operation`, `resolvedOperation` and `resolvedProofreadingLevel`; the terms gate
-> added `documentTermsUnavailable`; and 2026-08-15 added the five per-run overrides, whose
-> absence was a defect of exactly the kind this ADR exists to describe — the window offered
-> «Ещё вариант» for an adopted правка and ran it under its own toolbar's степень. **Anything
-> that describes the run moves with it**; `adopt(from:)` is the list, and it is the only place
-> the list should be written. It refuses on the source side too: `state` can move but the `Task` behind it
+> **The list has grown three times since this was written, and the rule is what to read, not
+> the count.** It said «five values — source, translation, `outcome`, `resolvedTarget`,
+> `state`». Правка added `operation`, `resolvedOperation` and `resolvedProofreadingLevel`; the
+> terms gate added `documentTermsUnavailable`; and 2026-08-15 added the правка pair —
+> `proofreadingLevelOverride` and `rewriteStyleOverride`, pinned to what the adopted run
+> *resolved* — whose absence was a defect of exactly the kind this ADR exists to describe: the
+> window offered «Ещё вариант» for an adopted правка and ran it under its own toolbar's
+> степень.
+>
+> **The rule is «anything that describes the run moves with it», and «Из», «В» and «Тон» turn
+> out not to describe the run.** They configure the *queue*: `MainWindowView` starts one with
+> `queue.run(source:target:tone:)` read off this same model, because the toolbar binds to one
+> owner across both of the window's modes. Moving them would have made a hand-off silently
+> reset a queue's language, so they stay — the one place where this model holds something that
+> is not about its own translation. `adopt(from:)` is the list, and it is the only place the
+> list should be written. It refuses on the source side too: `state` can move but the `Task` behind it
 cannot, so adopting `.running` would hand a model a state it has no way to leave.
 
 `adoptionRefusal(from:)` returns *why* rather than a Bool, because the panel needs two answers

@@ -58,6 +58,14 @@ final class TranslationViewModel {
     /// a header or an «Ещё вариант» must never describe another operation's result.
     private(set) var resolvedOperation: TextOperation?
     private(set) var resolvedProofreadingLevel: ProofreadingLevel?
+    /// The степень's other half — the стиль the finished правка was actually rendered in.
+    ///
+    /// Added alongside `resolvedProofreadingLevel` rather than left to be re-derived from
+    /// `rewriteStyleOverride ?? setting`, because that expression answers «what the *next* run
+    /// would use», and after `adopt(from:)` the run on screen is somebody else's. Without it
+    /// an adopted правка could be re-run through «Ещё вариант» in a different register from
+    /// the one the user is looking at.
+    private(set) var resolvedRewriteStyle: RewriteStyle?
     /// Overridden in the main window when the user picks a source explicitly.
     var sourceOverride: Language?
     var targetOverride: Language?
@@ -169,29 +177,38 @@ final class TranslationViewModel {
         resolvedTarget = other.resolvedTarget
         resolvedOperation = other.resolvedOperation
         resolvedProofreadingLevel = other.resolvedProofreadingLevel
+        resolvedRewriteStyle = other.resolvedRewriteStyle
         // `run()` dispatches on `operation`, not on `resolvedOperation` — so the adopted
         // run's own «Ещё вариант» and a toolbar switch left on the wrong setting must both
         // describe the run now on screen, not whatever this model was doing before.
         operation = other.operation
-        // The five per-run controls move with it, for exactly the reason `operation` does —
-        // and leaving them behind was a defect rather than an omission, because
+        // The правка pair moves too, and it moves *resolved* rather than copied: what the
+        // adopted run actually used, falling back to nothing only when there was no правка.
+        //
+        // Leaving them behind was a defect rather than an omission, because
         // `offersAnotherVariant` reads `resolvedProofreadingLevel`, which *did* move. So the
         // window offered «Ещё вариант» for an adopted «ошибки и стиль» правка and then ran it
-        // under whatever степень its own toolbar was left on: `proofread()` resolves
-        // `proofreadingLevelOverride ?? setting`, and the button promising another rendering
-        // of the text on screen delivered a different amount of change. Measured by
-        // `anAdoptedRunKeepsTheSettingsItWasProducedUnder`, which asserts the prompt.
+        // under whatever степень its own toolbar was left on — `proofread()` resolves
+        // `proofreadingLevelOverride ?? setting` — and the button promising another rendering
+        // of the text on screen delivered a different amount of change. Copying the *other
+        // model's overrides* would only half-fix it: the panel sets none, so the re-run would
+        // fall through to this window's settings, which are equally not what produced the text
+        // on screen. Pinning what the run resolved is what makes an adopted правка
+        // self-describing. `anAdoptedProofreadCanBeRerunWithoutConsultingTheSettings` asserts
+        // the prompt, not the properties.
         //
-        // Taking the other model's values rather than keeping ours means *clearing* whatever
-        // this model held whenever the source had none — which is right, not merely
-        // convenient: `knownTarget` is `targetOverride ?? resolvedTarget`, so a window that
-        // kept its own «В» after adopting named a language the translation on screen is not
-        // in. Every one of these describes the run, and the run is now somebody else's.
-        sourceOverride = other.sourceOverride
-        targetOverride = other.targetOverride
-        toneOverride = other.toneOverride
-        proofreadingLevelOverride = other.proofreadingLevelOverride
-        rewriteStyleOverride = other.rewriteStyleOverride
+        // **«Из», «В» and «Тон» deliberately do NOT move, and that asymmetry is the point.**
+        // They look like the same kind of thing and are not: `MainWindowView` reads them off
+        // this model to start a *queue* — `queue.run(source:target:tone:)` — because the
+        // toolbar binds to one owner across both of the window's modes. Moving them read as
+        // symmetrical and was a defect with teeth: choose «В: немецкий» in «Файлы», press the
+        // shortcut elsewhere, hand the panel's result to the window, and every queued file
+        // would then be written to disk in the settings-default language. The cost of leaving
+        // them is that the toolbar's «В» can name a language the adopted translation is not
+        // in; `docs/OPEN-ITEMS.md` carries that trade, and it costs a label rather than a
+        // file.
+        proofreadingLevelOverride = other.proofreadingLevelOverride ?? other.resolvedProofreadingLevel
+        rewriteStyleOverride = other.rewriteStyleOverride ?? other.resolvedRewriteStyle
         // Moved with the rest, for this function's own reason: a value that outlives the run
         // it describes is rendered under the next one. Left behind, the window's orange
         // «Термины документа не удалось подготовить» stayed under an adopted translation it
@@ -253,6 +270,7 @@ final class TranslationViewModel {
         resolvedTarget = nil
         resolvedOperation = nil
         resolvedProofreadingLevel = nil
+        resolvedRewriteStyle = nil
         state = .idle
     }
 
@@ -384,6 +402,7 @@ final class TranslationViewModel {
             resolvedTarget = target
             resolvedOperation = .translate
             resolvedProofreadingLevel = nil
+            resolvedRewriteStyle = nil
             outcome = result
             // The one place the engine's swallowed document-glossary failure is recorded. The
             // user is deliberately not told — it is a diagnostic about an enhancement, not a
@@ -431,6 +450,7 @@ final class TranslationViewModel {
             resolvedTarget = nil
             resolvedOperation = .proofread
             resolvedProofreadingLevel = level
+            resolvedRewriteStyle = style
             outcome = result
         })
     }

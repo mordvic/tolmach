@@ -883,14 +883,12 @@ private func waitForSheet(_ model: TranslationViewModel,
 }
 
 @MainActor
-@Test func anAdoptedRunKeepsTheSettingsItWasProducedUnder() async {
-    // The five per-run controls are part of the run, and `adopt` moved everything *except*
-    // them. What that costs is not cosmetic: `offersAnotherVariant` reads
-    // `resolvedProofreadingLevel`, which does move, so the window offers «Ещё вариант» for an
-    // adopted «ошибки и стиль» правка — and then runs it under whatever степень the window's
-    // own toolbar was left on, because `proofread()` resolves
-    // `proofreadingLevelOverride ?? setting`. The button promises another rendering of the
-    // text on screen and delivers a different operation's worth of change.
+@Test func anAdoptedProofreadCanBeRerunWithoutConsultingTheSettings() async {
+    // `offersAnotherVariant` reads `resolvedProofreadingLevel`, which moves with the run — so
+    // the window offers «Ещё вариант» for an adopted «ошибки и стиль» правка. What it then
+    // ran was `proofreadingLevelOverride ?? setting`, and neither of those described the
+    // adopted run: the button promising another rendering of the text on screen delivered a
+    // different amount of change. Adoption therefore pins what the run actually used.
     let panelClient = ScriptedClient(responses: ["Панель поправила со стилем."])
     let panel = makeModel(panelClient)
     panel.operation = .proofread
@@ -899,31 +897,49 @@ private func waitForSheet(_ model: TranslationViewModel,
     panel.sourceText = "Текст, в котором имеется ошибка."
     await panel.run()
     #expect(panel.resolvedProofreadingLevel == .errorsAndStyle)
+    #expect(panel.resolvedRewriteStyle == .business)
 
-    // A window carrying a full set of its own, all of them wrong for the run it is about to
-    // be handed.
+    // The window's own settings say «только ошибки» / «как в оригинале» — the factory pair —
+    // and its toolbar is left on something else again. Neither may decide the re-run.
     let windowClient = ScriptedClient(responses: ["Окно перевело.", "Ещё вариант."])
     let window = makeModel(windowClient)
     window.sourceText = "Window source."
     await window.translate()
     window.proofreadingLevelOverride = .errorsOnly
     window.rewriteStyleOverride = .friendly
-    window.toneOverride = .technical
-    window.targetOverride = .de
 
     #expect(window.adopt(from: panel))
     #expect(window.proofreadingLevelOverride == .errorsAndStyle)
     #expect(window.rewriteStyleOverride == .business)
-    // The two the panel never set come across as nil, which is the point: they describe the
-    // adopted run, and that run had no tone override and no target override. Left behind, the
-    // window's «В» would name a language the translation on screen is not in.
-    #expect(window.toneOverride == nil)
-    #expect(window.targetOverride == nil)
 
-    // And the behaviour all of that is for: «Ещё вариант» re-runs what is on screen.
     #expect(window.offersAnotherVariant)
     await window.run()
     let system = windowClient.receivedMessages.last!.first!.content
     #expect(system.contains("smooth awkward phrasing"))   // «ошибки и стиль», as adopted
-    #expect(system.contains("business register"))          // …in the style it was made with
+    #expect(system.contains("business register"))         // …in the style it was made with
+}
+
+@MainActor
+@Test func adoptingLeavesTheQueuesOwnConfigurationAlone() async {
+    // **«Из», «В» and «Тон» are not properties of a run, and that is the whole reason they
+    // must not move.** `MainWindowView` reads them off *this* model to start a queue —
+    // `queue.run(source:target:tone:)` — because the toolbar binds to one owner across both
+    // modes. Clearing them on adoption looked symmetrical and was a defect: pick «В: немецкий»
+    // in «Файлы», press the shortcut elsewhere, hand the panel's result to the window, and
+    // every queued file would then be written to disk in the settings-default language.
+    let panel = makeModel(ScriptedClient(responses: ["Перевод панели."]))
+    panel.sourceText = "Panel source."
+    await panel.translate()
+
+    let window = makeModel(ScriptedClient(responses: ["Перевод окна."]))
+    window.sourceText = "Window source."
+    await window.translate()
+    window.sourceOverride = .en
+    window.targetOverride = .de
+    window.toneOverride = .technical
+
+    #expect(window.adopt(from: panel))
+    #expect(window.sourceOverride == .en)
+    #expect(window.targetOverride == .de)
+    #expect(window.toneOverride == .technical)
 }
