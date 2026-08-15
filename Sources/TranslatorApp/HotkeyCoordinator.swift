@@ -5,6 +5,17 @@ import AppKit
 import TranslationCore
 import TextCapture
 
+/// Why a registration was refused, and how loudly to say so.
+///
+/// A type rather than a pair of `Log` calls, so the claim each message makes can be asserted —
+/// see `HotkeyCoordinator.failure(for:restored:combination:)`, whose doc comment carries the
+/// false claim this exists to prevent.
+struct RegistrationFailure: Equatable {
+    enum Severity: Equatable { case fault, error }
+    let severity: Severity
+    let message: String
+}
+
 /// Everything that happens between the user pressing the shortcut and the panel having
 /// something to show. The panel view stays a readout; every decision is here.
 @Observable
@@ -103,26 +114,63 @@ final class HotkeyCoordinator {
 
     /// Registers both stored combinations. Returns false when **either** was refused, which
     /// the caller surfaces rather than swallows: перевод's is the only way into the panel.
-    ///
-    /// `reduce` and not `allSatisfy`: `allSatisfy` short-circuits, so a перевод refusal would
-    /// leave правка unregistered as a side effect of how the check was written.
     @discardableResult
     func start(onPress: @escaping @MainActor (TextOperation) -> Void) -> Bool {
         self.onPress = onPress
-        return TextOperation.allCases.reduce(true) { ok, operation in
-            apply(combo(for: operation), for: operation) && ok
-        }
+        return bringRegistrationsInLine()
     }
 
-    /// Re-registers whichever shortcut the user changed. A no-op for one that did not move,
-    /// so it is cheap to call from an observation callback that fires for any reason — and so
-    /// a change to one shortcut does not drop the other for the length of a Carbon round trip.
+    /// Re-registers whichever shortcut the user changed. A no-op for one that is already as it
+    /// should be, so it is cheap to call from an observation callback that fires for any
+    /// reason — and so a change to one shortcut does not drop the other for the length of a
+    /// Carbon round trip.
     ///
     /// Returns false only when a new combination was refused — in which case that one's
     /// *previous* value is still live, because `apply` puts it back.
     @discardableResult
-    func refreshRegistration() -> Bool {
-        TextOperation.allCases.reduce(true) { ok, operation in
+    func refreshRegistration() -> Bool { bringRegistrationsInLine() }
+
+    /// Whether this operation's shortcut may be registered at all.
+    ///
+    /// **The collision is not something the user can type.** `HotkeyRecorder` refuses a
+    /// duplicate at the keystroke; what reaches here is the upgrade case — `proofreadHotkey`
+    /// answers its factory ⌥⌘R until the key is set, so a user who had already put перевод on
+    /// ⌥⌘R gets two identical settings without doing anything. Carbon would refuse the second
+    /// registration with -9878 and there would be nothing to restore, so the outcome is the
+    /// same either way; declining outright is what keeps it from being *reported* as a system
+    /// refusal, which it is not. `AppSettings.shortcutsCollide` is the one place that rule is
+    /// written, and «Основные» draws the warning from it.
+    ///
+    /// Перевод wins, because it is the only door to the panel.
+    private func shouldRegister(_ operation: TextOperation) -> Bool {
+        operation == .translate || !settings.shortcutsCollide
+    }
+
+    /// Makes the live registrations match the settings — the whole job, for both operations,
+    /// in the one place. `start` and `refreshRegistration` differ only in that the first also
+    /// stores the action.
+    ///
+    /// **Two passes, and the order is load-bearing — a test found this, not a review.** Carbon
+    /// refuses (-9878) a combination already held anywhere in this process, so a shortcut
+    /// moving *onto* the one the other currently holds cannot be registered until that other
+    /// one has let go. Measured with a single pass in `allCases` order: with перевод on ⌃⌥⌘,
+    /// key 0x2B and правка on 0x2C, changing перевод to 0x2C left перевод still on **0x2B** —
+    /// its own restore-on-refusal — and правка unregistered a moment later. The user's choice
+    /// was discarded silently, and both settings then disagreed with what was registered.
+    ///
+    /// `reduce` and not `allSatisfy` in the second pass: `allSatisfy` short-circuits, so a
+    /// перевод refusal would leave правка unregistered as a side effect of how the check was
+    /// written.
+    @discardableResult
+    private func bringRegistrationsInLine() -> Bool {
+        // Pass 1: let go of everything that must not be registered, before anything asks for a
+        // combination it might be holding.
+        for operation in TextOperation.allCases where !shouldRegister(operation) {
+            managers[operation]?.unregister()
+        }
+        // Pass 2: register what should be, skipping whatever already is.
+        return TextOperation.allCases.reduce(true) { ok, operation in
+            guard shouldRegister(operation) else { return ok }
             let wanted = combo(for: operation)
             guard wanted != managers[operation]?.registered else { return ok }
             return apply(wanted, for: operation) && ok
@@ -158,27 +206,63 @@ final class HotkeyCoordinator {
         // Read before the call, not after: `register` clears `registered` on its way in.
         let previous = manager.registered
         if manager.register(combo, onPress: press) { return true }
-        if let previous { manager.register(previous, onPress: press) }
-        switch operation {
-        case .translate:
-            // `.fault` and not `.error`: перевод refused leaves the user with no shortcut and
-            // no way into the panel, while the app still looks healthy — which is precisely
-            // what makes it hard to diagnose.
-            Log.hotkey.fault("""
-                hotkey registration refused; the app has no shortcut and no way into the panel \
-                (combination: \(combo.displayString, privacy: .public))
-                """)
-        case .proofread:
-            // `.error` and not `.fault`, deliberately: правка refused costs the user a
-            // shortcut, not the application — the panel's own switch still reaches it.
-            // Copying перевод's level would make the log lie about severity in the one place
-            // a severity is read.
-            Log.hotkey.error("""
-                правка shortcut registration refused; правка stays reachable from the panel's \
-                switch (combination: \(combo.displayString, privacy: .public))
-                """)
+        // Whether the restore actually happened is what the message below turns on, so it is
+        // read rather than assumed. On `refreshRegistration()` there is a working shortcut to
+        // fall back to; on `start()` there is not, and the two situations are not equally bad.
+        let restored = previous.map { manager.register($0, onPress: press) } ?? false
+        let failure = Self.failure(for: operation, restored: restored,
+                                   combination: combo.displayString)
+        switch failure.severity {
+        case .fault: Log.hotkey.fault("\(failure.message, privacy: .public)")
+        case .error: Log.hotkey.error("\(failure.message, privacy: .public)")
         }
         return false
+    }
+
+    /// What a refused registration means, as a value.
+    ///
+    /// A value rather than two `Log` calls written inline, and the reason is a defect this
+    /// replaces rather than a preference. The message used to be `.fault` and «the app has no
+    /// shortcut and no way into the panel» for перевод unconditionally — which was true where
+    /// it was born, in `launch()`, where nothing has been registered yet, and **false** on the
+    /// path it was moved to: `apply` restores the previous combination two lines up, so a
+    /// refused *change* leaves the old shortcut working. A log entry is a claim about the
+    /// app's state, and the highest severity there is was making the wrong one.
+    ///
+    /// `combination` is a `String` rather than a `HotkeyCombo` because `displayString` reads
+    /// the current keyboard layout through Text Input Sources, which must happen on the main
+    /// actor — see `HotkeyCombo.inputSourceLock`. Taking it already rendered keeps this
+    /// `nonisolated` and testable.
+    nonisolated static func failure(for operation: TextOperation, restored: Bool,
+                                    combination: String) -> RegistrationFailure {
+        switch (operation, restored) {
+        case (.translate, false):
+            // The only genuinely `.fault`-worthy case: no shortcut at all, and the app still
+            // looks healthy — which is precisely what makes it hard to diagnose.
+            RegistrationFailure(severity: .fault, message: """
+                hotkey registration refused; the app has no shortcut and no way into the panel \
+                (combination: \(combination))
+                """)
+        case (.translate, true):
+            RegistrationFailure(severity: .error, message: """
+                hotkey change refused; the previous combination is still registered, so the \
+                panel is still reachable (refused combination: \(combination))
+                """)
+        case (.proofread, false):
+            // `.error` and not `.fault`, deliberately: правка refused costs the user a
+            // shortcut, not the application — the panel's own switch still reaches правка.
+            // Copying перевод's level would make the log lie about severity in the one place
+            // a severity is read.
+            RegistrationFailure(severity: .error, message: """
+                правка shortcut registration refused; правка stays reachable from the panel's \
+                switch (combination: \(combination))
+                """)
+        case (.proofread, true):
+            RegistrationFailure(severity: .error, message: """
+                правка shortcut change refused; the previous combination is still registered \
+                (refused combination: \(combination))
+                """)
+        }
     }
 
     // MARK: - A press

@@ -374,6 +374,20 @@ final class AppSettings {
         }
     }
 
+    /// Whether the two shortcuts hold the same combination — i.e. whether one of them cannot
+    /// be registered at all.
+    ///
+    /// A property rather than a comparison written where it is needed, for
+    /// `batchModelDiffersFromInteractive`'s reason: two places read it — the coordinator, which
+    /// declines to register правка's, and the pane, which says so — and a restated comparison
+    /// is how those two come to disagree about what the app is doing.
+    ///
+    /// **The recorder refuses a duplicate at the keystroke, so this is not about typing one.**
+    /// It is about the one door left open: `proofreadHotkey` returns its factory ⌥⌘R whenever
+    /// the key is unset, which is every install upgrading to the build that introduced it — so
+    /// a user who had already put перевод on ⌥⌘R arrives here without touching anything.
+    var shortcutsCollide: Bool { hotkey == proofreadHotkey }
+
     /// Spec 6.2: if the detected source is the primary language, translate into the
     /// working one; otherwise into the primary one. An undetected source is not the
     /// primary language, so it also goes to the primary one — the common case of

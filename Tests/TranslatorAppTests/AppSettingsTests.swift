@@ -396,3 +396,18 @@ private final class FiredFlag: @unchecked Sendable {
                                            modifiers: NSEvent.ModifierFlags.control.rawValue)
     #expect(fired.value)
 }
+
+@Test func theTwoShortcutsAreReportedAsCollidingWhenTheyHoldTheSameCombination() {
+    // The factory pair must not collide, or every fresh install ships the warning.
+    let settings = AppSettings(defaults: freshDefaults())
+    #expect(!settings.shortcutsCollide)
+
+    // The case that actually reaches this: перевод was already on ⌥⌘R before правка's setting
+    // existed, so `proofreadHotkey` answers its factory value and the two match.
+    settings.hotkey = HotkeyCombo.proofreadDefault
+    #expect(settings.shortcutsCollide)
+
+    settings.proofreadHotkey = HotkeyCombo(
+        keyCode: 0x23, modifiers: NSEvent.ModifierFlags([.option, .command]).rawValue)
+    #expect(!settings.shortcutsCollide)
+}

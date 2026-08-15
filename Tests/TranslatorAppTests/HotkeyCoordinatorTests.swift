@@ -690,3 +690,75 @@ private func makePressedCoordinator(responses: [String]) async -> PressHarness {
     #expect(settings.defaultRewriteStyle == .original)
     #expect(client.receivedMessages.count == callsBefore)
 }
+
+// MARK: - What a refusal says, and the collision nobody can type
+
+/// The message is a claim about the app's state, and the claim depends on whether the restore
+/// happened. It used to be unconditional — «the app has no shortcut and no way into the panel»
+/// at `.fault` — which was true where it was written, in `launch()`, and false where it was
+/// moved to: `apply` puts the previous combination back, so a refused *change* leaves the old
+/// shortcut working.
+@Test func aRefusalOnlyClaimsTheAppIsShortcutlessWhenItActuallyIs() {
+    let lost = HotkeyCoordinator.failure(for: .translate, restored: false, combination: "⌥⌘T")
+    #expect(lost.severity == .fault)
+    #expect(lost.message.contains("no way into the panel"))
+
+    let kept = HotkeyCoordinator.failure(for: .translate, restored: true, combination: "⌥⌘T")
+    #expect(kept.severity == .error)
+    #expect(!kept.message.contains("no way into the panel"))
+    #expect(kept.message.contains("still registered"))
+
+    // Правка is never a fault: the panel's own switch reaches правка whatever happens to its
+    // shortcut, and copying перевод's level would make the log lie about severity.
+    #expect(HotkeyCoordinator.failure(for: .proofread, restored: false,
+                                      combination: "⌥⌘R").severity == .error)
+    #expect(HotkeyCoordinator.failure(for: .proofread, restored: true,
+                                      combination: "⌥⌘R").severity == .error)
+}
+
+@MainActor
+@Test func twoIdenticalCombinationsLeaveПравкаUnregisteredRatherThanFightingCarbon() async {
+    // Not something the user can type — `HotkeyRecorder` refuses a duplicate. It is the
+    // upgrade case: `proofreadHotkey` answers its factory ⌥⌘R until the key is set, so a user
+    // who had already put перевод on ⌥⌘R arrives with two identical settings.
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "hk"))
+    settings.hotkey = combo(0x2B)
+    settings.proofreadHotkey = combo(0x2B)
+    #expect(settings.shortcutsCollide)   // the premise
+    let reader = ScriptedReader([nil])
+    let (coordinator, _) = makeCoordinator(reader: reader, settings: settings)
+    defer { coordinator.stop() }
+
+    // Перевод wins, because it is the only door to the panel — and `start` reports success:
+    // this is a settings conflict the pane explains, not a refusal by the system.
+    #expect(coordinator.start { _ in })
+    #expect(coordinator.registeredCombo(for: .translate) == combo(0x2B))
+    #expect(coordinator.registeredCombo(for: .proofread) == nil)
+
+    // And it recovers the moment the user separates them.
+    settings.proofreadHotkey = combo(0x2C)
+    #expect(coordinator.refreshRegistration())
+    #expect(coordinator.registeredCombo(for: .proofread) == combo(0x2C))
+    #expect(coordinator.registeredCombo(for: .translate) == combo(0x2B))
+}
+
+@MainActor
+@Test func aShortcutMovedOntoTheOtherOneTakesПравкаRegistrationOff() {
+    // The direction that needs `refreshRegistration` to compare against what *should* be
+    // registered rather than against the stored combination: правка's own setting does not
+    // move here, перевод's moves onto it, and правка's live registration has to come off
+    // anyway or the app answers to a shortcut the pane says is not in force.
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "hk"))
+    settings.hotkey = combo(0x2B)
+    settings.proofreadHotkey = combo(0x2C)
+    let reader = ScriptedReader([nil])
+    let (coordinator, _) = makeCoordinator(reader: reader, settings: settings)
+    defer { coordinator.stop() }
+    #expect(coordinator.start { _ in })
+    #expect(coordinator.registeredCombo(for: .proofread) == combo(0x2C))
+
+    settings.hotkey = combo(0x2C)
+    #expect(coordinator.refreshRegistration())
+    #expect(coordinator.registeredCombo(for: .translate) == combo(0x2C))
+    #expect(coordinator.registeredCombo(for: .proofread) == nil)
+}

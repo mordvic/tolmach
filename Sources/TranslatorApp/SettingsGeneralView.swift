@@ -84,6 +84,23 @@ struct SettingsGeneralView: View {
                     // it wants truncates rather than wrapping — the clause that would go is
                     // the one explaining the refusal.
                     .fixedSize(horizontal: false, vertical: true)
+                // The recorder refuses a duplicate at the keystroke, so this cannot be typed.
+                // What it can be is inherited: `proofreadHotkey` answers its factory ⌥⌘R until
+                // the key is set, so a user who had already put перевод on ⌥⌘R arrives here
+                // with two identical settings and правка's shortcut declined. Say so, exactly
+                // as the two languages colliding is said — the user is the one who knows which
+                // of the two they meant to change.
+                if settings.shortcutsCollide {
+                    Label {
+                        Text("Оба сочетания одинаковые, поэтому правка по сочетанию клавиш "
+                             + "сейчас не работает: система не отдаёт одну комбинацию дважды. "
+                             + "Задайте для правки другое сочетание.")
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                    }
+                    .font(.caption).foregroundStyle(StatusColour.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             Section("Языки") {

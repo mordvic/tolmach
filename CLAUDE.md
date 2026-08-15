@@ -268,9 +268,15 @@ Facts that will bite you if you "tidy" them:
   because `HotkeyManager`'s handler already tells registrations apart by `signature` +
   `hotKeyID` and its comment carries that measurement; two *coordinators* are forbidden for the
   reason the three models must not be merged — that would be a second panel and a second
-  `TranslationViewModel`. A refused registration is logged inside `apply`, at `.fault` for
-  перевод and `.error` for правка: перевод refused leaves no way into the panel, правка refused
-  leaves the panel's own switch. The panel's «степень»/«стиль» pickers write
+  `TranslationViewModel`. Registrations are brought in line in **two passes** — release, then
+  register — because Carbon refuses a combination still held by the other manager, and one pass
+  made «move перевод onto правка's combination» silently keep the old one. A refused
+  registration is logged inside `apply` through `HotkeyCoordinator.failure(for:restored:
+  combination:)`, which is a value with a test: `.fault` only for перевод with nothing restored
+  — the one case where the app really has no way into the panel — and `.error` otherwise. If
+  both settings hold the same combination (not typable, but inherited by any install whose
+  перевод was already ⌥⌘R), правка's registration is declined rather than attempted and
+  «Основные» says so. The panel's «степень»/«стиль» pickers write
   `defaultProofreadingLevel` / `defaultRewriteStyle` **directly** — they are the settings, not
   per-run overrides, so a choice made where правка is used survives the panel closing and the
   window follows it wherever it has no override of its own. See
