@@ -197,18 +197,22 @@ final class TranslationViewModel {
         // self-describing. `anAdoptedProofreadCanBeRerunWithoutConsultingTheSettings` asserts
         // the prompt, not the properties.
         //
-        // **«Из», «В» and «Тон» deliberately do NOT move, and that asymmetry is the point.**
-        // They look like the same kind of thing and are not: `MainWindowView` reads them off
-        // this model to start a *queue* — `queue.run(source:target:tone:)` — because the
-        // toolbar binds to one owner across both of the window's modes. Moving them read as
-        // symmetrical and was a defect with teeth: choose «В: немецкий» in «Файлы», press the
-        // shortcut elsewhere, hand the panel's result to the window, and every queued file
-        // would then be written to disk in the settings-default language. The cost of leaving
-        // them is that the toolbar's «В» can name a language the adopted translation is not
-        // in; `docs/OPEN-ITEMS.md` carries that trade, and it costs a label rather than a
-        // file.
         proofreadingLevelOverride = other.proofreadingLevelOverride ?? other.resolvedProofreadingLevel
         rewriteStyleOverride = other.rewriteStyleOverride ?? other.resolvedRewriteStyle
+        // «Из», «В» and «Тон» move too, and for a while they could not: the toolbar bound both
+        // of the window's modes to this model, so these three doubled as the *queue's*
+        // configuration and clearing them here reset a queue's language — the next «Перевести»
+        // then wrote every file in the settings-default one. They are `FileQueueModel`'s own
+        // now, which is what makes moving them safe as well as right: they describe this
+        // model's run, and this model's run is now somebody else's.
+        //
+        // Taking the other's values means *clearing* ours whenever the source had none, which
+        // is the direction that matters: `knownTarget` is `targetOverride ?? resolvedTarget`,
+        // so a window that kept its own «В» after adopting named a language the translation on
+        // screen is not in.
+        sourceOverride = other.sourceOverride
+        targetOverride = other.targetOverride
+        toneOverride = other.toneOverride
         // Moved with the rest, for this function's own reason: a value that outlives the run
         // it describes is rendered under the next one. Left behind, the window's orange
         // «Термины документа не удалось подготовить» stayed under an adopted translation it
@@ -272,24 +276,6 @@ final class TranslationViewModel {
         resolvedProofreadingLevel = nil
         resolvedRewriteStyle = nil
         state = .idle
-    }
-
-    /// Whether the two toolbar pickers hold explicit languages to exchange.
-    ///
-    /// Separate from `canSwapLanguages`, which also consults the last run's detected source
-    /// and moves the text. In «Файлы» there is no text in this model to move and no run of
-    /// its own to learn a language from — the pickers are all there is.
-    var canSwapOverrides: Bool { sourceOverride != nil && targetOverride != nil }
-
-    /// Exchange the two pickers and **nothing else**.
-    ///
-    /// `swapLanguages()` also moves the translation into the source pane, which is right in
-    /// «Текст» and destructive in «Файлы»: that pane is not on screen, so the move happens
-    /// unseen and there is nothing to undo it with.
-    func swapOverrides() {
-        guard let source = sourceOverride, let target = targetOverride else { return }
-        sourceOverride = target
-        targetOverride = source
     }
 
     /// «Ещё вариант» is offered only where variance is the point: a finished правка run

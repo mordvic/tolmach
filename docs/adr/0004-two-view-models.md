@@ -34,13 +34,15 @@ refuses when either model is mid-translation.
 > window offered «Ещё вариант» for an adopted правка and ran it under its own toolbar's
 > степень.
 >
-> **The rule is «anything that describes the run moves with it», and «Из», «В» and «Тон» turn
-> out not to describe the run.** They configure the *queue*: `MainWindowView` starts one with
-> `queue.run(source:target:tone:)` read off this same model, because the toolbar binds to one
-> owner across both of the window's modes. Moving them would have made a hand-off silently
-> reset a queue's language, so they stay — the one place where this model holds something that
-> is not about its own translation. `adopt(from:)` is the list, and it is the only place the
-> list should be written. It refuses on the source side too: `state` can move but the `Task` behind it
+> **The rule is «anything that describes the run moves with it», and the exception that
+> appeared to exist was a defect elsewhere.** «Из», «В» and «Тон» could not move for a while,
+> because the toolbar bound *both* of the window's modes to this model and the queue started
+> with `queue.run(source: text.sourceOverride, …)` — so moving them meant a hand-off into
+> «Текст» silently reset the language a queue was configured with, and the next «Перевести»
+> wrote every file in the settings-default one. The answer was not to carve an exception into
+> the hand-off but to give the queue its own three pickers: one owner per mode, which is this
+> ADR's own reasoning applied to a value instead of to a run. `adopt(from:)` is the list, and
+> it is the only place the list should be written. It refuses on the source side too: `state` can move but the `Task` behind it
 cannot, so adopting `.running` would hand a model a state it has no way to leave.
 
 `adoptionRefusal(from:)` returns *why* rather than a Bool, because the panel needs two answers

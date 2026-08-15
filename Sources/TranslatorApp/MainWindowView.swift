@@ -77,12 +77,13 @@ struct PrimaryAction {
                 // «Файлы» is translation-only — the queue never proofs — so unlike `.text`
                 // this title never varies with the text model's switch.
                 startTitle: "Перевести",
-                // The toolbar's three pickers are drawn on this screen and must configure
-                // this run. They are read from the text model because that is what the
-                // toolbar binds to — one owner for those values, passed in per run.
-                start: { await queue.run(source: text.sourceOverride,
-                                         target: text.targetOverride,
-                                         tone: text.toneOverride) },
+                // The toolbar's three pickers are drawn on this screen and configure this
+                // run — and they are the queue's own now, so there is nothing to pass. They
+                // used to be read off the text model, which made a value chosen for a queue
+                // reachable by anything that touched that model: `adopt(from:)` cleared them
+                // on «Открыть в окне», and the next «Перевести» wrote every file in the
+                // settings-default language.
+                start: { await queue.run() },
                 cancel: { queue.cancel() },
                 canCopy: !queue.selectedText.isEmpty,
                 copy: { await queue.copySelection() },
@@ -90,8 +91,8 @@ struct PrimaryAction {
                 clear: {},
                 // The pickers are all there is to exchange here, and exchanging them must
                 // not touch the text model's panes: they are not on screen.
-                canSwap: text.canSwapOverrides && !queue.isRunning,
-                swap: { text.swapOverrides() })
+                canSwap: queue.canSwapOverrides && !queue.isRunning,
+                swap: { queue.swapOverrides() })
         }
     }
 }
@@ -118,7 +119,10 @@ struct MainWindowView: View {
     /// would have been worth taking on `PanelHost` too, if it had more than one caller.
     let onRunFinished: () async -> Void
     /// The third model, owned by `TranslatorApp` beside the window's and the panel's.
-    let queue: FileQueueModel
+    ///
+    /// `@Bindable` since the toolbar's «Из», «В» and «Тон» became the queue's own in «Файлы»:
+    /// the pickers write straight into whichever model owns the visible mode.
+    @Bindable var queue: FileQueueModel
     /// The ⌥⌘T panel's model. Read for one thing only: its terms sheet, which is presented
     /// here rather than in the panel — see `TranslatorApp`'s escalation.
     var panelModel: TranslationViewModel?
@@ -343,7 +347,13 @@ struct MainWindowView: View {
         // translation-only.
         ToolbarItem(placement: .navigation) {
             if mode == .files || model.operation == .translate {
-                languageMenu(label: "Из", selection: $model.sourceOverride,
+                // Bound to whichever model owns the visible mode's run. The pickers look like
+                // one control across both modes and are not: «Файлы» configures a queue that
+                // writes to disk, «Текст» configures the pane below. One binding for both is
+                // how a hand-off into «Текст» silently reset a queue's language.
+                languageMenu(label: "Из",
+                             selection: mode == .files ? $queue.sourceOverride
+                                                       : $model.sourceOverride,
                              placeholder: "Определить", help: "С какого языка переводить")
             }
         }
@@ -360,7 +370,9 @@ struct MainWindowView: View {
         }
         ToolbarItem(placement: .navigation) {
             if mode == .files || model.operation == .translate {
-                languageMenu(label: "В", selection: $model.targetOverride,
+                languageMenu(label: "В",
+                             selection: mode == .files ? $queue.targetOverride
+                                                       : $model.targetOverride,
                              placeholder: "По правилу", help: "На какой язык переводить")
             }
         }
@@ -370,9 +382,11 @@ struct MainWindowView: View {
             // one line that says which enum this control chooses from.
             if mode == .files || model.operation == .translate {
                 directionMenu(label: "Тон",
-                              value: model.toneOverride?.russianName ?? Self.toneDefault,
+                              value: (mode == .files ? queue.toneOverride : model.toneOverride)?
+                                  .russianName ?? Self.toneDefault,
                               help: "Насколько вольно переводить") {
-                    Picker("Тон", selection: $model.toneOverride) {
+                    Picker("Тон", selection: mode == .files ? $queue.toneOverride
+                                                            : $model.toneOverride) {
                         Text(Self.toneDefault).tag(Tone?.none)
                         ForEach(Tone.allCases, id: \.self) {
                             Text($0.russianName).tag(Tone?.some($0))

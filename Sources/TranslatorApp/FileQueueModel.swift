@@ -49,6 +49,22 @@ final class FileQueueModel {
 
     var jobs: [FileJob] = []
     var selection: FileJob.ID?
+    /// The toolbar's «Из», «В» and «Тон» **while «Файлы» is the visible mode**.
+    ///
+    /// They live here rather than on `TranslationViewModel`, and that placement was bought
+    /// with a defect. The window's toolbar binds to one model per mode, and for a while both
+    /// modes bound to the text one — the queue then started with
+    /// `queue.run(source: text.sourceOverride, …)`. So a value chosen for a queue could be
+    /// changed by something that had nothing to do with the queue: `adopt(from:)` moves every
+    /// value describing a run, and once it moved these too, handing a hotkey translation to
+    /// the window reset the pickers a queue was configured with — and the next «Перевести»
+    /// wrote every file to disk in the settings-default language. Two owners, one per mode, is
+    /// what makes that unrepresentable rather than merely fixed.
+    ///
+    /// Nil means «no override», and the settings rule applies — exactly as in the text pane.
+    var sourceOverride: Language?
+    var targetOverride: Language?
+    var toneOverride: Tone?
     private(set) var isRunning = false
     /// A property of the **queue**, not of a задание.
     ///
@@ -391,11 +407,28 @@ final class FileQueueModel {
     ///
     /// Started by «Перевести» and never by a drop: a drop that immediately began minutes
     /// of work would make a mis-aimed drag expensive to undo.
-    /// - Parameters describe the toolbar's three pickers. They are passed in per run rather
-    ///   than stored, because the toolbar belongs to the window and one owner for those
-    ///   values is what stops two models disagreeing about which language was chosen. Nil
-    ///   means «no override», and the settings rule applies — exactly as in the text pane.
-    func run(source: Language? = nil, target: Language? = nil, tone: Tone? = nil) async {
+    /// Whether the two language pickers hold explicit languages to exchange.
+    ///
+    /// Moved here from `TranslationViewModel` with the pickers themselves. Its doc comment
+    /// there already said what it was for — «In «Файлы» there is no text in this model to move
+    /// and no run of its own to learn a language from — the pickers are all there is» — which
+    /// is a sentence about this model, written on the other one.
+    var canSwapOverrides: Bool { sourceOverride != nil && targetOverride != nil }
+
+    /// Exchange the two pickers and **nothing else**.
+    ///
+    /// `TranslationViewModel.swapLanguages()` also moves the translation into the source pane,
+    /// which is right in «Текст» and destructive here: that pane is not on screen, so the move
+    /// would happen unseen with nothing to undo it.
+    func swapOverrides() {
+        guard let source = sourceOverride, let target = targetOverride else { return }
+        sourceOverride = target
+        targetOverride = source
+    }
+
+    /// The three pickers are read from this model's own properties — see `sourceOverride`.
+    func run() async {
+        let source = sourceOverride, target = targetOverride, tone = toneOverride
         guard !isRunning else { return }
         isRunning = true
         // Read before it is cleared: continuing a queue that paused itself is the *same*

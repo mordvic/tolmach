@@ -920,16 +920,17 @@ private func waitForSheet(_ model: TranslationViewModel,
 }
 
 @MainActor
-@Test func adoptingLeavesTheQueuesOwnConfigurationAlone() async {
-    // **«Из», «В» and «Тон» are not properties of a run, and that is the whole reason they
-    // must not move.** `MainWindowView` reads them off *this* model to start a queue —
-    // `queue.run(source:target:tone:)` — because the toolbar binds to one owner across both
-    // modes. Clearing them on adoption looked symmetrical and was a defect: pick «В: немецкий»
-    // in «Файлы», press the shortcut elsewhere, hand the panel's result to the window, and
-    // every queued file would then be written to disk in the settings-default language.
+@Test func adoptingClearsAPickerTheAdoptedRunNeverUsed() async {
+    // `knownTarget` is `targetOverride ?? resolvedTarget`, so a window that kept its own «В»
+    // after adopting named a language the translation on screen is not in. Clearing is
+    // therefore the point of moving these, not a side effect — and it is only safe because
+    // the queue's pickers are `FileQueueModel`'s own: while both modes bound to this model,
+    // this same assignment reset the language a queue was configured with, and the next
+    // «Перевести» wrote every file in the settings-default one.
     let panel = makeModel(ScriptedClient(responses: ["Перевод панели."]))
     panel.sourceText = "Panel source."
     await panel.translate()
+    #expect(panel.targetOverride == nil)   // the panel has no pickers to set one with
 
     let window = makeModel(ScriptedClient(responses: ["Перевод окна."]))
     window.sourceText = "Window source."
@@ -939,7 +940,7 @@ private func waitForSheet(_ model: TranslationViewModel,
     window.toneOverride = .technical
 
     #expect(window.adopt(from: panel))
-    #expect(window.sourceOverride == .en)
-    #expect(window.targetOverride == .de)
-    #expect(window.toneOverride == .technical)
+    #expect(window.sourceOverride == nil)
+    #expect(window.targetOverride == nil)
+    #expect(window.toneOverride == nil)
 }

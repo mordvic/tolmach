@@ -242,7 +242,10 @@ Facts that will bite you if you "tidy" them:
   the window and one owned by `HotkeyCoordinator` for the panel, plus `FileQueueModel` for the
   file queue. They must not be merged: a hotkey translation must never overwrite the window, and
   the re-entrancy guard is per instance. All three are built in `TranslatorApp.init` — the app
-  owns the models, the scenes read them.
+  owns the models, the scenes read them. **The toolbar's «Из», «В» and «Тон» belong to whichever
+  model owns the visible mode** — `FileQueueModel`'s own in «Файлы», the text model's in
+  «Текст». One owner for both modes is what let `adopt(from:)` reset the language a queue was
+  configured with, and the next «Перевести» wrote every file in the settings-default one.
 - **The window's left pane has two modes and the primary action follows the visible one.**
   `PrimaryAction.forMode` is that rule, and the toolbar button, ⌘↩ and ⌘. all read it. They used
   to reach `TranslationViewModel` directly, which would have left «Файлы» with a button that ran
