@@ -67,7 +67,7 @@ the words labelling it. A setting that moved both would have no such anchor.
   length whose cost anybody has timed.
 - **On a large font the панель will usually open at its height ceiling** (0.6 of the screen),
   because the reservation books the room the reply will need. That trade is already recorded in
-  `docs/OPEN-ITEMS.md`; the setting makes it arrive at a few hundred characters of selection
+  `docs/reference/OPEN-ITEMS.md`; the setting makes it arrive at a few hundred characters of selection
   instead of a few thousand.
 - The default is 13 pt системный, which measures **identically** to today's `.body`
   (375.0 × 16.0 for the same string, probe-checked). An install that never opens the setting

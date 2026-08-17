@@ -5,7 +5,7 @@
 > rejected — including defects in the audit itself. It is not maintained: it is the account of
 > a piece of work that has finished.
 
-# Audit ledger — report: docs/audit/architecture-and-ui-review.md
+# Audit ledger — report: docs/history/architecture-and-ui-review.md
 
 Branch base: `c25328f` (main)
 End: `09e6939` (main), through PRs #9, #10, #11, #12 and #13.
@@ -46,7 +46,7 @@ tractable problems; running things found the ones that mattered.** Every finding
 
 | Wave | PR | Commits | Tests | What it actually did |
 |---|---|---|---|---|
-| Audit | — | — | 347 | Read-only. `docs/audit/architecture-and-ui-review.md`: findings A1–A10 and U1–U11, a «checked and found no defect» section, modernisation table, three-wave roadmap. Two builds and four standalone probes; no source file touched. |
+| Audit | — | — | 347 | Read-only. `docs/history/architecture-and-ui-review.md`: findings A1–A10 and U1–U11, a «checked and found no defect» section, modernisation table, three-wave roadmap. Two builds and four standalone probes; no source file touched. |
 | 1 | #9 | `a4bfb59..c6fa646` | 352 | Four strict-concurrency errors in `TextCapture`, then `.swiftLanguageMode(.v6)` on all 11 targets. Per-call timeouts (10 / 30 / 120 s) replacing a shared 120. `os.Logger` on the four deliberately swallowed failures; `os` added to the closed whitelist with the rule that no user text may be logged. `TranslationOutcome.documentGlossaryFailure` so the engine reports without importing `os`. |
 | 2 | #10 | `4f470af..27c8c86` | 354 | `CFBundleDevelopmentRegion = ru` plus `Resources/ru.lproj`, so the standard menus stop being English. A «Перевод» command menu owning ⌘↩, ⌘., ⌃⌘S, ⇧⌘C and ⌘0 — each declared once, the toolbar giving its two up. `pruneEmptyMenus()`. Reduce Transparency in the panel; a glyph beside every coloured status. |
 | 3 | #11 | `4e91803..cbee1a1` | 364 | One `OllamaClient` instead of three plus one per download. Panel accessibility: an announcement on settle, `updatesFrequently`, a container label. `DroppedDocument` and a drop target on the source pane. GitHub Actions: build, a warning gate, tests. |
@@ -66,7 +66,7 @@ report had reasoned correctly from the source and the source was not the whole s
 |---|---|---|
 | **U6** | The settings panes' fixed `.frame(width: 560, height: 480)` clips content; replace it with minimums plus a `ScrollView`. | **Wrong, and the fix would have caused harm.** Control experiment: `.formStyle(.grouped)` installs an `NSScrollView` of its own at *any* content size, where a `VStack` and an unstyled `Form` install none. The panes already scroll. The recommended change would have brought back the window resizing between tabs that the frame exists to prevent, in exchange for nothing. `SettingsPane` is untouched and `CLAUDE.md` now says why it must stay so. |
 | **U3** | Remove the empty «Вид» menu with `CommandGroup(replacing: .sidebar) { }`. | **Half wrong.** That empties the group and leaves the menu as a title with no items — worse than the one dead item it replaced. `pruneEmptyMenus()` in AppKit was needed. Measured on the way: the menu is fully built by the time the app's `.task` first runs, so the prune needs no sleep and has none; the removal sticks, with nothing back after 2.5 s. |
-| **U4** | Cited `docs/OPEN-ITEMS.md` §2 — «`entire contents` of the panel window is empty through System Events» — as evidence the panel exposes nothing to accessibility. | **The probe cannot see either state.** Walking the real `PanelController`'s tree gives `AXWindow → AXGroup`, no label, zero children — identically with the new modifiers and with them removed, checked both ways. SwiftUI does not materialise its accessibility tree until an assistive client attaches, and a test process is not one. The observation was never evidence about the panel; the `OPEN-ITEMS` entry is corrected. |
+| **U4** | Cited `docs/reference/OPEN-ITEMS.md` §2 — «`entire contents` of the panel window is empty through System Events» — as evidence the panel exposes nothing to accessibility. | **The probe cannot see either state.** Walking the real `PanelController`'s tree gives `AXWindow → AXGroup`, no label, zero children — identically with the new modifiers and with them removed, checked both ways. SwiftUI does not materialise its accessibility tree until an assistive client attaches, and a test process is not one. The observation was never evidence about the panel; the `OPEN-ITEMS` entry is corrected. |
 
 ### What the audit missed entirely
 
@@ -202,6 +202,6 @@ Everything below was actually run. Nothing here was seen on a screen by a human.
 | Mutation testing | 5 mutations on the timeout table, 5 on `DroppedDocument` and the announcement, 6 on `GlossaryColumn`, 1 on the panel geometry tolerance — all killed except the tie-break, at 16/20 |
 | Install to `/Applications` and launch | runs background-only from `/Applications`, signature valid at the new path, log subsystem silent |
 
-`docs/OPEN-ITEMS.md` §1 carries what a human still owes. It grew by twelve rows during this
+`docs/reference/OPEN-ITEMS.md` §1 carries what a human still owes. It grew by twelve rows during this
 work. The one that decides how much of wave 2 is visible rather than merely correct is whether
 an `LSUIElement` app draws a menu bar at all.

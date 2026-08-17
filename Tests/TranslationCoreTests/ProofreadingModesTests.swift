@@ -27,8 +27,8 @@ import Testing
     }
 }
 
-// 2026-08-10 calibration (docs/OPEN-ITEMS.md, правка calibration section): candidate
+// 2026-08-10 calibration (docs/reference/OPEN-ITEMS.md, правка calibration section): candidate
 // rewordings for errorsOnly, friendly, professional and plain were tried against the
 // live corpus and reverted — none moved the measured output in the majority of 3 runs.
 // No pin is added for reverted wording; the negative result is recorded in
-// docs/OPEN-ITEMS.md instead of asserted here as if it held.
+// docs/reference/OPEN-ITEMS.md instead of asserted here as if it held.

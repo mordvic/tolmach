@@ -67,7 +67,7 @@ public struct SelectionWriter: Sendable {
     /// read side has the equivalent problem in the other direction and answers it with a poll
     /// against `changeCount`; there is no equivalent signal here to poll for — a paste has no
     /// observable completion this app can read — so this is a **fixed, chosen, unmeasured**
-    /// delay standing in for one, not a measured number. See `docs/OPEN-ITEMS.md`.
+    /// delay standing in for one, not a measured number. See `docs/reference/OPEN-ITEMS.md`.
     @MainActor
     public func replace(_ text: String, on pasteboard: NSPasteboard = .general) async {
         guard !text.isEmpty else { return }

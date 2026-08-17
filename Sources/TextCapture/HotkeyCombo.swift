@@ -56,8 +56,8 @@ public struct HotkeyCombo: Equatable, Sendable, Codable {
     /// `RegisterEventHotKey` accepts it, and no customised entry in
     /// `com.apple.symbolichotkeys` holds it. **That second half is narrower than it sounds**
     /// — the plist stores deviations from the factory set, not the set, so it cannot see a
-    /// stock system shortcut; `docs/MEASUREMENTS.md` carries the demonstration and
-    /// `docs/OPEN-ITEMS.md` carries the press on a real bundle that is the actual proof.
+    /// stock system shortcut; `docs/reference/MEASUREMENTS.md` carries the demonstration and
+    /// `docs/reference/OPEN-ITEMS.md` carries the press on a real bundle that is the actual proof.
     public static let proofreadDefault = HotkeyCombo(
         keyCode: UInt16(kVK_ANSI_R),
         modifiers: NSEvent.ModifierFlags([.option, .command]).rawValue)

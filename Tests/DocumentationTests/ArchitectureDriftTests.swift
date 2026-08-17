@@ -125,9 +125,9 @@ private func gateConstants() throws -> (ttftMS: Int, adherencePercent: Int) {
     // A baseline that names a ceiling the harness no longer enforces is worse than one that
     // names none: it invites a reader to compare a run against a number nothing checks.
     let (ttft, adherence) = try gateConstants()
-    let baseline = try RepoRoot.read("docs/BASELINE.md")
+    let baseline = try RepoRoot.read("docs/reference/BASELINE.md")
     #expect(baseline.contains("\(ttft) ms"),
-            "docs/BASELINE.md does not mention the \(ttft) ms TTFT ceiling the harness gates on")
+            "docs/reference/BASELINE.md does not mention the \(ttft) ms TTFT ceiling the harness gates on")
     #expect(baseline.contains("\(adherence) %") || baseline.contains("\(adherence)%"),
-            "docs/BASELINE.md does not mention the \(adherence)% adherence floor the harness gates on")
+            "docs/reference/BASELINE.md does not mention the \(adherence)% adherence floor the harness gates on")
 }

@@ -22,7 +22,7 @@ struct GlossaryHeader: View {
             // restored here. It stays `.labelsHidden()` all the same: this is a header row
             // that already carries a search field, a term count and two buttons, and a
             // visible four-word label would take the width from the picker itself, which is
-            // capped at 140 pt and is listed in `docs/OPEN-ITEMS.md` §1 as not yet known to
+            // capped at 140 pt and is listed in `docs/reference/OPEN-ITEMS.md` §1 as not yet known to
             // fit the longest Russian language name. Hidden is visual only — the string is
             // still the control's accessibility label — and `.help` gives a sighted user the
             // same sentence on hover, which is what a bare popup was missing.

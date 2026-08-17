@@ -3,7 +3,7 @@
 //
 // The icon is code rather than a committed binary so that the mark has a reviewable diff and
 // the reasoning behind its geometry stays reachable. That reasoning — and the meaning of every
-// number below — is in docs/superpowers/specs/2026-07-29-app-icon-design.md.
+// number below — is in docs/design/specs/2026-07-29-app-icon-design.md.
 import AppKit
 import CoreGraphics
 import CoreText

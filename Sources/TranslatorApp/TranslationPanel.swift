@@ -70,7 +70,7 @@ final class TranslationPanel: NSPanel {
         // than what is behind the window. The first two lines stop that fill; the third puts
         // the shadow back, because a window with no background loses the one AppKit derives
         // from it. **Not observed** — nothing in this environment can see the screen, and the
-        // corners are listed in `docs/OPEN-ITEMS.md` §1 as owed to a human.
+        // corners are listed in `docs/reference/OPEN-ITEMS.md` §1 as owed to a human.
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
@@ -313,7 +313,7 @@ final class PanelController: NSObject, NSWindowDelegate {
         // title bar is gone with `.titled`, and there is no fixed size to come back to. Nobody
         // can re-take that measurement from here — it needs the assembled bundle on a screen —
         // so the line stays on the strength of the mechanism above, and re-measuring it is
-        // listed in `docs/OPEN-ITEMS.md` §1 with everything else this task owes a human.
+        // listed in `docs/reference/OPEN-ITEMS.md` §1 with everything else this task owes a human.
         //
         // **No test in this file can hold it either, and one was written and deleted rather
         // than kept.** The shrink does not reproduce in the test process: a `PanelController`

@@ -45,7 +45,7 @@ clipboard outright.
   that pasteboard changes, and feeding held items back to `writeObjects` aborts the process.
   The bytes are copied eagerly instead.
 - Concurrent access to one pasteboard *name* aborts the process, so every clipboard touch in the
-  app goes through `GeneralPasteboard.withExclusiveAccess`. See `docs/PLATFORM-TRAPS.md`.
+  app goes through `GeneralPasteboard.withExclusiveAccess`. See `docs/reference/PLATFORM-TRAPS.md`.
 - A copy that lands after the poll deadline overwrites the restored clipboard. Unavoidable
   without waiting longer on every press; recorded rather than fixed.
 

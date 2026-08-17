@@ -14,7 +14,7 @@ recorder, a Markdown parser, an HTTP client — and each was written by hand ins
   convenience type at exactly the moment someone needs to know it.
 - **The HTTP client.** `OllamaKit` is one endpoint family over `URLSession` with NDJSON
   streaming. The two rules that make it correct — discard `message.thinking`, and treat `think`
-  as per-model rather than per-protocol (`docs/PLATFORM-TRAPS.md` has the sweep) — are empirical
+  as per-model rather than per-protocol (`docs/reference/PLATFORM-TRAPS.md` has the sweep) — are empirical
   facts about particular models that no general client would encode.
 - **Markup handling.** `MarkupSkeleton` does not parse Markdown; it extracts the structural
   tokens the model is allowed to change and compares before against after. A real parser would

@@ -8,7 +8,7 @@ import SwiftUI
 ///
 /// **Measured on this machine**, reading `NSColor` in both appearances and scoring each
 /// against the ground the drawing puts it on (white pane in light, `#1e1e1e` in dark).
-/// `Scripts/colour-contrast.swift` is the probe; `docs/MEASUREMENTS.md` carries the table.
+/// `Scripts/colour-contrast.swift` is the probe; `docs/reference/MEASUREMENTS.md` carries the table.
 ///
 /// ```
 /// colour   appearance  system     contrast   drawing    contrast
@@ -34,7 +34,7 @@ import SwiftUI
 ///
 /// One shortfall is stated rather than silently fixed: 4.20:1 is still short of WCAG AA's
 /// 4.5:1 for text this size. `#c26100` is the drawing's own number and this type is here to
-/// implement the drawing, so it is used as drawn; `docs/OPEN-ITEMS.md` carries the gap as a
+/// implement the drawing, so it is used as drawn; `docs/reference/OPEN-ITEMS.md` carries the gap as a
 /// judgement owed to a human, and closing it is a change to one constant here.
 ///
 /// Not `Color(.systemOrange)` with an opacity, and not a `.colorScheme` branch in each view:

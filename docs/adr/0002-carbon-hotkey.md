@@ -40,7 +40,7 @@ reading documentation they have no reason to open.
   measured, along with a foreign signature running the closure.
 - The C callback cannot capture context, so the bridge back to Swift goes through `userData` as
   an `Unmanaged` pointer. That leaves a narrow off-main teardown window, recorded in
-  `docs/OPEN-ITEMS.md`.
+  `docs/reference/OPEN-ITEMS.md`.
 - If Apple removes Carbon, this must be rewritten, and the onboarding story goes with it. There
   is no replacement at the macOS 14 floor with the no-permission property.
 

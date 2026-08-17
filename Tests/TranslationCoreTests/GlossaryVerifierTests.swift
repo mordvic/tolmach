@@ -11,11 +11,11 @@ import Testing
 /// Where there is no lemma data, `LemmaMatcher.decide` returns `nil` and a check becomes
 /// `.unverifiable` — deliberately, because a surface comparison cannot tell an absent term from
 /// an inflected one, and answering `.missing` there is the false alarm spec §4.6 forbids. That
-/// trade is recorded in `docs/OPEN-ITEMS.md` §2.
+/// trade is recorded in `docs/reference/OPEN-ITEMS.md` §2.
 ///
 /// **Gated rather than relaxed.** Rewriting these two as `!= .satisfied` would let
 /// `.unverifiable` satisfy them everywhere, and then nothing would notice if the checker went
-/// quiet on a machine that *can* lemmatise — `docs/TESTING.md`'s first lesson. The rule itself
+/// quiet on a machine that *can* lemmatise — `docs/reference/TESTING.md`'s first lesson. The rule itself
 /// is pinned machine-independently by `aLemmatisedMissIsStillAbsence` in `LemmaMatcherTests`;
 /// these two are the end-to-end confirmation, and they run wherever the data exists.
 private func lemmatises(_ language: Language, sample: String) -> Bool {
