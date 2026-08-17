@@ -442,6 +442,20 @@ Read the one that answers your question; do not read them all.
 | `CONTEXT.md` | Writing UI copy or naming something. |
 | `docs/superpowers/plans/` | Rarely. The four plans the codebase was built from; parts of them are known wrong where the ledgers record a correction. The UI redesign plan is the worst offender — seven of its defects reached the code verbatim. |
 
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues for `mordvic/tolmach`, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-role vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`), unchanged. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
 ### Traps, by where you are about to write
 
 Pointers, not summaries — the owning file has the measurement and is kept true by sitting next
