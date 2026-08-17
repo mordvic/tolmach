@@ -2,7 +2,7 @@
 #
 # `swift build`, `swift test` and the warning gate need nothing but a toolchain: the suite runs
 # against `FakeLLMClient` and never opens a socket. `swift run acceptance` is deliberately absent
-# — it needs a live Ollama with a resident model, which is why `docs/OPEN-ITEMS.md` records it as
+# — it needs a live Ollama with a resident model, which is why `docs/reference/OPEN-ITEMS.md` records it as
 # not in CI. That entry has always been read as «there is no CI», and it does not say that: it
 # says the *acceptance harness* cannot be in one.
 name: CI
@@ -58,7 +58,7 @@ jobs:
         run: swift build --build-tests 2>&1 | tee build.log
 
       # This project's standing rule is zero warnings, and until now it was kept by discipline
-      # alone — nothing could fail when it slipped. `docs/TESTING.md` names the trap this gate
+      # alone — nothing could fail when it slipped. `docs/reference/TESTING.md` names the trap this gate
       # has to avoid: a cached build reports zero warnings because nothing recompiled. The step
       # above is the first build in a fresh checkout, so there is no cache to hide behind.
       - name: Fail on any warning
