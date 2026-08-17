@@ -1280,7 +1280,7 @@ final class EmissionClock: @unchecked Sendable {
         text: source, target: .en, tone: .neutral, userGlossary: nil,
         options: ChatOptions(model: "fake"), maxChunkCharacters: 900,
         onToken: collector.onToken)
-    // The strong pin (docs/TESTING.md shape): not merely «two calls», but «no message
+    // The strong pin (docs/reference/TESTING.md shape): not merely «two calls», but «no message
     // ever sent to the model contains the fenced bytes» — a call-count pin alone
     // survives the defect «called, with the wrong chunk».
     for messages in fake.receivedMessages {

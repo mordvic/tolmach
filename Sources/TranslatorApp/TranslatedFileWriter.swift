@@ -9,7 +9,7 @@ import TranslationCore
 /// the two barriers. On macOS 14 a non-sandboxed app still meets TCC for `~/Documents`,
 /// `~/Desktop` and `~/Downloads`, and a drag grants the right to *read* what was dragged,
 /// not to place a sibling beside it. Whether the first write prompts, succeeds, or fails
-/// is an open probe — see the spec's §9.1 and `docs/OPEN-ITEMS.md`.
+/// is an open probe — see the spec's §9.1 and `docs/reference/OPEN-ITEMS.md`.
 ///
 /// So this returns a problem instead of throwing, and the caller's recovery is a save
 /// panel rather than a message: `NSSavePanel` confers the write right itself, which makes
@@ -166,7 +166,7 @@ enum TranslatedFileWriter {
             // the save panel's grant is for the *file* the user named. If those differ, the
             // atomic form fails where a direct write would have succeeded, and the user is
             // left with no route at all. Whether they differ is unverified — it is part of
-            // the same TCC probe `docs/OPEN-ITEMS.md` carries — so this does not depend on
+            // the same TCC probe `docs/reference/OPEN-ITEMS.md` carries — so this does not depend on
             // the answer: try the safer form, fall back to the one that needs less.
             do {
                 try Data(text.utf8).write(to: destination, options: .atomic)

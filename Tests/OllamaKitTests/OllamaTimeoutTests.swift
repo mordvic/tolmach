@@ -11,7 +11,7 @@ import Foundation
 /// **Not covered:** the wiring. Whether `chat` asks for `Timeout.interactive` and `models()`
 /// for `Timeout.probe` cannot be observed from a test process: the requests are built inside
 /// the calls, and the only way to see one is to let it reach a server. Pointing `chat` at
-/// `Timeout.pull` would leave every assertion here green. This is `docs/TESTING.md` shape 5 —
+/// `Timeout.pull` would leave every assertion here green. This is `docs/reference/TESTING.md` shape 5 —
 /// testing the builder while the wiring goes unchecked — and it is written down rather than
 /// papered over, because the alternative on offer is a test that waits out a real timeout.
 struct OllamaTimeoutTests {}

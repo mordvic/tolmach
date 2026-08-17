@@ -18,7 +18,7 @@
 // widths cannot show is the reason those three were wrong — a `Picker` inside a toolbar item
 // draws a bezelled control inside the item's own chrome, so a `Text` beside it makes the item
 // a container of two things rather than one control. That was measured on the bundle, not
-// here; `docs/PLATFORM-TRAPS.md` carries it.
+// here; `docs/reference/PLATFORM-TRAPS.md` carries it.
 //
 // **Treat every absolute figure this prints as unverified.** It has produced two now that did
 // not survive checking. The header once claimed «`menu` reports 810 pt» when it printed 560 —

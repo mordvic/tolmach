@@ -6,7 +6,7 @@ import Foundation
 ///
 /// Real files rather than an injected filesystem: every rule in `DroppedDocument` is about a
 /// file — its extension, its size on disk, whether its bytes decode — so a stub would only
-/// re-state the rules it is meant to check. `docs/TESTING.md` shape 5, avoided by making the
+/// re-state the rules it is meant to check. `docs/reference/TESTING.md` shape 5, avoided by making the
 /// thing under test the thing that runs.
 private func withTempFile<T>(named name: String, containing content: Data,
                              _ body: (URL) throws -> T) rethrows -> T {

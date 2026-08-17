@@ -42,7 +42,7 @@ struct PanelStatus: Equatable {
         /// All three are SF Symbols 1 (macOS 11), so they need no `#available` at this
         /// floor. A name that does not resolve renders as an empty image rather than
         /// trapping, which is why `square.and.pencil` reaching a screen is owed a look in
-        /// `docs/OPEN-ITEMS.md` rather than provable here.
+        /// `docs/reference/OPEN-ITEMS.md` rather than provable here.
         var symbol: String? {
             switch self {
             case .progress: nil
@@ -66,7 +66,7 @@ struct PanelView: View {
     /// carries no view-inspection dependency (the closed framework whitelist has none) and so
     /// has no way to assert what a rendered button's modifier actually is. Pinning the value
     /// here at least catches an accidental change to the combination itself; the button
-    /// reading it live is what a screen still has to confirm — see `docs/OPEN-ITEMS.md`.
+    /// reading it live is what a screen still has to confirm — see `docs/reference/OPEN-ITEMS.md`.
     static let replaceShortcut = KeyboardShortcut(.return, modifiers: [.command, .shift])
 
     let model: TranslationViewModel
@@ -268,7 +268,7 @@ struct PanelView: View {
     /// that room, and opening there is the alternative to climbing there during the run, which
     /// is the complaint the reservation exists for. What it costs is a panel covering 60% of
     /// the display from its first frame, over the document being read.
-    /// `docs/OPEN-ITEMS.md` carries that trade, which is a judgement and not a number.
+    /// `docs/reference/OPEN-ITEMS.md` carries that trade, which is a judgement and not a number.
     ///
     /// **«Шрифт текста» makes that trade arrive sooner, deliberately.** The figures above are
     /// the 13 pt ones. Measured at the same 560 pt width, against a 774 pt ceiling, the reserved
@@ -596,7 +596,7 @@ struct PanelView: View {
                             // because that block sits in a window the user sized, with no floor
                             // anywhere near its ceiling.
                             //
-                            // `docs/OPEN-ITEMS.md` carries whether scrolling them with the
+                            // `docs/reference/OPEN-ITEMS.md` carries whether scrolling them with the
                             // translation reads right, which is the one part a number cannot
                             // settle.
                             warnings

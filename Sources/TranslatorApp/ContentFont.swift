@@ -146,7 +146,7 @@ struct ContentFont: Equatable, Sendable {
     /// **The cost side was not re-measured.** The original figure — 16 000 characters costing
     /// 43.1 ms through `show(at:)` — could not be reproduced by a stand-in probe, so this
     /// generalisation rests on «the same answer for less work» rather than on a measured
-    /// saving. Re-taking it needs the assembled bundle; `docs/OPEN-ITEMS.md` carries that.
+    /// saving. Re-taking it needs the assembled bundle; `docs/reference/OPEN-ITEMS.md` carries that.
     ///
     /// **It only ever goes down, and that asymmetry is the point rather than an oversight.**
     /// The formula is symmetric and the cap must not be: 16 000 is the one length whose *cost*

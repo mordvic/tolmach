@@ -73,7 +73,7 @@ struct StatusColourTests {
     ///
     /// That it sits below WCAG AA's 4.5 at all is deliberate rather than an oversight:
     /// `#c26100` is the drawing's own value and this type implements the drawing.
-    /// `StatusColour`'s doc comment and `docs/OPEN-ITEMS.md` both carry it, and closing it is
+    /// `StatusColour`'s doc comment and `docs/reference/OPEN-ITEMS.md` both carry it, and closing it is
     /// a change to one constant. What must not happen quietly is a *regression* — a return to
     /// the system colour, or a lighter value chosen to match something else — and that is
     /// what this number is here to catch.

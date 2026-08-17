@@ -101,7 +101,7 @@ enum PanelSizer {
         // `TranslationPanel.constrainFrameRect` returns frames untouched by design, so nothing
         // pulls an over-tall frame back. The one mitigation is that `show(at:)` clears
         // `userSized`, so the *next* press sizes itself fresh rather than inheriting it. See
-        // `docs/OPEN-ITEMS.md` §1 for the standing question of whether that mitigation is
+        // `docs/reference/OPEN-ITEMS.md` §1 for the standing question of whether that mitigation is
         // enough.
         guard !userSized else {
             let userWidth = max(previous.width, minWidth)
@@ -131,7 +131,7 @@ enum PanelSizer {
         // too — that state's row carries «Заменить», «Скопировать», «Открыть в окне» *and*
         // «Отмена» at once, which this table never measured — but re-deriving them, and the
         // scrolling-ceiling and change-count arithmetic below that is built on this table,
-        // needs the same in-process probe redone rather than a guess; see `docs/OPEN-ITEMS.md`.
+        // needs the same in-process probe redone rather than a guess; see `docs/reference/OPEN-ITEMS.md`.
         //
         // There is no early moment at which the final width is knowable: the panel asks for
         // 347 pt before a single character has arrived — that is its button row, which is also

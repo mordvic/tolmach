@@ -295,7 +295,7 @@ struct MainWindowView: View {
                     // is `@State` that dies with it — so a reopened window finds the request
                     // still waiting and presents it again. What remains unverifiable from
                     // here is whether SwiftUI re-presents without the window being closed
-                    // and reopened; `docs/OPEN-ITEMS.md` carries that.
+                    // and reopened; `docs/reference/OPEN-ITEMS.md` carries that.
                     if presented === request { presented = nil }
                 }
         }
@@ -646,7 +646,7 @@ struct MainWindowView: View {
 /// a menu this app deliberately adds «Открыть окно перевода» to — as well as what Mission
 /// Control and VoiceOver announce.
 ///
-/// `docs/PLATFORM-TRAPS.md` carries both findings.
+/// `docs/reference/PLATFORM-TRAPS.md` carries both findings.
 private struct WindowTitleHidden: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView { TitleHidingView() }
 

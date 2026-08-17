@@ -20,7 +20,7 @@ enum TerminalBlocklist {
     // project makes, because these are nine other projects' packaging, not something this
     // app's own build can query. A bundle identifier can change across a major version; if
     // «Заменить» is ever reported not refusing in one of these, that terminal's current
-    // `Info.plist` is the thing to re-check, per `docs/OPEN-ITEMS.md`.
+    // `Info.plist` is the thing to re-check, per `docs/reference/OPEN-ITEMS.md`.
     static let bundleIdentifiers: Set<String> = [
         "com.apple.Terminal",       // confirmed on this machine's own Terminal.app
         "com.googlecode.iterm2",    // confirmed on this machine's own iTerm.app

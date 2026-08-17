@@ -140,7 +140,7 @@ struct PrimaryButtonColourTests {
     ///
     /// So the label wins, which is the complaint this colour was chosen to answer, and the
     /// grounds are the ones the choice was measured against — white and `#1e1e1e`, exactly as
-    /// `StatusColourTests` states its own. `docs/OPEN-ITEMS.md` carries what that costs on
+    /// `StatusColourTests` states its own. `docs/reference/OPEN-ITEMS.md` carries what that costs on
     /// macOS 15.
     @Test func theFillSeparatesFromTheGroundsItWasChosenAgainst() {
         for (appearance, ground) in [(Self.aqua, StatusColourTests.lightGround),

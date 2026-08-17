@@ -35,7 +35,7 @@ import SwiftUI
 ///
 /// 74 from `StatusColour.success` is the one number here with any slack in it. They are told
 /// apart by more than hue — success is an 11 pt label with a ✓ beside it, this is a filled
-/// button carrying a verb — and `docs/OPEN-ITEMS.md` carries it as something to look at rather
+/// button carrying a verb — and `docs/reference/OPEN-ITEMS.md` carries it as something to look at rather
 /// than something measured away.
 enum PrimaryButtonColour {
     /// sRGB, stated the way `StatusColour` states its own: a literal here is a colour this app

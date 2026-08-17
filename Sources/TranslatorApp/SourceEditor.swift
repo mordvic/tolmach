@@ -179,7 +179,7 @@ struct PaneHeader<Action: View>: View {
     ///
     /// The number is **not** measured — nothing in this environment can see a screen. It
     /// is the smallest value that should fit a `.small` segmented control with the
-    /// padding this row already had, and `docs/OPEN-ITEMS.md` carries it as owed to a
+    /// padding this row already had, and `docs/reference/OPEN-ITEMS.md` carries it as owed to a
     /// pair of eyes.
     static var height: CGFloat { 28 }
 

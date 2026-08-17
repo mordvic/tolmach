@@ -29,7 +29,7 @@ public final class HotkeyManager {
     /// isolated deinit { _ = p } }` typechecks cleanly at `-swift-version 6 -target
     /// arm64-apple-macosx14.0`. It is declined on behaviour instead. It moves teardown onto
     /// the main actor, so a manager whose last release lands off it no longer unregisters
-    /// synchronously — and that is precisely the path `docs/OPEN-ITEMS.md` §3 already lists
+    /// synchronously — and that is precisely the path `docs/reference/OPEN-ITEMS.md` §3 already lists
     /// as an unresolved narrow race. Changing it belongs in a change about that race, not in
     /// one whose whole purpose is to reach Swift 6 without moving any behaviour.
     nonisolated(unsafe) private var hotKeyRef: EventHotKeyRef?

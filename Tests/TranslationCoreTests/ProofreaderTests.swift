@@ -40,7 +40,7 @@ private final class StreamCollector: @unchecked Sendable {
         text: twoParagraphs, level: .errorsOnly,
         options: ChatOptions(model: "test"), maxChunkCharacters: 200,
         onToken: { collector.append($0) })
-    // The one formula, not a restatement of it (docs/TESTING.md).
+    // The one formula, not a restatement of it (docs/reference/TESTING.md).
     let plan = Chunker.plan(twoParagraphs, maxCharacters: 200)
     #expect(outcome.final == plan.assembled(from: ["один", "два"]))
     #expect(collector.value == outcome.final)

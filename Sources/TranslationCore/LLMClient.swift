@@ -10,7 +10,7 @@ public struct ChatMessage: Sendable, Equatable {
 /// Whether to ask a model *not* to reason, and how — the request side of Ollama's `think`.
 ///
 /// **There is deliberately no «on» case, and that absence is a safety property.** Measured
-/// 2026-08-11 across all eight installed models (`docs/PLATFORM-TRAPS.md`): `false` is accepted
+/// 2026-08-11 across all eight installed models (`docs/reference/PLATFORM-TRAPS.md`): `false` is accepted
 /// by every model, including the four whose `/api/show` capabilities lack `thinking`, while
 /// `true` or a level sent to one of those four answers **HTTP 400** — a failed translation, not
 /// a degraded one. With no way to spell «on», no value this app can construct can fail the

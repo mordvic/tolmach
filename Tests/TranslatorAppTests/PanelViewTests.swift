@@ -341,7 +341,7 @@ private func makeFinishedOutcome(detected: Language?) -> TranslationOutcome {
 
 /// Not a check that the rendered button actually carries this shortcut — this project has no
 /// view-inspection dependency to ask a `Button` what its `.keyboardShortcut(...)` is, and
-/// `docs/OPEN-ITEMS.md` owes that to a human. What this pins is the value itself: a change to
+/// `docs/reference/OPEN-ITEMS.md` owes that to a human. What this pins is the value itself: a change to
 /// the combination (or a copy-paste onto the wrong `KeyEquivalent`) fails here rather than
 /// only ever being caught by eye.
 @MainActor @Test func theReplaceShortcutIsCommandShiftReturn() {

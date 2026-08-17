@@ -227,7 +227,7 @@ struct TranslatorApp: App {
             // The same dump records what `keyboardShortcut("+", modifiers: .command)` becomes:
             // key `'+'` with mask `⌘`, i.e. SwiftUI stores the shifted character and does not
             // add ⇧ to the mask. Whether AppKit then matches a physical ⇧⌘= is not something a
-            // dump can answer and no keystroke can be sent from here — `docs/OPEN-ITEMS.md`
+            // dump can answer and no keystroke can be sent from here — `docs/reference/OPEN-ITEMS.md`
             // carries it, with `"="` as the fallback spelling if it turns out not to fire.
             CommandGroup(replacing: .sidebar) {
                 // Disabled at the ends of `ContentFont.sizes` rather than clamping silently: a
@@ -254,7 +254,7 @@ struct TranslatorApp: App {
                 // the key window's own handler gets it. So a hotkey run being cancelled while
                 // this window sits idle reaches the panel, not this. That the fall-through
                 // happens in that order is the one part of this block a physical key press
-                // still has to confirm; `docs/OPEN-ITEMS.md` §1 carries it.
+                // still has to confirm; `docs/reference/OPEN-ITEMS.md` §1 carries it.
                 //
                 // Both items read `PrimaryAction`, the same value the toolbar button reads,
                 // so the three cannot disagree about which model they drive. Before this,
@@ -772,7 +772,7 @@ private struct PanelHost: View {
             //
             // Growth only, because `PanelSizer`'s height is monotonic until the settle. Make
             // the text smaller with the panel up and it stays the height it was, with a gap
-            // under the reply until the presentation ends — `docs/OPEN-ITEMS.md` carries that.
+            // under the reply until the presentation ends — `docs/reference/OPEN-ITEMS.md` carries that.
             // The alternative was to pass `settling: true`, which is not available for this: a
             // settle also freezes the presentation's width, and a font change has no business
             // deciding that.

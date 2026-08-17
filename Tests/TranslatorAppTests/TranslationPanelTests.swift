@@ -38,7 +38,7 @@ import Foundation
 /// `isResizable` cannot tell them apart. The frame view's class would, but it is private API by
 /// name; the mask is the stable statement of the same fact.
 ///
-/// What this still cannot do is drag an edge. That stays in `docs/OPEN-ITEMS.md` §1.
+/// What this still cannot do is drag an edge. That stays in `docs/reference/OPEN-ITEMS.md` §1.
 @MainActor
 @Test func thePanelCarriesBothFlagsThatHandResizingNeeds() {
     let panel = TranslationPanel()
@@ -285,7 +285,7 @@ private func processCanGrantKeyStatus() -> Bool {
 /// **The tolerance does not weaken what these tests pin.** Each of them exists to catch AppKit
 /// relocating the panel, and the two observations behind them are a 202 pt sideways shove from
 /// the Stage Manager strip and a pull down by the height of the menu-bar band — three orders of
-/// magnitude away from one point. `docs/TESTING.md` shape 3 is the hazard to avoid here, and it
+/// magnitude away from one point. `docs/reference/TESTING.md` shape 3 is the hazard to avoid here, and it
 /// is about bounds that only catch movement in one direction; this stays an equality in both.
 /// Verified by mutation: restoring `constrainFrameRect` to `super`'s behaviour still kills all
 /// three tests.
@@ -634,7 +634,7 @@ private func realPanelContent(_ model: TranslationViewModel) -> (PanelContentVar
 /// other. Something outside this test occasionally flushes SwiftUI's pending update before the
 /// read; what that something is was not isolated. Alternating five times makes every one of
 /// them have to be lucky at once. It is not a proof of determinism and is not claimed as one —
-/// see `docs/OPEN-ITEMS.md` §2 — it is a measured reduction, from 1 escape in 40 to 0 in 40.
+/// see `docs/reference/OPEN-ITEMS.md` §2 — it is a measured reduction, from 1 escape in 40 to 0 in 40.
 @MainActor
 @Test func aReusedControllerMeasuresThePressItIsShowingNotThePreviousOne() {
     let longText = String(repeating: "Длинная строка перевода. ", count: 40)
@@ -1070,7 +1070,7 @@ private func resizablePanel(text: String)
 /// frames untouched, so nothing pulls one back. Measured while trying to write the stronger
 /// test: `setContentSize(NSSize(width: 10, height: 10))` on a shown panel produces a 10 × 10
 /// frame. What a drag does with the same minimum is owed to a hand on the mouse —
-/// `docs/OPEN-ITEMS.md` carries it.
+/// `docs/reference/OPEN-ITEMS.md` carries it.
 @MainActor
 @Test func theWindowRefusesTheSizesTheSizerWouldOverrule() {
     let controller = PanelController { _ in AnyView(Text("перевод")) }

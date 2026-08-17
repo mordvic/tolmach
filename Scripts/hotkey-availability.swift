@@ -20,7 +20,7 @@
 // source shortcuts, which had been changed) are there. So a clean answer means «no shortcut
 // the user has customised holds this», which is strictly weaker than «macOS does not use it».
 // The factory set has to be checked against Apple's own documentation by hand, and the only
-// real proof is pressing the key on a built bundle — which is why `docs/OPEN-ITEMS.md`
+// real proof is pressing the key on a built bundle — which is why `docs/reference/OPEN-ITEMS.md`
 // carries that check.
 //
 // The modifier numbers in symbolichotkeys are NSEvent's raw values, not Carbon's:

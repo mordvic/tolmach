@@ -438,7 +438,7 @@ final class HotkeyCoordinator {
         // The operation belongs to the shortcut that was pressed, and only to it: a press never
         // inherits what the previous presentation's switch was left on. That is the
         // predictability the правка design's §8 asked for, restated now that there is more than
-        // one shortcut — see docs/superpowers/specs/2026-08-15-proofread-hotkey-design.md,
+        // one shortcut — see docs/design/specs/2026-08-15-proofread-hotkey-design.md,
         // which supersedes that paragraph and nothing else in it.
         //
         // **Assigned before `afterCapture()`, and that placement is the point.** The panel is measured
