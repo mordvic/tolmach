@@ -123,6 +123,16 @@ enum PanelSizer {
         //     finished, whole reply  6929 →  462 at 330, 302 at 560
         //     finished, one word      274 →   94 at 560
         //
+        // **This table predates issue #27's «Заменить» button and is stale.** Adding a fourth
+        // control to the bottom action row moved at least the `finished` rows — a fresh short
+        // reply now measures 367 pt wide where this table says 274 → clamped to `minWidth`
+        // 300 (see `TranslationPanelTests.swift`'s `theRealPanelViewIsMeasuredRatherThanEcho…`
+        // and its siblings, which pin the new 367). The `running` rows almost certainly moved
+        // too — that state's row carries «Заменить», «Скопировать», «Открыть в окне» *and*
+        // «Отмена» at once, which this table never measured — but re-deriving them, and the
+        // scrolling-ceiling and change-count arithmetic below that is built on this table,
+        // needs the same in-process probe redone rather than a guess; see `docs/OPEN-ITEMS.md`.
+        //
         // There is no early moment at which the final width is knowable: the panel asks for
         // 347 pt before a single character has arrived — that is its button row, which is also
         // what `minWidth` is — and stays under 400 until one line of the reply is longer than

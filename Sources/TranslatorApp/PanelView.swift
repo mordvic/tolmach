@@ -79,6 +79,12 @@ struct PanelView: View {
     /// it with whichever reason it happened to know about.
     var adoptionRefusal: AdoptionRefusal?
     var onCopy: () -> Void = {}
+    /// «Заменить» — issue #27. Writes the finished result back into the source application in
+    /// place of the captured selection. Gated the same way «Скопировать» is on non-empty text,
+    /// plus `model.state == .finished`: unlike «Скопировать», which is deliberately available
+    /// the moment the first token lands so an interrupted run's partial output is not stranded,
+    /// «Заменить» must never write a half-streamed answer into another application.
+    var onReplace: () -> Void = {}
     var onOpenInWindow: () -> Void = {}
     var onRetry: () -> Void = {}
     var onGrantPermission: () -> Void = {}
@@ -616,6 +622,16 @@ struct PanelView: View {
             // scrolling flow it was pushed further out of reach by every token it was there
             // to stop.
             HStack {
+                // «Заменить» first and accented — issue #27 makes it the primary path a
+                // finished result is expected to leave the panel by, with «Скопировать»
+                // staying the manual fallback for a user who wants to paste somewhere else
+                // themselves. Gated on `.finished`, not merely non-empty text: unlike
+                // «Скопировать» below, this may never write a half-streamed answer into
+                // another application.
+                Button("Заменить", action: onReplace)
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.return, modifiers: [.command, .shift])
+                    .disabled(model.state != .finished || model.translatedText.isEmpty)
                 // Enabled the moment the first token lands, not only at the end: a run the
                 // user interrupts leaves partial output that spec 8 says must be kept, and
                 // keeping it while refusing to copy it would be pointless.

@@ -236,6 +236,18 @@ so the wiring is pinned at `pressAction(for:)` and the rest is eyes-only.
 | **The inherited collision**, if you can reproduce it | Set перевод to ⌥⌘R, quit, delete the `proofreadHotkey` key (`defaults delete <domain> proofreadHotkey`), relaunch. Expected: перевод still works on ⌥⌘R, правка's shortcut does nothing, and «Основные» carries the orange row explaining why. This is the one state the recorder is written to prevent and cannot, so it is worth seeing once | `AppSettings.shortcutsCollide`, `HotkeyCoordinator.shouldRegister` |
 | A степень changed from the panel | Change it and watch two things: the правка re-runs on the same text, and «Основные» shows the new value afterwards. The setting is written deliberately (design §6) — if that ever reads as surprising, this is where the complaint will start | `HotkeyCoordinator.setProofreadingLevel` |
 
+**Owed by «Заменить» (issue #27).** Nothing in a test process can synthesize a real keystroke
+into another application, so every test here fakes the paste trigger — `SelectionWriter`'s and
+`HotkeyCoordinator.replaceInSource()`'s own tests pin the sequencing, not the landing.
+
+| What to check | Why it needs eyes | Code |
+|---|---|---|
+| **⌘⇧↩ or the «Заменить» button, in a real application, replacing the actual selection** | The feature, and the one thing no test here can see: whether the synthesized ⌘V actually lands in the frontmost application and pastes over the selection `SelectionReader` captured. Try a native app (TextEdit), a browser (Safari) and an Electron app (per the existing capture check in §1), since the read side's own «owed to a human» entries found real differences between them | `SelectionWriter.pasteKeystroke`, `HotkeyCoordinator.replaceInSource` |
+| **⌘⇧↩ not being swallowed by the panel's raw Return handling** | `TranslationPanel`'s content view intercepts a bare Return in `keyDown` for «⏎ copies and closes»; «Заменить»'s shortcut is declared through SwiftUI's `.keyboardShortcut`, which should route through `performKeyEquivalent` before that override ever sees it — reasoned, not observed | `PanelView`'s «Заменить» button, `TranslationPanel.keyDown` |
+| **A secure input field (a password field) focused when «Заменить» is pressed** | macOS blocks synthetic keystrokes into secure-input fields; the expected result is a silent no-op, the same as a user's own ⌘V there, but nothing here can focus one and check | `SelectionWriter.replace` |
+| **The «Скопировать» → «Заменить» sequence**, issue #27's Implementation Decisions' own accepted behaviour | Copy the result with «Скопировать», then press «Заменить»: the pasteboard should end up holding whatever was on it *before either action*, not the deliberate copy. Confirm this actually reads as expected rather than merely as specified | `SelectionWriter.replace`, `HotkeyCoordinator.replaceInSource` |
+| The clipboard-restore timing, per the spec's own Further Notes | Whether restoring the snapshot immediately after posting the synthetic ⌘V ever races a slow target application's own read of the clipboard — the same class of timing question `SelectionReader`'s ⌘C fallback answers with a poll, which the write side has no equivalent of. Try a target application known to be slow to respond, and a long multi-chunk result | `SelectionWriter.replace` |
+
 **Owed by the settings/accessibility/CI wave.**
 
 | What to check | Why it needs eyes | Code |
@@ -287,6 +299,25 @@ nothing in this environment can see either.
   switch. Re-measure on the running bundle against `NSToolbar.visibleItems`;
   `Scripts/toolbar-fit.swift` models the pre-switch row and needs extending to include it.
   Until then, treat 700 as a carried-over guess rather than a re-confirmed floor.
+- **`PanelSizer.swift`'s whole button-row measurement table is stale as of issue #27's
+  «Заменить» button.** Re-measured in-process: a fresh short reply now opens at 367 pt wide
+  rather than clamping to `minWidth` (300) — pinned by
+  `TranslationPanelTests.swift`'s `theRealPanelViewIsMeasuredRatherThanEchoingTheProposal…`
+  and its two siblings. That single re-measurement is as far as this pass went. Still owed: the
+  `running` rows of the same table (that state's row now carries «Заменить», «Скопировать»,
+  «Открыть в окне» *and* «Отмена» together, a combination the table never measured), and
+  everything built on the table's old numbers — the scrolling-ceiling arithmetic and the
+  per-run width-change counts in the same comment, `docs/MEASUREMENTS.md`'s «347 → 370 → 6929»
+  line, and every other file citing 347 or 6929 for this row (`TranslationPanel.swift`,
+  `PanelView.swift`). None of that needs a screen — it is the same in-process
+  `PanelController.measure` probe already used for the number that was re-taken — so it is
+  listed here as work still to do, not as something only a human can settle.
+- **The panel's button row at its narrowest, with «Заменить» in it, has not been looked at.**
+  Four controls now share the bottom row in the finished state — «Заменить», «Скопировать»,
+  «Открыть в окне», and conditionally «Ещё вариант» — where the правка shortcut's own owed
+  item above only had to fit three. Drag the panel to its floor (now 367 pt, see above, not
+  300) and check the row still reads as four distinct controls rather than a crowded strip,
+  and that the accented «Заменить» is not so wide it pushes «Открыть в окне» to wrap or clip.
 
 ---
 

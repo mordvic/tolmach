@@ -37,6 +37,10 @@ final class HotkeyCoordinator {
     /// names — see the lock inside `GeneralPasteboard`, which is where that serialisation
     /// lives; it is not on `SelectionReader`, which an earlier version of this line said.
     private let pasteboard: NSPasteboard
+    /// «Заменить» — issue #27. Injected for the same reason `pasteboard` is: a test needs to
+    /// assert the write → trigger → restore sequence without a real synthesized ⌘V landing
+    /// wherever the test process's focus happens to be.
+    private let selectionWriter: SelectionWriter
 
     /// Kept so a re-registration after a settings change can reinstall the same action.
     /// Without it, `refreshRegistration()` would have nothing to hand `HotkeyManager` and the
@@ -58,6 +62,14 @@ final class HotkeyCoordinator {
     /// exist.
     @ObservationIgnored private var isCapturing = false
 
+    /// True from the instant «Заменить» is accepted until its write has settled. A second
+    /// call arriving while one is in flight — a double click, or ⌘⇧↩ landing during the brief
+    /// window between the paste trigger and the pasteboard restore — is ignored rather than
+    /// queued: interleaving two snapshot/restore cycles over one board is exactly the class of
+    /// race `isCapturing` above already exists to prevent on the read side. Set before the
+    /// first `await`, on the main actor, for the same reason `isCapturing` is.
+    @ObservationIgnored private var isReplacing = false
+
     /// The panel's own view model, deliberately not the window's. A hotkey translation must
     /// not overwrite what the user has on screen in the window — and Plan 2's re-entrancy
     /// guard is per-instance, so sharing one would make a hotkey press during a window
@@ -70,9 +82,11 @@ final class HotkeyCoordinator {
          translator: Translator,
          selectionReader: SelectionReader = SelectionReader(),
          managers: [TextOperation: HotkeyManager]? = nil,
-         pasteboard: NSPasteboard = .general) {
+         pasteboard: NSPasteboard = .general,
+         selectionWriter: SelectionWriter = SelectionWriter()) {
         self.settings = settings
         self.selectionReader = selectionReader
+        self.selectionWriter = selectionWriter
         // Optional rather than a default argument: a default argument is evaluated in a
         // nonisolated context, and `HotkeyManager` is `@MainActor`, so the obvious spelling
         // does not compile («call to main actor-isolated initializer in a synchronous
@@ -528,4 +542,19 @@ final class HotkeyCoordinator {
         await GeneralPasteboard.write(panelModel.translatedText, to: pasteboard)
     }
 
+    /// «Заменить» — issue #27. Writes the panel's finished result back into whatever
+    /// application currently has focus, replacing the selection this press originally
+    /// captured, and closes the panel — the caller (`TranslatorApp.configurePanel()`) hides it
+    /// the same way it does for «⏎ copies and closes».
+    ///
+    /// Gated on `.finished` rather than merely non-empty text: the button that calls this is
+    /// disabled until the run has fully settled (spec: never replace with a half-streamed
+    /// answer), and this is the same gate enforced again here so a call reaching this method by
+    /// any other path — a future shortcut, a test — cannot bypass it either.
+    func replaceInSource() async {
+        guard !isReplacing, panelModel.state == .finished else { return }
+        isReplacing = true
+        defer { isReplacing = false }
+        await selectionWriter.replace(panelModel.translatedText, on: pasteboard)
+    }
 }
