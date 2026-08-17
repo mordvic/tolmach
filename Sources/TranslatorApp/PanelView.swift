@@ -61,6 +61,14 @@ struct PanelStatus: Equatable {
 }
 
 struct PanelView: View {
+    /// «Заменить»'s dedicated shortcut — issue #27. Pulled out to a named value, rather than
+    /// written inline on the button's `.keyboardShortcut(...)` call, because this project
+    /// carries no view-inspection dependency (the closed framework whitelist has none) and so
+    /// has no way to assert what a rendered button's modifier actually is. Pinning the value
+    /// here at least catches an accidental change to the combination itself; the button
+    /// reading it live is what a screen still has to confirm — see `docs/OPEN-ITEMS.md`.
+    static let replaceShortcut = KeyboardShortcut(.return, modifiers: [.command, .shift])
+
     let model: TranslationViewModel
     let selection: SelectionResult
     /// Whether a press has been captured and its translation has not started yet — the window
@@ -630,8 +638,8 @@ struct PanelView: View {
                 // another application.
                 Button("Заменить", action: onReplace)
                     .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.return, modifiers: [.command, .shift])
-                    .disabled(model.state != .finished || model.translatedText.isEmpty)
+                    .keyboardShortcut(Self.replaceShortcut)
+                    .disabled(!model.offersReplace)
                 // Enabled the moment the first token lands, not only at the end: a run the
                 // user interrupts leaves partial output that spec 8 says must be kept, and
                 // keeping it while refusing to copy it would be pointless.

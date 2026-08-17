@@ -918,6 +918,31 @@ private func makePressedCoordinator(responses: [String]) async -> PressHarness {
 }
 
 @MainActor
+@Test func replaceInSourceAlsoWorksForAProofreadRun() async {
+    // Testing Decisions (issue #27): both `TextOperation` cases, not just `.translate` — the
+    // sibling test above only exercises the default operation `handlePress()` resolves to.
+    let board = scratchPasteboard()
+    defer { board.releaseGlobally() }
+    board.clearContents()
+    board.setString("буфер пользователя", forType: .string)
+
+    let trigger = RecordingTrigger(board: board)
+    let reader = ScriptedReader(["Превет."])
+    let (coordinator, _) = makeCoordinator(
+        reader: reader, replies: ["Привет."], pasteboard: board,
+        selectionWriter: SelectionWriter(triggerPaste: { trigger.fire() }))
+    await coordinator.handlePress(operation: .proofread)
+    #expect(coordinator.panelModel.operation == .proofread)
+    #expect(coordinator.panelModel.state == .finished)
+
+    await coordinator.replaceInSource()
+
+    #expect(trigger.callCount == 1)
+    #expect(trigger.textSeenAtTrigger == "Привет.")
+    #expect(board.string(forType: .string) == "буфер пользователя")
+}
+
+@MainActor
 @Test func replaceInSourceDoesNothingBeforeTheRunHasSettled() async {
     // Both cases the button's own `.disabled` condition covers: nothing translated yet, and
     // a run still streaming. Guarded again here, not just in the view, so a call reaching

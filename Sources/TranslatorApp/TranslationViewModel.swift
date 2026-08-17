@@ -292,6 +292,15 @@ final class TranslationViewModel {
             && (outcome?.modelChunkCount ?? 0) > 0
     }
 
+    /// Whether «Заменить» (issue #27) may write this result back into the source application.
+    /// Gated on `.finished`, not merely on non-empty text — unlike «Скопировать», which is
+    /// deliberately available the moment the first token lands so an interrupted run's partial
+    /// output is not stranded, «Заменить» must never write a half-streamed answer into another
+    /// application. Named and placed beside `offersAnotherVariant` so the same seam that tests
+    /// button-availability rules on this model covers it too, rather than leaving the rule
+    /// inlined in `PanelView`'s `.disabled(...)` where only a rendered view could pin it.
+    var offersReplace: Bool { state == .finished && !translatedText.isEmpty }
+
     /// The availability rule for the style controls, resolved the way the next run would
     /// resolve the level. Both the toolbar and the settings pane read the rule from
     /// `ProofreadingLevel.allowsRewriteStyle` rather than restating the comparison.
