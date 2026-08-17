@@ -729,13 +729,15 @@ private func panelModel() -> TranslationViewModel {
 @MainActor
 private func panelSize(source: String, translated: String,
                        state: TranslationState,
-                       awaitingRun: Bool = false) -> CGSize {
+                       awaitingRun: Bool = false,
+                       font: ContentFont = .default) -> CGSize {
     let model = panelModel()
     model.state = state
     model.translatedText = translated
     let controller = PanelController { variant in
         AnyView(PanelView(model: model, selection: .text(source),
                           awaitingRun: awaitingRun,
+                          font: font,
                           scrolls: variant == .installed(scrolls: true),
                           fillsPanel: variant != .measured))
     }
@@ -781,6 +783,52 @@ private let sentence = "Каждый профиль обязан ссылать�
     let ceiling = (NSScreen.main?.visibleFrame.height ?? 900) * PanelSizer.maxHeightFraction
     let size = panelSize(source: source, translated: source, state: .finished)
     #expect(size.height < ceiling / 2)
+}
+
+/// «Шрифт текста» has to reach the copy the panel is **measured** from, not only the one it
+/// draws.
+///
+/// This is the failure `PanelContentVariant` and `fillsPanel` have each already cost this file
+/// a defect over: `PanelController` builds two hosts from one builder and takes the size from
+/// the detached one. A font applied in `PanelView`'s body reaches both; a font applied by the
+/// call site to the installed host alone would leave every panel sized for 13 pt while showing
+/// 24 — the reply would overflow its window at exactly the setting a person chose because they
+/// could not read the small one.
+///
+/// Two sentences rather than twenty, so neither size is anywhere near the height ceiling, where
+/// both would clamp to the same number and the test would pass on a broken build.
+@MainActor
+@Test func thePanelIsMeasuredInTheFontTheReaderChose() {
+    let source = String(repeating: sentence, count: 2)
+    let small = panelSize(source: source, translated: source, state: .finished,
+                          font: ContentFont(typeface: .system, size: 13))
+    let large = panelSize(source: source, translated: source, state: .finished,
+                          font: ContentFont(typeface: .system, size: 24))
+    let ceiling = (NSScreen.main?.visibleFrame.height ?? 900) * PanelSizer.maxHeightFraction
+    #expect(large.height < ceiling)
+    #expect(large.height > small.height)
+}
+
+/// The hidden reservation is laid out in the reply's font too — and it is the *only* thing on
+/// screen while it does its job, which is what makes this checkable.
+///
+/// `awaitingRun` with an empty translation is the press window: the panel has been shown, the
+/// run has not produced a character, and the only content deciding the size is the invisible
+/// copy of the selection. So if that copy kept the system font while the reply grew, the panel
+/// would open at 13 pt's height and then climb through the whole run — «кнопки прыгают»,
+/// restored by way of the setting.
+///
+/// Removing `.font(font.font)` from the reservation `Text` alone fails this test and no other.
+@MainActor
+@Test func theReservationBooksRoomInTheFontTheReplyWillBeDrawnIn() {
+    let source = String(repeating: sentence, count: 2)
+    let small = panelSize(source: source, translated: "", state: .idle, awaitingRun: true,
+                          font: ContentFont(typeface: .system, size: 13))
+    let large = panelSize(source: source, translated: "", state: .idle, awaitingRun: true,
+                          font: ContentFont(typeface: .system, size: 24))
+    let ceiling = (NSScreen.main?.visibleFrame.height ?? 900) * PanelSizer.maxHeightFraction
+    #expect(large.height < ceiling)
+    #expect(large.height > small.height)
 }
 
 /// The «при первом открытии кнопки перекрываются нижней границей» report, as an assertion.
@@ -990,11 +1038,42 @@ private func resizablePanel(text: String)
 @MainActor
 @Test func theReservationStopsAtTheLengthThatStopsChangingTheAnswer() {
     let long = String(repeating: "слово ", count: 20_000)
-    #expect(long.count > PanelView.reservationLimit)
-    #expect(PanelView.reservation(for: long).count == PanelView.reservationLimit)
+    let font = ContentFont.default
+    #expect(long.count > font.reservationLimit)
+    #expect(PanelView.reservation(for: long, font: font).count == font.reservationLimit)
     // Short selections are reserved whole — the cap must not truncate the ordinary case.
     let short = "Каждый профиль обязан ссылаться на тип."
-    #expect(PanelView.reservation(for: short) == short)
+    #expect(PanelView.reservation(for: short, font: font) == short)
+}
+
+/// The cap is a length in characters, and what makes that length the right one is the height
+/// those characters come to — so it has to move when «Шрифт текста» does.
+///
+/// The rule it protects is the one `reservation(for:font:)` states: reserve up to about twice
+/// the length that already reaches the display's height ceiling, and stop, because past that
+/// point every further character is laid out to produce a number that has stopped changing.
+/// Measured by bisection against a 774 pt ceiling, that length is 2 914 characters at 13 pt and
+/// **511** at 32 — a fixed 16 000 would keep the number and lose the reason.
+///
+/// Mutating `ContentFont.reservationLimit` to a constant fails this and nothing else in the
+/// suite.
+@MainActor
+@Test func theReservedLengthShrinksAsTheTextGrows() {
+    let small = ContentFont(typeface: .system, size: 11)
+    let normal = ContentFont.default
+    let large = ContentFont(typeface: .system, size: 32)
+    #expect(normal.reservationLimit > large.reservationLimit)
+    // The default is the number the original measurement was taken at, unchanged.
+    #expect(normal.reservationLimit == 16_000)
+    // **And nothing below 13 pt goes above it.** The square would raise the cap to 22 347
+    // characters at 11 pt, which is more main-actor layout inside `show(at:)` than the 16 000
+    // whose cost was actually measured — for an identical panel, since 3 817 characters already
+    // reach the ceiling there. The cap bounds a cost; a cost bound that grows is not one.
+    #expect(small.reservationLimit == normal.reservationLimit)
+    // Still a cap rather than a muzzle: 2 641 characters at 32 pt is five times the 511 that
+    // already reach the ceiling there, so nothing a person would call an ordinary selection is
+    // truncated before the answer stops moving.
+    #expect(large.reservationLimit > 2_000)
 }
 
 /// Pressing ⌥⌘T twice over the same paragraph must be the same as pressing it once.

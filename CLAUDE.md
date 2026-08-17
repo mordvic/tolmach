@@ -26,6 +26,8 @@ swiftc -O -o /tmp/ac Scripts/accent-contrast.swift && /tmp/ac   # white on every
 swiftc -O -o /tmp/wt Scripts/window-title.swift && /tmp/wt   # why the window title needs re-asserting
 swiftc -O -o /tmp/tf Scripts/toolbar-fit.swift && /tmp/tf   # narrowest width the toolbar fits in
 swiftc -O -o /tmp/tbh Scripts/toolbar-height.swift && /tmp/tbh   # what the toolbar band costs, per style
+swiftc -O -o /tmp/cf Scripts/content-font.swift && /tmp/cf   # every measurement behind «Шрифт текста»
+swiftc -O -o /tmp/vm Scripts/view-menu.swift && /tmp/vm   # which menu the размер items land in, and how ⌘+ is stored
 swift run translate-cli --to ru --tone technical "text"   # needs a live Ollama; reads stdin if no text
 swift run acceptance              # live-Ollama corpus run; MUST run from the package root (reads ./corpus)
 ```
@@ -231,8 +233,13 @@ Facts that will bite you if you "tidy" them:
 - **The main menu exists, is Russian, and owns every keyboard shortcut the window has.**
   `LSUIElement` governs the Dock tile and whether the bar is *drawn*; it does not stop SwiftUI
   installing `NSApp.mainMenu`, and key equivalents are dispatched through it either way — measured
-  by dumping the menu from a copy of these three scenes. So ⌘↩, ⌘., ⌃⌘S, ⇧⌘C and ⌘0 are declared
-  once, in `.commands`, and **not** on the toolbar buttons that mirror them. Two things follow that
+  by dumping the menu from a copy of these three scenes. So ⌘↩, ⌘., ⌃⌘S, ⇧⌘C, ⌘0 and the three
+  размер items (⌘+, ⌘−, ⌃⌘0) are declared once, in `.commands`, and **not** on the toolbar
+  buttons that mirror them. «Вид» is **filled** rather than emptied now: the same
+  `CommandGroup(replacing: .sidebar)` that used to take the empty menu away carries «Крупнее»,
+  «Мельче» and «Обычный размер» — measured with `Scripts/view-menu.swift`, they land in «Вид» in
+  that order. ⌃⌘0 and not the conventional ⌘0 because ⌘0 is «Открыть окно перевода», the only
+  keyboard route to the window. Two things follow that
   are easy to undo by accident: `Info.plist`'s `CFBundleDevelopmentRegion = ru` plus
   `Resources/ru.lproj` are what make the *standard* menus Russian (without them the bundle claims
   `["en"]` and a fully Russian app carries an English menu bar), and `make-app-bundle.sh` must copy
@@ -302,6 +309,18 @@ Facts that will bite you if you "tidy" them:
   reassigning `rootView` is load-bearing, not tidy-up: without it the measuring host never sees
   content that changed through `@Observable`. All four facts are in `docs/PLATFORM-TRAPS.md`
   with their measurements.
+- **«Шрифт текста» reaches three `Text`s and nothing else, and one of them is invisible.**
+  `ContentFont` (гарнитура + размер, 11–32 pt, default 13) is applied to the исходник, the
+  перевод and the panel's reply — never to a label, a button, a status row or a table, because
+  `PanelSizer.minHeight` 132 and `dragMinHeight` 164 are measurements of the *pinned* block at
+  the system size and would otherwise become functions of a preference. `docs/adr/0008` is the
+  decision. Three things about it are load-bearing: the panel's **hidden reservation `Text`
+  takes the same font as the visible one** or it stops predicting the reply's height; the font
+  must be read **inside `PanelHost`'s body**, because `PanelController` sizes the panel from a
+  detached second host built by the same builder; and `reservationLimit` scales by the **square**
+  of the size — measured, a line is `size` tall and holds `1/size` characters, and the linear
+  version written first predicts less than half the movement. 13 pt is not «about right»: it
+  measures identically to `.body`, so an untouched install renders exactly as before.
 - **The settings panes already scroll — do not "fix" their fixed frame.** `settingsPane()`'s
   `.frame(width: 560, height: 480)` is what stops the window resizing between tabs, and it does
   **not** clip: `.formStyle(.grouped)` installs an `NSScrollView` of its own, measured, at any

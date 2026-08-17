@@ -98,6 +98,14 @@ pane would then show a shortcut the app does not answer to.
 _Avoid_: хоткей (in the interface — the settings section is «Сочетания клавиш»), горячая клавиша,
 шорткат
 
+**Панель** — *the panel*
+The floating readout either shortcut opens next to the pointer: it shows the result and nothing
+else, sizes itself to its own content, and never takes the application into the foreground. The
+app has a real dropdown menu as well — the one under the status-bar item — which is why calling
+this one «выпадающее меню» has to be avoided rather than merely discouraged: both exist.
+→ `TranslationPanel`, `PanelView`, `PanelController`, `PanelSizer`
+_Avoid_: выпадающее меню (that is the menu-bar menu), всплывающее окно, попап, окошко
+
 **Фоновый путь** — *background path*
 Translation by button or in batch, where prose quality matters more than speed. **Built** — the
 file queue and the document-terms review gate both ship. `AppSettings.batchModel` selects the
@@ -179,6 +187,20 @@ Re-run the same правка for a different rendering. Offered only for a finis
 «ошибки и стиль» run — «ещё вариант» of a deterministic minimal diff is a
 contradiction.
 _Avoid_: «Повторить» — that is the failure retry
+
+---
+
+## Вид
+
+**Шрифт текста** — *content font*
+The typeface and size the *user's own text* is drawn in: the исходник, the перевод, and the text
+in the панели. Deliberately not the interface's — подписи, кнопки, предупреждения and the tables
+keep the system's size, and that boundary is the whole of the concept.
+→ `ContentFont`, `ContentTypeface`, `AppSettings.contentFont`
+_On screen_: two controls, «Шрифт» and «Размер». The word «начертание» is not used for the first
+of them: in Russian typography it names bold or italic *within* a family, and what is chosen here
+is the family.
+_Avoid_: начертание, кегль, шрифт интерфейса, масштаб
 
 ---
 

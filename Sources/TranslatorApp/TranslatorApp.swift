@@ -162,7 +162,8 @@ struct TranslatorApp: App {
                            onRunFinished: {
                                await statusModel.refresh(interactiveModel: settings.interactiveModel)
                            },
-                           queue: queue, panelModel: coordinator.panelModel, mode: $mode)
+                           queue: queue, panelModel: coordinator.panelModel,
+                           settings: settings, mode: $mode)
                 .task { await statusModel.refresh(interactiveModel: settings.interactiveModel) }
         }
         // The drawing's number, and it is the drawing's for a reason: every main-window state
@@ -202,12 +203,49 @@ struct TranslatorApp: App {
         // Every equivalent below is declared here and **only** here. The window's toolbar used
         // to carry ⌘↩ and ⌘. itself; it no longer does.
         .commands {
-            // Both of these remove rather than add. `.sidebar` is what puts the empty «Вид»
-            // there — this window is an `HSplitView`, which has no sidebar to toggle — and
             // `.help` opens a help book that does not exist, so the menu it heads is a menu
-            // whose every item does nothing.
-            CommandGroup(replacing: .sidebar) { }
+            // whose every item does nothing. It still goes.
             CommandGroup(replacing: .help) { }
+
+            // **«Вид» is filled rather than emptied now, and it is the same group.** It used
+            // to be `CommandGroup(replacing: .sidebar) { }` — SwiftUI installs «Вид» carrying
+            // a sidebar toggle, and this window is an `HSplitView` with no sidebar, so the
+            // menu was one dead item and `pruneEmptyMenus()` took the empty shell away.
+            //
+            // Three размер items go in its place. Measured with `Scripts/view-menu.swift`,
+            // which dumps `NSApp.mainMenu` from a copy of these scenes: they land in «Вид», in
+            // this order, and `pruneEmptyMenus()` leaves it alone because it is no longer
+            // empty while still removing «Справка». (That dump renders the title as «View» —
+            // the probe bundle has no `ru.lproj`, which is exactly what makes the real app's
+            // standard menus Russian.)
+            //
+            // ⌘0 is **not** used for «Обычный размер», although that is the macOS convention:
+            // it is taken by «Открыть окно перевода» below, which is the only way into the
+            // window from the keyboard. ⌃⌘0 for the same reason ⌃⌘S was chosen over anything
+            // with ⌥ — that is where the system's own reserved space is thickest.
+            //
+            // The same dump records what `keyboardShortcut("+", modifiers: .command)` becomes:
+            // key `'+'` with mask `⌘`, i.e. SwiftUI stores the shifted character and does not
+            // add ⇧ to the mask. Whether AppKit then matches a physical ⇧⌘= is not something a
+            // dump can answer and no keystroke can be sent from here — `docs/OPEN-ITEMS.md`
+            // carries it, with `"="` as the fallback spelling if it turns out not to fire.
+            CommandGroup(replacing: .sidebar) {
+                // Disabled at the ends of `ContentFont.sizes` rather than clamping silently: a
+                // live menu item that does nothing is worse than a grey one that says so.
+                Button("Крупнее") { settings.contentFont = settings.contentFont.larger() }
+                    .keyboardShortcut("+", modifiers: .command)
+                    .disabled(!settings.contentFont.canGrow)
+                Button("Мельче") { settings.contentFont = settings.contentFont.smaller() }
+                    .keyboardShortcut("-", modifiers: .command)
+                    .disabled(!settings.contentFont.canShrink)
+                // The size only — never the гарнитура. That was chosen once and deliberately,
+                // and an item named for the size has no business undoing it.
+                Button("Обычный размер") {
+                    settings.contentFont = settings.contentFont.atDefaultSize()
+                }
+                .keyboardShortcut("0", modifiers: [.command, .control])
+                .disabled(settings.contentFont.size == ContentFont.defaultSize)
+            }
 
             CommandMenu("Перевод") {
                 // Disabled while a run is in flight, which is also what keeps this from
@@ -701,6 +739,11 @@ private struct PanelHost: View {
                   rewriteStyle: settings.defaultRewriteStyle,
                   onProofreadingLevelChange: onProofreadingLevelChange,
                   onRewriteStyleChange: onRewriteStyleChange,
+                  // Read here for the reason every other setting on this line is: the
+                  // controller keeps two hosts built from one builder, and the *detached* one
+                  // is what the panel's size comes from. A font resolved where the builder is
+                  // constructed would freeze at launch on both of them.
+                  font: settings.contentFont,
                   scrolls: scrolls,
                   onClose: onClose,
                   fillsPanel: fillsPanel)
@@ -709,6 +752,19 @@ private struct PanelHost: View {
             // inside a SwiftUI update re-enters layout on a view AppKit is already laying
             // out. The controller's own throttle then coalesces the burst.
             .onChange(of: coordinator.panelModel.translatedText) { _, _ in
+                Task { @MainActor in onContentChange(false) }
+            }
+            // A panel already on screen when the size changes. Same deferral and the same
+            // throttle as a streamed token, and the same tolerated doubling: both hosts carry
+            // this hook, and `applyFit` is idempotent against the frame it already set.
+            //
+            // Growth only, because `PanelSizer`'s height is monotonic until the settle. Make
+            // the text smaller with the panel up and it stays the height it was, with a gap
+            // under the reply until the presentation ends — `docs/OPEN-ITEMS.md` carries that.
+            // The alternative was to pass `settling: true`, which is not available for this: a
+            // settle also freezes the presentation's width, and a font change has no business
+            // deciding that.
+            .onChange(of: settings.contentFont) { _, _ in
                 Task { @MainActor in onContentChange(false) }
             }
             .onChange(of: coordinator.panelModel.state) { _, new in

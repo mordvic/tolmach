@@ -100,6 +100,22 @@ struct PanelView: View {
     var rewriteStyle: RewriteStyle = .original
     var onProofreadingLevelChange: (ProofreadingLevel) -> Void = { _ in }
     var onRewriteStyleChange: (RewriteStyle) -> Void = { _ in }
+    /// «Шрифт текста» — the face and size the *reply* is drawn in. Nothing else in this view
+    /// takes it: the header, the степень/стиль row, the status line, the warnings and the
+    /// buttons all keep the system's size, which is what keeps `PanelSizer`'s floors
+    /// (`minHeight` 132, `dragMinHeight` 164 — both measurements of the pinned block) true at
+    /// every setting. See `docs/adr/0008`.
+    ///
+    /// **Two `Text`s take it, and that pairing is load-bearing.** The visible one and the
+    /// hidden reservation below it are laid out in the same font or the reservation stops
+    /// predicting the reply's height — which is the whole of its job, and «кнопки прыгают» is
+    /// what it looks like when it fails.
+    ///
+    /// It must also arrive through `PanelHost`, i.e. be read inside a body, for the reason
+    /// `proofreadingLevel` is: `PanelController` builds *two* hosts from one builder and sizes
+    /// the panel from the detached one. A font applied only to the installed copy would leave
+    /// every panel measured at the previous size.
+    var font: ContentFont = .default
     /// Whether the content must scroll — `PanelSizer` decided the content is taller than the
     /// panel it can be given. It wraps only the rows whose height the content decides; the
     /// header and the button row are pinned outside it. See `scrollingMiddle`.
@@ -186,12 +202,19 @@ struct PanelView: View {
     /// ceiling, so it holds on a much taller one too.
     ///
     /// A cut mid-word does not matter: this copy is never drawn, only measured.
-    static func reservation(for source: String) -> String {
-        String(source.prefix(reservationLimit))
+    ///
+    /// **The cap moves with «Шрифт текста», and the figures above are the 13 pt column of it.**
+    /// The argument for 16 000 was «twice the length that already reached this display's
+    /// ceiling» — and that length is a function of the line height, which the setting changes.
+    /// Measured by bisection (`Scripts/content-font.swift`, against a 774 pt ceiling): the
+    /// reserved height first reaches it at 2 914 characters at 13 pt, 1 032 at 22 and 511 at 32.
+    /// `ContentFont.reservationLimit` is the generalisation — it scales by the *square* of the
+    /// size, which is what those numbers say, and only ever downwards, because 16 000 is the one
+    /// length whose cost was measured — and it carries the one thing that could **not** be
+    /// re-measured, that millisecond cost itself.
+    static func reservation(for source: String, font: ContentFont) -> String {
+        String(source.prefix(font.reservationLimit))
     }
-
-    /// See `reservation(for:)` for the measurements behind it.
-    static let reservationLimit = 16_000
 
     /// The selection to reserve room for, or nil — **only while the run has not started**.
     ///
@@ -227,6 +250,12 @@ struct PanelView: View {
     /// is the complaint the reservation exists for. What it costs is a panel covering 60% of
     /// the display from its first frame, over the document being read.
     /// `docs/OPEN-ITEMS.md` carries that trade, which is a judgement and not a number.
+    ///
+    /// **«Шрифт текста» makes that trade arrive sooner, deliberately.** The figures above are
+    /// the 13 pt ones. Measured at the same 560 pt width, against a 774 pt ceiling, the reserved
+    /// height first reaches it at 2 914 characters at 13 pt, 1 032 at 22 and **511** at 32 — so
+    /// on a large setting the panel opens at its ceiling for a selection of two paragraphs.
+    /// That is the same judgement, accepted again rather than re-opened.
     private var selectionAwaitingReply: String? {
         guard awaitingRun, case let .text(source) = selection else { return nil }
         return source
@@ -476,13 +505,18 @@ struct PanelView: View {
                     // the same text twice.
                     ZStack(alignment: .topLeading) {
                         if let source = selectionAwaitingReply {
-                            Text(Self.reservation(for: source))
+                            // The reply's font, not the system's. This copy exists to be the
+                            // size the reply will be; in any other font it reserves the wrong
+                            // room, and at a large setting it would reserve a fraction of it.
+                            Text(Self.reservation(for: source, font: font))
+                                .font(font.font)
                                 .hidden()
                                 .accessibilityHidden(true)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         Text(model.translatedText)
+                            .font(font.font)
                             .textSelection(.enabled)
                             // Without this the text is a live region VoiceOver has no warning
                             // about: it is rewritten on every streamed token, up to ten times a
