@@ -61,6 +61,14 @@ struct PanelStatus: Equatable {
 }
 
 struct PanelView: View {
+    /// «Заменить»'s dedicated shortcut — issue #27. Pulled out to a named value, rather than
+    /// written inline on the button's `.keyboardShortcut(...)` call, because this project
+    /// carries no view-inspection dependency (the closed framework whitelist has none) and so
+    /// has no way to assert what a rendered button's modifier actually is. Pinning the value
+    /// here at least catches an accidental change to the combination itself; the button
+    /// reading it live is what a screen still has to confirm — see `docs/OPEN-ITEMS.md`.
+    static let replaceShortcut = KeyboardShortcut(.return, modifiers: [.command, .shift])
+
     let model: TranslationViewModel
     let selection: SelectionResult
     /// Whether a press has been captured and its translation has not started yet — the window
@@ -79,6 +87,17 @@ struct PanelView: View {
     /// it with whichever reason it happened to know about.
     var adoptionRefusal: AdoptionRefusal?
     var onCopy: () -> Void = {}
+    /// «Заменить» — issue #27. Writes the finished result back into the source application in
+    /// place of the captured selection. Gated the same way «Скопировать» is on non-empty text,
+    /// plus `model.state == .finished`: unlike «Скопировать», which is deliberately available
+    /// the moment the first token lands so an interrupted run's partial output is not stranded,
+    /// «Заменить» must never write a half-streamed answer into another application.
+    var onReplace: () -> Void = {}
+    /// Whether the application in front of the panel right now is a known terminal emulator —
+    /// issue #29. Asked, not re-derived here, for the same reason `adoptionRefusal` is: the
+    /// decision (`TerminalBlocklist`) lives with `HotkeyCoordinator`, which is what
+    /// `replaceInSource()` re-checks it against too.
+    var frontmostIsTerminal = false
     var onOpenInWindow: () -> Void = {}
     var onRetry: () -> Void = {}
     var onGrantPermission: () -> Void = {}
@@ -616,6 +635,16 @@ struct PanelView: View {
             // scrolling flow it was pushed further out of reach by every token it was there
             // to stop.
             HStack {
+                // «Заменить» first and accented — issue #27 makes it the primary path a
+                // finished result is expected to leave the panel by, with «Скопировать»
+                // staying the manual fallback for a user who wants to paste somewhere else
+                // themselves. Gated on `.finished`, not merely non-empty text: unlike
+                // «Скопировать» below, this may never write a half-streamed answer into
+                // another application.
+                Button("Заменить", action: onReplace)
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(Self.replaceShortcut)
+                    .disabled(!model.offersReplace || frontmostIsTerminal)
                 // Enabled the moment the first token lands, not only at the end: a run the
                 // user interrupts leaves partial output that spec 8 says must be kept, and
                 // keeping it while refusing to copy it would be pointless.
@@ -646,6 +675,15 @@ struct PanelView: View {
             // reason is on screen, and not fine when it is in another window.
             if adoptionRefusal == .targetBusy {
                 Text("Окно занято своим переводом — дождитесь его окончания.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            // «Заменить» — issue #29. A terminal has no editable selection to replace, and a
+            // multi-line result can, depending on the shell and session, be read as a
+            // sequence of Enter-terminated commands rather than as inert text — the reason
+            // this refusal has no override, unlike `targetBusy` above which is just a wait.
+            if frontmostIsTerminal {
+                Text("«Заменить» не работает в терминале — там нет выделения для замены.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }

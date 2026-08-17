@@ -49,6 +49,42 @@ private func scratchPasteboard() -> NSPasteboard {
     NSPasteboard(name: NSPasteboard.Name("ru.tolmach.test.hk.\(UUID().uuidString)"))
 }
 
+/// A `SelectionWriter.Trigger` with a memory, standing in for the real ⌘V synthesis so these
+/// tests never post a real keystroke. `@unchecked Sendable` for the reason `ScriptedReader`
+/// above is: `SelectionWriter.replace` calls this from inside a detached task.
+///
+/// Reads `board` from *inside* `fire()`, at the one moment `SelectionWriter.replace` has
+/// written the result but not yet restored the snapshot — the same moment a real target
+/// application's own ⌘V would read the pasteboard. That is what lets a test tell «the write
+/// happened and the trigger saw it» apart from «the trigger fired on stale or already-restored
+/// content».
+private final class RecordingTrigger: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _callCount = 0
+    private var _entered = false
+    private var _textSeenAtTrigger: String?
+    private let board: NSPasteboard
+    private let delay: TimeInterval
+
+    init(board: NSPasteboard, delay: TimeInterval = 0) {
+        self.board = board
+        self.delay = delay
+    }
+
+    var callCount: Int { lock.lock(); defer { lock.unlock() }; return _callCount }
+    var entered: Bool { lock.lock(); defer { lock.unlock() }; return _entered }
+    var textSeenAtTrigger: String? { lock.lock(); defer { lock.unlock() }; return _textSeenAtTrigger }
+
+    func fire() {
+        lock.lock(); _entered = true; lock.unlock()
+        if delay > 0 { Thread.sleep(forTimeInterval: delay) }
+        lock.lock()
+        _callCount += 1
+        _textSeenAtTrigger = board.string(forType: .string)
+        lock.unlock()
+    }
+}
+
 /// Obscure enough that a shortcut the developer actually uses is never taken for the length
 /// of a test run.
 private func combo(_ keyCode: UInt16) -> HotkeyCombo {
@@ -62,7 +98,9 @@ private func makeCoordinator(reader: ScriptedReader,
                              replies: [String] = ["перевод"],
                              delayPerToken: Duration = .zero,
                              settings: AppSettings? = nil,
-                             pasteboard: NSPasteboard? = nil)
+                             pasteboard: NSPasteboard? = nil,
+                             selectionWriter: SelectionWriter? = nil,
+                             frontmostBundleIdentifier: (@Sendable () -> String?)? = nil)
     -> (HotkeyCoordinator, ScriptedClient) {
     let glossary = GlossaryStore(url: FileManager.default.temporaryDirectory
         .appendingPathComponent("hk-\(UUID().uuidString).json"))
@@ -75,7 +113,16 @@ private func makeCoordinator(reader: ScriptedReader,
         selectionReader: SelectionReader(accessibility: { reader.next() },
                                          clipboard: { nil },
                                          isTrusted: { isTrusted }),
-        pasteboard: pasteboard ?? scratchPasteboard())
+        pasteboard: pasteboard ?? scratchPasteboard(),
+        // Never the real trigger by default: a test process that ever posted a real ⌘V would
+        // synthesize a keystroke wherever the machine running the suite happens to have
+        // focus. `replaceInSource`'s own tests inject a recording trigger where they need to
+        // observe the sequence.
+        selectionWriter: selectionWriter ?? SelectionWriter(triggerPaste: {}, restoreDelay: 0),
+        // Never the real `NSWorkspace` call by default — a test process's own frontmost
+        // application is not something these tests are about, and never a terminal, so
+        // `frontmostIsTerminal`-gated tests inject their own closure where they need to.
+        frontmostBundleIdentifier: frontmostBundleIdentifier ?? { nil })
     return (coordinator, client)
 }
 
@@ -846,4 +893,180 @@ private func makePressedCoordinator(responses: [String]) async -> PressHarness {
         operationAtShow = coordinator.panelModel.operation
     })
     #expect(operationAtShow == .proofread)
+}
+
+// MARK: - «Заменить» — issue #27
+
+@MainActor
+@Test func replaceInSourceWritesTheResultTriggersOnceAndRestoresTheOriginalClipboard() async {
+    let board = scratchPasteboard()
+    defer { board.releaseGlobally() }
+    board.clearContents()
+    board.setString("буфер пользователя", forType: .string)
+
+    let trigger = RecordingTrigger(board: board)
+    let reader = ScriptedReader(["Hello."])
+    let (coordinator, _) = makeCoordinator(
+        reader: reader, replies: ["Привет."], pasteboard: board,
+        selectionWriter: SelectionWriter(triggerPaste: { trigger.fire() }, restoreDelay: 0))
+    await coordinator.handlePress()
+    #expect(coordinator.panelModel.state == .finished)
+
+    await coordinator.replaceInSource()
+
+    #expect(trigger.callCount == 1)
+    // What the trigger saw is what a real target application's own ⌘V would have read: the
+    // translation, not the user's earlier clipboard content and not the restored one either.
+    #expect(trigger.textSeenAtTrigger == "Привет.")
+    // Restored, not left holding the translation.
+    #expect(board.string(forType: .string) == "буфер пользователя")
+}
+
+@MainActor
+@Test func replaceInSourceAlsoWorksForAProofreadRun() async {
+    // Testing Decisions (issue #27): both `TextOperation` cases, not just `.translate` — the
+    // sibling test above only exercises the default operation `handlePress()` resolves to.
+    let board = scratchPasteboard()
+    defer { board.releaseGlobally() }
+    board.clearContents()
+    board.setString("буфер пользователя", forType: .string)
+
+    let trigger = RecordingTrigger(board: board)
+    let reader = ScriptedReader(["Превет."])
+    let (coordinator, _) = makeCoordinator(
+        reader: reader, replies: ["Привет."], pasteboard: board,
+        selectionWriter: SelectionWriter(triggerPaste: { trigger.fire() }, restoreDelay: 0))
+    await coordinator.handlePress(operation: .proofread)
+    #expect(coordinator.panelModel.operation == .proofread)
+    #expect(coordinator.panelModel.state == .finished)
+
+    await coordinator.replaceInSource()
+
+    #expect(trigger.callCount == 1)
+    #expect(trigger.textSeenAtTrigger == "Привет.")
+    #expect(board.string(forType: .string) == "буфер пользователя")
+}
+
+@MainActor
+@Test func replaceInSourceDoesNothingBeforeTheRunHasSettled() async {
+    // Both cases the button's own `.disabled` condition covers: nothing translated yet, and
+    // a run still streaming. Guarded again here, not just in the view, so a call reaching
+    // this method by any other path cannot write a half-finished answer either.
+    let board = scratchPasteboard()
+    defer { board.releaseGlobally() }
+    board.clearContents()
+    board.setString("буфер пользователя", forType: .string)
+
+    let trigger = RecordingTrigger(board: board)
+    let reader = ScriptedReader([nil])
+    let (coordinator, _) = makeCoordinator(
+        reader: reader, pasteboard: board,
+        selectionWriter: SelectionWriter(triggerPaste: { trigger.fire() }, restoreDelay: 0))
+    #expect(coordinator.panelModel.state == .idle)
+
+    await coordinator.replaceInSource()
+
+    #expect(trigger.callCount == 0)
+    #expect(board.string(forType: .string) == "буфер пользователя")
+}
+
+@MainActor
+@Test func aSecondReplaceWhileOneIsInFlightIsIgnored() async {
+    // Mirrors `aPressArrivingWhileTheSelectionIsStillBeingReadIsDropped`'s shape: an
+    // artificially slow trigger stands in for the window between the paste being posted and
+    // the pasteboard being restored, and a second call landing in that window must not
+    // interleave a second snapshot/restore cycle over the same board.
+    let board = scratchPasteboard()
+    defer { board.releaseGlobally() }
+    let trigger = RecordingTrigger(board: board, delay: 0.2)
+    let reader = ScriptedReader(["Hello."])
+    let (coordinator, _) = makeCoordinator(
+        reader: reader, replies: ["Привет."], pasteboard: board,
+        selectionWriter: SelectionWriter(triggerPaste: { trigger.fire() }, restoreDelay: 0))
+    await coordinator.handlePress()
+    #expect(coordinator.panelModel.state == .finished)
+
+    let first = Task { await coordinator.replaceInSource() }
+    await waitUntil { trigger.entered }
+
+    await coordinator.replaceInSource()
+    // Still inside the first call's artificial delay: a second call arriving here found
+    // `isReplacing` already true and returned without touching the trigger.
+    #expect(trigger.callCount == 0)
+
+    await first.value
+    #expect(trigger.callCount == 1)
+}
+
+@MainActor
+@Test func aPressArrivingWhileAReplaceIsInFlightIsDropped() async {
+    // `/code-review`'s finding: `handlePress` used to guard on `isCapturing` and `state !=
+    // .running` only, so a press landing during a «Заменить» in flight — the window between
+    // the trigger and the restore — could hide the panel and read a new selection right as
+    // the synthetic ⌘V was still meant to land on the original target. `isReplacing` closes
+    // that window the same way `isCapturing` already closes its own.
+    let board = scratchPasteboard()
+    defer { board.releaseGlobally() }
+    let trigger = RecordingTrigger(board: board, delay: 0.2)
+    let reader = ScriptedReader(["Hello.", "Второй."])
+    let (coordinator, _) = makeCoordinator(
+        reader: reader, replies: ["Привет.", "Два."], pasteboard: board,
+        selectionWriter: SelectionWriter(triggerPaste: { trigger.fire() }, restoreDelay: 0))
+    await coordinator.handlePress()
+    #expect(coordinator.panelModel.state == .finished)
+
+    let replace = Task { await coordinator.replaceInSource() }
+    await waitUntil { trigger.entered }
+
+    var captured = false
+    await coordinator.handlePress(afterCapture: { captured = true })
+    // Dropped: the reader was not asked again, and the panel's text is still the first press's.
+    #expect(!captured)
+    #expect(reader.callCount == 1)
+    #expect(coordinator.panelModel.translatedText == "Привет.")
+
+    await replace.value
+    #expect(trigger.callCount == 1)
+}
+
+// MARK: - «Заменить» refuses a terminal — issue #29
+
+@MainActor
+@Test func frontmostIsTerminalReflectsTheInjectedClosure() {
+    let reader = ScriptedReader([nil])
+    let (terminal, _) = makeCoordinator(
+        reader: reader, frontmostBundleIdentifier: { "com.apple.Terminal" })
+    #expect(terminal.frontmostIsTerminal)
+
+    let (ordinary, _) = makeCoordinator(
+        reader: ScriptedReader([nil]), frontmostBundleIdentifier: { "com.apple.Safari" })
+    #expect(!ordinary.frontmostIsTerminal)
+
+    let (unknown, _) = makeCoordinator(reader: ScriptedReader([nil]))   // default: nil
+    #expect(!unknown.frontmostIsTerminal)
+}
+
+@MainActor
+@Test func replaceInSourceRefusesToWriteIntoATerminalEvenWhenFinished() async {
+    // The authoritative gate, not merely the view's `.disabled` — same shape as the
+    // `.finished`/`isReplacing` guards right above it.
+    let board = scratchPasteboard()
+    defer { board.releaseGlobally() }
+    board.clearContents()
+    board.setString("буфер пользователя", forType: .string)
+
+    let trigger = RecordingTrigger(board: board)
+    let reader = ScriptedReader(["Hello."])
+    let (coordinator, _) = makeCoordinator(
+        reader: reader, replies: ["Привет."], pasteboard: board,
+        selectionWriter: SelectionWriter(triggerPaste: { trigger.fire() }, restoreDelay: 0),
+        frontmostBundleIdentifier: { "com.googlecode.iterm2" })
+    await coordinator.handlePress()
+    #expect(coordinator.panelModel.state == .finished)
+    #expect(coordinator.frontmostIsTerminal)
+
+    await coordinator.replaceInSource()
+
+    #expect(trigger.callCount == 0)
+    #expect(board.string(forType: .string) == "буфер пользователя")
 }

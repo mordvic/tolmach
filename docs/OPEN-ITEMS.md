@@ -236,6 +236,20 @@ so the wiring is pinned at `pressAction(for:)` and the rest is eyes-only.
 | **The inherited collision**, if you can reproduce it | Set перевод to ⌥⌘R, quit, delete the `proofreadHotkey` key (`defaults delete <domain> proofreadHotkey`), relaunch. Expected: перевод still works on ⌥⌘R, правка's shortcut does nothing, and «Основные» carries the orange row explaining why. This is the one state the recorder is written to prevent and cannot, so it is worth seeing once | `AppSettings.shortcutsCollide`, `HotkeyCoordinator.shouldRegister` |
 | A степень changed from the panel | Change it and watch two things: the правка re-runs on the same text, and «Основные» shows the new value afterwards. The setting is written deliberately (design §6) — if that ever reads as surprising, this is where the complaint will start | `HotkeyCoordinator.setProofreadingLevel` |
 
+**Owed by «Заменить» (issue #27).** Nothing in a test process can synthesize a real keystroke
+into another application, so every test here fakes the paste trigger — `SelectionWriter`'s and
+`HotkeyCoordinator.replaceInSource()`'s own tests pin the sequencing, not the landing.
+
+| What to check | Why it needs eyes | Code |
+|---|---|---|
+| **⌘⇧↩ or the «Заменить» button, in a real application, replacing the actual selection** | The feature, and the one thing no test here can see: whether the synthesized ⌘V actually lands in the frontmost application and pastes over the selection `SelectionReader` captured. Try a native app (TextEdit), a browser (Safari) and an Electron app (per the existing capture check in §1), since the read side's own «owed to a human» entries found real differences between them | `SelectionWriter.pasteKeystroke`, `HotkeyCoordinator.replaceInSource` |
+| **⌘⇧↩ not being swallowed by the panel's raw Return handling** | `TranslationPanel`'s content view intercepts a bare Return in `keyDown` for «⏎ copies and closes»; «Заменить»'s shortcut is declared through SwiftUI's `.keyboardShortcut`, which should route through `performKeyEquivalent` before that override ever sees it — reasoned, not observed | `PanelView`'s «Заменить» button, `TranslationPanel.keyDown` |
+| **A secure input field (a password field) focused when «Заменить» is pressed** | macOS blocks synthetic keystrokes into secure-input fields; the expected result is a silent no-op, the same as a user's own ⌘V there, but nothing here can focus one and check | `SelectionWriter.replace` |
+| **The «Скопировать» → «Заменить» sequence** — the actual behaviour, corrected here after `/code-review` caught the spec's own description as wrong | `SelectionWriter.replace` snapshots the pasteboard at the moment «Заменить» is pressed, whatever put that content there. `copyResult()` (behind «Скопировать») has no snapshot of its own — it overwrites the board outright — so pressing «Скопировать» then «Заменить» leaves the pasteboard holding **the translation** afterward, not whatever predated both actions as issue #27's Implementation Decisions originally claimed. Mechanically correct and arguably the more useful outcome (the user's last deliberate copy survives); what needs eyes is only whether it *reads* as expected rather than as a lost «Скопировать» | `SelectionWriter.replace`, `HotkeyCoordinator.replaceInSource` |
+| The clipboard-restore timing, per the spec's own Further Notes — **confirmed racing in Microsoft Teams, and confirmed fixed there** by a hand check | «Заменить» was pasting the *previous* clipboard content — a link — instead of the translation, because the restore ran before Teams' own (asynchronous, Electron) paste handling had read the board. Mitigated with a **fixed, unmeasured** 150 ms delay (`SelectionWriter.restoreDelay`) between the trigger and the restore, chosen rather than taken — there is no completion signal to poll for the way `SelectionReader`'s ⌘C fallback polls `changeCount`. A person has since reproduced the original bug in Teams and confirmed 150 ms fixes it there. Still open: whether 150 ms is enough in *other* slow, asynchronous editors, and whether it is unnecessarily long in fast native apps, where every ⌘V now carries a fixed 150 ms tax before the user's own clipboard is back | `SelectionWriter.replace`, `restoreDelay` |
+| **`TerminalBlocklist`'s refusal actually being seen in a real terminal (issue #29)** | The mechanism is unit-tested end to end (`frontmostIsTerminal`, the injected closure, the view's `.disabled`, `replaceInSource()`'s own gate), but nothing here can bring Terminal.app or iTerm2 to the front and watch the button grey out with its caption underneath. Press ⌥⌘T/⌥⌘R with one of them frontmost and confirm both: the button is disabled on the panel's *first* frame (no flash of it being briefly available), and the caption («не работает в терминале…») reads clearly rather than crowding the row | `TerminalBlocklist`, `HotkeyCoordinator.frontmostIsTerminal`, `PanelView`'s «Заменить» caption |
+| **Whether the blocklist's identifiers are still current** | Verified against each project's own packaging at the time this was written (Alacritty and WezTerm from their own repositories, the rest from published deployment catalogues) rather than assumed — but a bundle identifier can change across a major version the way any of these projects' own history shows, and nothing here re-checks it automatically. If «Заменить» is ever reported *not* refusing in one of the nine listed terminals, re-verify that terminal's current `Info.plist` first | `TerminalBlocklist.bundleIdentifiers` |
+
 **Owed by the settings/accessibility/CI wave.**
 
 | What to check | Why it needs eyes | Code |
@@ -287,6 +301,37 @@ nothing in this environment can see either.
   switch. Re-measure on the running bundle against `NSToolbar.visibleItems`;
   `Scripts/toolbar-fit.swift` models the pre-switch row and needs extending to include it.
   Until then, treat 700 as a carried-over guess rather than a re-confirmed floor.
+- **`PanelSizer.swift`'s whole button-row measurement table is stale as of issue #27's
+  «Заменить» button.** Re-measured in-process: a fresh short reply now opens at 367 pt wide
+  rather than clamping to `minWidth` (300) — pinned by
+  `TranslationPanelTests.swift`'s `theRealPanelViewIsMeasuredRatherThanEchoingTheProposal…`
+  and its two siblings. That single re-measurement is as far as this pass went. Still owed: the
+  `running` rows of the same table (that state's row now carries «Заменить», «Скопировать»,
+  «Открыть в окне» *and* «Отмена» together, a combination the table never measured), and
+  everything built on the table's old numbers — the scrolling-ceiling arithmetic and the
+  per-run width-change counts in the same comment, `docs/MEASUREMENTS.md`'s «347 → 370 → 6929»
+  line, and every other file citing 347 or 6929 for this row (`TranslationPanel.swift`,
+  `PanelView.swift`). None of that needs a screen — it is the same in-process
+  `PanelController.measure` probe already used for the number that was re-taken — so it is
+  listed here as work still to do, not as something only a human can settle.
+- **The panel's *drag* floor still lets a user go narrower than the button row needs, and
+  this is a real defect, not only a "look at it" item.** `PanelSizer.minWidth` (300) is what
+  `TranslationPanel.contentMinSize` hands AppKit as the hand-drag floor, and its own doc
+  comment already says what it is for: "below this a panel is narrower than its own button
+  row." That was true at 300 before issue #27; the row now needs 367 (the re-measurement two
+  bullets up), so a user who drags the panel to its floor today can reach a width 67 pt
+  narrower than «Заменить», «Скопировать», «Открыть в окне» and conditionally «Ещё вариант»
+  need — clipping or overlap, not merely a tight fit.
+  **Raising `minWidth` to 367 is not a one-line fix**, which is why it was not made alongside
+  the re-measurement above: `minHeight`'s own floor (currently 132) is derived from a
+  measurement table keyed at width 300 — specifically, a failure message wrapping to two
+  lines *at 300 pt* is what sets the height floor (see the table in `PanelSizer.swift`'s doc
+  comment on `minWidth`/`minHeight`). Widening the floor to 367 pt changes how that same text
+  wraps and could lower — or otherwise change — the height floor it currently produces, so
+  raising `minWidth` on its own, without redoing that measurement at the new width, would
+  silently invalidate a different "measured" claim to fix this one. Both need re-deriving
+  together, with the same in-process probe already used elsewhere in this list, before
+  `minWidth` changes.
 
 ---
 

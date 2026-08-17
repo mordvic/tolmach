@@ -514,6 +514,14 @@ struct TranslatorApp: App {
                 // Copying does not close. Enter is the shortcut that means «скопировать и
                 // закрыть» (spec 7.2); the button is for a user who wants to keep reading.
                 onCopy: { Task { await coordinator.copyResult() } },
+                // Hidden first, then replaced — the same ordering `panel.onEnter` uses for
+                // «copy and close», and for the same reason: `replaceInSource()` suspends
+                // while the write goes through `GeneralPasteboard`'s serialisation, and
+                // leaving the panel up for that suspension would make the close look laggy.
+                onReplace: {
+                    panel.hide()
+                    Task { await coordinator.replaceInSource() }
+                },
                 onOpenInWindow: { handOffToWindow() },
                 // The panel's own ⨯, which exists because dropping `.titled` from the style
                 // mask took the standard close button with it. Same two steps as Esc.
@@ -700,6 +708,8 @@ private struct PanelHost: View {
     /// does not exist.
     let fillsPanel: Bool
     let onCopy: () -> Void
+    /// «Заменить» — issue #27, threaded like every other callback here.
+    let onReplace: () -> Void
     let onOpenInWindow: () -> Void
     let onClose: () -> Void
     let onGrantPermission: () -> Void
@@ -730,6 +740,8 @@ private struct PanelHost: View {
                   awaitingRun: coordinator.isStartingRun,
                   adoptionRefusal: windowModel.adoptionRefusal(from: coordinator.panelModel),
                   onCopy: onCopy,
+                  onReplace: onReplace,
+                  frontmostIsTerminal: coordinator.frontmostIsTerminal,
                   onOpenInWindow: onOpenInWindow,
                   onRetry: { Task { await coordinator.retry() } },
                   onGrantPermission: onGrantPermission,

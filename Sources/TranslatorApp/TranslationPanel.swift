@@ -156,8 +156,33 @@ final class TranslationPanel: NSPanel {
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 36 || event.keyCode == 76 {   // Return, and the numeric pad's Enter
-            onEnter()
-            return
+            // ⌘⇧↩ is «Заменить»'s shortcut (issue #27), declared through SwiftUI's own
+            // `.keyboardShortcut`. While the button is disabled — the run has not settled —
+            // SwiftUI declines that equivalent and the key reaches here instead, same as bare
+            // Enter always has. Masked the same way `HotkeyCombo` masks a recorded
+            // combination, so the numeric-pad and caps-lock bits this event may also carry
+            // cannot turn a false match into a true one.
+            // Deliberately narrower than before this check existed: every modified Return
+            // used to reach `onEnter()` regardless of which modifiers it carried, because
+            // nothing here looked. That was never a documented shortcut — no spec names ⇧↩,
+            // ⌥↩ or bare ⌘↩ as meaning «copy and close» — it was just what an unguarded
+            // keyCode match did by accident. Only the two combinations this app actually
+            // declares are handled now; everything else on Return falls through to `super`
+            // and does nothing, matching how every other shortcut in this app is a single
+            // declared combination rather than a keycode matched loosely. Pinned by
+            // `commandShiftReturnIsSwallowedRatherThanMisreadAsPlainEnter` and
+            // `otherModifiedReturnsAreNoLongerMisreadAsPlainEnterEither`.
+            let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+            if modifiers == [.command, .shift] {
+                // Swallowed rather than falling through to plain Enter's «copy and close»:
+                // that cancels whatever is still running, which is the opposite of the no-op
+                // a disabled button's shortcut is supposed to be.
+                return
+            }
+            if modifiers.isEmpty {
+                onEnter()
+                return
+            }
         }
         super.keyDown(with: event)
     }

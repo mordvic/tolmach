@@ -299,8 +299,9 @@ private func isNear(_ frame: CGRect, _ expected: CGRect,
 
 // MARK: - Esc and Enter
 
-private func keyDown(_ keyCode: UInt16, _ characters: String) -> NSEvent {
-    NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+private func keyDown(_ keyCode: UInt16, _ characters: String,
+                     modifiers: NSEvent.ModifierFlags = []) -> NSEvent {
+    NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0,
                      windowNumber: 0, context: nil, characters: characters,
                      charactersIgnoringModifiers: characters, isARepeat: false,
                      keyCode: keyCode)!
@@ -345,6 +346,50 @@ private func keyDown(_ keyCode: UInt16, _ characters: String) -> NSEvent {
     controller.panel.sendEvent(keyDown(76, "\u{3}"))
     #expect(enters == 2)
     #expect(escapes == 0)
+}
+
+/// `/code-review`'s finding: while «Заменить» is disabled (the run has not settled), SwiftUI
+/// declines its ⌘⇧↩ equivalent and the key reaches `keyDown` the same way bare Return does —
+/// which used to treat *any* Return-family keycode as plain Enter regardless of modifiers,
+/// calling `onEnter` (cancel the run, copy the partial output, close). ⌘⇧↩ must be swallowed
+/// instead, not misread as the plain-Enter shortcut it is not.
+@MainActor
+@Test func commandShiftReturnIsSwallowedRatherThanMisreadAsPlainEnter() {
+    let controller = PanelController { _ in AnyView(Text("перевод")) }
+    var escapes = 0
+    var enters = 0
+    controller.onEscape = { escapes += 1 }
+    controller.onEnter = { enters += 1 }
+    controller.show(at: CGPoint(x: 300, y: 300))
+    defer { controller.hide() }
+
+    controller.panel.sendEvent(keyDown(36, "\r", modifiers: [.command, .shift]))
+    controller.panel.sendEvent(keyDown(76, "\u{3}", modifiers: [.command, .shift]))
+    #expect(enters == 0)
+    #expect(escapes == 0)
+
+    // Plain Enter still works afterward — the modifier check does not swallow it too.
+    controller.panel.sendEvent(keyDown(36, "\r"))
+    #expect(enters == 1)
+}
+
+/// `/code-review`'s follow-up finding on the fix above: adding the modifier check narrowed
+/// Return-handling for *every* combination, not just ⌘⇧↩ — before it existed, ⇧↩, ⌥↩ and bare
+/// ⌘↩ all reached `onEnter()` too, as a side effect of matching the keycode alone. None of
+/// those are a documented shortcut, so this pins the narrower behaviour as intentional rather
+/// than leaving it as an unrecorded side effect of the ⌘⇧↩ fix.
+@MainActor
+@Test func otherModifiedReturnsAreNoLongerMisreadAsPlainEnterEither() {
+    let controller = PanelController { _ in AnyView(Text("перевод")) }
+    var enters = 0
+    controller.onEnter = { enters += 1 }
+    controller.show(at: CGPoint(x: 300, y: 300))
+    defer { controller.hide() }
+
+    controller.panel.sendEvent(keyDown(36, "\r", modifiers: [.shift]))
+    controller.panel.sendEvent(keyDown(36, "\r", modifiers: [.option]))
+    controller.panel.sendEvent(keyDown(36, "\r", modifiers: [.command]))
+    #expect(enters == 0)
 }
 
 // MARK: - The panel sized to its content
@@ -539,8 +584,12 @@ private func realPanelContent(_ model: TranslationViewModel) -> (PanelContentVar
     #expect(short.panel.frame.height < long.panel.frame.height)
     #expect(short.panel.frame.width < long.panel.frame.width)
     // Named rather than merely relative, because "smaller than the other one" is also true of
-    // two panels that are both wrong. A one-word translation belongs at the floors.
-    #expect(short.panel.frame.width == PanelSizer.minWidth)
+    // two panels that are both wrong. A one-word translation used to belong at `minWidth`
+    // (300) exactly — that stopped being true once issue #27 added «Заменить» to the bottom
+    // action row: the row itself is now wider than the floor, so it is what a short reply's
+    // width is measured against instead of the content. Re-measured at 367 rather than left
+    // as `PanelSizer.minWidth`, which no longer describes what this scenario produces.
+    #expect(short.panel.frame.width == 367)
     #expect(short.panel.frame.height == PanelSizer.minHeight)
     short.hide()
     long.hide()
@@ -609,8 +658,11 @@ private func realPanelContent(_ model: TranslationViewModel) -> (PanelContentVar
     #expect(long.height > short.height)
     #expect(long.width > short.width)
     // Both named, because "the second is bigger" would also pass on a build that lagged one
-    // press behind in a way that happened to grow.
-    #expect(short == CGSize(width: PanelSizer.minWidth, height: PanelSizer.minHeight))
+    // press behind in a way that happened to grow. `short`'s width used to be `minWidth`
+    // (300) exactly; issue #27's «Заменить» button widened the bottom action row past that
+    // floor, to 367 — see the comment on the same number in
+    // `aReusedControllerMeasuresThePressItIsShowingNotThePreviousOne`'s sibling test above.
+    #expect(short == CGSize(width: 367, height: PanelSizer.minHeight))
     #expect(long.width == PanelSizer.maxWidth)
 
     // And back down again, four more times. Shrinking is the direction `PanelSizer`'s monotonic
@@ -641,8 +693,9 @@ private func realPanelContent(_ model: TranslationViewModel) -> (PanelContentVar
 /// The control below is the assertion that matters: the same content assigned *before* the
 /// show is the size this press deserves, and for this long reply the two agree — both land at
 /// `maxWidth`. That does not generalize to every length: the same comparison with a short
-/// reply has `afterRun` stuck at the button-row width the run started from (347 × 120)
-/// against a deserved 300 × 120, and with a medium reply `afterRun` settles at 560 × 134
+/// reply has `afterRun` stuck at the button-row width the run started from (367 × 120 as of
+/// issue #27's «Заменить» button — was 347 × 120 before it widened the row) against a
+/// deserved 300 × 120, and with a medium reply `afterRun` settles at 560 × 134
 /// against a deserved 560 × 120 — the width only grows and the height only grows within a
 /// run, so a reply that never needed the room it grew through disagrees with what a fresh
 /// `show(at:)` would give it. Long text is the one case where growth and deserved size land
@@ -676,7 +729,9 @@ private func realPanelContent(_ model: TranslationViewModel) -> (PanelContentVar
     control.hide()
 
     // Nothing to measure at the show — this is the state the defect froze a width against.
-    #expect(atShow.width == PanelSizer.minWidth)
+    // Was `PanelSizer.minWidth` (300) before issue #27's «Заменить» button widened the
+    // bottom action row past that floor.
+    #expect(atShow.width == 367)
     // The width catches up with the reply instead of having been decided before it existed.
     #expect(afterRun.width > atShow.width)
     #expect(afterRun == deserved)

@@ -337,6 +337,18 @@ private func makeFinishedOutcome(detected: Language?) -> TranslationOutcome {
             == "Перевод прерван, показана пришедшая часть")
 }
 
+// MARK: - «Заменить» — issue #27
+
+/// Not a check that the rendered button actually carries this shortcut — this project has no
+/// view-inspection dependency to ask a `Button` what its `.keyboardShortcut(...)` is, and
+/// `docs/OPEN-ITEMS.md` owes that to a human. What this pins is the value itself: a change to
+/// the combination (or a copy-paste onto the wrong `KeyEquivalent`) fails here rather than
+/// only ever being caught by eye.
+@MainActor @Test func theReplaceShortcutIsCommandShiftReturn() {
+    #expect(PanelView.replaceShortcut.key == .return)
+    #expect(PanelView.replaceShortcut.modifiers == [.command, .shift])
+}
+
 // MARK: - Степень and стиль
 
 /// Which controls appear is a decision, and a decision inside a `ViewBuilder` can only be

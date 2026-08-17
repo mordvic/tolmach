@@ -786,6 +786,19 @@ private func waitForSheet(_ model: TranslationViewModel,
     #expect(model.offersAnotherVariant)
 }
 
+@MainActor @Test func offersReplaceOnlyOnceTheRunHasSettled() async {
+    // The seam `PanelView`'s «Заменить» button (issue #27) reads its `.disabled` rule from,
+    // the same way `offersAnotherVariant` above is the seam its own button reads from — not
+    // re-derived inline in the view, where only a rendered button could pin it.
+    let (model, _) = makeModel(responses: ["Привет."])
+    model.sourceText = "Hello."
+    // Nothing to replace with yet: idle, no text.
+    #expect(!model.offersReplace)
+    await model.run()
+    #expect(model.state == .finished)
+    #expect(model.offersReplace)
+}
+
 @MainActor @Test func adoptMovesTheResolvedOperationWithTheRun() async {
     let (panel, _) = makeModel(responses: ["Исправлено."])
     panel.sourceText = "Превет."
