@@ -992,3 +992,34 @@ private func makePressedCoordinator(responses: [String]) async -> PressHarness {
     await first.value
     #expect(trigger.callCount == 1)
 }
+
+@MainActor
+@Test func aPressArrivingWhileAReplaceIsInFlightIsDropped() async {
+    // `/code-review`'s finding: `handlePress` used to guard on `isCapturing` and `state !=
+    // .running` only, so a press landing during a «Заменить» in flight — the window between
+    // the trigger and the restore — could hide the panel and read a new selection right as
+    // the synthetic ⌘V was still meant to land on the original target. `isReplacing` closes
+    // that window the same way `isCapturing` already closes its own.
+    let board = scratchPasteboard()
+    defer { board.releaseGlobally() }
+    let trigger = RecordingTrigger(board: board, delay: 0.2)
+    let reader = ScriptedReader(["Hello.", "Второй."])
+    let (coordinator, _) = makeCoordinator(
+        reader: reader, replies: ["Привет.", "Два."], pasteboard: board,
+        selectionWriter: SelectionWriter(triggerPaste: { trigger.fire() }, restoreDelay: 0))
+    await coordinator.handlePress()
+    #expect(coordinator.panelModel.state == .finished)
+
+    let replace = Task { await coordinator.replaceInSource() }
+    await waitUntil { trigger.entered }
+
+    var captured = false
+    await coordinator.handlePress(afterCapture: { captured = true })
+    // Dropped: the reader was not asked again, and the panel's text is still the first press's.
+    #expect(!captured)
+    #expect(reader.callCount == 1)
+    #expect(coordinator.panelModel.translatedText == "Привет.")
+
+    await replace.value
+    #expect(trigger.callCount == 1)
+}

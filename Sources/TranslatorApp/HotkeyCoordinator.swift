@@ -345,12 +345,16 @@ final class HotkeyCoordinator {
     func handlePress(operation: TextOperation = .translate,
                      willCapture: @MainActor () -> Void = {},
                      afterCapture: @MainActor () -> Void = {}) async {
-        // Two conditions, because they cover different windows. `isCapturing` covers the
+        // Three conditions, because they cover different windows. `isCapturing` covers the
         // whole of a press including the read; `state != .running` covers a translation
         // started by something that is not a press — «Повторить» on the panel — which would
         // otherwise have its source swapped out from under it and leave the panel showing
-        // one text's translation above another's.
-        guard !isCapturing, panelModel.state != .running else { return }
+        // one text's translation above another's. `isReplacing` covers the window «Заменить»
+        // (issue #27) opens between its trigger and its restore: `willCapture()` below hides
+        // the current panel and `afterCapture()` shows a new one, and either taking key status
+        // away mid-write would let the in-flight synthetic ⌘V land on whatever the new press
+        // just brought to the front instead of the application «Заменить» was writing into.
+        guard !isCapturing, !isReplacing, panelModel.state != .running else { return }
         isCapturing = true
         defer { isCapturing = false }
         // Inside the guard, so a press that is dropped does not take the panel away from a

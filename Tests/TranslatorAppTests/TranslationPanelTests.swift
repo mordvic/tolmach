@@ -299,8 +299,9 @@ private func isNear(_ frame: CGRect, _ expected: CGRect,
 
 // MARK: - Esc and Enter
 
-private func keyDown(_ keyCode: UInt16, _ characters: String) -> NSEvent {
-    NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+private func keyDown(_ keyCode: UInt16, _ characters: String,
+                     modifiers: NSEvent.ModifierFlags = []) -> NSEvent {
+    NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0,
                      windowNumber: 0, context: nil, characters: characters,
                      charactersIgnoringModifiers: characters, isARepeat: false,
                      keyCode: keyCode)!
@@ -345,6 +346,31 @@ private func keyDown(_ keyCode: UInt16, _ characters: String) -> NSEvent {
     controller.panel.sendEvent(keyDown(76, "\u{3}"))
     #expect(enters == 2)
     #expect(escapes == 0)
+}
+
+/// `/code-review`'s finding: while «Заменить» is disabled (the run has not settled), SwiftUI
+/// declines its ⌘⇧↩ equivalent and the key reaches `keyDown` the same way bare Return does —
+/// which used to treat *any* Return-family keycode as plain Enter regardless of modifiers,
+/// calling `onEnter` (cancel the run, copy the partial output, close). ⌘⇧↩ must be swallowed
+/// instead, not misread as the plain-Enter shortcut it is not.
+@MainActor
+@Test func commandShiftReturnIsSwallowedRatherThanMisreadAsPlainEnter() {
+    let controller = PanelController { _ in AnyView(Text("перевод")) }
+    var escapes = 0
+    var enters = 0
+    controller.onEscape = { escapes += 1 }
+    controller.onEnter = { enters += 1 }
+    controller.show(at: CGPoint(x: 300, y: 300))
+    defer { controller.hide() }
+
+    controller.panel.sendEvent(keyDown(36, "\r", modifiers: [.command, .shift]))
+    controller.panel.sendEvent(keyDown(76, "\u{3}", modifiers: [.command, .shift]))
+    #expect(enters == 0)
+    #expect(escapes == 0)
+
+    // Plain Enter still works afterward — the modifier check does not swallow it too.
+    controller.panel.sendEvent(keyDown(36, "\r"))
+    #expect(enters == 1)
 }
 
 // MARK: - The panel sized to its content
