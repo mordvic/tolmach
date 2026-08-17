@@ -99,7 +99,8 @@ private func makeCoordinator(reader: ScriptedReader,
                              delayPerToken: Duration = .zero,
                              settings: AppSettings? = nil,
                              pasteboard: NSPasteboard? = nil,
-                             selectionWriter: SelectionWriter? = nil)
+                             selectionWriter: SelectionWriter? = nil,
+                             frontmostBundleIdentifier: (@Sendable () -> String?)? = nil)
     -> (HotkeyCoordinator, ScriptedClient) {
     let glossary = GlossaryStore(url: FileManager.default.temporaryDirectory
         .appendingPathComponent("hk-\(UUID().uuidString).json"))
@@ -117,7 +118,11 @@ private func makeCoordinator(reader: ScriptedReader,
         // synthesize a keystroke wherever the machine running the suite happens to have
         // focus. `replaceInSource`'s own tests inject a recording trigger where they need to
         // observe the sequence.
-        selectionWriter: selectionWriter ?? SelectionWriter(triggerPaste: {}, restoreDelay: 0))
+        selectionWriter: selectionWriter ?? SelectionWriter(triggerPaste: {}, restoreDelay: 0),
+        // Never the real `NSWorkspace` call by default — a test process's own frontmost
+        // application is not something these tests are about, and never a terminal, so
+        // `frontmostIsTerminal`-gated tests inject their own closure where they need to.
+        frontmostBundleIdentifier: frontmostBundleIdentifier ?? { nil })
     return (coordinator, client)
 }
 
@@ -1022,4 +1027,46 @@ private func makePressedCoordinator(responses: [String]) async -> PressHarness {
 
     await replace.value
     #expect(trigger.callCount == 1)
+}
+
+// MARK: - «Заменить» refuses a terminal — issue #29
+
+@MainActor
+@Test func frontmostIsTerminalReflectsTheInjectedClosure() {
+    let reader = ScriptedReader([nil])
+    let (terminal, _) = makeCoordinator(
+        reader: reader, frontmostBundleIdentifier: { "com.apple.Terminal" })
+    #expect(terminal.frontmostIsTerminal)
+
+    let (ordinary, _) = makeCoordinator(
+        reader: ScriptedReader([nil]), frontmostBundleIdentifier: { "com.apple.Safari" })
+    #expect(!ordinary.frontmostIsTerminal)
+
+    let (unknown, _) = makeCoordinator(reader: ScriptedReader([nil]))   // default: nil
+    #expect(!unknown.frontmostIsTerminal)
+}
+
+@MainActor
+@Test func replaceInSourceRefusesToWriteIntoATerminalEvenWhenFinished() async {
+    // The authoritative gate, not merely the view's `.disabled` — same shape as the
+    // `.finished`/`isReplacing` guards right above it.
+    let board = scratchPasteboard()
+    defer { board.releaseGlobally() }
+    board.clearContents()
+    board.setString("буфер пользователя", forType: .string)
+
+    let trigger = RecordingTrigger(board: board)
+    let reader = ScriptedReader(["Hello."])
+    let (coordinator, _) = makeCoordinator(
+        reader: reader, replies: ["Привет."], pasteboard: board,
+        selectionWriter: SelectionWriter(triggerPaste: { trigger.fire() }, restoreDelay: 0),
+        frontmostBundleIdentifier: { "com.googlecode.iterm2" })
+    await coordinator.handlePress()
+    #expect(coordinator.panelModel.state == .finished)
+    #expect(coordinator.frontmostIsTerminal)
+
+    await coordinator.replaceInSource()
+
+    #expect(trigger.callCount == 0)
+    #expect(board.string(forType: .string) == "буфер пользователя")
 }

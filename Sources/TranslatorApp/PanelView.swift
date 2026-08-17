@@ -93,6 +93,11 @@ struct PanelView: View {
     /// the moment the first token lands so an interrupted run's partial output is not stranded,
     /// «Заменить» must never write a half-streamed answer into another application.
     var onReplace: () -> Void = {}
+    /// Whether the application in front of the panel right now is a known terminal emulator —
+    /// issue #29. Asked, not re-derived here, for the same reason `adoptionRefusal` is: the
+    /// decision (`TerminalBlocklist`) lives with `HotkeyCoordinator`, which is what
+    /// `replaceInSource()` re-checks it against too.
+    var frontmostIsTerminal = false
     var onOpenInWindow: () -> Void = {}
     var onRetry: () -> Void = {}
     var onGrantPermission: () -> Void = {}
@@ -639,7 +644,7 @@ struct PanelView: View {
                 Button("Заменить", action: onReplace)
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(Self.replaceShortcut)
-                    .disabled(!model.offersReplace)
+                    .disabled(!model.offersReplace || frontmostIsTerminal)
                 // Enabled the moment the first token lands, not only at the end: a run the
                 // user interrupts leaves partial output that spec 8 says must be kept, and
                 // keeping it while refusing to copy it would be pointless.
@@ -670,6 +675,15 @@ struct PanelView: View {
             // reason is on screen, and not fine when it is in another window.
             if adoptionRefusal == .targetBusy {
                 Text("Окно занято своим переводом — дождитесь его окончания.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            // «Заменить» — issue #29. A terminal has no editable selection to replace, and a
+            // multi-line result can, depending on the shell and session, be read as a
+            // sequence of Enter-terminated commands rather than as inert text — the reason
+            // this refusal has no override, unlike `targetBusy` above which is just a wait.
+            if frontmostIsTerminal {
+                Text("«Заменить» не работает в терминале — там нет выделения для замены.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }

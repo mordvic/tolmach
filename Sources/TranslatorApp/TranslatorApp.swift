@@ -741,6 +741,7 @@ private struct PanelHost: View {
                   adoptionRefusal: windowModel.adoptionRefusal(from: coordinator.panelModel),
                   onCopy: onCopy,
                   onReplace: onReplace,
+                  frontmostIsTerminal: coordinator.frontmostIsTerminal,
                   onOpenInWindow: onOpenInWindow,
                   onRetry: { Task { await coordinator.retry() } },
                   onGrantPermission: onGrantPermission,

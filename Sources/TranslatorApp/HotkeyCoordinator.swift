@@ -41,6 +41,10 @@ final class HotkeyCoordinator {
     /// assert the write → trigger → restore sequence without a real synthesized ⌘V landing
     /// wherever the test process's focus happens to be.
     private let selectionWriter: SelectionWriter
+    /// What `frontmostIsTerminal` reads — issue #29. Injected the same way `selectionWriter`
+    /// is: a test needs to assert the refusal without a real `NSWorkspace` call answering
+    /// whatever the test process's actual frontmost application happens to be.
+    private let frontmostBundleIdentifier: @Sendable () -> String?
 
     /// Kept so a re-registration after a settings change can reinstall the same action.
     /// Without it, `refreshRegistration()` would have nothing to hand `HotkeyManager` and the
@@ -83,10 +87,13 @@ final class HotkeyCoordinator {
          selectionReader: SelectionReader = SelectionReader(),
          managers: [TextOperation: HotkeyManager]? = nil,
          pasteboard: NSPasteboard = .general,
-         selectionWriter: SelectionWriter = SelectionWriter()) {
+         selectionWriter: SelectionWriter = SelectionWriter(),
+         frontmostBundleIdentifier: @escaping @Sendable () -> String?
+            = { NSWorkspace.shared.frontmostApplication?.bundleIdentifier }) {
         self.settings = settings
         self.selectionReader = selectionReader
         self.selectionWriter = selectionWriter
+        self.frontmostBundleIdentifier = frontmostBundleIdentifier
         // Optional rather than a default argument: a default argument is evaluated in a
         // nonisolated context, and `HotkeyManager` is `@MainActor`, so the obvious spelling
         // does not compile («call to main actor-isolated initializer in a synchronous
@@ -546,6 +553,15 @@ final class HotkeyCoordinator {
         await GeneralPasteboard.write(panelModel.translatedText, to: pasteboard)
     }
 
+    /// Whether the application in front of the panel right now is a known terminal emulator —
+    /// issue #29. Computed fresh on every call, the same way
+    /// `TranslationViewModel.adoptionRefusal(from:)` is: `PanelView` reads this live in `body`
+    /// to disable «Заменить» proactively, and `replaceInSource()` below checks it again as the
+    /// authoritative gate. Always the *current* frontmost application, never the one the
+    /// selection was originally captured from — a different question from the staleness check
+    /// issue #27 already declined answering.
+    var frontmostIsTerminal: Bool { TerminalBlocklist.isBlocked(frontmostBundleIdentifier()) }
+
     /// «Заменить» — issue #27. Writes the panel's finished result back into whatever
     /// application currently has focus, replacing the selection this press originally
     /// captured, and closes the panel — the caller (`TranslatorApp.configurePanel()`) hides it
@@ -554,9 +570,11 @@ final class HotkeyCoordinator {
     /// Gated on `.finished` rather than merely non-empty text: the button that calls this is
     /// disabled until the run has fully settled (spec: never replace with a half-streamed
     /// answer), and this is the same gate enforced again here so a call reaching this method by
-    /// any other path — a future shortcut, a test — cannot bypass it either.
+    /// any other path — a future shortcut, a test — cannot bypass it either. `frontmostIsTerminal`
+    /// (issue #29) is re-checked for the same reason: the view's own `.disabled` is not the
+    /// only thing standing between a press and a terminal.
     func replaceInSource() async {
-        guard !isReplacing, panelModel.state == .finished else { return }
+        guard !isReplacing, panelModel.state == .finished, !frontmostIsTerminal else { return }
         isReplacing = true
         defer { isReplacing = false }
         await selectionWriter.replace(panelModel.translatedText, on: pasteboard)
