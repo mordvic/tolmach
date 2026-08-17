@@ -46,7 +46,7 @@ Then, in order:
 The app lives in the menu bar — no Dock icon, and no window until you ask for one.
 
 Full detail, including what to check when something misbehaves:
-[`docs/RUNBOOK.md`](docs/RUNBOOK.md).
+[`docs/reference/RUNBOOK.md`](docs/reference/RUNBOOK.md).
 
 ---
 
@@ -70,12 +70,12 @@ Full detail, including what to check when something misbehaves:
 | Document | Read it when |
 |---|---|
 | [`CLAUDE.md`](CLAUDE.md) | You are about to change anything. Commands, architecture, and the facts that bite. |
-| [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | Building, signing, permissions, running the acceptance harness. |
-| [`docs/OPEN-ITEMS.md`](docs/OPEN-ITEMS.md) | You want to know what is unfinished, what is deliberate, and what is still an open question. |
-| [`docs/PLATFORM-TRAPS.md`](docs/PLATFORM-TRAPS.md) | You are writing a new call into `NSPasteboard`, Accessibility, Carbon or `NSPanel`. |
-| [`docs/TESTING.md`](docs/TESTING.md) | You are writing a test. Especially then. |
-| [`docs/MEASUREMENTS.md`](docs/MEASUREMENTS.md) | You want to know where a number came from. |
-| [`docs/BASELINE.md`](docs/BASELINE.md) | You ran the acceptance harness and want to know whether the result is normal. |
+| [`docs/reference/RUNBOOK.md`](docs/reference/RUNBOOK.md) | Building, signing, permissions, running the acceptance harness. |
+| [`docs/reference/OPEN-ITEMS.md`](docs/reference/OPEN-ITEMS.md) | You want to know what is unfinished, what is deliberate, and what is still an open question. |
+| [`docs/reference/PLATFORM-TRAPS.md`](docs/reference/PLATFORM-TRAPS.md) | You are writing a new call into `NSPasteboard`, Accessibility, Carbon or `NSPanel`. |
+| [`docs/reference/TESTING.md`](docs/reference/TESTING.md) | You are writing a test. Especially then. |
+| [`docs/reference/MEASUREMENTS.md`](docs/reference/MEASUREMENTS.md) | You want to know where a number came from. |
+| [`docs/reference/BASELINE.md`](docs/reference/BASELINE.md) | You ran the acceptance harness and want to know whether the result is normal. |
 | [`docs/adr/`](docs/adr/) | The code looks inconsistent and you want to know whether it is deliberate. |
 | [`docs/design/specs/`](docs/design/specs/) | You are changing engine behaviour. Note its status header: where it and the code disagree, the code is right. |
 | [`docs/history/`](docs/history/) | You want the account of how it was built, and what was tried and rejected. |

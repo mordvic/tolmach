@@ -31,7 +31,7 @@ Spec §8.3. A Carbon hot key takes its combination from every application on the
 
 **Files:**
 - Create: `Scripts/hotkey-availability.swift`
-- Modify: `docs/MEASUREMENTS.md`
+- Modify: `docs/reference/MEASUREMENTS.md`
 
 **Interfaces:**
 - Consumes: nothing.
@@ -124,7 +124,7 @@ If it reports a collision, run it again for candidates in this order and take th
 
 - [ ] **Step 3: Record the measurement**
 
-Add to `docs/MEASUREMENTS.md`, in the shape its neighbours use (what was measured, when, with what, and the number):
+Add to `docs/reference/MEASUREMENTS.md`, in the shape its neighbours use (what was measured, when, with what, and the number):
 
 ```markdown
 ### The правка shortcut's factory combination (2026-08-15)
@@ -140,7 +140,7 @@ Replace the combination and the numbers with what the probe actually printed. **
 - [ ] **Step 4: Commit**
 
 ```bash
-git add Scripts/hotkey-availability.swift docs/MEASUREMENTS.md
+git add Scripts/hotkey-availability.swift docs/reference/MEASUREMENTS.md
 git commit -m "test(app): probe whether the правка shortcut's combination is free"
 ```
 
@@ -234,7 +234,7 @@ In `Sources/TextCapture/HotkeyCombo.swift`, directly under `static let default`:
     /// ⌥⌘R because a Carbon hot key takes its combination from every application on the
     /// machine, and this one was measured free: `Scripts/hotkey-availability.swift` reports
     /// `RegisterEventHotKey` accepting it and no enabled entry in
-    /// `com.apple.symbolichotkeys` holding it (2026-08-15, docs/MEASUREMENTS.md).
+    /// `com.apple.symbolichotkeys` holding it (2026-08-15, docs/reference/MEASUREMENTS.md).
     public static let proofreadDefault = HotkeyCombo(
         keyCode: UInt16(kVK_ANSI_R),
         modifiers: NSEvent.ModifierFlags([.option, .command]).rawValue)
@@ -1131,7 +1131,7 @@ Spec §8.1. The panel's width is clamped to 300–560 pt and **frozen for a whol
 
 **Files:**
 - Create: `Scripts/panel-proofread-row.swift`
-- Modify: `docs/MEASUREMENTS.md`, and `Sources/TranslatorApp/PanelView.swift` only if the row does not fit
+- Modify: `docs/reference/MEASUREMENTS.md`, and `Sources/TranslatorApp/PanelView.swift` only if the row does not fit
 
 **Interfaces:**
 - Consumes: the row built in Task 5.
@@ -1239,11 +1239,11 @@ If it does **not** fit, apply the first of these that brings it under 272 and re
 
 The chosen style is then invisible until the menu is opened, which is a real loss for a value that now persists between presses — say so in the measurement note rather than letting the next reader discover it.
 
-Do **not** raise `PanelSizer`'s 300 pt floor. That number is measured (`docs/OPEN-ITEMS.md` carries what it buys) and this row is not a reason to move it.
+Do **not** raise `PanelSizer`'s 300 pt floor. That number is measured (`docs/reference/OPEN-ITEMS.md` carries what it buys) and this row is not a reason to move it.
 
 - [ ] **Step 4: Record the measurement**
 
-Add to `docs/MEASUREMENTS.md`:
+Add to `docs/reference/MEASUREMENTS.md`:
 
 ```markdown
 ### The panel's степень/стиль row at the width floor (2026-08-15)
@@ -1259,7 +1259,7 @@ Replace `N` with what the probe printed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Scripts/panel-proofread-row.swift docs/MEASUREMENTS.md Sources/TranslatorApp/PanelView.swift
+git add Scripts/panel-proofread-row.swift docs/reference/MEASUREMENTS.md Sources/TranslatorApp/PanelView.swift
 git commit -m "test(app): measure the правка row against the panel's width floor"
 ```
 
@@ -1271,7 +1271,7 @@ Spec §5's label change and §11's list. Nothing here changes behaviour; all of 
 
 **Files:**
 - Modify: `Sources/TranslatorApp/SettingsGeneralView.swift:156`
-- Modify: `CLAUDE.md`, `CONTEXT.md`, `docs/OPEN-ITEMS.md`, `docs/design/specs/2026-08-10-proofreading-design.md`
+- Modify: `CLAUDE.md`, `CONTEXT.md`, `docs/reference/OPEN-ITEMS.md`, `docs/design/specs/2026-08-10-proofreading-design.md`
 
 - [ ] **Step 1: Fix the autoCopy label**
 
@@ -1319,7 +1319,7 @@ At the top of §8 of `docs/design/specs/2026-08-10-proofreading-design.md`:
 > section still holds.
 ```
 
-- [ ] **Step 4: Add the manual checks to docs/OPEN-ITEMS.md**
+- [ ] **Step 4: Add the manual checks to docs/reference/OPEN-ITEMS.md**
 
 In the table of checks owed to a human:
 
@@ -1340,7 +1340,7 @@ Expected: `0` and a green suite.
 
 ```bash
 git add Sources/TranslatorApp/SettingsGeneralView.swift CLAUDE.md CONTEXT.md \
-        docs/OPEN-ITEMS.md docs/design/specs/2026-08-10-proofreading-design.md
+        docs/reference/OPEN-ITEMS.md docs/design/specs/2026-08-10-proofreading-design.md
 git commit -m "docs(app): record the second shortcut and what only a human can check"
 ```
 

@@ -213,7 +213,7 @@ the band, exactly as the titled one did. What did **not** reproduce on that re-m
 the original evidence — a frame at x = 19 coming back at x = 221, AppKit reserving the Stage
 Manager strip — which is consistent with the original note saying it was taken on a development
 machine with Stage Manager on. Both figures are kept: the first is why the override exists now,
-the second is why it was written. See `docs/MEASUREMENTS.md` for where each observation lives.
+the second is why it was written. See `docs/reference/MEASUREMENTS.md` for where each observation lives.
 → `Sources/TranslatorApp/TranslationPanel.swift`
 
 **`NSApp.activate(ignoringOtherApps:)` does not activate on macOS 14.** The window comes front
@@ -277,7 +277,7 @@ is materially lighter on macOS 15 than on macOS 26 — measured through a contra
 3.51 locally and 2.70 on CI for the same fill. A colour decision measured against it on one
 machine is not portable; state the grounds a design was chosen against as literals, the way
 `StatusColourTests` does, and record what the real surface does per release.
-→ `PrimaryButtonColourTests`, `docs/OPEN-ITEMS.md`
+→ `PrimaryButtonColourTests`, `docs/reference/OPEN-ITEMS.md`
 
 **`contentMinSize` binds the user, not you.** It is what makes a drag stop at a floor, and it
 does nothing to a programmatic frame — measured: `setContentSize(NSSize(width: 10, height: 10))`

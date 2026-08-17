@@ -1595,7 +1595,7 @@ import Foundation
 /// `~/Documents`, `~/Desktop` and `~/Downloads`, and a drag grants the right to *read*
 /// what was dragged, not to place a sibling beside it. Whether the first write prompts,
 /// succeeds, or fails is recorded as an open probe in the spec's §9.1 and in
-/// `docs/OPEN-ITEMS.md`.
+/// `docs/reference/OPEN-ITEMS.md`.
 ///
 /// So this returns a problem instead of throwing, and the caller's recovery is a save
 /// panel rather than a message: `NSSavePanel` confers the write right itself, which
@@ -1772,7 +1772,7 @@ struct PaneHeader<Action: View>: View {
     ///
     /// The number is not measured — nothing here can see a screen. It is the smallest
     /// value that fits a `.small` segmented control with the padding this row already
-    /// had, and `docs/OPEN-ITEMS.md` carries it as owed to a pair of eyes.
+    /// had, and `docs/reference/OPEN-ITEMS.md` carries it as owed to a pair of eyes.
     static var height: CGFloat { 28 }
 
     var body: some View {
@@ -2570,7 +2570,7 @@ worse than one that says it is not ready."
 The repo treats documentation drift as a build failure (`Tests/DocumentationTests`). This task is not optional and not last-minute.
 
 **Files:**
-- Modify: `CLAUDE.md`, `CONTEXT.md`, `docs/OPEN-ITEMS.md`
+- Modify: `CLAUDE.md`, `CONTEXT.md`, `docs/reference/OPEN-ITEMS.md`
 - Modify: `docs/design/specs/2026-07-24-local-translator-design.md` (§12)
 - Test: `Tests/DocumentationTests/ArchitectureDriftTests.swift`
 
@@ -2591,7 +2591,7 @@ Expected: it may already be failing — read what it checks before editing anyth
 
 Add «задание», «очередь» and «Файлы» to the vocabulary with their _Avoid_ lists, per spec §1. Update the line that says batch translation is not built.
 
-- [ ] **Step 4: `docs/OPEN-ITEMS.md` §1**
+- [ ] **Step 4: `docs/reference/OPEN-ITEMS.md` §1**
 
 Add the table from spec §11, verbatim, as a new «Owed by the file queue» block. Add the TCC probe (§9.1) to §2 with whatever the bundle runs in Task 11 Step 6 and Task 13 Step 6 actually established — **and nothing they did not**. `PaneHeader.height`'s 28 pt goes here too: it is a chosen number, not a measured one, and it decides whether the two panes read as one row.
 

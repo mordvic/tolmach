@@ -91,7 +91,7 @@ Two mandatory rules, derived empirically:
 > the model it was verified on. It is a fact about that model, not about Ollama. What is
 > protocol-wide, and was not known when this section was written, is the opposite direction:
 > `think: true` or a level sent to a model without the `thinking` capability is HTTP 400. The
-> table is in `docs/PLATFORM-TRAPS.md`; §11's item 8 inherits the same correction.
+> table is in `docs/reference/PLATFORM-TRAPS.md`; §11's item 8 inherits the same correction.
 
 Ollama reports durations in nanoseconds — the client converts them to milliseconds at the
 boundary.
@@ -637,7 +637,7 @@ deliberately limited to one round, to avoid tuning the wording to a single model
 The правка calibration (2026-08-10) measured the same phenomenon in a stronger form: under
 «только ошибки», the model corrected seeded typos INSIDE inline code and fenced blocks on 4/4
 code-bearing corpus texts, in one case overriding an explicit in-band «# do not fix this
-string» comment. See `docs/OPEN-ITEMS.md`'s «5. Правка prompt calibration» section for the
+string» comment. See `docs/reference/OPEN-ITEMS.md`'s «5. Правка prompt calibration» section for the
 per-text counts.
 
 **Closed by construction, 2026-08-10 (code-protection-and-styles pass).** Fenced blocks are
@@ -646,7 +646,7 @@ from source bytes with no model call, on both the translation and the правк
 inline spans are restored from source bytes under an equal-count gate rather than trusted to
 survive the model's reply. The limitation above survives only for a reply that changes the
 number of inline spans, which the skeleton diff already reports; on the translation route it
-also survives as the accepted blockquote-drop known limitation recorded in `docs/BASELINE.md`'s
+also survives as the accepted blockquote-drop known limitation recorded in `docs/reference/BASELINE.md`'s
 2026-08-10 entries.
 
 **Hard line breaks are lost in chunking.** `Chunker` trims trailing whitespace on the last line of

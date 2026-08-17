@@ -113,13 +113,13 @@ Reverting the fix — putting the `ScrollView` back around the whole content —
 full suite run: **346 tests, zero failures.** That is not a gap in the tests, it is the shape of
 the defect. Scrolling everything and scrolling the middle produce the same *sizing*, because the
 measured variant is flat either way; what differs is only which rows are on screen when the user
-scrolls, and no test in this environment can see a row's position. The `docs/OPEN-ITEMS.md` §1
+scrolls, and no test in this environment can see a row's position. The `docs/reference/OPEN-ITEMS.md` §1
 row added by this change is the only thing standing guard over it.
 
 **Not testable here, and must be recorded rather than claimed:**
 
 - That the chrome is actually visible while the middle scrolls. No GUI automation exists in this
-  environment. Add a row to `docs/OPEN-ITEMS.md` §1 naming what a human should look for: a
+  environment. Add a row to `docs/reference/OPEN-ITEMS.md` §1 naming what a human should look for: a
   translation long enough to scroll, then the ⨯ and both buttons still on screen, and «Отмена»
   still reachable while it streams.
 

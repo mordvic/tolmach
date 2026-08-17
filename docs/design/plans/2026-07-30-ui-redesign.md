@@ -1076,7 +1076,7 @@ Run: `swift test` → 312 tests passing.
 open build/LocalTranslator.app
 ```
 
-Then, with Ollama running, select a one-word phrase in another app and press ⌥⌘T; then a long paragraph. Record in the commit message what was actually seen: the two panel sizes, whether Esc closed it, whether Enter copied and closed, and whether the corner nearest the pointer stayed put while text streamed. **If you cannot run this, say so in the commit message and leave the checks in `docs/OPEN-ITEMS.md` for Task 14 rather than claiming them.**
+Then, with Ollama running, select a one-word phrase in another app and press ⌥⌘T; then a long paragraph. Record in the commit message what was actually seen: the two panel sizes, whether Esc closed it, whether Enter copied and closed, and whether the corner nearest the pointer stayed put while text streamed. **If you cannot run this, say so in the commit message and leave the checks in `docs/reference/OPEN-ITEMS.md` for Task 14 rather than claiming them.**
 
 - [ ] **Step 9: Commit**
 
@@ -2678,14 +2678,14 @@ git commit -m "feat(app): let the menu bar icon say whether Ollama is answering"
 ## Task 14: The documentation the change owes
 
 **Files:**
-- Modify: `docs/OPEN-ITEMS.md`
-- Modify: `docs/PLATFORM-TRAPS.md`
+- Modify: `docs/reference/OPEN-ITEMS.md`
+- Modify: `docs/reference/PLATFORM-TRAPS.md`
 - Modify: `CLAUDE.md`
 - Create: `docs/history/2026-07-30-ui-redesign-ledger.md`
 
 **Interfaces:** none.
 
-- [ ] **Step 1: Replace the panel's entry in `docs/OPEN-ITEMS.md`**
+- [ ] **Step 1: Replace the panel's entry in `docs/reference/OPEN-ITEMS.md`**
 
 The accepted limitation «**The panel is a fixed 380 × 260.** Nothing resizes it.» is no longer
 true. Delete it and record what replaced it, including the numbers: 300…560 pt wide, 120 pt to
@@ -2698,7 +2698,7 @@ owed to a human — `theUntitledPanelStillTakesKeyStatusWithoutItsProcessBecomin
 it in-process, at `.prohibited` activation policy, where `isKeyWindow` has one possible cause.
 Say that, rather than leaving a human a check the suite already makes.
 
-- [ ] **Step 2: Update `docs/PLATFORM-TRAPS.md`**
+- [ ] **Step 2: Update `docs/reference/PLATFORM-TRAPS.md`**
 
 Add the `NSHostingView` measuring trap: an installed hosting view measures what it is showing,
 so a `ScrollView` in the content makes `sizeThatFits` report a compressed height, and the fix

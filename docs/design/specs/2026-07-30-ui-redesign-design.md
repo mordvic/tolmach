@@ -429,7 +429,7 @@ Extended: `PanelPlacement`, `PanelController`, `TranslationViewModel`, `ModelsVi
 
 ## 8. What only a human can check
 
-To be appended to `docs/OPEN-ITEMS.md` as part of the work, not afterwards.
+To be appended to `docs/reference/OPEN-ITEMS.md` as part of the work, not afterwards.
 
 | Check | Why it cannot be automated |
 |---|---|

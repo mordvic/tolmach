@@ -39,7 +39,7 @@ produced «выделите текст» on every attempt, with the user's clipb
 The clipboard fallback *also* returned nothing in the show-first runs, and that was never
 isolated. The obvious candidate is the synthetic ⌘C landing on the panel rather than the source
 application. The code records this as a suspicion rather than a finding, and it should keep that
-status until someone measures it. See `docs/OPEN-ITEMS.md`.
+status until someone measures it. See `docs/reference/OPEN-ITEMS.md`.
 
 ## Where the code is
 

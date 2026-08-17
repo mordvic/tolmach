@@ -9,7 +9,7 @@ This is the pre-implementation design for one setting: whether the app asks a re
 model not to reason. Once the code exists, **the code is the authority on behaviour and this
 document is the authority on why**.
 
-Every figure below is **measured** — the sweep of 2026-08-11 recorded in `docs/PLATFORM-TRAPS.md`,
+Every figure below is **measured** — the sweep of 2026-08-11 recorded in `docs/reference/PLATFORM-TRAPS.md`,
 Ollama server 0.31.1, all eight locally installed models. Nothing here is inferred from Ollama's
 documentation, though §2 notes where the two agree.
 
@@ -215,7 +215,7 @@ baseline.
 
 - the pane keeps `settingsPane()`'s 560 × 480 frame, and `.formStyle(.grouped)` installs its own
   `NSScrollView`, so the section cannot clip. **That it still reads well at that height is a manual
-  check**, and this design does not claim it — `docs/OPEN-ITEMS.md` §1 gains the line.
+  check**, and this design does not claim it — `docs/reference/OPEN-ITEMS.md` §1 gains the line.
 - Russian labels for a domain enum live in `RussianCopy`, exhaustive with no `default:`. So
   `ThinkRequest.Level` gets «Кратко» / «Средне» / «Подробно» there, not in the view.
 
@@ -233,7 +233,7 @@ the prefix comparison would keep drawing the row after the rule changed.
 One flag, `--think off|low|medium|high`, defaulting to «not passed», mapping straight onto
 `ThinkRequest?` and bypassing `AppSettings` entirely — the CLI has no settings and should not grow
 one. It exists so the sweep in §2 can be re-run by hand against a real document rather than the
-one-sentence prompt it used, which is the measurement `docs/MEASUREMENTS.md` still owes for the
+one-sentence prompt it used, which is the measurement `docs/reference/MEASUREMENTS.md` still owes for the
 `qwen3:30b` blacklist entry.
 
 `--think` must reject an unknown value with the usage text rather than falling back to a default:
@@ -261,7 +261,7 @@ built around. The app is where the policy is enforced, because the app is where 
 
 ## 10. Testing
 
-Offline, Swift Testing, sentence-named, per `docs/TESTING.md`. Each of these fails under the defect
+Offline, Swift Testing, sentence-named, per `docs/reference/TESTING.md`. Each of these fails under the defect
 it names:
 
 **`OllamaKitTests`** — the first tests this project has of the request body.
@@ -293,8 +293,8 @@ if the policy inverted.
 
 - `CLAUDE.md` — the «Ollama rules» section already carries the corrected measurement; it gains the
   control itself, and `AppSettings`' paragraph gains the two keys.
-- `docs/PLATFORM-TRAPS.md` — the Ollama entries gain the pointer to the new owning code.
-- `docs/MEASUREMENTS.md` — the think row's owner moves from this documentation to `ModelPolicy`'s
+- `docs/reference/PLATFORM-TRAPS.md` — the Ollama entries gain the pointer to the new owning code.
+- `docs/reference/MEASUREMENTS.md` — the think row's owner moves from this documentation to `ModelPolicy`'s
   doc comment, per that file's own rule that a figure is owned by the code it constrains.
 - `CONTEXT.md` — the two words in §1.
-- `docs/OPEN-ITEMS.md` — the manual check in §7.
+- `docs/reference/OPEN-ITEMS.md` — the manual check in §7.

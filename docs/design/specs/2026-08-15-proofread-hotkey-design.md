@@ -195,7 +195,7 @@ the panel the button stops being theoretical.
 | The system refuses the правка combination | `apply()` restores the previous one, as for перевод, and the failure is logged at `.error` — **not** `.fault`. `fault` is justified for перевод by «the app has no shortcut and no way into the panel»; that door stays open here, and copying the level would make the log lie about severity. **Corrected during implementation:** the message must also turn on whether the restore *happened*. Written unconditionally it claimed перевод had no shortcut even on the path where `apply` had just put the old one back — true in `launch()`, where the message came from, and false everywhere it was moved to. `HotkeyCoordinator.failure(for:restored:combination:)` is that decision as a value, with a test |
 | **Both settings hold the same combination** | Not typable — the recorder refuses it — but reachable by upgrade: `proofreadHotkey` answers its factory ⌥⌘R until the key is set, so a user who had already put перевод on ⌥⌘R inherits a duplicate. Правка's registration is declined outright rather than attempted and refused (`AppSettings.shortcutsCollide`), перевод keeps the combination because it is the only door to the panel, and «Основные» draws an orange row saying правка's shortcut is not in force — the same «say it, do not silently substitute» rule the colliding languages already follow. **Found by review, not by the design** |
 | One shortcut moved onto the combination the other holds | Both registrations are brought in line in **two passes** — release what stands in the way, then register what should be. Measured: with one pass in `allCases` order, changing перевод to правка's combination left перевод on its *previous* one, because Carbon refused while правка still held it and `apply` restored. The user's choice was discarded silently. **Corrected again after a second review:** «what stands in the way» is not «what is out of date». A manager can hold a combination its own setting no longer names — that is `apply`'s restore-on-refusal working — and releasing every such registration up front would destroy the guarantee that a rejected change never leaves the user shortcutless. Pass 1 releases only registrations that must not exist at all, or that the *other* operation is about to ask Carbon for. **And corrected a third time:** what pass 1 releases must be *remembered* and handed to `apply` as its fallback. Measured — resolving an inherited collision by moving перевод onto a combination another component holds released перевод's live registration, left `apply` with nothing to restore, and ended with перевод registered to nothing while правка took the combination the user had been pressing for перевод |
-| Swapping the two shortcuts | Not possible in one step, and accepted rather than fixed: each recorder refuses what the other holds, so an exchange has to go through a third combination. `docs/OPEN-ITEMS.md` §2 carries the reasoning — a stored duplicate is a shortcut that silently does nothing, which is worse than the friction |
+| Swapping the two shortcuts | Not possible in one step, and accepted rather than fixed: each recorder refuses what the other holds, so an exchange has to go through a third combination. `docs/reference/OPEN-ITEMS.md` §2 carries the reasoning — a stored duplicate is a shortcut that silently does nothing, which is worse than the friction |
 | A press while a run is in flight | Dropped by `isCapturing` / `state != .running`, exactly as a second ⌥⌘T is today |
 | No selection, or no Accessibility grant | The existing hint and prompt, with neither the operation segment nor the new row |
 | Степень changed to «только ошибки» while a style is selected | The style picker disables; the stored style is left alone, so restoring the степень restores the choice. `PromptBuilder` already ignores a style under `.errorsOnly` |
@@ -210,17 +210,17 @@ the panel the button stops being theoretical.
    option this design offers.
 2. **Does a pop-up menu open inside a `.nonactivatingPanel`?** The panel becomes key while
    the application stays inactive, and no measurement in this project covers `NSMenu` in that
-   state. GUI automation is unavailable here, so this goes to `docs/OPEN-ITEMS.md` as a
+   state. GUI automation is unavailable here, so this goes to `docs/reference/OPEN-ITEMS.md` as a
    manual check with what to look for. If it fails, the fallback is the segment-plus-menu
    layout from the same design discussion, or a single settings-shaped button.
 3. **Is ⌥⌘R free?** A Carbon hot key takes the combination from every application, so a
    factory value must not collide with something common. Probe with a throwaway registration
-   before the value reaches the code, and record the result in `docs/MEASUREMENTS.md`.
+   before the value reaches the code, and record the result in `docs/reference/MEASUREMENTS.md`.
 
 ## 9. Tests
 
 Offline, `FakeLLMClient` and `InMemoryDefaults`, no Ollama. Each written to fail when its
-subject is mutated away (`docs/TESTING.md`).
+subject is mutated away (`docs/reference/TESTING.md`).
 
 - **Settings**: the factory value; a round trip; an undecodable or invalid stored value
   falling back to the factory one — the three `hotkey` already has.
@@ -252,8 +252,8 @@ they are.
   «every press starts with перевод» fact is superseded.
 - `docs/design/specs/2026-08-10-proofreading-design.md` — a correction note on §8
   pointing here, in the shape the other specs use where the code has moved past them.
-- `docs/OPEN-ITEMS.md` — §8.2's manual check, and the panel row's appearance at the 300 pt
+- `docs/reference/OPEN-ITEMS.md` — §8.2's manual check, and the panel row's appearance at the 300 pt
   floor.
-- `docs/MEASUREMENTS.md` — §8.1's width and §8.3's probe.
+- `docs/reference/MEASUREMENTS.md` — §8.1's width and §8.3's probe.
 - `CONTEXT.md` — «сочетание клавиш для правки» as the name of the new setting, so the pane
   and this document cannot drift.

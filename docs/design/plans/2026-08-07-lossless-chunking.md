@@ -18,7 +18,7 @@
 - Commits: conventional, scoped — `feat(core):`, `test(core):`, `feat(app):`, `docs:`.
 - Work happens on a branch off `docs/lossless-chunking-spec` (which holds the spec); suggested name `feat/lossless-chunking`.
 
-**Read before starting:** the spec (path above); `docs/TESTING.md` (the mutation rule); `Sources/TranslationCore/ResponseCleaner.swift` — Task 3 relies on knowing exactly what `clean` trims at the reply's edges. The design keeps every chunk's text free of leading/trailing whitespace precisely so the cleaner's edge-trimming can never eat structure.
+**Read before starting:** the spec (path above); `docs/reference/TESTING.md` (the mutation rule); `Sources/TranslationCore/ResponseCleaner.swift` — Task 3 relies on knowing exactly what `clean` trims at the reply's edges. The design keeps every chunk's text free of leading/trailing whitespace precisely so the cleaner's edge-trimming can never eat structure.
 
 ---
 
@@ -937,7 +937,7 @@ git commit -m "feat(core): markup skeleton learns table rows and setext headings
 
 **Files:**
 - Modify: `CLAUDE.md`
-- Modify: `docs/OPEN-ITEMS.md`
+- Modify: `docs/reference/OPEN-ITEMS.md`
 
 **Interfaces:** none — this task closes the wave.
 
@@ -948,9 +948,9 @@ In the «Facts that will bite you if you "tidy" them» list:
 1. In the `final`/`onToken` bullet, replace the sentence «Chunks are joined with `"\n\n"` in both `final` and the stream.» with: «Chunks are joined by each chunk's `separatorBefore` — the source document's own bytes, restored verbatim — in both `final` and the stream, plus the source's trailing whitespace at the end; `ChunkPlan`'s invariant is that this reassembly is byte-for-byte lossless.»
 2. Add a bullet after it: «**The packing rule is the structure guarantee.** Blocks merge into one chunk only across an exactly-`"\n\n"` separator, so the model always sees canonical spacing and every other separator never reaches it at all. Indented code (≥ 4 spaces after a blank line) is code: never sentence-split, protected by the prompt, tokenised by `MarkupSkeleton`. See `docs/design/specs/2026-08-07-lossless-chunking-design.md`.»
 
-- [ ] **Step 2: Record the owed manual run in `docs/OPEN-ITEMS.md`**
+- [ ] **Step 2: Record the owed manual run in `docs/reference/OPEN-ITEMS.md`**
 
-Read the file's own structure first and follow it. Add to the manual-checks section: «`swift run acceptance` after the lossless-chunking wave: the markup-integrity measurement now diffs against the raw source (it previously diffed against the chunker-normalised text), so the baseline may shift. Run against a live Ollama from the package root and record the result per `docs/BASELINE.md`.»
+Read the file's own structure first and follow it. Add to the manual-checks section: «`swift run acceptance` after the lossless-chunking wave: the markup-integrity measurement now diffs against the raw source (it previously diffed against the chunker-normalised text), so the baseline may shift. Run against a live Ollama from the package root and record the result per `docs/reference/BASELINE.md`.»
 
 - [ ] **Step 3: The zero-warning gate**
 
@@ -965,7 +965,7 @@ Expected: ALL pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add CLAUDE.md docs/OPEN-ITEMS.md
+git add CLAUDE.md docs/reference/OPEN-ITEMS.md
 git commit -m "docs: lossless chunking — pipeline facts and the owed acceptance run"
 ```
 

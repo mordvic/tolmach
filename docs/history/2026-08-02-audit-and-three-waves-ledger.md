@@ -66,7 +66,7 @@ report had reasoned correctly from the source and the source was not the whole s
 |---|---|---|
 | **U6** | The settings panes' fixed `.frame(width: 560, height: 480)` clips content; replace it with minimums plus a `ScrollView`. | **Wrong, and the fix would have caused harm.** Control experiment: `.formStyle(.grouped)` installs an `NSScrollView` of its own at *any* content size, where a `VStack` and an unstyled `Form` install none. The panes already scroll. The recommended change would have brought back the window resizing between tabs that the frame exists to prevent, in exchange for nothing. `SettingsPane` is untouched and `CLAUDE.md` now says why it must stay so. |
 | **U3** | Remove the empty «Вид» menu with `CommandGroup(replacing: .sidebar) { }`. | **Half wrong.** That empties the group and leaves the menu as a title with no items — worse than the one dead item it replaced. `pruneEmptyMenus()` in AppKit was needed. Measured on the way: the menu is fully built by the time the app's `.task` first runs, so the prune needs no sleep and has none; the removal sticks, with nothing back after 2.5 s. |
-| **U4** | Cited `docs/OPEN-ITEMS.md` §2 — «`entire contents` of the panel window is empty through System Events» — as evidence the panel exposes nothing to accessibility. | **The probe cannot see either state.** Walking the real `PanelController`'s tree gives `AXWindow → AXGroup`, no label, zero children — identically with the new modifiers and with them removed, checked both ways. SwiftUI does not materialise its accessibility tree until an assistive client attaches, and a test process is not one. The observation was never evidence about the panel; the `OPEN-ITEMS` entry is corrected. |
+| **U4** | Cited `docs/reference/OPEN-ITEMS.md` §2 — «`entire contents` of the panel window is empty through System Events» — as evidence the panel exposes nothing to accessibility. | **The probe cannot see either state.** Walking the real `PanelController`'s tree gives `AXWindow → AXGroup`, no label, zero children — identically with the new modifiers and with them removed, checked both ways. SwiftUI does not materialise its accessibility tree until an assistive client attaches, and a test process is not one. The observation was never evidence about the panel; the `OPEN-ITEMS` entry is corrected. |
 
 ### What the audit missed entirely
 
@@ -202,6 +202,6 @@ Everything below was actually run. Nothing here was seen on a screen by a human.
 | Mutation testing | 5 mutations on the timeout table, 5 on `DroppedDocument` and the announcement, 6 on `GlossaryColumn`, 1 on the panel geometry tolerance — all killed except the tie-break, at 16/20 |
 | Install to `/Applications` and launch | runs background-only from `/Applications`, signature valid at the new path, log subsystem silent |
 
-`docs/OPEN-ITEMS.md` §1 carries what a human still owes. It grew by twelve rows during this
+`docs/reference/OPEN-ITEMS.md` §1 carries what a human still owes. It grew by twelve rows during this
 work. The one that decides how much of wave 2 is visible rather than merely correct is whether
 an `LSUIElement` app draws a menu bar at all.

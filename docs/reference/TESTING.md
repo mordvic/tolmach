@@ -134,5 +134,5 @@ A measurement belongs in a comment at the code it justifies — that is the hous
 `CLAUDE.md` states the contract that comes with it. This document holds only what has no
 single site: the shapes above, which are about how tests fail rather than about any one test.
 
-Acceptance-run numbers go in `docs/BASELINE.md`. Things a human still has to look at go in
-`docs/OPEN-ITEMS.md`.
+Acceptance-run numbers go in `docs/reference/BASELINE.md`. Things a human still has to look at go in
+`docs/reference/OPEN-ITEMS.md`.

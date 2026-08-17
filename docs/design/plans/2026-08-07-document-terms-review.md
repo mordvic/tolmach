@@ -947,11 +947,11 @@ three failure sentences verbatim — two spellings of one failure is how they dr
 
 The pipeline description gains the review point and the fact that a hook may suspend the engine there — with the reason it is safe only there. The «Cancellation must be checked explicitly» paragraph gains the continuation trap as its third instance. `AppSettings.reviewDocumentTerms` stops being «read by nothing».
 
-- [ ] **Step 2: `docs/PLATFORM-TRAPS.md`**
+- [ ] **Step 2: `docs/reference/PLATFORM-TRAPS.md`**
 
 Add the continuation trap under a «suspending on a human» heading, pointing at `DocumentTermsRequest.swift`, and add the *unrun* probe from spec §9.3 — editable text fields in a `.nonactivatingPanel` — recorded as the reason the escalation exists rather than as a gap.
 
-- [ ] **Step 3: `docs/OPEN-ITEMS.md`**
+- [ ] **Step 3: `docs/reference/OPEN-ITEMS.md`**
 
 Add spec §11's terms-sheet rows: the table at 12 rows, an editable «перевод» cell, Esc cancelling the run, and the ⌥⌘T escalation bringing the window forward from another app.
 

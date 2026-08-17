@@ -309,7 +309,7 @@ nothing in this environment can see either.
   `running` rows of the same table (that state's row now carries «Заменить», «Скопировать»,
   «Открыть в окне» *and* «Отмена» together, a combination the table never measured), and
   everything built on the table's old numbers — the scrolling-ceiling arithmetic and the
-  per-run width-change counts in the same comment, `docs/MEASUREMENTS.md`'s «347 → 370 → 6929»
+  per-run width-change counts in the same comment, `docs/reference/MEASUREMENTS.md`'s «347 → 370 → 6929»
   line, and every other file citing 347 or 6929 for this row (`TranslationPanel.swift`,
   `PanelView.swift`). None of that needs a screen — it is the same in-process
   `PanelController.measure` probe already used for the number that was re-taken — so it is
@@ -524,7 +524,7 @@ Deliberate, with the reason. Do not "fix" these without reading the reason first
 - **`swift run acceptance` owed after the lossless-chunking wave.** The markup-integrity
   measurement now diffs against the raw source (it previously diffed against the chunker-normalised
   text), so the baseline may shift. Run against a live Ollama from the package root and record the
-  result per `docs/BASELINE.md`.
+  result per `docs/reference/BASELINE.md`.
 - **Cosmetics on the Модели tab** — the `aya-expanse:8b` value wraps to three lines. The other
   half of this entry, «the settings window changes size between tabs», is retired: all three
   panes now take one 560 × 480 frame from `settingsPane()`. Whether the resizing has actually
@@ -554,7 +554,7 @@ Deliberate, with the reason. Do not "fix" these without reading the reason first
   carries inline code spans buffers its whole reply before emitting anything, rather than
   streaming incrementally, so restore's equal-count gate can be decided before a byte
   reaches `onToken`. The price shows in the corpus: techdoc's TTFT moved ~2.9→~4.27 s (en)
-  and ~3.2→~4.3 s (ru) once the re-basing landed (`docs/BASELINE.md`'s 2026-08-10 entries,
+  and ~3.2→~4.3 s (ru) once the re-basing landed (`docs/reference/BASELINE.md`'s 2026-08-10 entries,
   «after the idiom/proper-noun rule» through «re-based state accepted»). Both are
   multi-chunk and so outside the <1 s gate — but the gate's own single-chunk corpus files
   (`email-en.md`, `snippet-en.md`) carry no backticks at all, so a hotkey selection that
@@ -562,7 +562,7 @@ Deliberate, with the reason. Do not "fix" these without reading the reason first
   bound; whether buffer-whole can blow it is untested, not cleared.
 - **`aya-expanse:8b` stochastically drops the leading `>` on a blockquote that follows a
   standalone passthrough fenced chunk, once the following chunk is recomposed.** Accepted
-  2026-08-10 as a known limitation rather than chased further — see `docs/BASELINE.md`'s
+  2026-08-10 as a known limitation rather than chased further — see `docs/reference/BASELINE.md`'s
   2026-08-10 entries, from «after pass-through chunks and inline restore (re-basing)»
   through «re-based state accepted», for the measurements and the reasoning; not retold
   here.

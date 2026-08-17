@@ -133,7 +133,7 @@ where today's `"\n\n"` emission sits.
 
 ## 7. Testing
 
-Per `docs/TESTING.md` (the mutation rule; a test must fail under the defect it names):
+Per `docs/reference/TESTING.md` (the mutation rule; a test must fail under the defect it names):
 
 - The reconstruction invariant over a corpus of hostile inputs: CRLF, `"\n\n\n"`, blank lines
   containing spaces, leading/trailing document whitespace, indentation, hard breaks, an
@@ -145,7 +145,7 @@ Per `docs/TESTING.md` (the mutation rule; a test must fail under the defect it n
 - Mutating the packing rule (merge on any separator) must fail the invariant corpus.
 - `swift run acceptance` is run by hand after implementation — the markup-integrity measurement
   may shift now that the diff sees the real source — and the result recorded against
-  `docs/BASELINE.md`.
+  `docs/reference/BASELINE.md`.
 
 ## 8. Deliberately unchanged
 

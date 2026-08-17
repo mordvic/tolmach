@@ -16,7 +16,7 @@
 - `swift build --build-tests` must stay at **zero warnings** — a standing rule, enforced by CI.
 - **No external dependencies.** The framework whitelist in CLAUDE.md is closed; this feature adds nothing to it.
 - Tests: Swift Testing (`@Test`, `#expect`), names are sentences; `UserDefaults`-backed tests use `InMemoryDefaults`, never a real suite; the suite stays offline (`FakeLLMClient`).
-- No test may restate the reassembly formula — call `ChunkPlan.assembled(from:)` (docs/TESTING.md).
+- No test may restate the reassembly formula — call `ChunkPlan.assembled(from:)` (docs/reference/TESTING.md).
 - All user-facing strings Russian, «guillemets» and «ё»; **no backticks in strings rendered by `Text(String)`**; Russian labels for domain enums live in `RussianCopy.swift`, exhaustive with no `default:`.
 - Code comments carry *why* and the measurement behind it. Do not delete code a «measured»/«load-bearing» comment justifies without updating the comment.
 - Nothing derived from the user's text may be logged.
@@ -432,7 +432,7 @@ private final class StreamCollector: @unchecked Sendable {
         text: twoParagraphs, level: .errorsOnly,
         options: ChatOptions(model: "test"), maxChunkCharacters: 200,
         onToken: { collector.append($0) })
-    // The one formula, not a restatement of it (docs/TESTING.md).
+    // The one formula, not a restatement of it (docs/reference/TESTING.md).
     let plan = Chunker.plan(twoParagraphs, maxCharacters: 200)
     #expect(outcome.final == plan.assembled(from: ["один", "два"]))
     #expect(collector.value == outcome.final)
@@ -1476,7 +1476,7 @@ git commit -m "feat(app): степень and стиль правки defaults in
 ### Task 12: Documentation, the app bundle, and the manual quality gate
 
 **Files:**
-- Modify: `CLAUDE.md`, `CONTEXT.md`, `docs/OPEN-ITEMS.md`
+- Modify: `CLAUDE.md`, `CONTEXT.md`, `docs/reference/OPEN-ITEMS.md`
 - Create: `docs/proofreading-gate/` (ten corpus files)
 
 **Interfaces:**
@@ -1554,7 +1554,7 @@ _Avoid_: «Повторить» — that is the failure retry
 swift build --build-tests 2>&1 | grep -i warning   # zero
 swift test                                          # entire suite green
 ./Scripts/make-app-bundle.sh                        # bundle assembles
-git add CLAUDE.md CONTEXT.md docs/OPEN-ITEMS.md docs/proofreading-gate/
+git add CLAUDE.md CONTEXT.md docs/reference/OPEN-ITEMS.md docs/proofreading-gate/
 git commit -m "docs: правка pipeline notes, vocabulary, and the manual quality-gate corpus"
 ```
 

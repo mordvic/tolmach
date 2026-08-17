@@ -56,7 +56,7 @@ against the thresholds in spec §10, and exits 1 on regression.
 **There is CI, and it is the offline half only** (`.github/workflows/ci.yml`): build with
 tests, a gate that fails on any warning, then `swift test`. `acceptance` stays out for the
 reason above — «no CI for that harness» was never «no CI». The warning gate is the point: zero
-warnings is a standing rule that until now nothing could enforce, and `docs/TESTING.md`'s tenth
+warnings is a standing rule that until now nothing could enforce, and `docs/reference/TESTING.md`'s tenth
 shape is why it runs against a fresh checkout rather than a cached build.
 
 The Accessibility grant is keyed to the code signature. `make-app-bundle.sh` prefers a
@@ -202,7 +202,7 @@ Facts that will bite you if you "tidy" them:
   is not monotonic. Ollama enables thinking by default for a capable model, so the app already
   pays for a trace it discards whenever the chosen model can reason: `aya-expanse:8b` cannot, so
   the interactive path is unaffected, but the recommended background model `gpt-oss:20b` can.
-  The table with every figure is in `docs/PLATFORM-TRAPS.md`.
+  The table with every figure is in `docs/reference/PLATFORM-TRAPS.md`.
 - **The control over it is `AppSettings.quietThinking` plus `gptOssThinkingLevel`, and the
   decision is `ModelPolicy.thinkRequest(for:quiet:level:)`.** `AppSettings.chatOptions(model:)`
   is the only place in the app that builds `ChatOptions`, precisely so a new call site cannot
@@ -307,7 +307,7 @@ Facts that will bite you if you "tidy" them:
   `fittingSize` for the ideal width and `sizeThatFits(in:)` for the height at that width,
   because a greedy SwiftUI view hands a proposal straight back. `layoutSubtreeIfNeeded()` after
   reassigning `rootView` is load-bearing, not tidy-up: without it the measuring host never sees
-  content that changed through `@Observable`. All four facts are in `docs/PLATFORM-TRAPS.md`
+  content that changed through `@Observable`. All four facts are in `docs/reference/PLATFORM-TRAPS.md`
   with their measurements.
 - **«Шрифт текста» reaches three `Text`s and nothing else, and one of them is invisible.**
   `ContentFont` (гарнитура + размер, 11–32 pt, default 13) is applied to the исходник, the
@@ -429,15 +429,15 @@ Read the one that answers your question; do not read them all.
 
 | Document | Read it when |
 |---|---|
-| `docs/RUNBOOK.md` | Building, signing, permissions, running the acceptance harness. |
-| `docs/OPEN-ITEMS.md` | «May I change this?» / «Is this unfinished on purpose?» — manual checks owed to a human, accepted limitations, and open questions. |
-| `docs/PLATFORM-TRAPS.md` | Before writing a *new* call into `NSPasteboard`, Accessibility, Carbon, `CGEvent`, `NSPanel`, or anything that measures a SwiftUI view. An index of the behaviours that each cost a defect. |
-| `docs/TESTING.md` | Writing a test. The mutation rule and nine shapes of test that pass under the defect they name. |
-| `docs/MEASUREMENTS.md` | «Where did this number come from?» |
-| `docs/BASELINE.md` | After running `swift run acceptance` — whether the result is normal, and where to record it. |
+| `docs/reference/RUNBOOK.md` | Building, signing, permissions, running the acceptance harness. |
+| `docs/reference/OPEN-ITEMS.md` | «May I change this?» / «Is this unfinished on purpose?» — manual checks owed to a human, accepted limitations, and open questions. |
+| `docs/reference/PLATFORM-TRAPS.md` | Before writing a *new* call into `NSPasteboard`, Accessibility, Carbon, `CGEvent`, `NSPanel`, or anything that measures a SwiftUI view. An index of the behaviours that each cost a defect. |
+| `docs/reference/TESTING.md` | Writing a test. The mutation rule and nine shapes of test that pass under the defect they name. |
+| `docs/reference/MEASUREMENTS.md` | «Where did this number come from?» |
+| `docs/reference/BASELINE.md` | After running `swift run acceptance` — whether the result is normal, and where to record it. |
 | `docs/adr/` | The code looks inconsistent and you want to know whether it is deliberate. |
 | `docs/design/specs/2026-07-24-local-translator-design.md` | Changing engine behaviour. **Note its status header — it is the pre-implementation design, and where it and the code disagree the code is right.** |
-| `docs/design/specs/2026-07-30-ui-redesign-design.md` | Changing the panel, the window or the settings: why each surface has the shape it has. Same status header, same rule — the code wins. Its §8 lists what only a human can check; `docs/OPEN-ITEMS.md` §1 is where that list is kept current. |
+| `docs/design/specs/2026-07-30-ui-redesign-design.md` | Changing the panel, the window or the settings: why each surface has the shape it has. Same status header, same rule — the code wins. Its §8 lists what only a human can check; `docs/reference/OPEN-ITEMS.md` §1 is where that list is kept current. |
 | `docs/history/` | «What did we already try?» The build ledgers, including rejected approaches and defects found in the plans — and in one case in an audit — themselves. `2026-08-02-audit-and-three-waves-ledger.md` is the newest: read it before touching the settings panes' fixed frame, the glossary's language column, `LemmaMatcher`, or anything that assumes a menu bar. `2026-07-30-ui-redesign-ledger.md` is the one before it and still the account to read for panel sizing and the window's decomposition. |
 | `CONTEXT.md` | Writing UI copy or naming something. |
 | `docs/design/plans/` | Rarely. The four plans the codebase was built from; parts of them are known wrong where the ledgers record a correction. The UI redesign plan is the worst offender — seven of its defects reached the code verbatim. |
@@ -459,7 +459,7 @@ Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/do
 ### Traps, by where you are about to write
 
 Pointers, not summaries — the owning file has the measurement and is kept true by sitting next
-to the code. `docs/PLATFORM-TRAPS.md` has the same list with the facts attached.
+to the code. `docs/reference/PLATFORM-TRAPS.md` has the same list with the facts attached.
 
 - `NSPasteboard`, anything clipboard → `TextCapture/PasteboardSnapshot.swift`, `GeneralPasteboard.swift`
 - Accessibility reads, synthetic key events → `TextCapture/SelectionReader.swift`

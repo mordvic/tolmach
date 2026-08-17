@@ -271,7 +271,7 @@ docs gain one line each saying so.
 - The switch and the button add fixed-height chrome to `PanelView`; the measuring copy
   picks them up automatically because it renders the same view. No `PanelSizer` rule
   changes. If the panel opens visibly short during implementation, the reservation path in
-  `PanelView` is where to look first (measured behaviours; see `docs/PLATFORM-TRAPS.md`).
+  `PanelView` is where to look first (measured behaviours; see `docs/reference/PLATFORM-TRAPS.md`).
 
 ## 9. Errors, edges, and what does not change
 
@@ -310,7 +310,7 @@ docs gain one line each saying so.
 ## 11. Testing
 
 Offline, Swift Testing, `FakeLLMClient`, `InMemoryDefaults` — the standing rules, plus
-`docs/TESTING.md`'s shapes (particularly: no test may restate the assembly formula; call
+`docs/reference/TESTING.md`'s shapes (particularly: no test may restate the assembly formula; call
 `ChunkPlan.assembled(from:)`).
 
 - **Prompt**: the level instruction reaches the system prompt; the style instruction
@@ -357,7 +357,7 @@ against the live default model (`aya-expanse:8b`):
   day automate).
 - Each rewrite style run once on one text, checked for register shift without meaning
   drift.
-- The corpus and the observed results are recorded in `docs/OPEN-ITEMS.md` (a manual check
+- The corpus and the observed results are recorded in `docs/reference/OPEN-ITEMS.md` (a manual check
   owed to a human — that file's stated purpose) or, if the corpus proves worth keeping, as
   a new acceptance-harness task later. If the model fails the gate, the feature waits on
   prompt calibration or a model decision — it does not ship on the strength of the offline
@@ -368,5 +368,5 @@ against the live default model (`aya-expanse:8b`):
 - `CLAUDE.md`: the pipeline section gains the proofread route (one paragraph: shared
   machinery, no glossary stages, returns `TranslationOutcome` with empty glossary fields).
 - `CONTEXT.md`: the §1 vocabulary.
-- `docs/TESTING.md` and `docs/PLATFORM-TRAPS.md`: only if implementation uncovers a new
+- `docs/reference/TESTING.md` and `docs/reference/PLATFORM-TRAPS.md`: only if implementation uncovers a new
   shape or trap; nothing is expected.

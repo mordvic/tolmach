@@ -18,7 +18,7 @@
 - Tests are Swift Testing (`@Test`, `#expect`), named as sentences describing the behaviour pinned. `UserDefaults`-backed tests use `InMemoryDefaults`, never a real suite.
 - All user-facing strings are Russian, «guillemets» and «ё». No backticks inside `Text(String)`. Russian labels for a domain enum live in `RussianCopy.swift`, exhaustive, no `default:`.
 - `TranslationCore` imports Foundation and NaturalLanguage only — no `os`, no AppKit.
-- Comments carry *why* and the measurement behind it. «Measured» and «load-bearing» are a contract: a figure quoted must be one from `docs/PLATFORM-TRAPS.md`'s sweep of 2026-08-11.
+- Comments carry *why* and the measurement behind it. «Measured» and «load-bearing» are a contract: a figure quoted must be one from `docs/reference/PLATFORM-TRAPS.md`'s sweep of 2026-08-11.
 - Commit messages: conventional, scoped — `feat(ollama):`, `feat(app):`, `docs(app):`.
 - UI is verified by hand; GUI automation is unavailable. Never describe UI behaviour that was not observed.
 
@@ -108,7 +108,7 @@ In `Sources/TranslationCore/LLMClient.swift`, above `ChatOptions`:
 /// Whether to ask a model *not* to reason, and how — the request side of Ollama's `think`.
 ///
 /// **There is deliberately no «on» case, and that absence is a safety property.** Measured
-/// 2026-08-11 across all eight installed models (`docs/PLATFORM-TRAPS.md`): `false` is accepted
+/// 2026-08-11 across all eight installed models (`docs/reference/PLATFORM-TRAPS.md`): `false` is accepted
 /// by every model, including the four whose `/api/show` capabilities lack `thinking`, while
 /// `true` or a level sent to one of those four answers **HTTP 400** — a failed translation, not
 /// a degraded one. With no way to spell «on», no value this app can construct can fail the
@@ -716,10 +716,10 @@ git commit -m "feat(cli): --think, for re-measuring what the setting does"
 
 **Files:**
 - Modify: `CLAUDE.md` (the «Ollama rules» section, and `AppSettings`' paragraph in «The app layer»)
-- Modify: `docs/PLATFORM-TRAPS.md` (the three Ollama entries' `→` pointers)
-- Modify: `docs/MEASUREMENTS.md` (the think row's owner)
+- Modify: `docs/reference/PLATFORM-TRAPS.md` (the three Ollama entries' `→` pointers)
+- Modify: `docs/reference/MEASUREMENTS.md` (the think row's owner)
 - Modify: `CONTEXT.md` (two words)
-- Modify: `docs/OPEN-ITEMS.md` (§1, the manual check)
+- Modify: `docs/reference/OPEN-ITEMS.md` (§1, the manual check)
 
 The measurement itself is already recorded — that landed in commit `766ef85` with the design. This task records only what the *code* now does.
 
@@ -742,7 +742,7 @@ In «The app layer», at the end of the `AppSettings` bullet, add:
   does, see the Ollama rules above) and `"gptOssThinkingLevel"` (default `low`).
 ```
 
-- [ ] **Step 2: `docs/PLATFORM-TRAPS.md`**
+- [ ] **Step 2: `docs/reference/PLATFORM-TRAPS.md`**
 
 Change the `→` line under «Turning reasoning on is capability-gated…» to:
 
@@ -751,10 +751,10 @@ Change the `→` line under «Turning reasoning on is capability-gated…» to:
   `Sources/OllamaKit/OllamaChatBody.swift`
 ```
 
-- [ ] **Step 3: `docs/MEASUREMENTS.md`**
+- [ ] **Step 3: `docs/reference/MEASUREMENTS.md`**
 
 In the «Durable — the models» table, change the owner cell of the **0 / 2798 / 563** row from
-`docs/PLATFORM-TRAPS.md`, `CLAUDE.md` to `ModelPolicy.swift`, `docs/PLATFORM-TRAPS.md` — the file's
+`docs/reference/PLATFORM-TRAPS.md`, `CLAUDE.md` to `ModelPolicy.swift`, `docs/reference/PLATFORM-TRAPS.md` — the file's
 own rule is that a figure is owned by the code it constrains, and it now constrains code.
 
 - [ ] **Step 4: `CONTEXT.md`**
@@ -764,7 +764,7 @@ answer; never «размышление», «мышление», «thinking») an
 may be: «Кратко» / «Средне» / «Подробно»; never «степень», which правка owns, and never «уровень»).
 Match the surrounding table's shape rather than inventing a section.
 
-- [ ] **Step 5: `docs/OPEN-ITEMS.md`**
+- [ ] **Step 5: `docs/reference/OPEN-ITEMS.md`**
 
 Add to §1's list of manual checks: whether the «Модели» pane still reads well at 560 × 480 with the
 two new controls, and — if a `gpt-oss` model is installed — whether the depth row's four states
@@ -780,7 +780,7 @@ does not touch, and a failure here means something else was edited by accident.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add CLAUDE.md docs/PLATFORM-TRAPS.md docs/MEASUREMENTS.md CONTEXT.md docs/OPEN-ITEMS.md
+git add CLAUDE.md docs/reference/PLATFORM-TRAPS.md docs/reference/MEASUREMENTS.md CONTEXT.md docs/reference/OPEN-ITEMS.md
 git commit -m "docs(app): record the think control the code now owns"
 ```
 

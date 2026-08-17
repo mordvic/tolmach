@@ -175,7 +175,7 @@ There is no unit test. The generator is a script, not a target, so `swift test` 
 | The artwork is actually right, not merely present | the generated PNGs are opened and looked at — at 1024, and at 32 and 16 where the simplified drawing of §3.1 has to be confirmed as a *different* drawing |
 | The signature covers the resource | `codesign --verify --deep --strict build/LocalTranslator.app` |
 
-**What no automated check can establish**, and what therefore goes to `docs/OPEN-ITEMS.md` §1 as
+**What no automated check can establish**, and what therefore goes to `docs/reference/OPEN-ITEMS.md` §1 as
 owed to a human: how the icon reads in Finder, in Spotlight, in the Accessibility list, and against
 a dark desktop background — the last one being the specific risk the user accepted in §2.4. Note for
 whoever looks: Finder caches icons aggressively, so a stale blank sheet after the first build is a

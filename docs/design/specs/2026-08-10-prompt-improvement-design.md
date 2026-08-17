@@ -93,7 +93,7 @@ wordings when a failure needs one.
 ### 3.1 Translation: the acceptance harness
 
 - `swift run acceptance` **before any edit** — a fresh baseline entry appended to
-  `docs/BASELINE.md` (append-only, per that file's rule).
+  `docs/reference/BASELINE.md` (append-only, per that file's rule).
 - One wording change at a time, each followed by a full harness run and its own appended
   entry. Gates: cross-chunk adherence stays ≥ 80 % and does not drop against the baseline,
   single-chunk TTFT stays < 1000 ms, no new markup diffs beyond the recorded
@@ -115,7 +115,7 @@ and one with a fenced block. This pass builds that corpus and reuses it as the A
 - Pass criteria per text are §11.1's own: output language equals input language, seeded
   errors fixed or at least not worsened, code/URLs/identifiers byte-identical, and under
   «только ошибки» no wording changes outside the seeded errors (eyeball diff).
-- Results — corpus, wordings tried, observations — are recorded in `docs/OPEN-ITEMS.md`,
+- Results — corpus, wordings tried, observations — are recorded in `docs/reference/OPEN-ITEMS.md`,
   which also discharges the §11.1 pre-merge gate itself.
 
 ## 4. Tests and documentation
@@ -127,7 +127,7 @@ and one with a fenced block. This pass builds that corpus and reuses it as the A
   warnings, the standing rules.
 - Every added line carries a comment with the *why*: the source of the technique and where
   the measurement lives — the «measured»/«load-bearing» contract.
-- `docs/BASELINE.md` gains the run entries; `docs/OPEN-ITEMS.md` gains the правка corpus
+- `docs/reference/BASELINE.md` gains the run entries; `docs/reference/OPEN-ITEMS.md` gains the правка corpus
   record; the proofreading spec is not edited (the code wins after implementation).
 
 ## 5. Out of scope

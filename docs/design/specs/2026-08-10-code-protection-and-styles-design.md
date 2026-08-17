@@ -6,7 +6,7 @@ Status: designed, not implemented
 ## Status of this document
 
 This design answers the three failures the правка calibration measured
-(`docs/OPEN-ITEMS.md` §5) and re-diagnoses two of them: the protected-span corruption is
+(`docs/reference/OPEN-ITEMS.md` §5) and re-diagnoses two of them: the protected-span corruption is
 not a prompt problem, and the style no-ops were largely a flawed experiment plus a real
 prompt contradiction. Once the code exists, **the code is the authority on behaviour and
 this document is the authority on why**.
@@ -216,7 +216,7 @@ The scratchpad corpus and runner from the calibration are reused:
 - The style matrix per §3.2.
 - The «только ошибки» texts re-run to confirm no regression from the prompt change
   (§3.1 does not touch `errorsOnly`, so any change is noise to investigate).
-- Results recorded in `docs/OPEN-ITEMS.md` §5 as a dated follow-up subsection; the §1
+- Results recorded in `docs/reference/OPEN-ITEMS.md` §5 as a dated follow-up subsection; the §1
   escalation entry is closed with a pointer to it (the protectionRules decision the
   escalation asked for is: **moot for fenced, restored-by-code for inline**).
 
@@ -245,7 +245,7 @@ Recorded in the same OPEN-ITEMS subsection.
 
 ## 6. Testing
 
-Offline, Swift Testing, `FakeLLMClient`, the standing rules and `docs/TESTING.md` shapes
+Offline, Swift Testing, `FakeLLMClient`, the standing rules and `docs/reference/TESTING.md` shapes
 (assembly pinned via `ChunkPlan.assembled(from:)`, never a restated formula).
 
 - **Chunker**: a fenced block never merges with prose in either direction; it forms a
@@ -255,7 +255,7 @@ Offline, Swift Testing, `FakeLLMClient`, the standing rules and `docs/TESTING.md
 - **Translator, both routes**: a pass-through chunk issues no model call — pinned in the
   strong form: **no message ever sent to the fake client contains the fenced block's
   bytes** (a call-count pin alone survives the defect «called, with the wrong chunk» —
-  `docs/TESTING.md`'s shape); its bytes reach `final` and the stream verbatim; `final` equals
+  `docs/reference/TESTING.md`'s shape); its bytes reach `final` and the stream verbatim; `final` equals
   `plan.assembled(from:)`; the stream reconstructs `final` byte-for-byte; an all-code
   document yields `timeToFirstTokenMS == nil`, empty `stats`, `modelChunkCount == 0` —
   and the **view model treats it as success, not «пустой ответ»** (the renegotiated
@@ -281,6 +281,6 @@ Offline, Swift Testing, `FakeLLMClient`, the standing rules and `docs/TESTING.md
   positionally; both routes).
 - `docs/design/specs/2026-07-24-local-translator-design.md` §11a: the
   inside-code-translation entry rewritten per §2.1/§4.1.
-- `docs/OPEN-ITEMS.md`: §1 escalation closed, §5 follow-up subsection with all §4
+- `docs/reference/OPEN-ITEMS.md`: §1 escalation closed, §5 follow-up subsection with all §4
   results.
-- `docs/BASELINE.md`: the after-Part-A acceptance entry.
+- `docs/reference/BASELINE.md`: the after-Part-A acceptance entry.

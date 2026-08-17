@@ -561,7 +561,7 @@ A throwaway binary in the assembled bundle, signed the same way, that takes a UR
 `~/Documents` and writes a sibling. What is being established: whether TCC prompts, whether a
 denial surfaces as an error or as a silent no-op, and what the error is. The result decides
 nothing about the shape — the `NSSavePanel` fallback is there either way — but it decides what
-`docs/OPEN-ITEMS.md` §2 records as accepted, and whether the first run needs a word of warning
+`docs/reference/OPEN-ITEMS.md` §2 records as accepted, and whether the first run needs a word of warning
 before it writes anything.
 
 ### 9.2 The four tabs at 560 × 480 (§7.1)
@@ -579,7 +579,7 @@ reconsidered, this probe comes first.
 
 ## 10. Testing
 
-`docs/TESTING.md`'s rule applies: a test that passes under the defect it names is not a test.
+`docs/reference/TESTING.md`'s rule applies: a test that passes under the defect it names is not a test.
 
 **Pure, in `TranslatorAppTests`.** `OutputNaming` — the code inserted before the extension, no
 extension, an occupied name taking a number, a name occupied twice, case. `QueueDrop` — a mixed
@@ -618,7 +618,7 @@ being picked up.
 
 ## 11. What only a human can check
 
-For `docs/OPEN-ITEMS.md` §1. Every one of these is unobservable from this environment.
+For `docs/reference/OPEN-ITEMS.md` §1. Every one of these is unobservable from this environment.
 
 - The mode switch in the pane header, and whether both pane headers still read as one row.
 - A queue of three files end to end: rows updating, the bar moving, the right pane streaming the

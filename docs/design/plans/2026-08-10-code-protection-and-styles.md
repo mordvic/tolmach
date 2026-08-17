@@ -16,7 +16,7 @@
 - Zero warnings: `swift build --build-tests` must print none (grep `warning:` — plain `-i warning` also matches the filenames `WarningsView*.swift`).
 - `swift test` passes fully offline; no offline test touches the network.
 - `swift run acceptance` runs from the worktree root, needs live Ollama, takes minutes — 10-minute timeout, never abort it.
-- `docs/BASELINE.md` and `docs/OPEN-ITEMS.md` §5 are append-only records.
+- `docs/reference/BASELINE.md` and `docs/reference/OPEN-ITEMS.md` §5 are append-only records.
 - Comments carry *why* + the measurement; «measured»/«load-bearing» is a contract.
 - The правка corpus/runner live ONLY in the session scratchpad, never in the repo. Scratchpad root (referred to as `$SCRATCH` below — substitute the literal path):
   `/private/tmp/claude-501/-Users-dmitriy-Documents-Projects-local-translator/529d224b-873c-437a-b0cb-eb2afe8fb11f/scratchpad`
@@ -154,7 +154,7 @@ Append to `Tests/TranslationCoreTests/TranslatorTests.swift` (follow the file's 
         text: source, target: .en, tone: .neutral,
         options: ChatOptions(model: "fake"), maxChunkCharacters: 900,
         onToken: { streamed += $0 })
-    // The strong pin (docs/TESTING.md shape): not merely «two calls», but «no message
+    // The strong pin (docs/reference/TESTING.md shape): not merely «two calls», but «no message
     // ever sent to the model contains the fenced bytes» — a call-count pin alone
     // survives the defect «called, with the wrong chunk».
     for messages in fake.receivedMessages {
@@ -591,7 +591,7 @@ git commit -m "feat(core): inline code restored from source bytes under the equa
 
 **Files:**
 - Modify: `Sources/acceptance/main.swift:79,160,180,190` (every `chunks.count` classification site)
-- Modify: `docs/BASELINE.md` (append one entry)
+- Modify: `docs/reference/BASELINE.md` (append one entry)
 
 **Interfaces:**
 - Consumes: `TranslationOutcome.modelChunkCount` (Task 2).
@@ -607,7 +607,7 @@ Run `swift run acceptance` twice (10-minute timeout each); the second run is the
 
 - [ ] **Step 3: Append the re-based entry**
 
-Append to `docs/BASELINE.md`, following its entry format, headed:
+Append to `docs/reference/BASELINE.md`, following its entry format, headed:
 
 ```markdown
 ## 2026-08-10 — after pass-through chunks and inline restore (re-basing)
@@ -628,7 +628,7 @@ engine tasks on your own; the failure analysis is the controller's.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add Sources/acceptance/main.swift docs/BASELINE.md
+git add Sources/acceptance/main.swift docs/reference/BASELINE.md
 git commit -m "feat(acceptance): classify by model-bound chunks; re-based entry after Part A"
 ```
 
@@ -642,7 +642,7 @@ git commit -m "feat(acceptance): classify by model-bound chunks; re-based entry 
 - No repo changes in this task (records land in Task 8).
 
 **Interfaces:**
-- Consumes: the corpus and runner from the prompt-improvement pass. If `$SCRATCH/proofread-corpus/` or the runner are missing, rebuild them: the 11 texts are recorded verbatim in `docs/OPEN-ITEMS.md` §5, the runner code in `docs/design/plans/2026-08-10-prompt-improvement.md` Task 4 (use its Task 4 report's compile fix: add `-module-name TranslationCore`).
+- Consumes: the corpus and runner from the prompt-improvement pass. If `$SCRATCH/proofread-corpus/` or the runner are missing, rebuild them: the 11 texts are recorded verbatim in `docs/reference/OPEN-ITEMS.md` §5, the runner code in `docs/design/plans/2026-08-10-prompt-improvement.md` Task 4 (use its Task 4 report's compile fix: add `-module-name TranslationCore`).
 - Produces: `$SCRATCH/proofread-out-partA/` and `$SCRATCH/proofread-out-matrix-baseline/` + logs, consumed by Tasks 7–8.
 
 - [ ] **Step 1: The new probe text**
@@ -744,7 +744,7 @@ Append to `Tests/TranslationCoreTests/ProofreadPromptTests.swift`:
 /// The style-aware variant. When a named style accompanies this level, «voice»
 /// leaves the preservation list — the style owns the voice, and keeping both
 /// instructions produced measured 3/3 no-ops on «дружеский» and «простой»
-/// (spec §3.1; docs/OPEN-ITEMS.md §5). `errorsOnly` ignores the flag: no style
+/// (spec §3.1; docs/reference/OPEN-ITEMS.md §5). `errorsOnly` ignores the flag: no style
 /// ever accompanies it.
 public func instruction(styleGovernsVoice: Bool) -> String {
     guard self == .errorsAndStyle, styleGovernsVoice else { return instruction }
@@ -777,7 +777,7 @@ git commit -m "feat(core): a named style owns the voice — the level instructio
 ### Task 8: Правка corpus run №2 — the matrix after the fix, and the records
 
 **Files:**
-- Modify: `docs/OPEN-ITEMS.md` (§5 — append a dated follow-up subsection; §1 — close the escalation)
+- Modify: `docs/reference/OPEN-ITEMS.md` (§5 — append a dated follow-up subsection; §1 — close the escalation)
 
 **Interfaces:**
 - Consumes: Task 6's outputs (`$SCRATCH/proofread-out-matrix-baseline/`, `$SCRATCH/matrix-baseline-verdict.md`) and Task 7's prompt fix.
@@ -792,7 +792,7 @@ Per probe: register shifted (majority of 3)? meaning preserved? Compare with the
 
 - [ ] **Step 3: The records**
 
-Append to `docs/OPEN-ITEMS.md` §5 a dated subsection:
+Append to `docs/reference/OPEN-ITEMS.md` §5 a dated subsection:
 
 ```markdown
 ### Part A verification and the style matrix (2026-08-10, follow-up)
@@ -811,7 +811,7 @@ Close the §1 escalation entry: replace its «rests with a human» tail with the
 - [ ] **Step 4: Commit**
 
 ```bash
-git add docs/OPEN-ITEMS.md
+git add docs/reference/OPEN-ITEMS.md
 git commit -m "docs: Part A verification and the style matrix, before and after the voice fix"
 ```
 
@@ -820,7 +820,7 @@ git commit -m "docs: Part A verification and the style matrix, before and after 
 ### Task 9: Bounded model benchmark
 
 **Files:**
-- Modify: `docs/OPEN-ITEMS.md` (append to the Task 8 subsection)
+- Modify: `docs/reference/OPEN-ITEMS.md` (append to the Task 8 subsection)
 - Scratchpad: reuse the runner with a model argument.
 
 - [ ] **Step 1: Parameterise the runner's model**
@@ -843,7 +843,7 @@ $SCRATCH/proofread-runner/pp $SCRATCH/proofread-corpus $SCRATCH/proofread-out-be
 Append to the OPEN-ITEMS §5 subsection: per model — errorsOnly pass counts, style-shift counts, codeIntact (should be 3/3 regardless of model — the guarantee is structural now; if it is not, that is a restorer bug, stop and report), and the timing caveat. Purpose line verbatim: «facts for a future model-policy decision about правка; no policy change here». Commit:
 
 ```bash
-git add docs/OPEN-ITEMS.md
+git add docs/reference/OPEN-ITEMS.md
 git commit -m "docs: правка model benchmark — facts, no policy change"
 ```
 

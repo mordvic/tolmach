@@ -15,7 +15,7 @@ ollama pull aya-expanse:8b        # the interactive model — required
 `aya-expanse:8b` is the interactive default and is what the acceptance harness measures
 against. The choice is not a preference: it is the model that met the sub-second
 time-to-first-token requirement without corrupting identifiers — see `ModelPolicy.swift` and
-`docs/MEASUREMENTS.md`.
+`docs/reference/MEASUREMENTS.md`.
 
 The app never starts Ollama for you. If it is not running, the window says so and offers a
 button; the design decision is that a translator does not silently launch a server.
@@ -122,7 +122,7 @@ asserted, because a multi-chunk run pays for the term-list call first.
 
 `known` and `known-limitation` lines are expected diffs, not warnings.
 
-Record every run in `docs/BASELINE.md` — that file explains how to read the output in full and
+Record every run in `docs/reference/BASELINE.md` — that file explains how to read the output in full and
 what a regression looks like. A run whose numbers nobody wrote down cannot be compared to
 anything.
 

@@ -27,7 +27,7 @@ size in this document was measured inside a test process; every claim about how 
 *looks* is absent on purpose. `./Scripts/make-app-bundle.sh` was run at Tasks 4 and 7 and the
 bundle assembles and signs — that is a build check, not a visual one.
 
-`docs/OPEN-ITEMS.md` §1 carries the full list of what a human still owes. It is long. It is
+`docs/reference/OPEN-ITEMS.md` §1 carries the full list of what a human still owes. It is long. It is
 supposed to be long.
 
 ---
@@ -195,7 +195,7 @@ works on some machines.
 - **`hosting.sizingOptions = []`, 380 × 120 → 380 × 260.** Taken on a `.titled` panel against a
   fixed size, and neither condition exists any more. The mechanism it records is sound and the
   line stays on that basis; the numbers are quarantined in the comment, in
-  `docs/MEASUREMENTS.md` and in `docs/PLATFORM-TRAPS.md`, and re-measuring is owed to a human.
+  `docs/reference/MEASUREMENTS.md` and in `docs/reference/PLATFORM-TRAPS.md`, and re-measuring is owed to a human.
   The project contract offers two options for an invalidated measurement — re-measure, or record
   why it no longer applies — and this took the second.
 - **«~70 characters in the 500 ms window, the 5 ms sleeps settling at ~7 ms each».** Retired
@@ -295,7 +295,7 @@ for the thing being measured, the stand-in is the measurement.
 
 None of these was fixed **at the time**. They are recorded so that a future reader can tell
 «unfinished» from «decided». The three that a user could actually meet are promoted into
-`docs/OPEN-ITEMS.md` §2; the rest live only here.
+`docs/reference/OPEN-ITEMS.md` §2; the rest live only here.
 
 > **Most of this list has since been closed by the final whole-branch fix wave**, which is
 > recorded in `.superpowers/sdd/2026-07-30-ui-redesign/final-fix-report.md`. Closed there: the
@@ -304,7 +304,7 @@ None of these was fixed **at the time**. They are recorded so that a future read
 > hold» group; and all five «dead or stray» items except the `120 < 120` degeneracy and the
 > property-order note. The entries are left standing rather than struck through, because what
 > they record is what the *build* left behind, and that is the thing this document is for.
-> `docs/OPEN-ITEMS.md` is the file to read for what is open **now**.
+> `docs/reference/OPEN-ITEMS.md` is the file to read for what is open **now**.
 
 **Behaviour, and therefore promoted:**
 
@@ -352,7 +352,7 @@ None of these was fixed **at the time**. They are recorded so that a future read
   `swapLanguages()` and `adopt(from:)`, not only translation attempts. Every extra fire makes
   the glyph fresher, so this is a comment defect and not a behaviour one.
 - `MenuBarExtra` content caching is stated as fact and is inherited, not measured. Moved to
-  `docs/OPEN-ITEMS.md` §3 as an open question.
+  `docs/reference/OPEN-ITEMS.md` §3 as an open question.
 
 **Dead or stray:**
 
@@ -393,7 +393,7 @@ What was gathered instead, uniformly, across every task:
   has that provenance: `ViewThatFits` at 13.0 and `HSplitView` at 10.15 are stated from recall —
   `HSplitView` is described as "SwiftUI's original split-view API" rather than cited — and should
   be re-read before anyone relies on them.
-- **Mutation testing**, per `docs/TESTING.md`, with the source restored and `git status`
+- **Mutation testing**, per `docs/reference/TESTING.md`, with the source restored and `git status`
   confirmed clean after each one.
 - **Scratch probes** for the things a unit test cannot reach: the four hosting-view measurement
   candidates, the observation staleness, the doubled status refresh, and this task's five-press
@@ -405,7 +405,7 @@ What was gathered instead, uniformly, across every task:
 
 The distinction that matters, and the one this project keeps having to relearn: a green suite
 says the arithmetic is right. It says nothing about whether the arithmetic reaches a screen.
-Spec §8 knew that before the first line was written; `docs/OPEN-ITEMS.md` §1 is where it is now
+Spec §8 knew that before the first line was written; `docs/reference/OPEN-ITEMS.md` §1 is where it is now
 kept, and it is the first thing a human with the bundle on a screen should work through.
 
 ---
