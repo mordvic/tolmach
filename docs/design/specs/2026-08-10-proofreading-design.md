@@ -240,7 +240,7 @@ docs gain one line each saying so.
 > has the степень/стиль controls this section predicted as «the expected first ask». Those
 > controls write the settings rather than per-run overrides, so «правка in the panel uses the
 > settings defaults» still holds — the user can now change those defaults from the panel. See
-> `docs/superpowers/specs/2026-08-15-proofread-hotkey-design.md`. Everything else in this
+> `docs/design/specs/2026-08-15-proofread-hotkey-design.md`. Everything else in this
 > section — the switch, `switchOperation(to:)`'s refusal to read a new selection, «Ещё
 > вариант», `autoCopy` — is unchanged.
 

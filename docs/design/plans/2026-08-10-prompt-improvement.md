@@ -8,7 +8,7 @@
 
 **Tech Stack:** Swift 6 / SwiftPM, Swift Testing (`@Test`, `#expect`), live Ollama at `http://127.0.0.1:11434` with `aya-expanse:8b`.
 
-**Spec:** `docs/superpowers/specs/2026-08-10-prompt-improvement-design.md`
+**Spec:** `docs/design/specs/2026-08-10-prompt-improvement-design.md`
 
 ## Global Constraints
 
@@ -50,7 +50,7 @@ Read the tail of `docs/BASELINE.md` to copy the exact entry format already in us
 ## 2026-08-10 — baseline before the prompt-improvement pass
 
 Purpose: the «before» for the targeted prompt changes
-(docs/superpowers/specs/2026-08-10-prompt-improvement-design.md §3.1).
+(docs/design/specs/2026-08-10-prompt-improvement-design.md §3.1).
 <the harness's printed lines, verbatim>
 ```
 

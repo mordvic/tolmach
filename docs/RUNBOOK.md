@@ -40,7 +40,7 @@ by itself whenever `build/AppIcon.icns` is missing or older than the generator �
 common case on a fresh clone, since `build/` is git-ignored — so the command above is only needed
 to inspect the rasters; it leaves `build/AppIcon.iconset/` behind for exactly that. Why the
 mark is what it is, and why the 16 and 32 px rasters are a different drawing rather than a
-downscale, is in `docs/superpowers/specs/2026-07-29-app-icon-design.md`.
+downscale, is in `docs/design/specs/2026-07-29-app-icon-design.md`.
 
 The app is `LSUIElement`: no Dock icon, no window at launch, just the menu-bar item. That is
 deliberate and the scene order in `TranslatorApp.swift` is what enforces it — the comment there

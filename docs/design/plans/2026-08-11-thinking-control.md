@@ -8,7 +8,7 @@
 
 **Tech Stack:** Swift 6 (`.swiftLanguageMode(.v6)` on every target), SwiftUI, Swift Testing, no external dependencies.
 
-**Design:** `docs/superpowers/specs/2026-08-11-thinking-control-design.md`. Where this plan and the spec disagree, the spec is right and the plan has a bug.
+**Design:** `docs/design/specs/2026-08-11-thinking-control-design.md`. Where this plan and the spec disagree, the spec is right and the plan has a bug.
 
 ## Global Constraints
 

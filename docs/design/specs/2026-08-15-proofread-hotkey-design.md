@@ -15,7 +15,7 @@ A claim marked **measured** restates an observation already recorded in the code
 it is not a claim, and nothing in the implementation may rest on a guessed answer to it.
 
 This document supersedes one paragraph of
-`docs/superpowers/specs/2026-08-10-proofreading-design.md` §8 — «A press of ⌥⌘T behaves
+`docs/design/specs/2026-08-10-proofreading-design.md` §8 — «A press of ⌥⌘T behaves
 exactly as today: capture → перевод» — and only that paragraph. That spec's reasoning about
 *why* the press must be predictable is kept and restated in §4 below; what changes is that
 predictability now means «each shortcut has one operation», not «the only shortcut is
@@ -250,7 +250,7 @@ they are.
 
 - `CLAUDE.md` — the app-layer section: the hotkey path owns two combinations now, and the
   «every press starts with перевод» fact is superseded.
-- `docs/superpowers/specs/2026-08-10-proofreading-design.md` — a correction note on §8
+- `docs/design/specs/2026-08-10-proofreading-design.md` — a correction note on §8
   pointing here, in the shape the other specs use where the code has moved past them.
 - `docs/OPEN-ITEMS.md` — §8.2's manual check, and the panel row's appearance at the 300 pt
   floor.

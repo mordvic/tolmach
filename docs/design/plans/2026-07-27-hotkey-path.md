@@ -1874,7 +1874,7 @@ git commit -m "feat(app): retry button on a failed window translation"
 **Files:**
 - Modify: `Sources/TranslatorApp/TranslatorApp.swift`
 - Modify: `Sources/TranslatorApp/SettingsGeneralView.swift`
-- Modify: `docs/superpowers/specs/2026-07-24-local-translator-design.md`
+- Modify: `docs/design/specs/2026-07-24-local-translator-design.md`
 
 Spec 6.1 asks for an onboarding screen at first launch when the permission is missing. Task 9 already shows the prompt at the moment of use, which is the more useful half; this adds the standing indicator so a user who has not pressed the key yet is not left to discover it.
 
@@ -1942,7 +1942,7 @@ Report exactly what you observed and what you could not reach.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/TranslatorApp docs/superpowers/specs/2026-07-24-local-translator-design.md
+git add Sources/TranslatorApp docs/design/specs/2026-07-24-local-translator-design.md
 git commit -m "feat(app): first-launch permission prompt and standing indicator"
 ```
 
@@ -1995,7 +1995,7 @@ than its screen. They agree.
 
 ## Execution Handoff
 
-Plan complete and saved to `docs/superpowers/plans/2026-07-27-hotkey-path.md`. Two execution options:
+Plan complete and saved to `docs/design/plans/2026-07-27-hotkey-path.md`. Two execution options:
 
 **1. Subagent-Driven (recommended)** — a fresh subagent per task, review between tasks, fast iteration. This is how Plans 1 and 2 were built, and on this project the reviews have consistently found defects that the per-task tests did not.
 

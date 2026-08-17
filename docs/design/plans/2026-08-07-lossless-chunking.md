@@ -4,7 +4,7 @@
 
 **Goal:** The assembled translation reproduces the source document's separators — blank-line runs, indentation, CRLF, document-edge whitespace — byte for byte; indented code becomes code; the markup diff compares against the real source.
 
-**Architecture:** `Chunker` gains a `plan()` API whose chunks carry `separatorBefore` (a verbatim substring of the source); the packing rule merges blocks only across an exactly-`"\n\n"` separator, so the model always sees canonical text and every other separator is restored at assembly by `Translator`. `MarkupSkeleton` learns indented code, table rows and setext headings. Spec: `docs/superpowers/specs/2026-08-07-lossless-chunking-design.md`.
+**Architecture:** `Chunker` gains a `plan()` API whose chunks carry `separatorBefore` (a verbatim substring of the source); the packing rule merges blocks only across an exactly-`"\n\n"` separator, so the model always sees canonical text and every other separator is restored at assembly by `Translator`. `MarkupSkeleton` learns indented code, table rows and setext headings. Spec: `docs/design/specs/2026-08-07-lossless-chunking-design.md`.
 
 **Tech Stack:** Swift 6 / SwiftPM, Foundation + NaturalLanguage only in `TranslationCore`, Swift Testing (`@Test`, `#expect`).
 
@@ -946,7 +946,7 @@ git commit -m "feat(core): markup skeleton learns table rows and setext headings
 In the «Facts that will bite you if you "tidy" them» list:
 
 1. In the `final`/`onToken` bullet, replace the sentence «Chunks are joined with `"\n\n"` in both `final` and the stream.» with: «Chunks are joined by each chunk's `separatorBefore` — the source document's own bytes, restored verbatim — in both `final` and the stream, plus the source's trailing whitespace at the end; `ChunkPlan`'s invariant is that this reassembly is byte-for-byte lossless.»
-2. Add a bullet after it: «**The packing rule is the structure guarantee.** Blocks merge into one chunk only across an exactly-`"\n\n"` separator, so the model always sees canonical spacing and every other separator never reaches it at all. Indented code (≥ 4 spaces after a blank line) is code: never sentence-split, protected by the prompt, tokenised by `MarkupSkeleton`. See `docs/superpowers/specs/2026-08-07-lossless-chunking-design.md`.»
+2. Add a bullet after it: «**The packing rule is the structure guarantee.** Blocks merge into one chunk only across an exactly-`"\n\n"` separator, so the model always sees canonical spacing and every other separator never reaches it at all. Indented code (≥ 4 spaces after a blank line) is code: never sentence-split, protected by the prompt, tokenised by `MarkupSkeleton`. See `docs/design/specs/2026-08-07-lossless-chunking-design.md`.»
 
 - [ ] **Step 2: Record the owed manual run in `docs/OPEN-ITEMS.md`**
 

@@ -5,9 +5,9 @@
 > defects in the plan itself. It is not maintained: it is the account of a build that has
 > finished.
 
-# SDD ledger — plan: docs/superpowers/plans/2026-07-30-ui-redesign.md
+# SDD ledger — plan: docs/design/plans/2026-07-30-ui-redesign.md
 
-Spec: `docs/superpowers/specs/2026-07-30-ui-redesign-design.md`
+Spec: `docs/design/specs/2026-07-30-ui-redesign-design.md`
 Branch: `feat/ui-redesign`
 Merge base: `89efea3` (main)
 Baseline at start: 289 tests, zero warnings from `swift build --build-tests`.

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Swift 6 (`.swiftLanguageMode(.v6)`), SwiftPM, SwiftUI/AppKit, Swift Testing, macOS 14 floor. No external dependencies.
 
-**Spec:** `docs/superpowers/specs/2026-08-07-batch-translation-design.md`. Section references below (§4.1, §7.2 …) point into it.
+**Spec:** `docs/design/specs/2026-08-07-batch-translation-design.md`. Section references below (§4.1, §7.2 …) point into it.
 
 ## Global Constraints
 
@@ -2571,7 +2571,7 @@ The repo treats documentation drift as a build failure (`Tests/DocumentationTest
 
 **Files:**
 - Modify: `CLAUDE.md`, `CONTEXT.md`, `docs/OPEN-ITEMS.md`
-- Modify: `docs/superpowers/specs/2026-07-24-local-translator-design.md` (§12)
+- Modify: `docs/design/specs/2026-07-24-local-translator-design.md` (§12)
 - Test: `Tests/DocumentationTests/ArchitectureDriftTests.swift`
 
 - [ ] **Step 1: Run the documentation tests first**
@@ -2597,7 +2597,7 @@ Add the table from spec §11, verbatim, as a new «Owed by the file queue» bloc
 
 - [ ] **Step 5: Spec §12**
 
-`docs/superpowers/specs/2026-07-24-local-translator-design.md` §12's first bullet stops being future tense and points at the new spec.
+`docs/design/specs/2026-07-24-local-translator-design.md` §12's first bullet stops being future tense and points at the new spec.
 
 - [ ] **Step 6: Run everything and commit**
 

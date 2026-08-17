@@ -8,7 +8,7 @@
 
 **Tech Stack:** Swift 6 / SwiftPM, Swift Testing (`@Test`, `#expect`), live Ollama at `http://127.0.0.1:11434` (`aya-expanse:8b`).
 
-**Spec:** `docs/superpowers/specs/2026-08-10-code-protection-and-styles-design.md` — read §2 (Part A) before Tasks 1–5, §3 (Part B) before Tasks 6–8.
+**Spec:** `docs/design/specs/2026-08-10-code-protection-and-styles-design.md` — read §2 (Part A) before Tasks 1–5, §3 (Part B) before Tasks 6–8.
 
 ## Global Constraints
 
@@ -642,7 +642,7 @@ git commit -m "feat(acceptance): classify by model-bound chunks; re-based entry 
 - No repo changes in this task (records land in Task 8).
 
 **Interfaces:**
-- Consumes: the corpus and runner from the prompt-improvement pass. If `$SCRATCH/proofread-corpus/` or the runner are missing, rebuild them: the 11 texts are recorded verbatim in `docs/OPEN-ITEMS.md` §5, the runner code in `docs/superpowers/plans/2026-08-10-prompt-improvement.md` Task 4 (use its Task 4 report's compile fix: add `-module-name TranslationCore`).
+- Consumes: the corpus and runner from the prompt-improvement pass. If `$SCRATCH/proofread-corpus/` or the runner are missing, rebuild them: the 11 texts are recorded verbatim in `docs/OPEN-ITEMS.md` §5, the runner code in `docs/design/plans/2026-08-10-prompt-improvement.md` Task 4 (use its Task 4 report's compile fix: add `-module-name TranslationCore`).
 - Produces: `$SCRATCH/proofread-out-partA/` and `$SCRATCH/proofread-out-matrix-baseline/` + logs, consumed by Tasks 7–8.
 
 - [ ] **Step 1: The new probe text**
@@ -852,7 +852,7 @@ git commit -m "docs: правка model benchmark — facts, no policy change"
 ### Task 10: Documentation and the final sweep
 
 **Files:**
-- Modify: `CLAUDE.md` (the pipeline section), `docs/superpowers/specs/2026-07-24-local-translator-design.md` §11a
+- Modify: `CLAUDE.md` (the pipeline section), `docs/design/specs/2026-07-24-local-translator-design.md` §11a
 - Verify: everything.
 
 - [ ] **Step 1: CLAUDE.md**
@@ -868,12 +868,12 @@ In the pipeline section's fact list, add one bullet (place it after the packing-
   `TranslationOutcome.modelChunkCount` is what «multi-chunk» means now — the
   document-glossary trigger, the empty-reply ending and the acceptance classification
   all count model-bound chunks. See
-  docs/superpowers/specs/2026-08-10-code-protection-and-styles-design.md.
+  docs/design/specs/2026-08-10-code-protection-and-styles-design.md.
 ```
 
 - [ ] **Step 2: §11a**
 
-In `docs/superpowers/specs/2026-07-24-local-translator-design.md` §11a, the entry «The model translates human-readable text inside code» (extended 2026-08-10 with the правка counts) gains its closing sentences: fenced blocks are now structurally out of the model's reach (pass-through chunks) and inline spans are restored from source bytes under the equal-count gate — the limitation survives only for a reply that changes the number of inline spans, which the skeleton diff reports. Date the addition.
+In `docs/design/specs/2026-07-24-local-translator-design.md` §11a, the entry «The model translates human-readable text inside code» (extended 2026-08-10 with the правка counts) gains its closing sentences: fenced blocks are now structurally out of the model's reach (pass-through chunks) and inline spans are restored from source bytes under the equal-count gate — the limitation survives only for a reply that changes the number of inline spans, which the skeleton diff reports. Date the addition.
 
 - [ ] **Step 3: Final sweep**
 
@@ -882,7 +882,7 @@ Run: `swift test` (expect PASS, ~2.1–2.6 s), `swift build --build-tests 2>&1 |
 - [ ] **Step 4: Commit**
 
 ```bash
-git add CLAUDE.md docs/superpowers/specs/2026-07-24-local-translator-design.md
+git add CLAUDE.md docs/design/specs/2026-07-24-local-translator-design.md
 git commit -m "docs: record protection-by-construction as pipeline fact and close §11a's code entry"
 ```
 

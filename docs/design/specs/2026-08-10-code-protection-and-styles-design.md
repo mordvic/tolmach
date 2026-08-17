@@ -279,7 +279,7 @@ Offline, Swift Testing, `FakeLLMClient`, the standing rules and `docs/TESTING.md
 - `CLAUDE.md`: the pipeline section — pass-through chunks and inline restore are new
   load-bearing facts (the model never sees fenced code; inline content is restored
   positionally; both routes).
-- `docs/superpowers/specs/2026-07-24-local-translator-design.md` §11a: the
+- `docs/design/specs/2026-07-24-local-translator-design.md` §11a: the
   inside-code-translation entry rewritten per §2.1/§4.1.
 - `docs/OPEN-ITEMS.md`: §1 escalation closed, §5 follow-up subsection with all §4
   results.

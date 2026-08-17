@@ -8,7 +8,7 @@
 
 **Tech Stack:** Swift 6, SwiftUI, AppKit, Carbon.HIToolbox, Observation, Swift Testing.
 
-**Spec:** `docs/superpowers/specs/2026-08-15-proofread-hotkey-design.md`. Where this plan and the spec disagree, the spec is the authority on *why* and this plan is wrong — stop and ask.
+**Spec:** `docs/design/specs/2026-08-15-proofread-hotkey-design.md`. Where this plan and the spec disagree, the spec is the authority on *why* and this plan is wrong — stop and ask.
 
 ## Global Constraints
 
@@ -608,7 +608,7 @@ and, where `panelModel.operation = .translate` stood:
         // never inherits what the previous presentation's switch was left on. That is the
         // предсказуемость the правка design's §8 asked for, restated now that there is more
         // than one shortcut — the design that supersedes it is
-        // docs/superpowers/specs/2026-08-15-proofread-hotkey-design.md.
+        // docs/design/specs/2026-08-15-proofread-hotkey-design.md.
         panelModel.operation = operation
 ```
 
@@ -1271,7 +1271,7 @@ Spec §5's label change and §11's list. Nothing here changes behaviour; all of 
 
 **Files:**
 - Modify: `Sources/TranslatorApp/SettingsGeneralView.swift:156`
-- Modify: `CLAUDE.md`, `CONTEXT.md`, `docs/OPEN-ITEMS.md`, `docs/superpowers/specs/2026-08-10-proofreading-design.md`
+- Modify: `CLAUDE.md`, `CONTEXT.md`, `docs/OPEN-ITEMS.md`, `docs/design/specs/2026-08-10-proofreading-design.md`
 
 - [ ] **Step 1: Fix the autoCopy label**
 
@@ -1308,14 +1308,14 @@ Add to the settings bullet: the two stored combinations are `"hotkey"` and `"pro
 
 - [ ] **Step 3: Add the correction note to the правка spec**
 
-At the top of §8 of `docs/superpowers/specs/2026-08-10-proofreading-design.md`:
+At the top of §8 of `docs/design/specs/2026-08-10-proofreading-design.md`:
 
 ```markdown
 > **Corrected 2026-08-15.** The first bullet below — «A press of ⌥⌘T behaves exactly as
 > today: capture → перевод» — no longer describes the code. There are two shortcuts now, each
 > carrying its own operation, and the panel has the степень/стиль controls this section
 > predicted as «the expected first ask». See
-> `docs/superpowers/specs/2026-08-15-proofread-hotkey-design.md`. Everything else in this
+> `docs/design/specs/2026-08-15-proofread-hotkey-design.md`. Everything else in this
 > section still holds.
 ```
 
@@ -1340,7 +1340,7 @@ Expected: `0` and a green suite.
 
 ```bash
 git add Sources/TranslatorApp/SettingsGeneralView.swift CLAUDE.md CONTEXT.md \
-        docs/OPEN-ITEMS.md docs/superpowers/specs/2026-08-10-proofreading-design.md
+        docs/OPEN-ITEMS.md docs/design/specs/2026-08-10-proofreading-design.md
 git commit -m "docs(app): record the second shortcut and what only a human can check"
 ```
 

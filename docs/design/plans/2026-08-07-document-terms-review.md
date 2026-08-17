@@ -8,9 +8,9 @@
 
 **Tech Stack:** Swift 6 (`.swiftLanguageMode(.v6)`), SwiftPM, SwiftUI/AppKit, Swift Testing, macOS 14 floor. No external dependencies.
 
-**Spec:** `docs/superpowers/specs/2026-08-07-batch-translation-design.md`, §3.1–3.4, §3.6, §6.
+**Spec:** `docs/design/specs/2026-08-07-batch-translation-design.md`, §3.1–3.4, §3.6, §6.
 
-**Depends on Phase 1** (`docs/superpowers/plans/2026-08-07-batch-translation-queue.md`): `FileQueueModel`, `AppSettings.reviewDocumentTerms` and `TranslationProgress` already exist. Do not start this plan until that one is merged and green.
+**Depends on Phase 1** (`docs/design/plans/2026-08-07-batch-translation-queue.md`): `FileQueueModel`, `AppSettings.reviewDocumentTerms` and `TranslationProgress` already exist. Do not start this plan until that one is merged and green.
 
 ## Global Constraints
 

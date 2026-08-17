@@ -77,7 +77,7 @@ Full detail, including what to check when something misbehaves:
 | [`docs/MEASUREMENTS.md`](docs/MEASUREMENTS.md) | You want to know where a number came from. |
 | [`docs/BASELINE.md`](docs/BASELINE.md) | You ran the acceptance harness and want to know whether the result is normal. |
 | [`docs/adr/`](docs/adr/) | The code looks inconsistent and you want to know whether it is deliberate. |
-| [`docs/superpowers/specs/`](docs/superpowers/specs/) | You are changing engine behaviour. Note its status header: where it and the code disagree, the code is right. |
+| [`docs/design/specs/`](docs/design/specs/) | You are changing engine behaviour. Note its status header: where it and the code disagree, the code is right. |
 | [`docs/history/`](docs/history/) | You want the account of how it was built, and what was tried and rejected. |
 | [`CONTEXT.md`](CONTEXT.md) | You are writing UI copy or naming something. |
 

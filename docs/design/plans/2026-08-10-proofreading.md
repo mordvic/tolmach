@@ -8,7 +8,7 @@
 
 **Tech Stack:** Swift 6 (`.swiftLanguageMode(.v6)`), SwiftPM, SwiftUI/AppKit, Swift Testing. No new dependencies.
 
-**Spec:** `docs/superpowers/specs/2026-08-10-proofreading-design.md`. Where this plan and the spec disagree, the spec wins; where either disagrees with measured comments in the code, the code's comments win.
+**Spec:** `docs/design/specs/2026-08-10-proofreading-design.md`. Where this plan and the spec disagree, the spec wins; where either disagrees with measured comments in the code, the code's comments win.
 
 ## Global Constraints
 
@@ -1493,7 +1493,7 @@ git commit -m "feat(app): степень and стиль правки defaults in
   no `GlossaryVerifier`. It returns `TranslationOutcome` with honestly empty glossary
   fields (`documentGlossaryAttempted == false` is the marker). The style instruction
   reaches the prompt only under `.errorsAndStyle` — `PromptBuilder` enforces it and the
-  UI disables the control. See `docs/superpowers/specs/2026-08-10-proofreading-design.md`.
+  UI disables the control. See `docs/design/specs/2026-08-10-proofreading-design.md`.
 ```
 
 - [ ] **Step 2: CONTEXT.md** — add a «## Правка» section with the spec §1 vocabulary, in the file's own format (headword — English gloss, → types, _Avoid_ list):

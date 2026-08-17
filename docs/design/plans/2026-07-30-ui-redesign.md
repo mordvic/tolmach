@@ -8,7 +8,7 @@
 
 **Tech Stack:** Swift 5 language mode on Swift 6 tools, SwiftUI + AppKit, Observation, Swift Testing. No external dependencies.
 
-**Spec:** `docs/superpowers/specs/2026-07-30-ui-redesign-design.md`. Where this plan and the spec disagree, the spec is right; report the disagreement rather than choosing.
+**Spec:** `docs/design/specs/2026-07-30-ui-redesign-design.md`. Where this plan and the spec disagree, the spec is right; report the disagreement rather than choosing.
 
 ## Global Constraints
 

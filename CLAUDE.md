@@ -138,7 +138,7 @@ Facts that will bite you if you "tidy" them:
   **Indentation is not a code signal anywhere in the pipeline**: fenced and inline code are the
   only protected forms, indented text is prose and is translated, and its indentation survives
   because `Block.range` moves edge whitespace into the separators. See
-  `docs/superpowers/specs/2026-08-07-lossless-chunking-design.md` and its correction note.
+  `docs/design/specs/2026-08-07-lossless-chunking-design.md` and its correction note.
 - **The model never sees fenced code, and inline code is restored by construction.**
   A fenced block is its own pass-through chunk (`Chunk.passthrough`) — emitted from
   source bytes with no model call, on both routes; inline spans are restored
@@ -147,7 +147,7 @@ Facts that will bite you if you "tidy" them:
   `TranslationOutcome.modelChunkCount` is what «multi-chunk» means now — the
   document-glossary trigger, the empty-reply ending and the acceptance classification
   all count model-bound chunks. See
-  docs/superpowers/specs/2026-08-10-code-protection-and-styles-design.md.
+  docs/design/specs/2026-08-10-code-protection-and-styles-design.md.
 - **`translate(source:)` is how a caller states the language, and every caller does** — the
   window, the queue and `translate-cli --from`. Nil still
   means «detect it», but a stated source governs everything downstream — the prompt, the tagger
@@ -172,7 +172,7 @@ Facts that will bite you if you "tidy" them:
   no `GlossaryVerifier`. It returns `TranslationOutcome` with honestly empty glossary
   fields (`documentGlossaryAttempted == false` is the marker). The style instruction
   reaches the prompt only under `.errorsAndStyle` — `PromptBuilder` enforces it and the
-  UI disables the control. See `docs/superpowers/specs/2026-08-10-proofreading-design.md`.
+  UI disables the control. See `docs/design/specs/2026-08-10-proofreading-design.md`.
 
 ### Ollama rules (empirical, non-negotiable)
 
@@ -294,7 +294,7 @@ Facts that will bite you if you "tidy" them:
   `defaultProofreadingLevel` / `defaultRewriteStyle` **directly** — they are the settings, not
   per-run overrides, so a choice made where правка is used survives the panel closing and the
   window follows it wherever it has no override of its own. See
-  `docs/superpowers/specs/2026-08-15-proofread-hotkey-design.md`.
+  `docs/design/specs/2026-08-15-proofread-hotkey-design.md`.
 - **The panel sizes itself to its content and is not `.titled`.** Three types share the job and
   none of them may be collapsed into another: `PanelSizer` owns the rules (width clamped to
   300–560 pt and frozen for a whole presentation, height floored at 120 pt, monotonic within a
@@ -436,11 +436,11 @@ Read the one that answers your question; do not read them all.
 | `docs/MEASUREMENTS.md` | «Where did this number come from?» |
 | `docs/BASELINE.md` | After running `swift run acceptance` — whether the result is normal, and where to record it. |
 | `docs/adr/` | The code looks inconsistent and you want to know whether it is deliberate. |
-| `docs/superpowers/specs/2026-07-24-local-translator-design.md` | Changing engine behaviour. **Note its status header — it is the pre-implementation design, and where it and the code disagree the code is right.** |
-| `docs/superpowers/specs/2026-07-30-ui-redesign-design.md` | Changing the panel, the window or the settings: why each surface has the shape it has. Same status header, same rule — the code wins. Its §8 lists what only a human can check; `docs/OPEN-ITEMS.md` §1 is where that list is kept current. |
+| `docs/design/specs/2026-07-24-local-translator-design.md` | Changing engine behaviour. **Note its status header — it is the pre-implementation design, and where it and the code disagree the code is right.** |
+| `docs/design/specs/2026-07-30-ui-redesign-design.md` | Changing the panel, the window or the settings: why each surface has the shape it has. Same status header, same rule — the code wins. Its §8 lists what only a human can check; `docs/OPEN-ITEMS.md` §1 is where that list is kept current. |
 | `docs/history/` | «What did we already try?» The build ledgers, including rejected approaches and defects found in the plans — and in one case in an audit — themselves. `2026-08-02-audit-and-three-waves-ledger.md` is the newest: read it before touching the settings panes' fixed frame, the glossary's language column, `LemmaMatcher`, or anything that assumes a menu bar. `2026-07-30-ui-redesign-ledger.md` is the one before it and still the account to read for panel sizing and the window's decomposition. |
 | `CONTEXT.md` | Writing UI copy or naming something. |
-| `docs/superpowers/plans/` | Rarely. The four plans the codebase was built from; parts of them are known wrong where the ledgers record a correction. The UI redesign plan is the worst offender — seven of its defects reached the code verbatim. |
+| `docs/design/plans/` | Rarely. The four plans the codebase was built from; parts of them are known wrong where the ledgers record a correction. The UI redesign plan is the worst offender — seven of its defects reached the code verbatim. |
 
 ## Agent skills
 

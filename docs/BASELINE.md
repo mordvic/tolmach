@@ -95,7 +95,7 @@ three runs.
 - Verdict: **ACCEPTED**
 
 Purpose: the «before» for the targeted prompt changes
-(docs/superpowers/specs/2026-08-10-prompt-improvement-design.md §3.1).
+(docs/design/specs/2026-08-10-prompt-improvement-design.md §3.1).
 
 ```
 article-en.md: run1 86.1% (31/36) · run2 83.3% (30/36) · run3 83.3% (30/36) · average 84.3% · 3 chunks · 20 terms · TTFT 3114/3021/2951 ms (info only — multi-chunk, not asserted)
@@ -129,7 +129,7 @@ The gated numbers: single-chunk TTFT **453 ms** and **515 ms** against a 1000 ms
 - Verdict: **ACCEPTED**
 
 Purpose: measure the anti-answering rule added to both system prompts against the Task 1
-baseline (docs/superpowers/specs/2026-08-10-prompt-improvement-design.md §3.1).
+baseline (docs/design/specs/2026-08-10-prompt-improvement-design.md §3.1).
 
 ```
 article-en.md: run1 88.9% (32/36) · run2 86.1% (31/36) · run3 86.1% (31/36) · average 87.0% · 3 chunks · 20 terms · TTFT 3185/2879/2967 ms (info only — multi-chunk, not asserted)
@@ -171,7 +171,7 @@ run to run as they already did between the two prior entries — and no new diff
 
 Purpose: measure the idiom-by-meaning and proper-noun rule added to the translation system
 prompt only against the Task 1 baseline
-(docs/superpowers/specs/2026-08-10-prompt-improvement-design.md §3.1).
+(docs/design/specs/2026-08-10-prompt-improvement-design.md §3.1).
 
 ```
 article-en.md: run1 91.7% (33/36) · run2 83.3% (30/36) · run3 86.1% (31/36) · average 87.0% · 3 chunks · 20 terms · TTFT 3254/3022/2962 ms (info only — multi-chunk, not asserted)
