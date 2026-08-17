@@ -5,7 +5,7 @@
 > rejected — including defects in the audit itself. It is not maintained: it is the account of
 > a piece of work that has finished.
 
-# Audit ledger — report: docs/audit/architecture-and-ui-review.md
+# Audit ledger — report: docs/history/architecture-and-ui-review.md
 
 Branch base: `c25328f` (main)
 End: `09e6939` (main), through PRs #9, #10, #11, #12 and #13.
@@ -46,7 +46,7 @@ tractable problems; running things found the ones that mattered.** Every finding
 
 | Wave | PR | Commits | Tests | What it actually did |
 |---|---|---|---|---|
-| Audit | — | — | 347 | Read-only. `docs/audit/architecture-and-ui-review.md`: findings A1–A10 and U1–U11, a «checked and found no defect» section, modernisation table, three-wave roadmap. Two builds and four standalone probes; no source file touched. |
+| Audit | — | — | 347 | Read-only. `docs/history/architecture-and-ui-review.md`: findings A1–A10 and U1–U11, a «checked and found no defect» section, modernisation table, three-wave roadmap. Two builds and four standalone probes; no source file touched. |
 | 1 | #9 | `a4bfb59..c6fa646` | 352 | Four strict-concurrency errors in `TextCapture`, then `.swiftLanguageMode(.v6)` on all 11 targets. Per-call timeouts (10 / 30 / 120 s) replacing a shared 120. `os.Logger` on the four deliberately swallowed failures; `os` added to the closed whitelist with the rule that no user text may be logged. `TranslationOutcome.documentGlossaryFailure` so the engine reports without importing `os`. |
 | 2 | #10 | `4f470af..27c8c86` | 354 | `CFBundleDevelopmentRegion = ru` plus `Resources/ru.lproj`, so the standard menus stop being English. A «Перевод» command menu owning ⌘↩, ⌘., ⌃⌘S, ⇧⌘C and ⌘0 — each declared once, the toolbar giving its two up. `pruneEmptyMenus()`. Reduce Transparency in the panel; a glyph beside every coloured status. |
 | 3 | #11 | `4e91803..cbee1a1` | 364 | One `OllamaClient` instead of three plus one per download. Panel accessibility: an announcement on settle, `updatesFrequently`, a container label. `DroppedDocument` and a drop target on the source pane. GitHub Actions: build, a warning gate, tests. |
