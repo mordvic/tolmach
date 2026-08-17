@@ -373,6 +373,25 @@ private func keyDown(_ keyCode: UInt16, _ characters: String,
     #expect(enters == 1)
 }
 
+/// `/code-review`'s follow-up finding on the fix above: adding the modifier check narrowed
+/// Return-handling for *every* combination, not just ⌘⇧↩ — before it existed, ⇧↩, ⌥↩ and bare
+/// ⌘↩ all reached `onEnter()` too, as a side effect of matching the keycode alone. None of
+/// those are a documented shortcut, so this pins the narrower behaviour as intentional rather
+/// than leaving it as an unrecorded side effect of the ⌘⇧↩ fix.
+@MainActor
+@Test func otherModifiedReturnsAreNoLongerMisreadAsPlainEnterEither() {
+    let controller = PanelController { _ in AnyView(Text("перевод")) }
+    var enters = 0
+    controller.onEnter = { enters += 1 }
+    controller.show(at: CGPoint(x: 300, y: 300))
+    defer { controller.hide() }
+
+    controller.panel.sendEvent(keyDown(36, "\r", modifiers: [.shift]))
+    controller.panel.sendEvent(keyDown(36, "\r", modifiers: [.option]))
+    controller.panel.sendEvent(keyDown(36, "\r", modifiers: [.command]))
+    #expect(enters == 0)
+}
+
 // MARK: - The panel sized to its content
 
 @MainActor
