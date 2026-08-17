@@ -117,7 +117,7 @@ private func makeCoordinator(reader: ScriptedReader,
         // synthesize a keystroke wherever the machine running the suite happens to have
         // focus. `replaceInSource`'s own tests inject a recording trigger where they need to
         // observe the sequence.
-        selectionWriter: selectionWriter ?? SelectionWriter(triggerPaste: {}))
+        selectionWriter: selectionWriter ?? SelectionWriter(triggerPaste: {}, restoreDelay: 0))
     return (coordinator, client)
 }
 
@@ -903,7 +903,7 @@ private func makePressedCoordinator(responses: [String]) async -> PressHarness {
     let reader = ScriptedReader(["Hello."])
     let (coordinator, _) = makeCoordinator(
         reader: reader, replies: ["Привет."], pasteboard: board,
-        selectionWriter: SelectionWriter(triggerPaste: { trigger.fire() }))
+        selectionWriter: SelectionWriter(triggerPaste: { trigger.fire() }, restoreDelay: 0))
     await coordinator.handlePress()
     #expect(coordinator.panelModel.state == .finished)
 
@@ -930,7 +930,7 @@ private func makePressedCoordinator(responses: [String]) async -> PressHarness {
     let reader = ScriptedReader(["Превет."])
     let (coordinator, _) = makeCoordinator(
         reader: reader, replies: ["Привет."], pasteboard: board,
-        selectionWriter: SelectionWriter(triggerPaste: { trigger.fire() }))
+        selectionWriter: SelectionWriter(triggerPaste: { trigger.fire() }, restoreDelay: 0))
     await coordinator.handlePress(operation: .proofread)
     #expect(coordinator.panelModel.operation == .proofread)
     #expect(coordinator.panelModel.state == .finished)
@@ -956,7 +956,7 @@ private func makePressedCoordinator(responses: [String]) async -> PressHarness {
     let reader = ScriptedReader([nil])
     let (coordinator, _) = makeCoordinator(
         reader: reader, pasteboard: board,
-        selectionWriter: SelectionWriter(triggerPaste: { trigger.fire() }))
+        selectionWriter: SelectionWriter(triggerPaste: { trigger.fire() }, restoreDelay: 0))
     #expect(coordinator.panelModel.state == .idle)
 
     await coordinator.replaceInSource()
@@ -977,7 +977,7 @@ private func makePressedCoordinator(responses: [String]) async -> PressHarness {
     let reader = ScriptedReader(["Hello."])
     let (coordinator, _) = makeCoordinator(
         reader: reader, replies: ["Привет."], pasteboard: board,
-        selectionWriter: SelectionWriter(triggerPaste: { trigger.fire() }))
+        selectionWriter: SelectionWriter(triggerPaste: { trigger.fire() }, restoreDelay: 0))
     await coordinator.handlePress()
     #expect(coordinator.panelModel.state == .finished)
 

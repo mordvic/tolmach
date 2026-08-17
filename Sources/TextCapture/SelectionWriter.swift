@@ -17,9 +17,15 @@ public struct SelectionWriter: Sendable {
     public typealias Trigger = @Sendable () -> Void
 
     private let triggerPaste: Trigger
+    private let restoreDelay: TimeInterval
 
-    public init(triggerPaste: @escaping Trigger = SelectionWriter.pasteKeystroke) {
+    /// `restoreDelay` is a real, load-bearing mitigation and an explicitly **unmeasured**
+    /// one — see `replace(_:on:)`'s doc comment for what it is standing in for and why 0.15 s
+    /// is a chosen number, not a taken one.
+    public init(triggerPaste: @escaping Trigger = SelectionWriter.pasteKeystroke,
+                restoreDelay: TimeInterval = 0.15) {
         self.triggerPaste = triggerPaste
+        self.restoreDelay = restoreDelay
     }
 
     /// Replaces whatever is on `pasteboard` with `text`, synthesizes ⌘V, then restores the
@@ -48,12 +54,27 @@ public struct SelectionWriter: Sendable {
     /// never blocked — what this buys is a caller that is itself `@MainActor`
     /// (`HotkeyCoordinator`, holding a non-`Sendable` `NSPasteboard`) being able to hand this
     /// method its board without «sending risks causing data races».
+    ///
+    /// **`restoreDelay` sits between `triggerPaste()` returning and the snapshot going back —
+    /// reported broken without it.** `pasteKeystroke()` posts the ⌘V events and returns the
+    /// instant `CGEvent.post` does, which says nothing about when — or whether yet — the
+    /// target application has actually read the pasteboard; a web/Electron app's paste
+    /// handling in particular runs on its own event loop, asynchronously to the OS event that
+    /// triggered it. Without this delay the restore below was observed racing that read in
+    /// Microsoft Teams: the whole replacement came out as a hyperlink, because the pasteboard
+    /// had already been put back to the user's *previous* clipboard content (itself a link)
+    /// by the time Teams got to reading it, and Teams pasted that instead. `SelectionReader`'s
+    /// read side has the equivalent problem in the other direction and answers it with a poll
+    /// against `changeCount`; there is no equivalent signal here to poll for — a paste has no
+    /// observable completion this app can read — so this is a **fixed, chosen, unmeasured**
+    /// delay standing in for one, not a measured number. See `docs/OPEN-ITEMS.md`.
     @MainActor
     public func replace(_ text: String, on pasteboard: NSPasteboard = .general) async {
         guard !text.isEmpty else { return }
         struct BoxedBoard: @unchecked Sendable { let board: NSPasteboard }
         let boxed = BoxedBoard(board: pasteboard)
         let trigger = triggerPaste
+        let delay = restoreDelay
         await Task.detached(priority: .userInitiated) {
             GeneralPasteboard.withExclusiveAccess {
                 let snapshot = PasteboardSnapshot.take(from: boxed.board)
@@ -61,6 +82,7 @@ public struct SelectionWriter: Sendable {
                 boxed.board.clearContents()
                 boxed.board.setString(text, forType: .string)
                 trigger()
+                if delay > 0 { usleep(useconds_t(delay * 1_000_000)) }
             }
         }.value
     }

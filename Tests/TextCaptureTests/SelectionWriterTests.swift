@@ -36,7 +36,7 @@ private final class RecordingTrigger: @unchecked Sendable {
     pb.setString("пользовательский буфер", forType: .string)
 
     let trigger = RecordingTrigger(board: pb)
-    let writer = SelectionWriter(triggerPaste: { trigger.fire() })
+    let writer = SelectionWriter(triggerPaste: { trigger.fire() }, restoreDelay: 0)
     await writer.replace("перевод", on: pb)
 
     #expect(trigger.callCount == 1)
@@ -54,7 +54,7 @@ private final class RecordingTrigger: @unchecked Sendable {
     pb.clearContents()
 
     let trigger = RecordingTrigger(board: pb)
-    let writer = SelectionWriter(triggerPaste: { trigger.fire() })
+    let writer = SelectionWriter(triggerPaste: { trigger.fire() }, restoreDelay: 0)
     await writer.replace("перевод", on: pb)
 
     #expect(trigger.textSeenAtTrigger == "перевод")
@@ -73,7 +73,7 @@ private final class RecordingTrigger: @unchecked Sendable {
     pb.setString("нетронуто", forType: .string)
 
     let trigger = RecordingTrigger(board: pb)
-    let writer = SelectionWriter(triggerPaste: { trigger.fire() })
+    let writer = SelectionWriter(triggerPaste: { trigger.fire() }, restoreDelay: 0)
     await writer.replace("", on: pb)
 
     #expect(trigger.callCount == 0)
@@ -92,7 +92,7 @@ private final class RecordingTrigger: @unchecked Sendable {
     item.setData(Data("{\\rtf1 rich}".utf8), forType: .rtf)
     pb.writeObjects([item])
 
-    let writer = SelectionWriter(triggerPaste: {})
+    let writer = SelectionWriter(triggerPaste: {}, restoreDelay: 0)
     await writer.replace("перевод", on: pb)
 
     #expect(pb.string(forType: .string) == "простой")
