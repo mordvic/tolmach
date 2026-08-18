@@ -235,6 +235,39 @@ private final class FiredFlag: @unchecked Sendable {
     #expect(settings.resolvedBatchModel == settings.interactiveModel)
 }
 
+@Test func anUnsetProofreadModelFollowsTheInteractiveOne() {
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "proofread-model-unset"))
+    #expect(settings.proofreadModel == nil)
+    #expect(settings.resolvedProofreadModel == settings.interactiveModel)
+    #expect(!settings.proofreadModelDiffersFromInteractive)
+    settings.interactiveModel = "translategemma:12b"
+    // Following, not frozen at whatever the interactive model was when first read.
+    #expect(settings.resolvedProofreadModel == "translategemma:12b")
+}
+
+@Test func aChosenProofreadModelStopsFollowingTheInteractiveOneAndAnEmptyChoiceClearsIt() {
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "proofread-model-set"))
+    settings.proofreadModel = "gemma4:26b"
+    settings.interactiveModel = "translategemma:12b"
+    #expect(settings.resolvedProofreadModel == "gemma4:26b")
+    #expect(settings.proofreadModelDiffersFromInteractive)
+    // The same model chosen explicitly is not «different» — the pane's note must not draw.
+    settings.proofreadModel = "translategemma:12b"
+    #expect(!settings.proofreadModelDiffersFromInteractive)
+    // Empty string stores as nil, like `batchModel`: «» is not a model.
+    settings.proofreadModel = ""
+    #expect(settings.proofreadModel == nil)
+    #expect(settings.resolvedProofreadModel == settings.interactiveModel)
+}
+
+@Test func theGptOssDepthControlAlsoAppearsWhenOnlyTheProofreadModelIsGptOss() {
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "proofread-gpt-oss"))
+    settings.interactiveModel = "aya-expanse:8b"
+    #expect(!settings.usesGptOss)
+    settings.proofreadModel = "gpt-oss:20b"
+    #expect(settings.usesGptOss)
+}
+
 @Test func choosingABatchModelThatDiffersFromTheHotkeysIsWorthWarningAbout() {
     // Ollama holds one model: cold load ~2000 ms against ~155 ms warm. A batch model
     // that differs costs two of those on every hotkey press during a queue run, and the

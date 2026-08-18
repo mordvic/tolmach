@@ -49,12 +49,18 @@ final class QueueClient: LLMClient, @unchecked Sendable {
     /// and `translate`, where a `TranslationCore` test cannot see it.
     var receivedMessages: [[ChatMessage]] { lock.lock(); defer { lock.unlock() }; return _received }
     private var _received: [[ChatMessage]] = []
+    /// The model each call named, in order — the other half of the wiring `receivedMessages`
+    /// pins: which *model* a run reached, not only which prompt. Правка's own model setting
+    /// lives entirely between `AppSettings` and `ChatOptions`, where no engine test can see it.
+    var receivedModels: [String] { lock.lock(); defer { lock.unlock() }; return _models }
+    private var _models: [String] = []
 
     func chat(messages: [ChatMessage], options: ChatOptions) -> AsyncThrowingStream<ChatEvent, Error> {
         lock.lock()
         let index = _callCount
         _callCount += 1
         _received.append(messages)
+        _models.append(options.model)
         // Deliberately does **not** run out: a queue that re-scanned its work list would
         // loop forever here, and a fixture that exhausted itself would turn that hang
         // into a different, misleading failure. The call count is what the test asserts.
