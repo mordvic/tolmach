@@ -63,6 +63,8 @@ From the throwaway prototype that preceded the engine. See the note below about 
 | **20 terms** | Document-glossary cap. Chosen against an originally-intended 40 for the reason recorded in the ADR. | `TermExtractor.swift`, `docs/adr/0001` |
 | **900 characters** | Default chunk size. Larger means a more coherent long translation and a longer wait for the first result. | `AppSettings.swift`, and the same default at each call site |
 | **120 s** | Request timeout. | `OllamaClient.swift` |
+| **5/5 → 0/15**, **7/15 → 0/15** | `translategemma:27b` answering a one-line question inside the user prompt's `<text>` markers instead of translating it, and echoing the markers back around the reply — before and after the text was handed over plainly under one closing line. Isolated to the markers by variant (rules kept, structure varied): the reason both user prompts lost their markers on 2026-08-18. `translategemma:12b` 0/15 either way. | `PromptBuilder.userPrompt(for:)`, `docs/reference/PLATFORM-TRAPS.md` |
+| **255 / 203** tokens; **354 / 634 / 1382** ms cold, **27 / 85 / 180** ms cached | The app's translation system prompt against TranslateGemma's native one, and what prefilling the app's prompt costs on `aya-expanse:8b` / `translategemma:12b` / `:27b` with and without Ollama's prefix cache. Why the TTFT gate follows the policy model and why the stable part of a prompt should precede the part that varies per chunk. | `docs/reference/PLATFORM-TRAPS.md`, `Sources/acceptance/main.swift` |
 
 ### The prototype is not in this repository
 

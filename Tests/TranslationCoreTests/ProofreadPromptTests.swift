@@ -11,12 +11,14 @@ import Testing
     // language is named twice — about the text and about the output (spec §4.2).
     #expect(system.components(separatedBy: "Russian").count >= 3)
     let user = messages.last!.content
-    #expect(user.contains("<text>"))
-    #expect(user.contains("Превет, мир."))
-    // The live model intermittently echoed the markers around its reply (observed
-    // 2026-08-10); the cleaner now guarantees removal, and this clause is the
-    // prompt-side half that lowers how often the guarantee is needed.
-    #expect(user.contains("without the markers"))
+    // The text is handed over plainly under one closing line, not wrapped in
+    // <text>…</text> markers: on translategemma:27b the markers made a question inside
+    // them a question to answer (5/5) and were echoed back around 7/15 replies —
+    // measured 2026-08-18, see `PromptBuilder.userPrompt(for:)`. Named language, third
+    // mention, against the helpful-translation failure.
+    #expect(user.hasPrefix("Please correct the following Russian text:\n\n\n"))
+    #expect(user.hasSuffix("Превет, мир."))
+    #expect(!user.contains("<text>"))
 }
 
 @Test func theStyleInstructionReachesThePromptOnlyUnderErrorsAndStyle() {

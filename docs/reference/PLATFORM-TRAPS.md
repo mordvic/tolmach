@@ -415,3 +415,43 @@ witness.
 
 **Durations are nanoseconds.** Converted at the client boundary.
 → `Sources/OllamaKit/OllamaClient.swift`
+
+**Wrapping the text in `<text>…</text>` markers made a question inside them a question to
+answer — on one model.** `translategemma:27b`, temperature 0.2, 2026-08-18: with the app's
+former user prompt («Translate the text between the markers …», text between markers) a
+one-line factual question came back as its answer («Париж.») in 5/5 runs, and the markers
+were echoed back around 7 of 15 replies — each echo costing the chunk its streaming, since the
+unwrap was only decidable at the end. Isolated by variant, 15 runs each: the same system prompt
+with the text handed over under TranslateGemma's own trained closing line («Please translate
+the following English text into Russian:», two blank lines, the text) — 0/15 answered, 0/15
+echoed; the rules list in any packaging, two messages or one, 0/15 once the markers were gone;
+TranslateGemma's own native head *with* the markers, 5/15. The markers were the cause, not the
+rules and not the message structure. `translategemma:12b`: 0/15 on both shapes;
+`aya-expanse:8b`: the marker echo was sampling noise there (13 clean probes, 2026-08-10) and
+the shape change is measured on the acceptance harness in `docs/reference/BASELINE.md`.
+→ `PromptBuilder.userPrompt(for:)`, `PromptBuilder.proofreadMessages`
+
+**A chat template may render `system` as a second `user` turn.** Ollama's template for
+`translategemma` emits `<start_of_turn>user` for the `system` and `user` roles alike, so the
+app's `[system, user]` pair reaches the model as two consecutive user turns — a shape Gemma's
+own template (which folds the system text into the first user turn) never produces, and the
+model card says TranslateGemma «supports only User and Assistant roles». Measured 2026-08-18
+not to matter here: on `translategemma:27b` the two-message form and the same text merged into
+one user turn scored the same on the anti-answering and marker-echo probes above (3/15 vs 5/15
+answered, both 0/15 without markers), and on 12b both were 0/15. Recorded because a per-model
+prompt shape was considered on that suspicion and rejected on this measurement.
+→ `PromptBuilder.messages(for:)`
+
+**Prefill is a real cost above 8b, and `keep_alive` keeps the prefix cache too.** The app's
+translation system prompt is 255 tokens; with a 538-byte user text, 402–406 tokens; with twenty
+document-glossary terms, 770–772. Prefill of that prompt, temperature 0.2, `num_predict 1`,
+Apple M5 Pro, Ollama 0.32.14, model already loaded — cold prefix / prefix cached from an
+identical earlier request: `aya-expanse:8b` 354 / 27 ms (20 terms: 455 / 23);
+`translategemma:12b` 634 / ~85 (1117 / ~100); `translategemma:27b` 1382 / ~180 (2387 / ~186).
+TranslateGemma's own 203-token native prompt: 346 / 88 and 764 / 169. Two consequences: the
+1000 ms TTFT ceiling is spent on prefill alone by 27b's cold prefix, which is why the
+acceptance harness gates TTFT only for the model `ModelPolicy` pins; and the cache is by
+common prefix across separate HTTP requests while the model stays resident, so a stable
+system-prompt prefix is worth keeping stable — anything that varies per chunk should come
+*after* what does not (see `GlossaryMerge`).
+→ `Sources/acceptance/main.swift` (`RunConfiguration.gatesTTFT`), `PromptBuilder.swift`

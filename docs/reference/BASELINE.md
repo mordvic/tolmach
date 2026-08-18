@@ -581,3 +581,66 @@ user's own text size, not the prompt, is what puts this configuration over the s
 
 Comparability: Runs B and C are the first entries under `--model`; every earlier entry in
 this file is aya-expanse:8b at 900 and stays the reference for the default configuration.
+
+---
+
+## 2026-08-18 — user prompts hand the text over plainly; the `<text>` markers are gone
+
+- Machine: Apple M5 Pro, 48 GB, macOS 26.6.1
+- Ollama 0.32.14
+- Commit: the `feat/prompt-shape-and-term-list` branch on top of `d31fdfa` — `PromptBuilder.userPrompt(for:)`
+  and `proofreadMessages` lost their `<text>…</text>` wrapper (the text now follows one closing
+  line, «Please translate the following English text into Russian:», two blank lines), the
+  term-list prompt names the document's real source language, and `ResponseCleaner`'s marker
+  unwrap plus the buffer-to-end it forced in `streamChunkReply` are removed.
+- Why: measured on `translategemma:27b` — a question inside the markers was answered 5/5 and
+  the markers were echoed back around 7/15 replies; 0/15 and 0/15 without them, isolated to the
+  markers by variant. The full account is in `docs/reference/PLATFORM-TRAPS.md` («Ollama»)
+  and the doc comment on `PromptBuilder.userPrompt(for:)`.
+- Expected direction: no change on either model — the rules did not move, only the wrapper.
+  Reference points are the same day's Run A (aya) and Run B (translategemma:12b) above.
+
+### Run D — defaults (aya-expanse:8b, 900), verdict **ACCEPTED**, 160 s
+
+```
+acceptance: model aya-expanse:8b · chunk 900 chars · TTFT gate enforced · known-limitation set applied
+article-en.md: run1 83.3% (30/36) · run2 83.3% (30/36) · run3 83.3% (30/36) · average 83.3% · 3 chunks · 20 terms · TTFT 3206/2841/2849 ms (info only — multi-chunk, not asserted)
+email-en.md: adherence n/a (single model-bound chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 453 ms
+snippet-en.md: adherence n/a (single model-bound chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 456 ms
+techdoc-en.md: run1 88.0% (44/50) · run2 82.0% (41/50) · run3 86.0% (43/50) · average 85.3% · 6 chunks (4 model-bound) · 20 terms · TTFT 4230/4154/4116 ms (info only — multi-chunk, not asserted)
+techdoc-ru.md: run1 95.9% (47/49) · run2 95.9% (47/49) · run3 93.9% (46/49) · average 95.2% · 5 chunks (4 model-bound) · 20 terms · TTFT 4617/4170/4183 ms (info only — multi-chunk, not asserted)
+ACCEPTED — engine meets the recalibrated baseline
+```
+
+Against Run A: article-en 82.4 → 83.3 %, techdoc-en 84.7 → 85.3 %, techdoc-ru 95.9 → 95.2 %,
+single-chunk TTFT 463/455 → 453/456 ms — every move inside the noise floor Run A recorded
+against its own predecessor (−2.8 / −2.0 / +1.3). One thing to note without claiming it: this
+run printed **no `known-limitation` line at all** — the stochastic blockquote drop that Run A
+showed six times across the two techdocs did not occur once here. Six chances in one run set
+is not a measurement of a rate; it is recorded so that the next aya run can say whether the
+plain hand-over changed that rate or this was the noise the drop has always had.
+
+### Run E — `--model translategemma:12b` (900), verdict **FAILED**, 249 s
+
+```
+acceptance: model translategemma:12b · chunk 900 chars · TTFT gate info only — not the interactive-policy model · known-limitation set not applied — measured on aya-expanse:8b
+article-en.md: run1 77.8% (28/36) · run2 77.8% (28/36) · run3 72.2% (26/36) · average 75.9% · 3 chunks · 20 terms · TTFT 4841/4482/4496 ms (info only — multi-chunk, not asserted)
+email-en.md: adherence n/a (single model-bound chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 720 ms (info only — TTFT not gated for this model)
+snippet-en.md: adherence n/a (single model-bound chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 915 ms (info only — TTFT not gated for this model)
+techdoc-en.md: run1 92.0% (46/50) · run2 94.0% (47/50) · run3 92.0% (46/50) · average 92.7% · 6 chunks (4 model-bound) · 20 terms · TTFT 7483/7109/7125 ms (info only — multi-chunk, not asserted)
+techdoc-ru.md: run1 93.9% (46/49) · run2 93.9% (46/49) · run3 93.9% (46/49) · average 93.9% · 5 chunks (4 model-bound) · 20 terms · TTFT 6916/6673/6659 ms (info only — multi-chunk, not asserted)
+FAILED
+  - article-en.md: average adherence 75.9% < 80%
+```
+
+Against Run B: article-en 76.9 → 75.9 % (the same file under the same model-neutral floor,
+the same failure — pre-existing, not the shape's), techdoc-en 92.0 → 92.7 %, techdoc-ru
+93.2 → 93.9 %, single-chunk TTFT 726/997 → 720/915 ms; still no markup diff on any file.
+Neither model moved outside its noise on either gate: the wrapper cost nothing to remove here
+and cost `translategemma:27b` its anti-answering and its streaming to keep.
+
+The правка user prompt changed with the same rule and was probed rather than harnessed (the
+harness translates only): three seeded texts × 5 runs, old wrapper vs plain hand-over, on
+aya-expanse:8b and translategemma:12b — language kept 15/15 on both shapes on both models,
+no marker echo, no answering, seeded fixes present 5/15 → 5/15 (aya) and 13/15 → 14/15 (12b).
+Neutral, as expected; the runner was throwaway, as the правка calibration's was.
