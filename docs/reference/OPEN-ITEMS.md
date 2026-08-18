@@ -566,6 +566,18 @@ Deliberate, with the reason. Do not "fix" these without reading the reason first
   2026-08-10 entries, from «after pass-through chunks and inline restore (re-basing)»
   through «re-based state accepted», for the measurements and the reasoning; not retold
   here.
+- **A `~~~` fence is prose to the whole pipeline.** `LineScanner.isFenceMarker` recognises
+  only a line whose trimmed content starts with ```` ``` ````, and the prompt's protection
+  rule names the same three characters — so a CommonMark tilde fence is neither a
+  passthrough chunk in `Chunker`, nor a fence to `MarkupSkeleton`, nor anything the model
+  is told to leave alone: its contents are chunked, translated and diffed as ordinary
+  paragraphs, and inline restore does not apply inside it. Found 2026-08-18 while reading
+  the prompts; no document in `corpus/` and no test uses one. *Recorded rather than fixed*
+  because the fix is not one line: both scanners and the passthrough rule would need the
+  second spelling, plus the CommonMark detail that a tilde fence closes only on a tilde
+  fence of at least the opening length, and nothing measured so far says the input this
+  app sees carries tilde fences at all. If one shows up, this is the entry to reopen.
+
 - **The smaller findings the UI redesign deferred are listed in its ledger**, not repeated
   here: `docs/history/2026-07-30-ui-redesign-ledger.md`. They are test-coverage gaps and
   comment imprecisions rather than behaviour, with the exception of the resize items above,

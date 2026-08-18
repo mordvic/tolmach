@@ -234,7 +234,7 @@ public struct Translator: Sendable {
                 documentGlossaryAttempted = true
                 do {
                     try Task.checkCancellation()
-                    let raw = try await streamTermList(PromptBuilder.termListMessages(terms: terms, target: target))
+                    let raw = try await streamTermList(PromptBuilder.termListMessages(terms: terms, source: source, target: target))
                     // AsyncThrowingStream's iterator finishes silently on task cancellation
                     // rather than throwing, so `streamTermList` can return a partial (or
                     // empty) buffer instead of surfacing the cancellation. Check explicitly

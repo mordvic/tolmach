@@ -99,15 +99,23 @@ public enum PromptBuilder {
 
     /// The `=>` echo contract is load-bearing: it lets the parser match by term instead
     /// of by line position, so a dropped line costs one entry rather than corrupting
-    /// every later pairing. Verbatim from the validated experiment prompt.
-    public static func termListMessages(terms: [String], target: Language) -> [ChatMessage] {
+    /// every later pairing. Verbatim from the validated experiment prompt, in every word
+    /// but one: that experiment ran English sources, and its "as given in English" was
+    /// hard-coded — so a Russian document asked the model to echo Russian terms «as given
+    /// in English», an instruction that, taken literally, would translate the left-hand
+    /// side and lose every line to `DocumentGlossary.parse`'s exact-term match. Measured
+    /// harmless before the change — `techdoc-ru.md` (RU→EN) parsed 20/20 terms in every
+    /// BASELINE.md entry on aya-expanse:8b, and 5/5 on translategemma:12b and :27b
+    /// (2026-08-18 probes) — so naming the real source language is honesty, not a fix,
+    /// and no number is expected to move.
+    public static func termListMessages(terms: [String], source: Language, target: Language) -> [ChatMessage] {
         let system = """
         You translate a list of glossary terms into \(target.englishName).
 
         Output one line per input term, in exactly this format:
         source term => translation
 
-        Echo the source term exactly as given in English, then " => ", then the translation. \
+        Echo the source term exactly as given in \(source.englishName), then " => ", then the translation. \
         No numbering, no commentary, no extra lines. Do not translate anything except the terms. \
         Keep identifiers and product names untranslated when they have no established \
         target-language form.

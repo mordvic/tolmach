@@ -34,7 +34,7 @@ import Testing
 }
 
 @Test func termListPromptDemandsEchoedTermFormat() {
-    let messages = PromptBuilder.termListMessages(terms: ["profile server", "changelog"], target: .ru)
+    let messages = PromptBuilder.termListMessages(terms: ["profile server", "changelog"], source: .en, target: .ru)
     let system = messages.first { $0.role == "system" }!.content
     // The "=>" contract is what makes the parser immune to line shifts.
     #expect(system.contains("=>"))
@@ -44,6 +44,16 @@ import Testing
     #expect(user.contains("changelog"))
     // No numbering: a numbered reply would put "1. " inside the parsed term.
     #expect(!user.contains("1."))
+}
+
+@Test func termListPromptNamesTheDocumentsOwnSourceLanguageInTheEchoInstruction() {
+    // The echo instruction used to say «as given in English» for every source; a Russian
+    // document's terms are not given in English, and the exact-term parser downstream
+    // depends on the left-hand side coming back untranslated.
+    let system = PromptBuilder.termListMessages(terms: ["сервер профилей"], source: .ru, target: .en)
+        .first { $0.role == "system" }!.content
+    #expect(system.contains("exactly as given in Russian"))
+    #expect(!system.contains("as given in English"))
 }
 
 @Test func theSystemPromptProtectsFencedAndInlineCodeAndNothingElse() {
