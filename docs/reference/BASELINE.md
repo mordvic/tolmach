@@ -10,6 +10,12 @@ if a number looks wrong later, that is a finding, not a typo.
 
 Run it from the package root; the harness reads `./corpus` relative to the working directory.
 
+Since 2026-08-18 the harness takes `--model <ollama model>` and `--chunk <characters>`
+(defaults: `ModelPolicy`'s interactive model, 900). **An entry must say which it ran** — the
+harness prints that as its first line, paste it. Entries for different models or chunk budgets
+are different baselines and are not compared to each other; the aya-expanse:8b entries below
+predate the flags and were all run at the defaults.
+
 ---
 
 ## Reading the output
@@ -21,13 +27,20 @@ Three kinds of line, and two of them are not warnings even though they read like
   Only multi-chunk files have it; a single-chunk file prints `adherence n/a` because a
   document glossary is not built for one chunk, and that is correct rather than a gap.
 - **`TTFT … (info only — multi-chunk, not asserted)`** — time to first token. **Gated at
-  1000 ms, but only for single-chunk files.** A multi-chunk run pays for the preparatory
-  term-list call before its first chunk, so its TTFT measures something else entirely and is
-  printed for information. The single-chunk figures are the ones that guard the hotkey path's
-  hard requirement.
+  1000 ms, but only for single-chunk files, and only for the model `ModelPolicy` pins for
+  the interactive path.** A multi-chunk run pays for the preparatory term-list call before
+  its first chunk, so its TTFT measures something else entirely and is printed for
+  information. The single-chunk figures are the ones that guard the hotkey path's hard
+  requirement — a requirement of that path, measured on that model. Under any other
+  `--model` the single-chunk line carries `(info only — TTFT not gated for this model)`:
+  the number is recorded, not judged (`RunConfiguration.gatesTTFT` in
+  `Sources/acceptance/main.swift` carries the measurement behind that rule).
 - **`known` and `known-limitation`** — markup diffs that are expected and deliberately not
   failed. They are recorded so that a *new* diff is visible against them, not because
-  something is wrong. Their content is in §11a of the design spec.
+  something is wrong. Their content is in §11a of the design spec. **They apply only to
+  `aya-expanse:8b`**, the model they were measured on; under any other `--model` every diff
+  prints as `markup` and counts as unaccepted, so the model's first entry shows what it
+  does. Accepting a limitation of another model is a decision to record here, by hand.
 
 TTFT is the first **consumer-visible** emission, not the first token off the wire — see
 `TranslationOutcome.timeToFirstTokenMS` in `Sources/TranslationCore/Translator.swift`, which

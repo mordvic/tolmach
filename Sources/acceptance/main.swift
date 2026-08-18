@@ -3,9 +3,70 @@ import Foundation
 import OllamaKit
 import TranslationCore
 
-let model = ModelPolicy.defaultModel(for: .interactive)
+/// What one run measures. Both fields were hard-coded until 2026-08-18 — `aya-expanse:8b`, the
+/// model `ModelPolicy` pins for the interactive path, and 900 characters, the app's default
+/// chunk budget — so this harness could certify exactly one configuration. An install running
+/// another model had no baseline at all: measured 2026-08-18, a machine with `translategemma:12b`
+/// in `interactiveModel` and `chunkSize` 4000 was described by not one number in BASELINE.md.
+struct RunConfiguration {
+    let model: String
+    let maxChunkCharacters: Int
+    /// The 1000 ms TTFT ceiling is a property of the *interactive path*, and it was measured on
+    /// the model `ModelPolicy` pins for that path. Another model passed through `--model` is
+    /// being measured, not certified: its single-chunk TTFT is printed and recorded, never
+    /// failed. A gate that is red on every run of a configuration is a gate people learn to
+    /// ignore, and the number itself is what a BASELINE.md entry needs — measured 2026-08-18,
+    /// `translategemma:12b` pays 634 ms of prefill alone on a cold prefix for the app's
+    /// translation prompt (`translategemma:27b`: 1382 ms), so the ceiling would fail on
+    /// prefill before the model had produced a token.
+    var gatesTTFT: Bool { model == ModelPolicy.defaultModel(for: .interactive) }
+    /// The `known` / `known-limitation` sets below were each measured on `measuredOn` and name
+    /// it in their reasons. For any other model every diff is reported as unaccepted, so a
+    /// new model's first entry shows what it actually does — accepting a limitation is a
+    /// decision recorded in BASELINE.md, not something a reason string written about a
+    /// different model can confer.
+    var appliesKnownLimitations: Bool { model == Self.measuredOn }
+    static let measuredOn = "aya-expanse:8b"
+}
+
+func usage(_ message: String) -> Never {
+    print("acceptance: \(message)")
+    print("usage: swift run acceptance [--model <ollama model>] [--chunk <characters>]")
+    print("  --model  defaults to ModelPolicy's interactive model (\(ModelPolicy.defaultModel(for: .interactive)))")
+    print("  --chunk  maxChunkCharacters, defaults to 900 — the app's own default")
+    exit(2)
+}
+
+func parseConfiguration(_ arguments: ArraySlice<String>) -> RunConfiguration {
+    var model = ModelPolicy.defaultModel(for: .interactive)
+    var chunk = 900
+    var iterator = arguments.makeIterator()
+    while let argument = iterator.next() {
+        switch argument {
+        case "--model":
+            guard let value = iterator.next(), !value.isEmpty else { usage("--model needs a value") }
+            model = value
+        case "--chunk":
+            guard let value = iterator.next(), let parsed = Int(value), parsed > 0 else {
+                usage("--chunk needs a positive integer")
+            }
+            chunk = parsed
+        default:
+            usage("unknown argument \"\(argument)\"")
+        }
+    }
+    return RunConfiguration(model: model, maxChunkCharacters: chunk)
+}
+
+let config = parseConfiguration(CommandLine.arguments.dropFirst())
+let model = config.model
 let client = OllamaClient()
 let translator = Translator(client: client)
+// The first line of every run names what it measured, so a BASELINE.md entry pasted from the
+// output cannot silently describe a different configuration than its heading claims.
+print("acceptance: model \(config.model) · chunk \(config.maxChunkCharacters) chars · " +
+      "TTFT gate \(config.gatesTTFT ? "enforced" : "info only — not the interactive-policy model") · " +
+      "known-limitation set \(config.appliesKnownLimitations ? "applied" : "not applied — measured on \(RunConfiguration.measuredOn)")")
 // A missing or unreadable corpus directory must become a legible line naming the
 // cause and the expected working directory, not an uncaught throw that dies with
 // "Fatal error: Error raised at top level" and says nothing about why — the same
@@ -106,7 +167,7 @@ func chunkSummary(_ outcome: TranslationOutcome) -> String {
 func translate(_ text: String, to target: Language) async throws -> TranslationOutcome {
     try await translator.translate(
         text: text, target: target, tone: .technical, userGlossary: nil,
-        options: ChatOptions(model: model), maxChunkCharacters: 900)
+        options: ChatOptions(model: model), maxChunkCharacters: config.maxChunkCharacters)
 }
 
 /// (honoured, applicable, percentage) for one outcome. Only meaningful when the
@@ -171,11 +232,13 @@ for name in corpus {
     func checkMarkup(_ outcome: TranslationOutcome, label: String) {
         for diff in outcome.markupDiffs {
             let expected = String(describing: diff.expected), actual = String(describing: diff.actual)
-            if isKnownModelBehaviour(diff) {
+            if config.appliesKnownLimitations, isKnownModelBehaviour(diff) {
                 print("    known\(label): expected \(expected) actual \(actual)")
-            } else if isCodeBlockDiff(diff), let reason = knownFileLimitations[name] {
+            } else if config.appliesKnownLimitations, isCodeBlockDiff(diff),
+                      let reason = knownFileLimitations[name] {
                 print("    known-limitation\(label): \(reason) (expected \(expected) actual \(actual))")
-            } else if isBlockquoteDropDiff(diff), let reason = knownBlockquoteDropLimitations[name] {
+            } else if config.appliesKnownLimitations, isBlockquoteDropDiff(diff),
+                      let reason = knownBlockquoteDropLimitations[name] {
                 print("    known-limitation\(label): \(reason) (expected \(expected) actual \(actual))")
             } else {
                 print("    markup\(label): expected \(expected) actual \(actual)")
@@ -267,8 +330,11 @@ for name in corpus {
             // carried a passthrough chunk alongside it (chunkSummary reports both
             // counts when they differ).
             let ttftDescription = first.timeToFirstTokenMS.map { String(Int($0)) } ?? "—"
+            // The line keeps its exact shape for the gated model, so entries stay comparable
+            // across BASELINE.md; the suffix appears only where the number is not a gate.
+            let ttftSuffix = config.gatesTTFT ? "" : " (info only — TTFT not gated for this model)"
             print("\(name): adherence n/a (single model-bound chunk, document glossary not applicable) · " +
-                  "\(chunkSummary(first)) · \(first.documentGlossary.count) terms · TTFT \(ttftDescription) ms")
+                  "\(chunkSummary(first)) · \(first.documentGlossary.count) terms · TTFT \(ttftDescription) ms\(ttftSuffix)")
             checkMarkup(first, label: "")
             flushMarkupFailures(totalRuns: 1)
             // Absent and slow are different failures. Before, a nil TTFT was measured
@@ -277,7 +343,7 @@ for name in corpus {
             // actually no response at all. Only a real, non-nil TTFT is judged
             // against the latency threshold.
             if let ttft = first.timeToFirstTokenMS {
-                if ttft >= 1000 {
+                if ttft >= 1000, config.gatesTTFT {
                     failures.append("\(name): TTFT \(Int(ttft)) ms >= 1000 ms")
                 }
             } else {

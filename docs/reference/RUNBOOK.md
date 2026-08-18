@@ -13,7 +13,7 @@ ollama pull aya-expanse:8b        # the interactive model — required
 ```
 
 `aya-expanse:8b` is the interactive default and is what the acceptance harness measures
-against. The choice is not a preference: it is the model that met the sub-second
+against unless told otherwise (`--model`, §5). The choice is not a preference: it is the model that met the sub-second
 time-to-first-token requirement without corrupting identifiers — see `ModelPolicy.swift` and
 `docs/reference/MEASUREMENTS.md`.
 
@@ -109,16 +109,30 @@ What needs it and what does not:
 
 ```bash
 cd /path/to/local-translator
-swift run acceptance
+swift run acceptance                                   # ModelPolicy's interactive model, 900-character chunks
+swift run acceptance --model translategemma:12b        # any installed Ollama model
+swift run acceptance --model translategemma:12b --chunk 4000   # and the app's chunk budget you actually run
 ```
 
 It translates `corpus/` three times per file against a live model and prints per-file lines,
 then ACCEPTED or FAILED, exiting 1 on regression. It is **not in CI** — deliberately, because it
 needs a resident model — so it is run by hand before anything that touches the engine.
 
+The first line of the output names the configuration it measured — model, chunk budget, and
+whether each gate applies — so an entry pasted into `docs/reference/BASELINE.md` cannot describe
+a different configuration than its heading claims.
+
 Two gates: single-chunk time to first token under 1000 ms, and average cross-chunk terminology
 adherence at or above 80 %. Multi-chunk TTFT figures are printed for information and not
-asserted, because a multi-chunk run pays for the term-list call first.
+asserted, because a multi-chunk run pays for the term-list call first. **The TTFT gate applies
+only to the model `ModelPolicy` pins for the interactive path** — the sub-second requirement is
+a property of that path and was measured on that model. Any other `--model` is being measured,
+not certified: its single-chunk TTFT is printed with an `info only` suffix and recorded, never
+failed. Likewise the `known` / `known-limitation` sets were measured on `aya-expanse:8b` and
+name it in their reasons, so for any other model every markup diff is reported as unaccepted —
+a new model's first entry shows what it actually does, and accepting one of its limitations
+is a decision recorded in BASELINE.md, not something a reason string about a different model
+can confer.
 
 `known` and `known-limitation` lines are expected diffs, not warnings.
 
