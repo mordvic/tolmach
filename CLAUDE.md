@@ -30,6 +30,7 @@ swiftc -O -o /tmp/cf Scripts/content-font.swift && /tmp/cf   # every measurement
 swiftc -O -o /tmp/vm Scripts/view-menu.swift && /tmp/vm   # which menu the размер items land in, and how ⌘+ is stored
 swift run translate-cli --to ru --tone technical "text"   # needs a live Ollama; reads stdin if no text
 swift run acceptance              # live-Ollama corpus run; MUST run from the package root (reads ./corpus)
+swift run acceptance --model translategemma:12b --chunk 4000   # any installed model / the chunk budget you actually run
 ```
 
 No count here on purpose: it went stale twice in one review cycle, and a number nothing
@@ -51,7 +52,13 @@ hardware measure 0.87 s and 3.0 s on the same commit.
 
 `swift test` never touches the network. `translate-cli` and `acceptance` do — `acceptance` is
 the deliberately-not-in-CI harness that measures TTFT, markup integrity and term consistency
-against the thresholds in spec §10, and exits 1 on regression.
+against the thresholds in spec §10, and exits 1 on regression. **Its two gates are not
+model-neutral, and the harness says so on its first line**: the TTFT ceiling and the
+`known`/`known-limitation` sets are properties of `aya-expanse:8b`, the model `ModelPolicy`
+pins for the interactive path, and apply only when that is the model under test. Under
+`--model` anything else, TTFT is printed `info only` and every markup diff is unaccepted —
+measured, not certified. Until 2026-08-18 model and chunk budget were hard-coded, so an
+install running `translategemma:12b` at `chunkSize` 4000 was described by no baseline at all.
 
 **There is CI, and it is the offline half only** (`.github/workflows/ci.yml`): build with
 tests, a gate that fails on any warning, then `swift test`. `acceptance` stays out for the

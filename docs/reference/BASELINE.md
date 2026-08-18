@@ -10,6 +10,12 @@ if a number looks wrong later, that is a finding, not a typo.
 
 Run it from the package root; the harness reads `./corpus` relative to the working directory.
 
+Since 2026-08-18 the harness takes `--model <ollama model>` and `--chunk <characters>`
+(defaults: `ModelPolicy`'s interactive model, 900). **An entry must say which it ran** — the
+harness prints that as its first line, paste it. Entries for different models or chunk budgets
+are different baselines and are not compared to each other; the aya-expanse:8b entries below
+predate the flags and were all run at the defaults.
+
 ---
 
 ## Reading the output
@@ -21,13 +27,20 @@ Three kinds of line, and two of them are not warnings even though they read like
   Only multi-chunk files have it; a single-chunk file prints `adherence n/a` because a
   document glossary is not built for one chunk, and that is correct rather than a gap.
 - **`TTFT … (info only — multi-chunk, not asserted)`** — time to first token. **Gated at
-  1000 ms, but only for single-chunk files.** A multi-chunk run pays for the preparatory
-  term-list call before its first chunk, so its TTFT measures something else entirely and is
-  printed for information. The single-chunk figures are the ones that guard the hotkey path's
-  hard requirement.
+  1000 ms, but only for single-chunk files, and only for the model `ModelPolicy` pins for
+  the interactive path.** A multi-chunk run pays for the preparatory term-list call before
+  its first chunk, so its TTFT measures something else entirely and is printed for
+  information. The single-chunk figures are the ones that guard the hotkey path's hard
+  requirement — a requirement of that path, measured on that model. Under any other
+  `--model` the single-chunk line carries `(info only — TTFT not gated for this model)`:
+  the number is recorded, not judged (`RunConfiguration.gatesTTFT` in
+  `Sources/acceptance/main.swift` carries the measurement behind that rule).
 - **`known` and `known-limitation`** — markup diffs that are expected and deliberately not
   failed. They are recorded so that a *new* diff is visible against them, not because
-  something is wrong. Their content is in §11a of the design spec.
+  something is wrong. Their content is in §11a of the design spec. **They apply only to
+  `aya-expanse:8b`**, the model they were measured on; under any other `--model` every diff
+  prints as `markup` and counts as unaccepted, so the model's first entry shows what it
+  does. Accepting a limitation of another model is a decision to record here, by hand.
 
 TTFT is the first **consumer-visible** emission, not the first token off the wire — see
 `TranslationOutcome.timeToFirstTokenMS` in `Sources/TranslationCore/Translator.swift`, which
@@ -473,3 +486,98 @@ techdoc-ru.md: run1 93.9% (46/49) · run2 93.9% (46/49) · run3 93.9% (46/49) ·
 
 ACCEPTED — engine meets the recalibrated baseline
 ```
+
+---
+
+## 2026-08-18 — the harness takes `--model` and `--chunk`; first entries for translategemma:12b
+
+- Machine: Apple M5 Pro, 48 GB, macOS 26.6.1
+- Ollama 0.32.14
+- Commit: `dc1ae43` (`feat(acceptance): take --model and --chunk; gate TTFT and known diffs per model`)
+- Engine code unchanged since `bc145f9`; only the harness gained the flags and the per-model gate rule.
+
+Three runs, one after another on an otherwise idle machine. The first proves the default path
+is what it was; the other two are the first numbers ever recorded for the configuration this
+machine's install actually runs (`interactiveModel = translategemma:12b`, `chunkSize = 4000`,
+`batchModel` unset — so the same model for the file queue).
+
+### Run A — defaults (aya-expanse:8b, 900), verdict **ACCEPTED**, 156 s
+
+```
+acceptance: model aya-expanse:8b · chunk 900 chars · TTFT gate enforced · known-limitation set applied
+article-en.md: run1 80.6% (29/36) · run2 83.3% (30/36) · run3 83.3% (30/36) · average 82.4% · 3 chunks · 20 terms · TTFT 3315/2830/2970 ms (info only — multi-chunk, not asserted)
+email-en.md: adherence n/a (single model-bound chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 463 ms
+snippet-en.md: adherence n/a (single model-bound chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 455 ms
+techdoc-en.md: run1 82.0% (41/50) · run2 84.0% (42/50) · run3 88.0% (44/50) · average 84.7% · 6 chunks (4 model-bound) · 20 terms · TTFT 4353/4098/4219 ms (info only — multi-chunk, not asserted)
+techdoc-ru.md: run1 95.9% (47/49) · run2 95.9% (47/49) · run3 95.9% (47/49) · average 95.9% · 5 chunks (4 model-bound) · 20 terms · TTFT 4802/4211/4211 ms (info only — multi-chunk, not asserted)
+    known-limitation run1: aya-expanse:8b stochastically drops the leading ">" on the blockquote that follows a fenced code block, now that the fence is a standalone passthrough chunk and the following chunk recomposed. Two prompt-rule attempts to fix it made the model's structure preservation worse elsewhere and were reverted. Accepted by the user 2026-08-10 as a stochastic marker loss WarningsView already surfaces, traded against the deterministic code corruption the same change fixed 4/4. (expected Optional(TranslationCore.MarkupToken.blockquote) actual nil)
+    known-limitation run1: aya-expanse:8b stochastically drops the leading ">" on the blockquote that follows a fenced code block, now that the fence is a standalone passthrough chunk and the following chunk recomposed. Two prompt-rule attempts to fix it made the model's structure preservation worse elsewhere and were reverted. Accepted by the user 2026-08-10 as a stochastic marker loss WarningsView already surfaces, traded against the deterministic code corruption the same change fixed 4/4. (expected Optional(TranslationCore.MarkupToken.blockquote) actual nil)
+    known-limitation run2: aya-expanse:8b stochastically drops the leading ">" on the blockquote that follows a fenced code block, now that the fence is a standalone passthrough chunk and the following chunk recomposed. Two prompt-rule attempts to fix it made the model's structure preservation worse elsewhere and were reverted. Accepted by the user 2026-08-10 as a stochastic marker loss WarningsView already surfaces, traded against the deterministic code corruption the same change fixed 4/4. (expected Optional(TranslationCore.MarkupToken.blockquote) actual nil)
+    known-limitation run2: aya-expanse:8b stochastically drops the leading ">" on the blockquote that follows a fenced code block, now that the fence is a standalone passthrough chunk and the following chunk recomposed. Two prompt-rule attempts to fix it made the model's structure preservation worse elsewhere and were reverted. Accepted by the user 2026-08-10 as a stochastic marker loss WarningsView already surfaces, traded against the deterministic code corruption the same change fixed 4/4. (expected Optional(TranslationCore.MarkupToken.blockquote) actual nil)
+    known-limitation run3: aya-expanse:8b stochastically drops the leading ">" on the blockquote that follows a fenced code block, now that the fence is a standalone passthrough chunk and the following chunk recomposed. Two prompt-rule attempts to fix it made the model's structure preservation worse elsewhere and were reverted. Accepted by the user 2026-08-10 as a stochastic marker loss WarningsView already surfaces, traded against the deterministic code corruption the same change fixed 4/4. (expected Optional(TranslationCore.MarkupToken.blockquote) actual nil)
+    known-limitation run3: aya-expanse:8b stochastically drops the leading ">" on the blockquote that follows a fenced code block, now that the fence is a standalone passthrough chunk and the following chunk recomposed. Two prompt-rule attempts to fix it made the model's structure preservation worse elsewhere and were reverted. Accepted by the user 2026-08-10 as a stochastic marker loss WarningsView already surfaces, traded against the deterministic code corruption the same change fixed 4/4. (expected Optional(TranslationCore.MarkupToken.blockquote) actual nil)
+ACCEPTED — engine meets the recalibrated baseline
+```
+
+Same commit as the run an hour earlier at `bc145f9` (article-en 85.2 %, techdoc-en 86.7 %,
+techdoc-ru 94.6 %; TTFT 455/446 ms): identical code, identical prompt, and the averages
+moved by −2.8 / −2.0 / +1.3 points. **That is the run-to-run noise floor of this corpus at
+temperature 0.2**, worth knowing before reading any two entries below as a difference.
+
+### Run B — `--model translategemma:12b` (900), verdict **FAILED**, 263 s
+
+```
+acceptance: model translategemma:12b · chunk 900 chars · TTFT gate info only — not the interactive-policy model · known-limitation set not applied — measured on aya-expanse:8b
+article-en.md: run1 75.0% (27/36) · run2 77.8% (28/36) · run3 77.8% (28/36) · average 76.9% · 3 chunks · 20 terms · TTFT 5236/4637/4745 ms (info only — multi-chunk, not asserted)
+email-en.md: adherence n/a (single model-bound chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 726 ms (info only — TTFT not gated for this model)
+snippet-en.md: adherence n/a (single model-bound chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 997 ms (info only — TTFT not gated for this model)
+techdoc-en.md: run1 92.0% (46/50) · run2 92.0% (46/50) · run3 92.0% (46/50) · average 92.0% · 6 chunks (4 model-bound) · 20 terms · TTFT 7649/7581/7516 ms (info only — multi-chunk, not asserted)
+techdoc-ru.md: run1 93.9% (46/49) · run2 93.9% (46/49) · run3 91.8% (45/49) · average 93.2% · 5 chunks (4 model-bound) · 20 terms · TTFT 7401/6979/7019 ms (info only — multi-chunk, not asserted)
+FAILED
+  - article-en.md: average adherence 76.9% < 80%
+```
+
+What the entry says, read line by line:
+
+- **The gate that failed is the adherence floor**, which is model-neutral on purpose: it
+  measures the document-glossary mechanism, not the model's latency. `article-en.md` at
+  76.9 % is 5.5 points under aya's 82.4 % on the same day and 3 under the floor; on the two
+  technical documents the same model is *ahead* (techdoc-en 92.0 % vs 84.7 %, techdoc-ru
+  93.2 % vs 95.9 % — inside the noise floor above). So the document glossary works on this
+  model and one prose file falls short of it — the mechanism is not broken, and this is the
+  number to move.
+- **Single-chunk TTFT 726 ms and 997 ms, printed info-only** — the harness does not gate TTFT
+  for a model `ModelPolicy` does not pin, and this is why: `snippet-en.md` sits 3 ms under the
+  ceiling on a warm model. Cold-prefix prefill alone was measured at 634 ms for this prompt on
+  this model (`docs/reference/PLATFORM-TRAPS.md`), so on the hotkey path the sub-second
+  requirement holds only while Ollama's prefix cache is warm.
+- **No `markup` line on any file** — translategemma:12b produced no markup diff at all on
+  this corpus, where aya-expanse:8b carries a known blockquote drop on both techdocs. Under
+  `--model` the `known`/`known-limitation` sets are not applied, so had it dropped one it
+  would have printed as unaccepted; it dropped none.
+- Multi-chunk TTFT 4.6–7.6 s against aya's 2.8–4.8 s: the term-list call plus a slower
+  model. Info-only, as always.
+
+### Run C — `--model translategemma:12b --chunk 4000` (this install's own `chunkSize`), verdict **ACCEPTED**, 194 s
+
+```
+acceptance: model translategemma:12b · chunk 4000 chars · TTFT gate info only — not the interactive-policy model · known-limitation set not applied — measured on aya-expanse:8b
+article-en.md: adherence n/a (single model-bound chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 1288 ms (info only — TTFT not gated for this model)
+email-en.md: adherence n/a (single model-bound chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 708 ms (info only — TTFT not gated for this model)
+snippet-en.md: adherence n/a (single model-bound chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 836 ms (info only — TTFT not gated for this model)
+techdoc-en.md: run1 92.5% (37/40) · run2 92.5% (37/40) · run3 92.5% (37/40) · average 92.5% · 5 chunks (3 model-bound) · 20 terms · TTFT 8417/7496/7503 ms (info only — multi-chunk, not asserted)
+techdoc-ru.md: run1 92.9% (26/28) · run2 92.9% (26/28) · run3 92.9% (26/28) · average 92.9% · 3 chunks (2 model-bound) · 20 terms · TTFT 6852/6897/6951 ms (info only — multi-chunk, not asserted)
+ACCEPTED — engine meets the recalibrated baseline
+```
+
+At 4000 characters `article-en.md` (2326 bytes) is one chunk, so the file that failed the
+adherence floor at 900 is not measured for adherence at all here — **ACCEPTED is not a better
+result than Run B's FAILED, it is a smaller measurement**: only the two technical documents
+still chunk (their fenced blocks force boundaries the budget cannot merge across), at 92.5 %
+and 92.9 % on 3 and 2 model-bound chunks. The other thing this run shows is what a 4000-
+character budget costs on the hotkey path: `article-en.md` as a single 2.3 KB chunk took
+1288 ms to its first token on a warm 12b, against 726–836 ms for the two short files — the
+user's own text size, not the prompt, is what puts this configuration over the second.
+
+Comparability: Runs B and C are the first entries under `--model`; every earlier entry in
+this file is aya-expanse:8b at 900 and stays the reference for the default configuration.
