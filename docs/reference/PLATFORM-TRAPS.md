@@ -448,10 +448,20 @@ document-glossary terms, 770–772. Prefill of that prompt, temperature 0.2, `nu
 Apple M5 Pro, Ollama 0.32.14, model already loaded — cold prefix / prefix cached from an
 identical earlier request: `aya-expanse:8b` 354 / 27 ms (20 terms: 455 / 23);
 `translategemma:12b` 634 / ~85 (1117 / ~100); `translategemma:27b` 1382 / ~180 (2387 / ~186).
-TranslateGemma's own 203-token native prompt: 346 / 88 and 764 / 169. Two consequences: the
-1000 ms TTFT ceiling is spent on prefill alone by 27b's cold prefix, which is why the
-acceptance harness gates TTFT only for the model `ModelPolicy` pins; and the cache is by
-common prefix across separate HTTP requests while the model stays resident, so a stable
-system-prompt prefix is worth keeping stable — anything that varies per chunk should come
-*after* what does not (see `GlossaryMerge`).
-→ `Sources/acceptance/main.swift` (`RunConfiguration.gatesTTFT`), `PromptBuilder.swift`
+TranslateGemma's own 203-token native prompt: 346 / 88 and 764 / 169. **The «cached» column
+means two different things on the two model families, measured 2026-08-18, 3/3 each.** On
+`aya-expanse:8b` the cache is by common prefix: the same system prompt with a *different*
+text re-prefills only the text (cold 274 → 92 ms; identical 27), and reordering the glossary
+blocks so the stable document block precedes the per-chunk user block cuts the second chunk
+of a run from 379 to 101 ms — which is what `GlossaryMerge.forPrompt` does. On
+`translategemma:12b` the cache is all-or-nothing: the same system prompt with a different
+text costs exactly a cold prefill (474 vs 477 ms), only a byte-identical request hits it
+(90 ms), and the block order changes nothing (672 vs 672). The likely cause is Gemma 3's
+sliding-window attention layers, whose KV cache llama.cpp cannot partially reuse — *not
+verified here*, recorded as the observed behaviour. Two consequences: the 1000 ms TTFT
+ceiling is spent on prefill alone by 27b's cold prefix, which is why the acceptance harness
+gates TTFT only for the model `ModelPolicy` pins; and on TranslateGemma every hotkey press
+pays the whole system prompt — 255 tokens against the native prompt's 203 — so the length of
+that prompt is a live cost there in a way it is not on aya.
+→ `Sources/acceptance/main.swift` (`RunConfiguration.gatesTTFT`), `PromptBuilder.swift`,
+`GlossaryMerge.forPrompt`

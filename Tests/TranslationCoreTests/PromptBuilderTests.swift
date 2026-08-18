@@ -22,6 +22,10 @@ import Testing
     #expect(system.contains("Terminology"))
     #expect(system.contains("FHIR"))
     #expect(system.contains("сервер профилей"))
+    // In the order given, and only that: `GlossaryMerge.forPrompt` decides the order for a
+    // measured reason (prefix cache), and a builder that re-sorted would silently undo it.
+    let fhir = system.range(of: "\"FHIR\"")!, ps = system.range(of: "\"profile server\"")!
+    #expect(fhir.lowerBound < ps.lowerBound)
 }
 
 @Test func terminologyHeaderIsOmittedWhenNoEntryResolvesForTheTarget() {

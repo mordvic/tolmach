@@ -383,7 +383,11 @@ public struct Translator: Sendable {
             // the document glossary deliberately is not) — this is orthogonal to that: code
             // was never prose to filter *by* in the first place.
             let relevantUser = userGlossary?.relevantEntries(for: TermExtractor.strippingCode(chunk.text)) ?? []
-            let merged = GlossaryMerge.merge(user: relevantUser, document: documentEntries)
+            // `forPrompt`, not `merge`: the same set, document block first, so the part of
+            // the system prompt that is identical for every часть stays in Ollama's cached
+            // prefix — the measured reason is on `GlossaryMerge.forPrompt`. The verifier
+            // below still takes `merge`, the precedence order.
+            let merged = GlossaryMerge.forPrompt(user: relevantUser, document: documentEntries)
             let request = TranslationRequest(text: chunk.text, source: detected, target: target,
                                              tone: tone, glossaryEntries: merged)
             // `streamChunkReply` delivers this chunk's content to `onToken`
