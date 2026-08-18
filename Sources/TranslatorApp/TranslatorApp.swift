@@ -656,29 +656,39 @@ struct TranslatorApp: App {
     /// which is the entire job.
     private func warmUp() async {
         guard settings.warmUpOnLaunch else { return }
-        // The same options a real run gets, think decision included: a warm-up that reasoned
-        // while the run did not would page the model in under a regime nothing else uses.
-        let options = settings.chatOptions(model: settings.interactiveModel)
-        do {
-            // Drained rather than abandoned after the first event: dropping the stream runs
-            // `onTermination`, which cancels the request, and there is nothing to save by
-            // cutting off a reply this short.
-            for try await _ in client.chat(messages: [ChatMessage(role: "user", content: "ok")],
-                                           options: options) {}
-        } catch {
-            // Still swallowed as far as the user is concerned, and that part is right: a
-            // warm-up is by definition something they did not ask for, so its failure must
-            // cost them nothing, and Ollama being unreachable is already the window's status
-            // line's job to say. Saying it twice — once about a request nobody made — would be
-            // worse than silence.
-            //
-            // `.debug` and not `.error`, because at launch this failing is *ordinary*: Ollama
-            // is simply not up yet on a good proportion of logins. It is here so that «the
-            // first translation is always slow» has somewhere to be answered from.
-            Log.engine.debug("""
-                warm-up failed, first translation will pay the cold-load cost: \
-                \(error.localizedDescription, privacy: .public)
-                """)
+        // Both models a hotkey can reach, when they differ — ⌥⌘T's and ⌥⌘R's. One after the
+        // other rather than in parallel: Ollama serialises loads anyway, and two requests in
+        // flight at launch would only make the failure log below ambiguous about which one
+        // failed. Ollama keeps both resident when they fit (measured, `AppSettings.proofreadModel`),
+        // so this is not paying a load that the first press would immediately undo.
+        var models = [settings.interactiveModel]
+        if settings.proofreadModelDiffersFromInteractive { models.append(settings.resolvedProofreadModel) }
+        for model in models {
+            // The same options a real run gets, think decision included: a warm-up that
+            // reasoned while the run did not would page the model in under a regime nothing
+            // else uses.
+            let options = settings.chatOptions(model: model)
+            do {
+                // Drained rather than abandoned after the first event: dropping the stream runs
+                // `onTermination`, which cancels the request, and there is nothing to save by
+                // cutting off a reply this short.
+                for try await _ in client.chat(messages: [ChatMessage(role: "user", content: "ok")],
+                                               options: options) {}
+            } catch {
+                // Still swallowed as far as the user is concerned, and that part is right: a
+                // warm-up is by definition something they did not ask for, so its failure must
+                // cost them nothing, and Ollama being unreachable is already the window's status
+                // line's job to say. Saying it twice — once about a request nobody made — would
+                // be worse than silence.
+                //
+                // `.debug` and not `.error`, because at launch this failing is *ordinary*: Ollama
+                // is simply not up yet on a good proportion of logins. It is here so that «the
+                // first translation is always slow» has somewhere to be answered from.
+                Log.engine.debug("""
+                    warm-up of \(model, privacy: .public) failed, its first run will pay the cold-load cost: \
+                    \(error.localizedDescription, privacy: .public)
+                    """)
+            }
         }
     }
 

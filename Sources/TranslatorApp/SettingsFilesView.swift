@@ -34,7 +34,11 @@ struct SettingsFilesView: View {
                      + "взять модель медленнее той, что работает по сочетанию клавиш.")
                     .font(.caption).foregroundStyle(.secondary)
                 if settings.batchModelDiffersFromInteractive {
-                    Label("Ollama держит в памяти одну модель. Пока идёт очередь, каждое "
+                    // Softened 2026-08-18 from «Ollama держит в памяти одну модель»: two models
+                    // that fit stayed resident together on this machine (`AppSettings.batchModel`
+                    // has the measurement), so the cost is conditional on memory, and the label
+                    // now says so rather than promising a thrash that may not come.
+                    Label("Если обе модели не помещаются в память, то, пока идёт очередь, каждое "
                           + "нажатие сочетания клавиш будет перезагружать модель — около "
                           + "двух секунд туда и столько же обратно.",
                           systemImage: "exclamationmark.triangle.fill")

@@ -428,7 +428,9 @@ final class TranslationViewModel {
         // it, with identical behaviour.
         let level = proofreadingLevelOverride ?? settings.defaultProofreadingLevel
         let style = rewriteStyleOverride ?? settings.defaultRewriteStyle
-        let options = settings.chatOptions(model: settings.interactiveModel)
+        // Правка's own model, which follows the interactive one unless the user chose
+        // otherwise — `AppSettings.proofreadModel` carries the measurement behind the split.
+        let options = settings.chatOptions(model: settings.resolvedProofreadModel)
         state = .running
         // Правка never raises the terms sheet, but the notice must not outlive its run
         // either — same reset `translate()` performs.

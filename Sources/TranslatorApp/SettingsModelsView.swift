@@ -69,6 +69,35 @@ struct SettingsModelsView: View {
                             onDownload: download)
             }
 
+            Section("Модель для правки") {
+                // The same optional-with-a-named-default shape as «Файлы»'s batch picker,
+                // for the same reason it has one: «как для перевода» is a real state, not
+                // an absent value, and the user has to be able to return to it.
+                Picker("Модель", selection: $settings.proofreadModel) {
+                    Text("Как для перевода").tag(String?.none)
+                    // `options(selecting:)` and not `installedNames`: a `Picker` bound to a
+                    // value absent from its options renders blank, and a blank row reads as
+                    // «как для перевода» while a removed model is still stored underneath.
+                    ForEach(models.options(selecting: settings.proofreadModel ?? ""), id: \.self) { name in
+                        if !name.isEmpty { Text(models.optionLabel(name)).tag(String?.some(name)) }
+                    }
+                }
+                // Measured, not preferred — `AppSettings.proofreadModel` carries the numbers.
+                Text("Модель, которая хорошо переводит, не обязательно хорошо правит: "
+                     + "переводческие модели меняют больше, чем просят. Для правки лучше "
+                     + "универсальная модель — она исправляет только ошибки.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if settings.proofreadModelDiffersFromInteractive {
+                    // Not a warning: two models that fit in memory stay resident together
+                    // (measured on Ollama 0.32.14 — `AppSettings.proofreadModel`), and both
+                    // are warmed at launch. It says what the cost is when they do not fit.
+                    Text("Обе модели загружаются при запуске и остаются в памяти, если хватает "
+                         + "места. Если не хватает, первое переключение между переводом и "
+                         + "правкой будет ждать загрузки около двух секунд.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
             Section("Установленные модели") {
                 if models.installed.isEmpty {
                     Text(models.error == nil

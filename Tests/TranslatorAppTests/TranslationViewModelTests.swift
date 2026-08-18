@@ -119,13 +119,45 @@ private func makeModel(_ client: LLMClient, pasteboard: NSPasteboard? = nil) -> 
 /// the job.
 @MainActor
 private func makeModel(responses: [String]) -> (TranslationViewModel, QueueClient) {
+    makeModel(responses: responses, settings: AppSettings(defaults: InMemoryDefaults(prefix: "vm-run"))).0
+}
+
+/// The overload that lets a test reach the settings the model reads: `TranslationViewModel`
+/// keeps its `settings` private, and the правка-model wiring is a fact about which stored
+/// value ends up in `ChatOptions`.
+@MainActor
+private func makeModel(responses: [String], settings: AppSettings) -> ((TranslationViewModel, QueueClient), AppSettings) {
     let client = QueueClient(replies: responses)
     let model = TranslationViewModel(
         translator: Translator(client: client),
-        settings: AppSettings(defaults: InMemoryDefaults(prefix: "vm-run")),
+        settings: settings,
         glossary: scratchGlossary(),
         pasteboard: scratchPasteboard())
-    return (model, client)
+    return ((model, client), settings)
+}
+
+@MainActor @Test func aProofreadRunReachesTheProofreadModelAndATranslateRunTheInteractiveOne() async {
+    // The whole reason `proofreadModel` exists is measured in `AppSettings`: the model that
+    // translates best here edits worst. Wiring it is one line in `proofread()`, and one line
+    // is exactly what a refactor drops — so the model each operation names is pinned here,
+    // where the engine's own tests cannot see it.
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "vm-proofread-model"))
+    settings.interactiveModel = "translategemma:12b"
+    settings.proofreadModel = "gemma4:26b"
+    let ((model, fake), _) = makeModel(responses: ["Исправлено.", "Translated."], settings: settings)
+    model.sourceText = "Превет, мир."
+    model.operation = .proofread
+    await model.run()
+    #expect(fake.receivedModels.last == "gemma4:26b")
+    model.operation = .translate
+    await model.run()
+    #expect(fake.receivedModels.last == "translategemma:12b")
+    // And with the setting cleared, правка follows перевод again — the default a user who
+    // never opened the pane lives under.
+    settings.proofreadModel = nil
+    model.operation = .proofread
+    await model.run()
+    #expect(fake.receivedModels.last == "translategemma:12b")
 }
 
 @MainActor

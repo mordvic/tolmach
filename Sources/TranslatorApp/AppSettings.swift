@@ -89,14 +89,17 @@ final class AppSettings {
     }
     /// The model the file queue uses, or `nil` for «the same one the hotkey uses».
     ///
-    /// **The only setting in this app with no fixed default, and that is deliberate.**
-    /// Ollama holds one model in memory: cold load ~2000 ms against ~155 ms warm
-    /// (measured, recorded in CLAUDE.md alongside `keep_alive`). If this defaulted to
-    /// anything but the interactive model, then every ⌥⌘T pressed during a queue run
-    /// would cost two cold loads — one to serve the panel, one to get back to the queue
-    /// — and a thirteen-file queue makes that the normal case rather than the edge. A
-    /// different default would build that thrash into the box for a user who never
-    /// opened the settings.
+    /// **One of two settings in this app with no fixed default, and that is deliberate**
+    /// (`proofreadModel` below is the other, for the same reason). Cold load is ~2000 ms
+    /// against ~155 ms warm (measured, recorded in CLAUDE.md alongside `keep_alive`), and
+    /// when this was written Ollama was observed to hold one model in memory, so a batch
+    /// model differing from the interactive one meant two cold loads on every ⌥⌘T pressed
+    /// during a queue run. Re-measured 2026-08-18 on Ollama 0.32.14 with 48 GB: two models
+    /// that fit — `gemma4:26b` at 17.5 GB beside `aya-expanse:8b` at 5.9 GB — stayed
+    /// resident together (`/api/ps`), so the thrash is a fact about memory pressure rather
+    /// than about Ollama. The default stays `nil` regardless: a fixed second model would
+    /// still cost its residency, and its cold loads on a smaller machine, to a user who
+    /// never opened the settings.
     ///
     /// `ModelPolicy.defaultModel(for: .background)` is still not consulted. It is a
     /// recommendation to a user who opens the picker, not a default that changes what
@@ -135,6 +138,45 @@ final class AppSettings {
     /// property above.
     var resolvedBatchModel: String { batchModel ?? interactiveModel }
 
+    /// The model правка runs on — the panel's ⌥⌘R and the window's «Правка» — or `nil` for
+    /// «the same one перевод uses». Same shape and the same default as `batchModel`, for
+    /// the same reason: a fixed default other than the interactive model would make a user
+    /// who never opened the settings pay a second model's residency for a feature they may
+    /// not use.
+    ///
+    /// Why it exists at all: правка and перевод want different things from a model, and
+    /// the model that translates best here is bad at editing. Measured 2026-08-18 on the
+    /// правка corpus (10 texts, 3 runs each, the app's own prompts): the translation-tuned
+    /// `translategemma:12b` made 21 word-edits beyond the seeded errors (adds a comma no
+    /// one asked for, splits paragraphs into lines) where `gemma4:26b`, `qwen3.8:27b` and
+    /// `qwen3-coder:30b` made 6 — the floor, two justified un-seeded fixes — and did it in
+    /// 0.4–1.1 s. One setting for both operations forced the choice of one model for both.
+    ///
+    /// The residency cost this used to be feared for is smaller than the batch comment
+    /// above says: on this machine Ollama 0.32.14 kept `gemma4:26b` (17.5 GB) and
+    /// `aya-expanse:8b` (5.9 GB) resident at once (`/api/ps`, 2026-08-18), so two models
+    /// that fit in memory do not evict each other. `warmUp()` warms this one too when it
+    /// differs, so the first ⌥⌘R after launch pays no cold load either.
+    var proofreadModel: String? {
+        get {
+            access(keyPath: \.proofreadModel)
+            return optionalString("proofreadModel")
+        }
+        set {
+            withMutation(keyPath: \.proofreadModel) {
+                // `set(nil,)` for `batchModel`'s reason: `InMemoryDefaults` overrides `set`,
+                // not `removeObject`.
+                let stored = (newValue?.isEmpty == false) ? newValue : nil
+                defaults.set(stored, forKey: "proofreadModel")
+            }
+        }
+    }
+
+    /// What to put in `ChatOptions` for a правка run — `resolvedBatchModel`'s reason for
+    /// being a property: two call sites (`TranslationViewModel.proofread` and `warmUp()`)
+    /// plus the picker's «current» state, one rule.
+    var resolvedProofreadModel: String { proofreadModel ?? interactiveModel }
+
     /// Whether the app asks a model not to reason.
     ///
     /// **On by default, which is a change in what the app does and is meant to be.** Ollama
@@ -168,8 +210,8 @@ final class AppSettings {
         }
     }
 
-    /// Whether either path would run a `gpt-oss` model — i.e. whether the depth control has
-    /// anything to govern.
+    /// Whether any path would run a `gpt-oss` model — i.e. whether the depth control has
+    /// anything to govern. Three paths now, not two: правка has its own model.
     ///
     /// A derived property rather than a comparison written in the pane, for
     /// `batchModelDiffersFromInteractive`'s stated reason: a view that restated the prefix rule
@@ -177,8 +219,14 @@ final class AppSettings {
     var usesGptOss: Bool {
         ModelPolicy.thinkingLevelsOnly.contains {
             interactiveModel.hasPrefix($0) || resolvedBatchModel.hasPrefix($0)
+                || resolvedProofreadModel.hasPrefix($0)
         }
     }
+
+    /// Whether правка and перевод would use two different models — what decides whether the
+    /// «Модели» pane draws its residency note under the правка picker. Same reasoning as
+    /// `batchModelDiffersFromInteractive`.
+    var proofreadModelDiffersFromInteractive: Bool { resolvedProofreadModel != interactiveModel }
 
     /// Whether the queue and the hotkey would use two different models — i.e. whether a
     /// hotkey press during a queue run costs a model swap in Ollama's memory.

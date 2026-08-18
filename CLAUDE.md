@@ -236,11 +236,17 @@ Facts that will bite you if you "tidy" them:
   file queue reads `AppSettings.batchModel` (see below), not `ModelPolicy.defaultModel(for:
   .background)`, so the recommendation and the setting stay separate things.
   `keep_alive` (default `30m`) is load-bearing, not an optimisation: cold load ~2000 ms vs
-  ~155 ms warm. **That measurement is why `AppSettings.batchModel` has no fixed default**: one
-  model lives in memory, so a batch model differing from the interactive one costs two cold loads
-  on every ⌥⌘T pressed during a queue run. `nil` means «the same one the hotkey uses», and the
-  settings pane warns when the user picks otherwise. The property is stored under the old
-  `"backgroundModel"` key, as its removal comment promised.
+  ~155 ms warm. **That measurement is why `AppSettings.batchModel` and `AppSettings.proofreadModel`
+  have no fixed default**: a second model costs its residency and, when memory is short, a cold
+  load on every switch. `nil` means «the same one the hotkey uses». Re-measured 2026-08-18: on
+  Ollama 0.32.14 with 48 GB two models that fit stayed resident together, so the «one model in
+  memory» this rule was first written under is a fact about memory pressure, not about Ollama —
+  the «Файлы» warning is conditional now, and «Модели»' правка note says both are warmed at
+  launch. `batchModel` is stored under the old `"backgroundModel"` key, as its removal comment
+  promised; `proofreadModel` under its own name. **Правка's model is `resolvedProofreadModel`**
+  (`TranslationViewModel.proofread`, `warmUp()`), because the model that translates best here
+  edits worst — measured 2026-08-18 on the правка corpus, `AppSettings.proofreadModel` has the
+  numbers.
 
 ### The app layer
 
@@ -371,7 +377,8 @@ Facts that will bite you if you "tidy" them:
   so `@Observable`'s synthesis does not apply — each accessor calls `access(keyPath:)` /
   `withMutation(keyPath:_:)` by hand. Keep that shape when adding a setting. Two of its keys
   are `"quietThinking"` (default **true** — a deliberate change to what the app does, see the
-  Ollama rules above) and `"gptOssThinkingLevel"` (default `low`). Two more are the shortcuts:
+  Ollama rules above) and `"gptOssThinkingLevel"` (default `low`). `"proofreadModel"` is an
+  optional string like `"backgroundModel"`, empty stored as nil. Two more are the shortcuts:
   `"hotkey"` and `"proofreadHotkey"`, each one JSON value re-checked for `isValid` on the way
   out. They differ in one argument only — `hotkey` falls back to its default because it is the
   only door to the panel, and `proofreadHotkey` does so for the weaker reason that a setting
