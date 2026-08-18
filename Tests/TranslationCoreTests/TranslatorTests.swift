@@ -640,18 +640,17 @@ private func assertPerfectEchoProducesNoMarkupDiffs(_ text: String, maxChunkChar
 
 // MARK: - Lossless assembly: final restores the source's separators byte for byte.
 
-/// A "perfect translator": echoes back exactly the text between the <text> markers
-/// of the user prompt. The term-list call's prompt carries no markers and echoes
-/// nothing, which parses as an empty document glossary — so this fake never needs
+/// A "perfect translator": echoes back exactly the text the user prompt hands over —
+/// everything after the closing line's colon and the two blank lines that follow it
+/// (`PromptBuilder.userPrompt(for:)`). The term-list call's prompt has no such line and
+/// echoes nothing, which parses as an empty document glossary — so this fake never needs
 /// its response queue aligned with the unpredictable presence of that call.
 private struct EchoLLMClient: LLMClient {
     func chat(messages: [ChatMessage], options: ChatOptions) -> AsyncThrowingStream<ChatEvent, Error> {
         let user = messages.last?.content ?? ""
         let payload: String
-        if let start = user.range(of: "<text>\n"),
-           let end = user.range(of: "\n</text>", options: .backwards),
-           start.upperBound <= end.lowerBound {
-            payload = String(user[start.upperBound..<end.lowerBound])
+        if user.hasPrefix("Please translate the following "), let start = user.range(of: ":\n\n\n") {
+            payload = String(user[start.upperBound...])
         } else {
             payload = ""
         }
@@ -731,9 +730,9 @@ func aPerfectEchoReproducesTheSourceByteForByte(_ text: String) async throws {
         onToken: collector.onToken)
     #expect(outcome.chunks.count == 2)
     #expect(fake.receivedMessages.count == outcome.chunks.count) // no term-list call
-    // The `<text>` markers appear in the per-chunk translation prompt and nowhere
-    // else — the term-list prompt has none.
-    let chunkPrompts = fake.receivedMessages.filter { $0.last?.content.contains("<text>") == true }
+    // The «Please translate the following …» closing line opens the per-chunk translation
+    // prompt and nothing else — the term-list prompt has no such line.
+    let chunkPrompts = fake.receivedMessages.filter { $0.last?.content.hasPrefix("Please translate the following ") == true }
     #expect(chunkPrompts.count == outcome.chunks.count)
     for chunk in outcome.chunks {
         #expect(chunkPrompts.contains { $0.last?.content.contains(chunk.text) == true })
@@ -1252,17 +1251,6 @@ final class EmissionClock: @unchecked Sendable {
         text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
         options: ChatOptions(model: "test"), maxChunkCharacters: 900)
     #expect(outcome.detectedSource == .en)
-}
-
-@Test func translationAlsoStripsAnEchoedMarkerWrapper() async throws {
-    // The marker unwrap lives in the shared per-chunk machinery, so the translate
-    // route gets the same guarantee правка needed: both user prompts wrap the text
-    // in <text>…</text>, and either route's model can echo them back.
-    let fake = FakeLLMClient(responses: ["<text>\nПривет, мир.\n</text>"])
-    let outcome = try await Translator(client: fake).translate(
-        text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
-        options: ChatOptions(model: "test"), maxChunkCharacters: 900)
-    #expect(outcome.final == "Привет, мир.")
 }
 
 // MARK: - CP Task 2: passthrough chunks skip the model; modelChunkCount

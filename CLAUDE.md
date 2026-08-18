@@ -169,6 +169,15 @@ Facts that will bite you if you "tidy" them:
   still scanned twice. Measured: 2.06 MB of Ukrainian detects as nil in 48 ms (best of
   three), so such a file pays ~96 ms of scanning instead of ~48. Both scans are off the main actor, which is why this is a note and
   not a defect — but it is not «no second scan».
+- **The user turn hands the text over plainly under one closing line — no `<text>…</text>`
+  markers, on either route.** They were there until 2026-08-18, and `translategemma:27b` read
+  a question inside them as a question to answer (5/5) and echoed them back around 7/15
+  replies, each echo costing the chunk its streaming; the same rules with the text handed over
+  under «Please translate the following … text into …:» gave 0/15 and 0/15, and the markers —
+  not the rules, not the message structure — were isolated as the cause. The whole-answer
+  marker unwrap in `ResponseCleaner` and the buffer-to-end it forced in `streamChunkReply`
+  went with them, gone rather than dead-coded. `PromptBuilder.userPrompt(for:)` carries the
+  measurement; the aya-expanse:8b before/after is in `docs/reference/BASELINE.md`.
 - `timeToFirstTokenMS` is `nil` when nothing was ever emitted — that nil *is* the empty-reply
   signal. Do not substitute a sentinel; it makes an absent response read as a slow one.
 - `stats` covers the per-chunk translation calls only, never the term-list call.

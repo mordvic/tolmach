@@ -87,14 +87,27 @@ public enum PromptBuilder {
         return lines.joined(separator: "\n")
     }
 
+    /// The user turn hands over the text and nothing that can be read as a second
+    /// instruction. It used to wrap the text in `<text>…</text>` markers with «Translate the
+    /// text between the markers» above them, and one model read a question inside those
+    /// markers as a question put to it. Measured 2026-08-18 on `translategemma:27b`,
+    /// temperature 0.2: a one-line factual question came back as its answer («Париж.») in
+    /// 5/5 runs, and across 15 replies the markers were echoed back around the reply 7 times —
+    /// each echo costing the whole chunk its streaming, since the unwrap was only decidable at
+    /// the end. Isolated by variant, 15 runs each: the same system prompt with the text handed
+    /// over plainly under TranslateGemma's own trained closing line («Please translate the
+    /// following English text into Russian:», two blank lines, the text) gave 0/15 and 0/15;
+    /// the rules list in any packaging — two messages or one — gave 0/15 once the markers were
+    /// gone; TranslateGemma's own native head *with* the markers gave 5/15. The markers were
+    /// the cause; not the rules, not the two-turn structure. `translategemma:12b` was 0/15 on
+    /// both shapes; `aya-expanse:8b` was measured on the acceptance harness before and after
+    /// (BASELINE.md, 2026-08-18, Runs A and D): adherence 82.4 → 83.3 / 84.7 → 85.3 /
+    /// 95.9 → 95.2 %, single-chunk TTFT 463/455 → 453/456 ms — inside the corpus's own
+    /// run-to-run noise, recorded there. The two blank lines are that model family's
+    /// trained shape and cost nothing on the others.
     public static func userPrompt(for request: TranslationRequest) -> String {
-        """
-        Translate the text between the markers into \(request.target.englishName).
-
-        <text>
-        \(request.text)
-        </text>
-        """
+        let sourceClause = request.source.map { "\($0.englishName) " } ?? ""
+        return "Please translate the following \(sourceClause)text into \(request.target.englishName):\n\n\n\(request.text)"
     }
 
     /// The `=>` echo contract is load-bearing: it lets the parser match by term instead
@@ -156,14 +169,15 @@ public enum PromptBuilder {
     public static func proofreadMessages(text: String, language: Language?,
                                          level: ProofreadingLevel,
                                          style: RewriteStyle) -> [ChatMessage] {
-        [ChatMessage(role: "system",
-                     content: proofreadSystemPrompt(language: language, level: level, style: style)),
-         ChatMessage(role: "user", content: """
-         Correct the text between the markers. Output only the corrected text, without the markers.
-
-         <text>
-         \(text)
-         </text>
-         """)]
+        // The same shape as `userPrompt(for:)`, for the same measurement — one rule for the
+        // two routes, so they cannot drift back apart. The language is named a third time
+        // here when known: the правка system prompt already names it twice against the
+        // helpful-translation failure (spec §4.2), and the user turn is the last thing the
+        // model reads before the text.
+        let languageClause = language.map { "\($0.englishName) " } ?? ""
+        return [ChatMessage(role: "system",
+                            content: proofreadSystemPrompt(language: language, level: level, style: style)),
+                ChatMessage(role: "user",
+                            content: "Please correct the following \(languageClause)text:\n\n\n\(text)")]
     }
 }

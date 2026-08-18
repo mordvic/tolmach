@@ -5,7 +5,6 @@ public struct CleanedResponse: Sendable, Equatable {
     public let text: String
     public let strippedPreamble: String?
     public let unwrappedCodeFence: Bool
-    public let unwrappedTextMarkers: Bool
 }
 
 public enum ResponseCleaner {
@@ -18,15 +17,11 @@ public enum ResponseCleaner {
 
     /// `allowFenceUnwrap` defaults to true for standalone callers (e.g. tests probing
     /// `clean` in isolation), but `Translator` always passes `!chunk.passthrough`
-    /// explicitly — see the false-positive case below. `allowMarkerUnwrap` follows the
-    /// same shape for the same reason: the caller knows whether the source itself
-    /// opened with the marker line, and this function does not.
-    public static func clean(_ raw: String, allowFenceUnwrap: Bool = true,
-                             allowMarkerUnwrap: Bool = true) -> CleanedResponse {
+    /// explicitly — see the false-positive case below.
+    public static func clean(_ raw: String, allowFenceUnwrap: Bool = true) -> CleanedResponse {
         var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         var stripped: String? = nil
         var unwrapped = false
-        var unwrappedMarkers = false
 
         if let newline = text.firstIndex(of: "\n") {
             let firstLine = String(text[text.startIndex..<newline])
@@ -56,29 +51,17 @@ public enum ResponseCleaner {
             unwrapped = true
         }
 
-        // The same failure one wrapper over: both user prompts hand the model its text
-        // between <text>…</text> markers, and the model intermittently echoes them back
-        // around the reply — observed live on правка (aya-expanse:8b, temperature 0.2,
-        // 2026-08-10; 13 identical direct probes came back clean, so the echo is
-        // sampling noise the prompt can discourage but never rule out). The same
-        // erring-toward-not-unwrapping rules as the fence above: whole-answer wrapper
-        // only, nothing that looks like a marker in the interior, and the caller
-        // suppresses the unwrap when the source itself opened with the marker line.
-        let markerLines = text.components(separatedBy: .newlines)
-        if allowMarkerUnwrap, markerLines.count >= 2,
-           markerLines[0].trimmingCharacters(in: .whitespaces) == "<text>",
-           markerLines[markerLines.count - 1].trimmingCharacters(in: .whitespaces) == "</text>",
-           !markerLines[1..<(markerLines.count - 1)].contains(where: {
-               let line = $0.trimmingCharacters(in: .whitespaces)
-               return line == "<text>" || line == "</text>"
-           }) {
-            text = markerLines[1..<(markerLines.count - 1)].joined(separator: "\n")
-            unwrappedMarkers = true
-        }
+        // A whole-answer `<text>…</text>` unwrap lived here from 2026-08-10 to 2026-08-18.
+        // It guarded an echo of the user prompt's own markers (aya-expanse:8b, sampling
+        // noise, 13 clean probes; translategemma:27b, 7/15 replies), and both user prompts
+        // stopped carrying markers on 2026-08-18 for the measured reason in
+        // `PromptBuilder.userPrompt(for:)`. A reply can no longer echo what it was never
+        // shown, so the guard is gone rather than dead-coded — the same call
+        // `Translator.streamChunkReply` records for `allowFenceUnwrap: false`. A reply
+        // that opens with a literal `<text>` line is content now, and a test pins that.
 
         return CleanedResponse(text: text.trimmingCharacters(in: .whitespacesAndNewlines),
-                               strippedPreamble: stripped, unwrappedCodeFence: unwrapped,
-                               unwrappedTextMarkers: unwrappedMarkers)
+                               strippedPreamble: stripped, unwrappedCodeFence: unwrapped)
     }
 
     /// The longest normalised length `isPreambleLine` will ever accept — anything
