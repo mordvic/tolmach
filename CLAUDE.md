@@ -15,7 +15,7 @@ to disk.
 ```bash
 swift build                       # build everything
 swift build --build-tests         # must stay at zero warnings — this is a standing rule
-swift test                        # the whole suite, offline (fake LLMClient), ~1.5 s
+swift test                        # the whole suite, offline (fake LLMClient), ~2 s
 swift test --filter someTestName  # one test, by name (Swift Testing function names)
 swift test --filter TranslationCoreTests   # one test target
 
@@ -33,38 +33,29 @@ swift run acceptance              # live-Ollama corpus run; MUST run from the pa
 swift run acceptance --model translategemma:12b --chunk 4000   # any installed model / the chunk budget you actually run
 ```
 
-No count here on purpose: it went stale twice in one review cycle, and a number nothing
-checks is a contract nobody can keep. What is worth stating is what the line above already
-says — the suite is offline and finishes in about two seconds, so there is no reason not to
-run it. That number has a floor and a reason: one test
-(`aFileInterruptedFromTheTermsSheetDoesNotReportTheReadersDeliberation`) sleeps a deliberate
-second, because the property it pins — that a reader's time in the terms sheet is not reported
-as the machine's — can only be seen by letting real time pass in the sheet. Its two runs go
-concurrently, so the floor is ~1.05 s rather than ~1.1 s.
-
-That floor has since become the *whole* of the figure rather than most of it. The suite reads
-**~2.1 s** now, and the reason is contention rather than any test being slow: `TranslationPanelTests`
-shows real `NSPanel`s and lays out real `NSHostingController`s — 22 tests, 0.75 s on their own —
-and running beside them stretches the sleeping test's own two runs from ~1.05 s to ~1.97 s. So the
-number to watch is still that one test's, not the total. If the suite ever reads much above this,
-suspect the machine before the code: a leaked load generator from an earlier session made the same
-hardware measure 0.87 s and 3.0 s on the same commit.
+No test count here on purpose: it went stale twice in one review cycle, and a number nothing
+checks is a contract nobody can keep. The suite is offline and reads **~2.1 s**, so there is
+no reason not to run it. Nearly all of that is one test
+(`aFileInterruptedFromTheTermsSheetDoesNotReportTheReadersDeliberation`) that sleeps a
+deliberate second — the property it pins, that a reader's time in the terms sheet is not
+reported as the machine's, can only be seen by letting real time pass — stretched from
+~1.05 s to ~1.97 s by contention with `TranslationPanelTests`' real `NSPanel`s. Watch that
+test's figure, not the total; if the suite reads much above ~2.1 s, suspect the machine before
+the code — a leaked load generator once made the same commit measure 0.87 s and 3.0 s on the
+same hardware.
 
 `swift test` never touches the network. `translate-cli` and `acceptance` do — `acceptance` is
 the deliberately-not-in-CI harness that measures TTFT, markup integrity and term consistency
-against the thresholds in spec §10, and exits 1 on regression. **Its two gates are not
-model-neutral, and the harness says so on its first line**: the TTFT ceiling and the
-`known`/`known-limitation` sets are properties of `aya-expanse:8b`, the model `ModelPolicy`
-pins for the interactive path, and apply only when that is the model under test. Under
-`--model` anything else, TTFT is printed `info only` and every markup diff is unaccepted —
-measured, not certified. Until 2026-08-18 model and chunk budget were hard-coded, so an
-install running `translategemma:12b` at `chunkSize` 4000 was described by no baseline at all.
+against the thresholds in spec §10, and exits 1 on regression. **Its two gates are properties
+of `aya-expanse:8b`, and the harness says so on its first line**: the TTFT ceiling and the
+`known`/`known-limitation` sets apply only when that is the model under test. Under `--model`
+anything else, TTFT is printed `info only` and every markup diff is unaccepted — measured, not
+certified.
 
 **There is CI, and it is the offline half only** (`.github/workflows/ci.yml`): build with
 tests, a gate that fails on any warning, then `swift test`. `acceptance` stays out for the
-reason above — «no CI for that harness» was never «no CI». The warning gate is the point: zero
-warnings is a standing rule that until now nothing could enforce, and `docs/reference/TESTING.md`'s tenth
-shape is why it runs against a fresh checkout rather than a cached build.
+reason above. The warning gate enforces the zero-warnings rule, and it runs against a fresh
+checkout rather than a cached build because of `docs/reference/TESTING.md`'s tenth shape.
 
 The Accessibility grant is keyed to the code signature. `make-app-bundle.sh` prefers a
 self-signed "LocalTranslator Dev" identity precisely so the grant survives rebuilds; with
@@ -131,20 +122,19 @@ Facts that will bite you if you "tidy" them:
   lets `TranslationViewModel` tell them from model content; it is asserted in `plan` and pinned.
 - **The packing rule is the structure guarantee.** Blocks merge into one chunk only across a
   separator that is **exactly one blank line in the document's own line-ending convention** —
-  `LineScanner.isExactlyOneBlankLine`, i.e. two bare line terminators of any recognised spelling —
-  and the join uses the document's own separator bytes, so a merged chunk's text is byte-identical
-  to its source span. Every other separator (three blank lines, a lone `"\n"` before a fence, a
-  blank line carrying spaces) forces a chunk boundary and never reaches the model at all.
-  Accepting every convention is not a relaxation: the model may normalise an interior `"\r\n"` to
-  `"\n"`, but `MarkupSkeleton` shares `LineScanner`, which reads either as one line break, so the
-  diff cannot cry wolf. **Do not re-spell this rule as a list of literals** — that list was the
-  defect twice over: `"\n\n"` alone cost a CRLF document *every* merge (measured: 30 short
-  paragraphs at a 900-character budget gave 30 chunks, 31 model calls, against the 2 chunks and 3
-  calls of an LF copy of the same document), and adding `"\r\n\r\n"` to it left CR-only and
-  mixed-EOL documents in the same hole (measured: 2 chunks against the LF twin's 1).
-  **Indentation is not a code signal anywhere in the pipeline**: fenced and inline code are the
-  only protected forms, indented text is prose and is translated, and its indentation survives
-  because `Block.range` moves edge whitespace into the separators. See
+  `LineScanner.isExactlyOneBlankLine`, i.e. two bare line terminators of any recognised
+  spelling — and the join uses the document's own separator bytes, so a merged chunk's text is
+  byte-identical to its source span. Every other separator (three blank lines, a lone `"\n"`
+  before a fence, a blank line carrying spaces) forces a chunk boundary and never reaches the
+  model at all. Accepting every convention is not a relaxation: the model may normalise an
+  interior `"\r\n"` to `"\n"`, but `MarkupSkeleton` shares `LineScanner`, which reads either as
+  one line break, so the diff cannot cry wolf. **Do not re-spell this rule as a list of
+  literals** — that list was the defect twice over: `"\n\n"` alone cost a CRLF document *every*
+  merge (measured: 30 chunks and 31 model calls against the LF copy's 2 and 3), and adding
+  `"\r\n\r\n"` left CR-only and mixed-EOL documents in the same hole. **Indentation is not a
+  code signal anywhere in the pipeline**: fenced and inline code are the only protected forms,
+  indented text is prose and is translated, and its indentation survives because `Block.range`
+  moves edge whitespace into the separators. See
   `docs/design/specs/2026-08-07-lossless-chunking-design.md` and its correction note.
 - **The model never sees fenced code, and inline code is restored by construction.**
   A fenced block is its own pass-through chunk (`Chunk.passthrough`) — emitted from
@@ -154,30 +144,24 @@ Facts that will bite you if you "tidy" them:
   `TranslationOutcome.modelChunkCount` is what «multi-chunk» means now — the
   document-glossary trigger, the empty-reply ending and the acceptance classification
   all count model-bound chunks. See
-  docs/design/specs/2026-08-10-code-protection-and-styles-design.md.
+  `docs/design/specs/2026-08-10-code-protection-and-styles-design.md`.
 - **`translate(source:)` is how a caller states the language, and every caller does** — the
-  window, the queue and `translate-cli --from`. Nil still
-  means «detect it», but a stated source governs everything downstream — the prompt, the tagger
-  `TermExtractor` parses with, and `detectedSource`. It used to be resolved in the app to pick a
-  *target* and then dropped, so the toolbar's «Из» changed where the text went and nothing about
-  how it was read: correcting a misdetection left the model told «translate from …» whatever the
-  detector had guessed. `translate-cli` was the worst of the three: it parsed `--from` into a
-  variable with one occurrence in the file, so the flag was advertised and did nothing at all.
-  It also removes a second full scan of a file up to 2 MB — but **only for a language the app
-  can name**. `detected` is `source ?? LanguageDetector.detect(text)`, and a caller passes nil
-  when its own detect returned nil, so a document in a language outside the supported nine is
-  still scanned twice. Measured: 2.06 MB of Ukrainian detects as nil in 48 ms (best of
-  three), so such a file pays ~96 ms of scanning instead of ~48. Both scans are off the main actor, which is why this is a note and
-  not a defect — but it is not «no second scan».
+  window, the queue and `translate-cli --from`. Nil means «detect it», but a stated source
+  governs everything downstream — the prompt, the tagger `TermExtractor` parses with, and
+  `detectedSource`. Before it existed, correcting a misdetection changed only where the text
+  went, never how it was read, and `translate-cli --from` was advertised and did nothing.
+  A stated source also saves a second full scan of a file up to 2 MB — **but only for a
+  language the app can name**: a caller passes nil when its own detect returned nil, so a
+  document outside the supported nine is still scanned twice (measured: 2.06 MB of Ukrainian,
+  ~48 ms a scan, both off the main actor — a note, not a defect).
 - **The user turn hands the text over plainly under one closing line — no `<text>…</text>`
-  markers, on either route.** They were there until 2026-08-18, and `translategemma:27b` read
-  a question inside them as a question to answer (5/5) and echoed them back around 7/15
-  replies, each echo costing the chunk its streaming; the same rules with the text handed over
-  under «Please translate the following … text into …:» gave 0/15 and 0/15, and the markers —
-  not the rules, not the message structure — were isolated as the cause. The whole-answer
-  marker unwrap in `ResponseCleaner` and the buffer-to-end it forced in `streamChunkReply`
-  went with them, gone rather than dead-coded. `PromptBuilder.userPrompt(for:)` carries the
-  measurement; the aya-expanse:8b before/after is in `docs/reference/BASELINE.md`.
+  markers, on either route.** Measured on `translategemma:27b`: a question inside the markers
+  was answered as a question 5/5 and the markers were echoed back around 7/15 replies, each
+  echo costing the chunk its streaming; 0/15 and 0/15 without them, and the markers — not the
+  rules, not the message structure — were isolated as the cause. The whole-answer marker
+  unwrap in `ResponseCleaner` and the buffer-to-end it forced went with them, gone rather than
+  dead-coded. `PromptBuilder.userPrompt(for:)` carries the measurement; the aya-expanse:8b
+  before/after is in `docs/reference/BASELINE.md`.
 - `timeToFirstTokenMS` is `nil` when nothing was ever emitted — that nil *is* the empty-reply
   signal. Do not substitute a sentinel; it makes an absent response read as a slow one.
 - `stats` covers the per-chunk translation calls only, never the term-list call.
@@ -194,56 +178,46 @@ Facts that will bite you if you "tidy" them:
 
 - `message.thinking` in a response is read and **discarded**.
 - **In the app, whether the `think` parameter is sent, and what value, is decided per model by
-  `ModelPolicy.thinkRequest` — never sent as a bare, unconditional `false` or `true`.**
-  `translate-cli --think` and `acceptance` are the deliberate exceptions: the CLI's flag exists
-  precisely to force a bare value past that policy and re-take a measurement like the one below.
-  Re-measured 2026-08-11 against Ollama 0.31.1 across all eight locally installed models, four
-  to six values of `think` each. `"think": false` genuinely silences `qwen3:8b` (2621 → 0
-  characters of trace) and `gemma4:26b` (721 → 0); it is **ignored** by `gpt-oss:20b` (563
-  characters with it); and on **`qwen3:30b` — the model the original rule was taken on — it puts
-  2798 characters of Russian reasoning into `message.content`**, i.e. straight into the
-  translation. So the trap is real and is a property of a model, not of Ollama, and the old
-  spelling of this rule as a fact about the protocol was wrong. See the `AppSettings.quietThinking`
-  bullet below for the control that now decides this per request.
-- **The two directions are asymmetric, which is what any future control has to respect.** `false`
-  is safe on the wire everywhere — HTTP 200 on all eight, including the four that cannot reason
-  at all — and unsafe in meaning on `qwen3:30b`. Turning reasoning *on* is the opposite: `true`
-  or a level sent to a model whose `/api/show` capabilities lack `thinking` is **HTTP 400**
-  `"…" does not support thinking`, i.e. a failed translation, 4 of 4 such models. Anything that
-  enables it must be gated on `capabilities`, which this client cannot read yet — it calls
-  `/api/tags`, `/api/ps`, `/api/pull` and `/api/chat` and nothing else.
-- **Levels grade `gpt-oss:20b` and nothing else here.** `low`/`medium`/`high` give it 15 / 441 /
-  889 characters of trace at 0.49 / 1.99 / 3.77 s to first token, warm — and they are its only
-  lever, since it ignores `false`. On `qwen3` and `gemma4` a level means no more than «on» and
-  is not monotonic. Ollama enables thinking by default for a capable model, so the app already
-  pays for a trace it discards whenever the chosen model can reason: `aya-expanse:8b` cannot, so
-  the interactive path is unaffected, but the recommended background model `gpt-oss:20b` can.
-  The table with every figure is in `docs/reference/PLATFORM-TRAPS.md`.
-- **The control over it is `AppSettings.quietThinking` plus `gptOssThinkingLevel`, and the
-  decision is `ModelPolicy.thinkRequest(for:quiet:level:)`.** `AppSettings.chatOptions(model:)`
-  is the only place in the app that builds `ChatOptions`, precisely so a new call site cannot
-  opt out of it; `acceptance` and `translate-cli` stay outside it on purpose, the first because
-  a harness that followed a user setting would move its own baseline and the second because
-  `--think` is how a measurement is re-taken. `ThinkRequest` has no «on» case: that is what
-  makes every request the app can build one Ollama accepts, and it is why there is still no
-  `/api/show` call anywhere in `OllamaKit`.
+  `ModelPolicy.thinkRequest(for:quiet:level:)` — never sent as a bare, unconditional value.**
+  The trap is a property of a model, not of the protocol: `"think": false` genuinely silences
+  `qwen3:8b` and `gemma4:26b`, is **ignored** by `gpt-oss:20b`, and on `qwen3:30b` puts 2798
+  characters of Russian reasoning into `message.content` — straight into the translation.
+  The two directions are asymmetric: `false` is safe on the wire everywhere (HTTP 200 on all
+  eight local models, re-measured 2026-08-11 on Ollama 0.31.1) and unsafe in meaning on
+  `qwen3:30b`; `true` or a level sent to a model whose `/api/show` capabilities lack
+  `thinking` is **HTTP 400**, a failed translation, 4 of 4 such models. Anything that enables
+  reasoning must be gated on `capabilities`, which this client cannot read — it calls
+  `/api/tags`, `/api/ps`, `/api/pull`, `/api/chat` and nothing else. That is why `ThinkRequest`
+  has no «on» case: every request the app can build is one Ollama accepts. Levels grade
+  `gpt-oss:20b` and nothing else here (15/441/889 characters of trace at 0.49/1.99/3.77 s to
+  first token, warm — its only lever, since it ignores `false`); on `qwen3`/`gemma4` a level
+  means no more than «on». The full table is in `docs/reference/PLATFORM-TRAPS.md`.
+- **The controls are `AppSettings.quietThinking` plus `gptOssThinkingLevel`.** `quietThinking`
+  defaults to **true** — a deliberate change to what the app does: Ollama enables thinking by
+  default for a capable model, so the app was paying for a trace it discards whenever the
+  chosen model can reason. `gptOssThinkingLevel` defaults to `low`.
+  `AppSettings.chatOptions(model:)` is the only place in the app that builds `ChatOptions`,
+  precisely so a new call site cannot opt out of the policy. `acceptance` and `translate-cli`
+  stay outside it on purpose — a harness that followed a user setting would move its own
+  baseline, and `translate-cli --think` exists precisely to force a bare value past the policy
+  and re-take a measurement.
 - Ollama reports durations in nanoseconds; convert to ms at the client boundary.
 - `ModelPolicy` pins `aya-expanse:8b` for the interactive path (TTFT < 1 s is a hard requirement)
-  and `gpt-oss:20b` for the background path, and carries a blacklist with measured reasons. Those
-  reasons are English and reach `translate-cli`; the settings pane renders
-  `RussianCopy.blacklistReasons`, keyed by the same prefixes, and falls back to the English if a
-  prefix has no Russian counterpart. **`ModelRole.background` is still policy only** — the
-  file queue reads `AppSettings.batchModel` (see below), not `ModelPolicy.defaultModel(for:
-  .background)`, so the recommendation and the setting stay separate things.
-  `keep_alive` (default `30m`) is load-bearing, not an optimisation: cold load ~2000 ms vs
-  ~155 ms warm. **That measurement is why `AppSettings.batchModel` and `AppSettings.proofreadModel`
-  have no fixed default**: a second model costs its residency and, when memory is short, a cold
-  load on every switch. `nil` means «the same one the hotkey uses». Re-measured 2026-08-18: on
-  Ollama 0.32.14 with 48 GB two models that fit stayed resident together, so the «one model in
-  memory» this rule was first written under is a fact about memory pressure, not about Ollama —
-  the «Файлы» warning is conditional now, and «Модели»' правка note says both are warmed at
-  launch. `batchModel` is stored under the old `"backgroundModel"` key, as its removal comment
-  promised; `proofreadModel` under its own name. **Правка's model is `resolvedProofreadModel`**
+  and `gpt-oss:20b` for the background path, and carries a blacklist with measured reasons.
+  Those reasons are English and reach `translate-cli`; the settings pane renders
+  `RussianCopy.blacklistReasons`, keyed by the same prefixes, falling back to the English.
+  **`ModelRole.background` is still policy only** — the file queue reads `AppSettings.batchModel`,
+  not `ModelPolicy.defaultModel(for: .background)`, so the recommendation and the setting stay
+  separate things. `keep_alive` (default `30m`) is load-bearing, not an optimisation: cold load
+  ~2000 ms vs ~155 ms warm. **That measurement is why `AppSettings.batchModel` and
+  `AppSettings.proofreadModel` have no fixed default** (optional strings, empty stored as nil;
+  `nil` means «the same one the hotkey uses»): a second model costs its residency and, when
+  memory is short, a cold load on every switch. Re-measured 2026-08-18 (Ollama 0.32.14, 48 GB):
+  two models that fit stayed resident together, so the «one model in memory» this rule was
+  first written under is a fact about memory pressure, not about Ollama — the «Файлы» warning
+  is conditional now, and «Модели»' правка note says both are warmed at launch. `batchModel`
+  is stored under the old `"backgroundModel"` key, as its removal comment promised;
+  `proofreadModel` under its own name. **Правка's model is `resolvedProofreadModel`**
   (`TranslationViewModel.proofread`, `warmUp()`), because the model that translates best here
   edits worst — measured 2026-08-18 on the правка corpus, `AppSettings.proofreadModel` has the
   numbers.
@@ -254,34 +228,34 @@ Facts that will bite you if you "tidy" them:
   first scene, or SwiftUI opens the main window at every login. `Settings` stays last.
 - **The main menu exists, is Russian, and owns every keyboard shortcut the window has.**
   `LSUIElement` governs the Dock tile and whether the bar is *drawn*; it does not stop SwiftUI
-  installing `NSApp.mainMenu`, and key equivalents are dispatched through it either way — measured
-  by dumping the menu from a copy of these three scenes. So ⌘↩, ⌘., ⌃⌘S, ⇧⌘C, ⌘0 and the three
-  размер items (⌘+, ⌘−, ⌃⌘0) are declared once, in `.commands`, and **not** on the toolbar
-  buttons that mirror them. «Вид» is **filled** rather than emptied now: the same
+  installing `NSApp.mainMenu`, and key equivalents are dispatched through it either way —
+  measured by dumping the menu from a copy of these three scenes. So ⌘↩, ⌘., ⌃⌘S, ⇧⌘C, ⌘0 and
+  the three размер items (⌘+, ⌘−, ⌃⌘0) are declared once, in `.commands`, and **not** on the
+  toolbar buttons that mirror them. «Вид» is **filled** rather than emptied: the same
   `CommandGroup(replacing: .sidebar)` that used to take the empty menu away carries «Крупнее»,
-  «Мельче» and «Обычный размер» — measured with `Scripts/view-menu.swift`, they land in «Вид» in
-  that order. ⌃⌘0 and not the conventional ⌘0 because ⌘0 is «Открыть окно перевода», the only
-  keyboard route to the window. Two things follow that
-  are easy to undo by accident: `Info.plist`'s `CFBundleDevelopmentRegion = ru` plus
-  `Resources/ru.lproj` are what make the *standard* menus Russian (without them the bundle claims
-  `["en"]` and a fully Russian app carries an English menu bar), and `make-app-bundle.sh` must copy
-  that directory in **before** `codesign`, like the icon. `CommandGroup(replacing:)` empties a menu
-  but does not remove it, so `pruneEmptyMenus()` takes away whatever is left with no items.
+  «Мельче» and «Обычный размер» — measured with `Scripts/view-menu.swift`. ⌃⌘0 and not the
+  conventional ⌘0 because ⌘0 is «Открыть окно перевода», the only keyboard route to the window.
+  Easy to undo by accident: `Info.plist`'s `CFBundleDevelopmentRegion = ru` plus
+  `Resources/ru.lproj` are what make the *standard* menus Russian (without them the bundle
+  claims `["en"]` and a fully Russian app carries an English menu bar), and `make-app-bundle.sh`
+  must copy that directory in **before** `codesign`, like the icon. `CommandGroup(replacing:)`
+  empties a menu but does not remove it, so `pruneEmptyMenus()` takes away whatever is left
+  with no items.
 - **Three** models over one shared `OllamaClient`: two `TranslationViewModel` instances, one for
   the window and one owned by `HotkeyCoordinator` for the panel, plus `FileQueueModel` for the
   file queue. They must not be merged: a hotkey translation must never overwrite the window, and
   the re-entrancy guard is per instance. All three are built in `TranslatorApp.init` — the app
   owns the models, the scenes read them. **The toolbar's «Из», «В» and «Тон» belong to whichever
   model owns the visible mode** — `FileQueueModel`'s own in «Файлы», the text model's in
-  «Текст». One owner for both modes is what let `adopt(from:)` reset the language a queue was
+  «Текст». One owner for both modes let `adopt(from:)` reset the language a queue was
   configured with, and the next «Перевести» wrote every file in the settings-default one.
 - **The window's left pane has two modes and the primary action follows the visible one.**
-  `PrimaryAction.forMode` is that rule, and the toolbar button, ⌘↩ and ⌘. all read it. They used
-  to reach `TranslationViewModel` directly, which would have left «Файлы» with a button that ran
-  an empty text model and two dead shortcuts. `mode` therefore lives in `TranslatorApp`, not in
+  `PrimaryAction.forMode` is that rule, and the toolbar button, ⌘↩ and ⌘. all read it — never
+  `TranslationViewModel` directly, which would leave «Файлы» with a button running an empty
+  text model and two dead shortcuts. `mode` therefore lives in `TranslatorApp`, not in
   `MainWindowView`: a menu declared in the app's scene cannot read that view's `@State`. The ⌘.
   argument still holds — a disabled menu item declines its equivalent so the panel gets it — but
-  its condition is now «the *visible mode* is running».
+  its condition is «the *visible mode* is running».
 - **The file queue writes to disk, and that is the only place this app does.** `QueueDrop` decides
   what it accepts (a mixed drop is kept, with unreadable files shown as rows — refusing the whole
   drop is the text pane's one-slot rule, which does not transfer to a queue with a slot per file);
@@ -296,41 +270,35 @@ Facts that will bite you if you "tidy" them:
 - **There are two shortcuts and one coordinator.** A `HotkeyManager` per `TextOperation`
   (⌥⌘T перевод, ⌥⌘R правка by default), and `handlePress(operation:)` assigns the pressed
   shortcut's operation to the panel model — a press never inherits what the previous
-  presentation's switch was left on. Two managers rather than one holding two registrations,
-  because `HotkeyManager`'s handler already tells registrations apart by `signature` +
-  `hotKeyID` and its comment carries that measurement; two *coordinators* are forbidden for the
-  reason the three models must not be merged — that would be a second panel and a second
-  `TranslationViewModel`. Registrations are brought in line in **two passes** — release what
-  blocks (remembering it), then register — because Carbon refuses a combination still held by
-  the other manager. Both halves cost a defect: one pass made «move перевод onto правка's
-  combination» silently keep the old one, and releasing without remembering left перевод
-  registered to *nothing* when the new combination was then refused. `handlePress` assigns
-  `panelModel.operation` **before** `afterCapture()`, because that hook is where the panel is
-  measured and the степень/стиль row is drawn from it. A refused
-  registration is logged inside `apply` through `HotkeyCoordinator.failure(for:restored:
-  combination:)`, which is a value with a test: `.fault` only for перевод with nothing restored
-  — the one case where the app really has no way into the panel — and `.error` otherwise. If
-  both settings hold the same combination (not typable, but inherited by any install whose
-  перевод was already ⌥⌘R), правка's registration is declined rather than attempted and
-  «Основные» says so. The panel's «степень»/«стиль» pickers write
-  `defaultProofreadingLevel` / `defaultRewriteStyle` **directly** — they are the settings, not
-  per-run overrides, so a choice made where правка is used survives the panel closing and the
-  window follows it wherever it has no override of its own. See
+  presentation's switch was left on — and assigns it **before** `afterCapture()`, because that
+  hook is where the panel is measured and the степень/стиль row is drawn from it. Two managers
+  rather than one holding two registrations, because `HotkeyManager`'s handler already tells
+  registrations apart by `signature` + `hotKeyID` and its comment carries that measurement;
+  two *coordinators* are forbidden for the reason the three models must not be merged — that
+  would be a second panel and a second `TranslationViewModel`. Registrations are brought in
+  line in **two passes** — release what blocks (remembering it), then register — because Carbon
+  refuses a combination still held by the other manager; each half skipped cost a defect (one
+  pass silently kept the old combination; releasing without remembering left перевод registered
+  to *nothing*). A refused registration is logged inside `apply` through
+  `HotkeyCoordinator.failure(for:restored:combination:)`, a value with a test: `.fault` only
+  for перевод with nothing restored — the one case where the app really has no way into the
+  panel — and `.error` otherwise. If both settings hold the same combination (not typable, but
+  inheritable), правка's registration is declined rather than attempted and «Основные» says so.
+  The panel's «степень»/«стиль» pickers write `defaultProofreadingLevel` /
+  `defaultRewriteStyle` **directly** — they are the settings, not per-run overrides, so a
+  choice made where правка is used survives the panel closing and the window follows it
+  wherever it has no override of its own. See
   `docs/design/specs/2026-08-15-proofread-hotkey-design.md`.
 - **The panel sizes itself to its content and is not `.titled`.** Three types share the job and
   none of them may be collapsed into another: `PanelSizer` owns the rules (width clamped to
-  300–560 pt and frozen for a whole presentation, height floored at 120 pt, monotonic within a
+  300–560 pt and frozen for a whole presentation; height floored at 120 pt, monotonic within a
   presentation and capped at 0.6 of `visibleFrame`, past which the content scrolls; a
-  hand-resize wins until the
-  panel hides), `PanelPlacement` picks the anchor corner nearest the pointer so growth moves the
-  *far* edge and not the text already read, and `PanelController` does the measuring.
-  It measures with a **second, detached `NSHostingController`** — never the installed view,
-  which measures what it is showing rather than what the content wants — and the two passes use
-  `fittingSize` for the ideal width and `sizeThatFits(in:)` for the height at that width,
-  because a greedy SwiftUI view hands a proposal straight back. `layoutSubtreeIfNeeded()` after
-  reassigning `rootView` is load-bearing, not tidy-up: without it the measuring host never sees
-  content that changed through `@Observable`. All four facts are in `docs/reference/PLATFORM-TRAPS.md`
-  with their measurements.
+  hand-resize wins until the panel hides), `PanelPlacement` picks the anchor corner nearest the
+  pointer so growth moves the *far* edge and not the text already read, and `PanelController`
+  does the measuring — with a **second, detached `NSHostingController`** (never the installed
+  view), `fittingSize` for the ideal width then `sizeThatFits(in:)` for the height at that
+  width, and `layoutSubtreeIfNeeded()` after reassigning `rootView`, which is load-bearing.
+  All four measuring facts are in `docs/reference/PLATFORM-TRAPS.md` with their measurements.
 - **«Шрифт текста» reaches three `Text`s and nothing else, and one of them is invisible.**
   `ContentFont` (гарнитура + размер, 11–32 pt, default 13) is applied to the исходник, the
   перевод and the panel's reply — never to a label, a button, a status row or a table, because
@@ -351,38 +319,34 @@ Facts that will bite you if you "tidy" them:
 - **The glossary pane's language column is derived from the glossary, not from a setting.**
   `GlossaryColumn.language(for:fallback:)` picks the language most entries are actually written
   into; the fallback is `primaryLanguage`, because `targetLanguage(forDetected:)` sends
-  everything that is not already in the user's own language *into* it. It used to default to
-  `workingLanguage`, which named the other direction — so on a default install every «перевод»
-  field rendered blank. **It must not be recomputed while the user types**: `entryBinding`
-  writes through `translations[editingLanguage.rawValue]`, so a column that moved mid-word would
-  split one translation across two keys. `SettingsGlossaryView` computes it on appear and on
-  re-read only, and holds it in `@State`.
+  everything that is not already in the user's own language *into* it (the old `workingLanguage`
+  fallback named the other direction, and on a default install every «перевод» field rendered
+  blank). **It must not be recomputed while the user types**: `entryBinding` writes through
+  `translations[editingLanguage.rawValue]`, so a column that moved mid-word would split one
+  translation across two keys. `SettingsGlossaryView` computes it on appear and on re-read only,
+  and holds it in `@State`.
 - `SourceEditor` takes a dropped file. What it accepts is `DroppedDocument` — a closed extension
   list, a 256 KB ceiling, UTF-8 or nothing — and a refusal is `false` out of `dropDestination`,
   which makes the system spring the item back. That is the entire error channel and is
   deliberate: there is no error surface in that window, and inventing one to say «this is not
   text» would be worse than the feedback the platform already draws.
-- The main window is a toolbar plus `SourceEditor`/`FileQueuePane` | `TranslationPane` over a collapsible
-  `RunStatusBar`; the translation side is a read-only `Text`, deliberately, because the
-  `TextEditor` it replaced took a caret and discarded typing. The settings are **four** tabs —
-  «Основные», «Модели», «Глоссарий», «Файлы». They were three: «Дополнительно» was folded into
-  «Модели» and stayed folded, and «Файлы» is new with the queue. All four take one 560 × 480
-  frame from `settingsPane()`, so adding a pane means checking it fits rather than sizing it
-  itself.
+- The main window is a toolbar plus `SourceEditor`/`FileQueuePane` | `TranslationPane` over a
+  collapsible `RunStatusBar`; the translation side is a read-only `Text`, deliberately, because
+  the `TextEditor` it replaced took a caret and discarded typing. The settings are **four**
+  tabs — «Основные», «Модели», «Глоссарий», «Файлы» («Дополнительно» was folded into «Модели»
+  and stays folded). All four take one 560 × 480 frame from `settingsPane()`, so adding a pane
+  means checking it fits rather than sizing it itself.
 - Capture order is Accessibility first, synthetic ⌘C fallback second, and the fallback must restore
   the *whole* pasteboard. The only path allowed to write the user's clipboard unasked is `autoCopy`,
   off by default — and it is read only by `HotkeyCoordinator`, so it governs the panel and not
   the main window. Its label says so; do not widen one without the other.
 - `AppSettings` reads and writes `UserDefaults` directly in every accessor (no stored properties),
   so `@Observable`'s synthesis does not apply — each accessor calls `access(keyPath:)` /
-  `withMutation(keyPath:_:)` by hand. Keep that shape when adding a setting. Two of its keys
-  are `"quietThinking"` (default **true** — a deliberate change to what the app does, see the
-  Ollama rules above) and `"gptOssThinkingLevel"` (default `low`). `"proofreadModel"` is an
-  optional string like `"backgroundModel"`, empty stored as nil. Two more are the shortcuts:
-  `"hotkey"` and `"proofreadHotkey"`, each one JSON value re-checked for `isValid` on the way
-  out. They differ in one argument only — `hotkey` falls back to its default because it is the
-  only door to the panel, and `proofreadHotkey` does so for the weaker reason that a setting
-  whose stored state and behaviour disagree cannot be reasoned about.
+  `withMutation(keyPath:_:)` by hand. Keep that shape when adding a setting. The two shortcut
+  keys, `"hotkey"` and `"proofreadHotkey"`, are each one JSON value re-checked for `isValid` on
+  the way out. They differ in one argument only — `hotkey` falls back to its default because it
+  is the only door to the panel, and `proofreadHotkey` does so for the weaker reason that a
+  setting whose stored state and behaviour disagree cannot be reasoned about.
 - `GlossaryStore` persists `~/Library/Application Support/LocalTranslator/glossary.json` (hand-editable,
   git-trackable by design). `save()` is gated on a successful `load()` and on a file stamp check, so
   the app cannot overwrite a file edited behind its back.
@@ -390,29 +354,27 @@ Facts that will bite you if you "tidy" them:
 ## Conventions
 
 - Swift 6 tools, `.swiftLanguageMode(.v6)` on **every** target, platform floor macOS 14. Any new
-  target repeats both. **`.v6` is enforced, not aspirational** — the package built at `.v5` until
-  the observability wave, and moving it cost four compile errors in `TextCapture` plus one runtime
-  trap that no build could see. Three facts from that move are worth knowing before writing a new
-  target: an imported C global (`kAXTrustedCheckOptionPrompt`) needs `@preconcurrency import`, not
-  `nonisolated(unsafe)`; a `nonisolated deinit` on a `@MainActor` class may not touch a
-  non-`Sendable` stored property without `nonisolated(unsafe)` on it; and a closure written inside
-  a `View` inherits main-actor isolation that Swift 6 checks **at run time** with a trap. Each is
-  recorded at the site it bit — `PermissionsGate.swift`, `HotkeyManager.swift`,
-  `Tests/TranslatorAppTests/WarningsViewTests.swift`.
+  target repeats both. **`.v6` is enforced, not aspirational** — moving the package off `.v5`
+  cost four compile errors in `TextCapture` plus one runtime trap that no build could see.
+  Three facts from that move, each recorded at the site it bit: an imported C global
+  (`kAXTrustedCheckOptionPrompt`) needs `@preconcurrency import`, not `nonisolated(unsafe)`
+  (`PermissionsGate.swift`); a `nonisolated deinit` on a `@MainActor` class may not touch a
+  non-`Sendable` stored property without `nonisolated(unsafe)` on it (`HotkeyManager.swift`);
+  and a closure written inside a `View` inherits main-actor isolation that Swift 6 checks **at
+  run time** with a trap (`Tests/TranslatorAppTests/WarningsViewTests.swift`).
 - **No external dependencies.** Foundation, NaturalLanguage, SwiftUI, AppKit, Observation,
   ApplicationServices, CoreGraphics, CoreText, ImageIO, Carbon, os, UniformTypeIdentifiers,
-  Swift Testing only. This list is
-  a closed whitelist, not an illustration: adding a framework to it is a deliberate edit, not a
-  formality. CoreText and ImageIO are here for `Scripts/make-icon.swift` alone — glyph layout and
-  PNG encoding for the icon — and nothing in the shipped targets uses them. `UniformTypeIdentifiers` was added for one
-  call: `MainWindowView.addFiles`'s `NSOpenPanel.allowedContentTypes`, which takes `UTType`
-  and has no string-based equivalent that is not deprecated — the extension list itself is
-  still `DroppedDocument.readableExtensions`, so the panel and the drop cannot come to
-  accept different things. `os` was added
-  deliberately, for `Log` in `TranslatorApp` and nowhere else: it is what makes this app's four
-  deliberate swallowed failures diagnosable on a user's machine. `TranslationCore` does **not** get
-  it — the engine reports through `TranslationOutcome.documentGlossaryFailure` instead, so the
-  domain layer keeps its «Foundation and NaturalLanguage only» rule.
+  Swift Testing only — a closed whitelist, not an illustration: adding a framework to it is a
+  deliberate edit, not a formality. CoreText and ImageIO are here for `Scripts/make-icon.swift`
+  alone; nothing in the shipped targets uses them. `UniformTypeIdentifiers` is here for one
+  call — `MainWindowView.addFiles`'s `NSOpenPanel.allowedContentTypes`, which takes `UTType`
+  and has no non-deprecated string equivalent; the extension list itself is still
+  `DroppedDocument.readableExtensions`, so the panel and the drop cannot come to accept
+  different things. `os` is here for `Log` in `TranslatorApp` and nowhere else: it is what
+  makes this app's four deliberate swallowed failures diagnosable on a user's machine.
+  `TranslationCore` does **not** get it — the engine reports through
+  `TranslationOutcome.documentGlossaryFailure` instead, so the domain layer keeps its
+  «Foundation and NaturalLanguage only» rule.
 - **Nothing derived from the user's text may be logged.** Not the selection, not the source, not
   the translation, not a glossary term. `Log`'s doc comment carries the reasoning; the short
   version is that a unified-log entry is readable by any admin on the machine and is collected by
@@ -461,7 +423,7 @@ Read the one that answers your question; do not read them all.
 | `docs/adr/` | The code looks inconsistent and you want to know whether it is deliberate. |
 | `docs/design/specs/2026-07-24-local-translator-design.md` | Changing engine behaviour. **Note its status header — it is the pre-implementation design, and where it and the code disagree the code is right.** |
 | `docs/design/specs/2026-07-30-ui-redesign-design.md` | Changing the panel, the window or the settings: why each surface has the shape it has. Same status header, same rule — the code wins. Its §8 lists what only a human can check; `docs/reference/OPEN-ITEMS.md` §1 is where that list is kept current. |
-| `docs/history/` | «What did we already try?» The build ledgers, including rejected approaches and defects found in the plans — and in one case in an audit — themselves. `2026-08-02-audit-and-three-waves-ledger.md` is the newest: read it before touching the settings panes' fixed frame, the glossary's language column, `LemmaMatcher`, or anything that assumes a menu bar. `2026-07-30-ui-redesign-ledger.md` is the one before it and still the account to read for panel sizing and the window's decomposition. |
+| `docs/history/` | «What did we already try?» The build ledgers, including rejected approaches and defects found in the plans — and in one case in an audit — themselves. `2026-08-02-audit-and-three-waves-ledger.md` is the newest: read it before touching the settings panes' fixed frame, the glossary's language column, `LemmaMatcher`, or anything that assumes a menu bar. `2026-07-30-ui-redesign-ledger.md` is the account to read for panel sizing and the window's decomposition. |
 | `CONTEXT.md` | Writing UI copy or naming something. |
 | `docs/design/plans/` | Rarely. The four plans the codebase was built from; parts of them are known wrong where the ledgers record a correction. The UI redesign plan is the worst offender — seven of its defects reached the code verbatim. |
 
