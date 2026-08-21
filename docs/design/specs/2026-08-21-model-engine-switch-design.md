@@ -397,6 +397,18 @@ Here the server answers, so «this family only grades, it cannot be silenced» s
 table and becomes the third row above — which is why §4 leaves the table alone instead of
 extending it with LM Studio names.
 
+> **Corrected during implementation (2026-08-21).** The table collapses `.off` and `.level` into
+> one column, which would send the *lowest* level to a model offering several — and that makes
+> «Длина рассуждения» inert on this engine, the very control §6.3 draws from `allowed_options`.
+> `ReasoningChoice` therefore honours a requested level when the model allows it (`.level(.high)`
+> on `gpt-oss` sends `"high"`) and falls back to the quietest option only when the requested one
+> is not on offer; `.off` behaves exactly as the table says. What this leaves open is an
+> **app-layer** question for the settings wave rather than a transport one:
+> `ModelPolicy.thinkRequest` answers `.off` for every LM Studio identifier, because its prefix
+> table matches no publisher-qualified name — so as things stand nothing would ever *pass* a
+> level, and the control §6.3 draws would be read by nobody. However that is resolved, the
+> transport already does the right thing with either intent.
+
 ### 5.6 Models, downloads, errors
 
 - `GET /api/v1/models` → the probe's `installedModels()` and `residentModels()`. `key` is the
@@ -410,6 +422,14 @@ extending it with LM Studio names.
   has to be polled. `ModelsViewModel.Puller` is already
   `(String) -> AsyncThrowingStream<PullProgress, Error>`, so the client synthesises the stream
   by polling and the app layer does not learn that the two engines differ.
+
+  > **Corrected during implementation (2026-08-21).** The synthesised stream carries
+  > `ModelDownloadProgress`, a value of this module's own with `PullProgress`'s shape, **not**
+  > `PullProgress` itself — that type lives in `OllamaKit`, and `LMStudioKit` deliberately does
+  > not depend on it (`Package.swift` says why). The adaptation therefore happens in the engine
+  > router, which is the one place that already knows which движок is selected; the view model
+  > still does not learn. The alternative — moving `PullProgress` down into `TranslationCore` —
+  > would put a transport concern in the domain layer to save one adapter.
 
   Three decisions rather than measurements, because there is nothing here to measure:
 

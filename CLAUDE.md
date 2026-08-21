@@ -63,7 +63,7 @@ ad-hoc signing macOS re-asks after every build. The script's header says how to 
 
 ## Architecture
 
-6 SwiftPM targets, one hard rule: **translation logic knows nothing about Ollama or SwiftUI.**
+7 SwiftPM targets, one hard rule: **translation logic knows nothing about Ollama or SwiftUI.**
 
 <!-- The count and the names below are checked against Package.swift by
      DocumentationTests/ArchitectureDriftTests.swift. This block said "Five" and named a
@@ -71,9 +71,9 @@ ad-hoc signing macOS re-asks after every build. The script's header says how to 
 
 ```
 TranslationCore  (pure domain; depends on nothing but Foundation/NaturalLanguage)
-      ↑                    ↑
-   OllamaKit          TextCapture (independent; no TranslationCore)
-      ↑                    ↑
+      ↑            ↑              ↑
+   OllamaKit  LMStudioKit    TextCapture (independent; no TranslationCore)
+      ↑            ↑              ↑
         TranslatorApp (SwiftUI) · translate-cli · acceptance
 ```
 
@@ -83,6 +83,13 @@ TranslationCore  (pure domain; depends on nothing but Foundation/NaturalLanguage
   `ResponseCleaner`, `MarkupSkeleton`, `ModelPolicy`, and `Translator` orchestrating them.
   Fully testable with `FakeLLMClient`; no Ollama needed.
 - `OllamaKit` — thin HTTP client implementing `LLMClient` (`/api/chat`, `/api/tags`, `/api/pull`, `/api/ps`).
+- `LMStudioKit` — the same job against LM Studio's native `/api/v1/*`, and the same rule: it
+  knows `LLMClient` and nothing about `OllamaKit`. Two facts about that server shape the client
+  and are measured, not assumed — an unknown JSON key is **rejected** rather than ignored, so
+  the request body is a closed list, and `reasoning: "off"` is **HTTP 400** on a model whose
+  `capabilities.reasoning.allowed_options` lacks it, so what to send is resolved from those
+  options rather than posted blind. See
+  `docs/design/specs/2026-08-21-model-engine-switch-design.md`.
 - `TextCapture` — every fragile macOS API, isolated on purpose: Carbon hotkey registration,
   the Accessibility read, the synthetic ⌘C fallback, the whole-pasteboard snapshot, the permission gate.
 - `TranslatorApp` — `MenuBarExtra` + panel + window + settings, `LSUIElement`.

@@ -9,6 +9,12 @@ let package = Package(
         .testTarget(name: "TranslationCoreTests", dependencies: ["TranslationCore"], swiftSettings: [.swiftLanguageMode(.v6)]),
         .target(name: "OllamaKit", dependencies: ["TranslationCore"], swiftSettings: [.swiftLanguageMode(.v6)]),
         .testTarget(name: "OllamaKitTests", dependencies: ["OllamaKit", "TranslationCore"], swiftSettings: [.swiftLanguageMode(.v6)]),
+        // Deliberately does **not** depend on OllamaKit: the two transports share the
+        // `LLMClient` protocol in TranslationCore and nothing else. A dependency here would let
+        // one server's shape leak into the other's client, which is the whole failure the
+        // second engine's design set out to avoid.
+        .target(name: "LMStudioKit", dependencies: ["TranslationCore"], swiftSettings: [.swiftLanguageMode(.v6)]),
+        .testTarget(name: "LMStudioKitTests", dependencies: ["LMStudioKit", "TranslationCore"], swiftSettings: [.swiftLanguageMode(.v6)]),
         .executableTarget(name: "translate-cli", dependencies: ["TranslationCore", "OllamaKit"], swiftSettings: [.swiftLanguageMode(.v6)]),
         .executableTarget(name: "acceptance", dependencies: ["TranslationCore", "OllamaKit"], swiftSettings: [.swiftLanguageMode(.v6)]),
         .target(name: "TextCapture", swiftSettings: [.swiftLanguageMode(.v6)]),

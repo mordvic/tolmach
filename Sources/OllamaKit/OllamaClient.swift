@@ -204,6 +204,26 @@ extension OllamaClient {
         return raw.compactMap { ($0["name"] as? String).map(RunningModel.init(name:)) }
     }
 
+    /// Frees a model's memory. See `OllamaUnloadBody` for why the body looks like a translation
+    /// request with nothing to translate.
+    ///
+    /// `Timeout.probe` rather than `interactive`: nothing is generated, the server answers as
+    /// soon as it has dropped the weights.
+    public func unload(model: String) async throws {
+        var request = request("api/chat", timeout: Timeout.probe, method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: OllamaUnloadBody.json(model: model))
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch { throw Self.mapTransportError(error) }
+        guard let http = response as? HTTPURLResponse else { throw OllamaError.notRunning }
+        guard http.statusCode == 200 else {
+            throw OllamaError.httpStatus(http.statusCode, String(data: data, encoding: .utf8) ?? "")
+        }
+    }
+
     public func pull(model: String) -> AsyncThrowingStream<PullProgress, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {

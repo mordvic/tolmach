@@ -117,10 +117,15 @@ by nothing.
 _Avoid_: медленный режим, качественный режим
 
 **Рассуждение** — *reasoning, thinking*
-What a model emits into `message.thinking` before its answer. The app reads it and
-throws it away, so its only effect here is delay — which is why «Отключать
-рассуждение модели» is on by default.
-→ `ThinkRequest`, `ModelPolicy.thinkRequest`, `AppSettings.quietThinking`
+What a model emits before its answer — into `message.thinking` on Ollama, into the
+`reasoning.delta` events on LM Studio. The app reads it and throws it away on both, so its
+only effect here is delay — which is why «Отключать рассуждение модели» is on by default.
+**How the app asks for silence differs by движок, and the safe direction is inverted**: on
+Ollama nothing may *enable* it (`ThinkRequest` has no «on» case), while on LM Studio `off`
+itself is refused by a model that cannot be silenced, so the value sent is chosen from what
+that model says it accepts.
+→ `ThinkRequest`, `ModelPolicy.thinkRequest`, `AppSettings.quietThinking`,
+`ReasoningChoice`, `LMStudioModel.reasoningOptions`
 _Avoid_: размышление, мышление, thinking
 
 **Длина рассуждения** — *reasoning length*
