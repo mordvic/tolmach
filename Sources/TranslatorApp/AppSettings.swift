@@ -80,13 +80,78 @@ final class AppSettings {
             }
         }
     }
+    /// Which local server every request goes to.
+    ///
+    /// Defaults to `.ollama`, and that default *is* the migration story: an existing install
+    /// behaves exactly as it did until someone touches the switch.
+    var engine: ModelEngine {
+        get {
+            access(keyPath: \.engine)
+            return ModelEngine(rawValue: string("engine", ModelEngine.ollama.rawValue)) ?? .ollama
+        }
+        set { withMutation(keyPath: \.engine) { defaults.set(newValue.rawValue, forKey: "engine") } }
+    }
+
+    /// The port the selected engine is expected on. Per engine, because the two defaults differ
+    /// and a user who moved one has not moved the other.
+    var enginePort: Int {
+        get {
+            access(keyPath: \.enginePort)
+            return int(key("enginePort"), engine.defaultPort)
+        }
+        set { withMutation(keyPath: \.enginePort) { defaults.set(newValue, forKey: key("enginePort")) } }
+    }
+
+    /// The engine choice, read straight from a defaults store.
+    ///
+    /// `static` and taking the store, so `EngineRouter` — which is `Sendable` and runs off the
+    /// main actor — can read the same key with the same default without capturing an instance
+    /// of this class. There is no second source of truth involved: every accessor on this type
+    /// reads `UserDefaults` too, which is the whole shape of it.
+    static func engine(in defaults: UserDefaults) -> ModelEngine {
+        ModelEngine(rawValue: defaults.string(forKey: "engine") ?? "") ?? .ollama
+    }
+
+    static func enginePort(in defaults: UserDefaults) -> Int {
+        let engine = engine(in: defaults)
+        return defaults.object(forKey: "enginePort" + engine.settingsKeySuffix) as? Int
+            ?? engine.defaultPort
+    }
+
+    /// A settings key in the selected engine's scope. See `ModelEngine.settingsKeySuffix` for
+    /// why Ollama's scope is the unsuffixed key an existing install already wrote.
+    private func key(_ base: String) -> String { base + engine.settingsKeySuffix }
+
+    /// The model перевод runs on, for the selected engine.
+    ///
+    /// **Reading this registers `engine` too, and that matters**: the value answers differently
+    /// per engine, so a picker that did not depend on the engine would go on showing the other
+    /// one's model after a switch until something unrelated invalidated the view.
+    ///
+    /// It happens for free rather than by an extra `access(keyPath:)` call, and the difference
+    /// is worth stating because an earlier version of this file made the call explicitly: the
+    /// getter *reads* `engine` — through `key(_:)` and through the default — and `engine`'s own
+    /// getter is what registers it. A mutation test proved the explicit line changed nothing,
+    /// which in this codebase makes it a line that looks load-bearing and is not. What would
+    /// break the dependency is a getter that stopped consulting `engine` at all.
     var interactiveModel: String {
         get {
             access(keyPath: \.interactiveModel)
-            return string("interactiveModel", ModelPolicy.defaultModel(for: .interactive))
+            return string(key("interactiveModel"), engine.defaultTranslationModel ?? "")
         }
-        set { withMutation(keyPath: \.interactiveModel) { defaults.set(newValue, forKey: "interactiveModel") } }
+        set {
+            withMutation(keyPath: \.interactiveModel) {
+                defaults.set(newValue, forKey: key("interactiveModel"))
+            }
+        }
     }
+
+    /// Whether the selected engine has no model to translate with yet.
+    ///
+    /// True only on an engine with no honest default — LM Studio, until someone chooses. The
+    /// window disables its primary action on this and says which setting to fill; the panel says
+    /// the same thing and offers a way into the settings, because it has no other exit.
+    var hasNoTranslationModel: Bool { interactiveModel.isEmpty }
     /// The model the file queue uses, or `nil` for «the same one the hotkey uses».
     ///
     /// **One of two settings in this app with no fixed default, and that is deliberate**
@@ -111,7 +176,7 @@ final class AppSettings {
     var batchModel: String? {
         get {
             access(keyPath: \.batchModel)
-            return optionalString("backgroundModel")
+            return optionalString(key("backgroundModel"))
         }
         set {
             withMutation(keyPath: \.batchModel) {
@@ -125,7 +190,7 @@ final class AppSettings {
                 // removes the key from that dictionary — the same effect through the door
                 // that is open.
                 let stored = (newValue?.isEmpty == false) ? newValue : nil
-                defaults.set(stored, forKey: "backgroundModel")
+                defaults.set(stored, forKey: key("backgroundModel"))
             }
         }
     }
@@ -160,14 +225,14 @@ final class AppSettings {
     var proofreadModel: String? {
         get {
             access(keyPath: \.proofreadModel)
-            return optionalString("proofreadModel")
+            return optionalString(key("proofreadModel"))
         }
         set {
             withMutation(keyPath: \.proofreadModel) {
                 // `set(nil,)` for `batchModel`'s reason: `InMemoryDefaults` overrides `set`,
                 // not `removeObject`.
                 let stored = (newValue?.isEmpty == false) ? newValue : nil
-                defaults.set(stored, forKey: "proofreadModel")
+                defaults.set(stored, forKey: key("proofreadModel"))
             }
         }
     }
@@ -510,7 +575,29 @@ extension AppSettings {
     /// the second states its own with `--think`.
     func chatOptions(model: String) -> ChatOptions {
         ChatOptions(model: model, temperature: temperature, keepAlive: keepAlive,
-                    think: ModelPolicy.thinkRequest(for: model, quiet: quietThinking,
-                                                    level: gptOssThinkingLevel))
+                    think: thinkRequest(for: model))
+    }
+
+    /// What to ask about the model's reasoning, which is decided **per engine** because the two
+    /// servers answer opposite questions.
+    ///
+    /// On Ollama the app is blind — it never calls `/api/show` — so `ModelPolicy`'s prefix
+    /// tables are all there is, and their answer is safe by construction: nothing the app can
+    /// build enables reasoning, and `false` is accepted everywhere.
+    ///
+    /// On LM Studio the server states what each model accepts, so the intent is carried instead
+    /// of a guess: `.level(...)` reads «as quiet as this model allows, no louder than the length
+    /// the user chose», and `ReasoningChoice` resolves it against `allowed_options`. Passing
+    /// `ModelPolicy`'s answer here would have been quietly wrong rather than merely unhelpful:
+    /// its tables are keyed on Ollama tags, so no publisher-qualified name matches, and «Длина
+    /// рассуждения» would have been read by nobody.
+    private func thinkRequest(for model: String) -> ThinkRequest? {
+        switch engine {
+        case .ollama:
+            return ModelPolicy.thinkRequest(for: model, quiet: quietThinking,
+                                            level: gptOssThinkingLevel)
+        case .lmStudio:
+            return quietThinking ? .level(gptOssThinkingLevel) : nil
+        }
     }
 }

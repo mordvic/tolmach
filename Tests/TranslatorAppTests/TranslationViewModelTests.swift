@@ -326,9 +326,8 @@ private func makeModel(responses: [String], settings: AppSettings) -> ((Translat
     // the shape `waitUntilRunning`'s own doc comment warns against, and it lost: measured 3
     // failures in ~40 runs at 16× oversubscription, where the second run had not reached the
     // pane when the cancel landed and both assertions below fired on the *first* run's text.
-    for _ in 0..<20_000 {
-        if !model.translatedText.isEmpty, model.translatedText != "Первый перевод." { break }
-        await Task.yield()
+    await waitUntil("the second run has put its own text on the pane") {
+        !model.translatedText.isEmpty && model.translatedText != "Первый перевод."
     }
     model.cancel()
     await run.value

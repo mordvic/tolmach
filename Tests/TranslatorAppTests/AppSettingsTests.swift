@@ -505,3 +505,159 @@ private final class FiredFlag: @unchecked Sendable {
         #expect(fired.value)
     }
 }
+
+// MARK: - The engine, and the settings that follow it
+
+@Test func aFreshInstallTalksToOllamaSoNothingChangesForAnExistingUser() {
+    let settings = AppSettings(defaults: freshDefaults())
+    #expect(settings.engine == .ollama)
+    #expect(settings.interactiveModel == ModelPolicy.defaultModel(for: .interactive))
+    #expect(settings.enginePort == 11434)
+}
+
+@Test func eachEngineKeepsItsOwnChoiceOfModels() {
+    // The whole reason these are per-engine: `translategemma:27b` does not exist in LM Studio
+    // and `openai/gpt-oss-20b` does not exist in Ollama, so one shared field would leave the
+    // first translation after a switch failing with «model not found».
+    let settings = AppSettings(defaults: freshDefaults())
+    settings.interactiveModel = "translategemma:27b"
+    settings.batchModel = "gpt-oss:20b"
+    settings.proofreadModel = "aya-expanse:32b"
+
+    settings.engine = .lmStudio
+    settings.interactiveModel = "qwen/qwen3.8-27b"
+    settings.batchModel = "openai/gpt-oss-20b"
+    settings.proofreadModel = "google/gemma-4-e4b"
+
+    settings.engine = .ollama
+    #expect(settings.interactiveModel == "translategemma:27b")
+    #expect(settings.batchModel == "gpt-oss:20b")
+    #expect(settings.proofreadModel == "aya-expanse:32b")
+
+    settings.engine = .lmStudio
+    #expect(settings.interactiveModel == "qwen/qwen3.8-27b")
+    #expect(settings.batchModel == "openai/gpt-oss-20b")
+    #expect(settings.proofreadModel == "google/gemma-4-e4b")
+}
+
+@Test func anUnchosenLMStudioModelReadsBackEmptyRatherThanAnOllamaDefault() {
+    // `ModelPolicy.defaultModel(for:)` names Ollama tags, so there is no sensible default here.
+    // Empty is what lets the window disable «Перевести» and say which setting to fill; an
+    // Ollama tag would produce «model not found» from a server that never had it.
+    let settings = AppSettings(defaults: freshDefaults())
+    settings.engine = .lmStudio
+    #expect(settings.interactiveModel.isEmpty)
+    #expect(settings.hasNoTranslationModel)
+    settings.interactiveModel = "qwen/qwen3.8-27b"
+    #expect(settings.hasNoTranslationModel == false)
+}
+
+@Test func theResolvedModelsFollowTheEngineTheyWereChosenOn() {
+    // `nil` still means «the same one перевод uses», per engine rather than across them.
+    let settings = AppSettings(defaults: freshDefaults())
+    settings.interactiveModel = "translategemma:27b"
+    #expect(settings.resolvedBatchModel == "translategemma:27b")
+    #expect(settings.resolvedProofreadModel == "translategemma:27b")
+
+    settings.engine = .lmStudio
+    settings.interactiveModel = "qwen/qwen3.8-27b"
+    #expect(settings.resolvedBatchModel == "qwen/qwen3.8-27b")
+    settings.batchModel = "openai/gpt-oss-20b"
+    #expect(settings.resolvedBatchModel == "openai/gpt-oss-20b")
+    settings.engine = .ollama
+    #expect(settings.resolvedBatchModel == "translategemma:27b", "the LM Studio choice must not leak back")
+}
+
+@Test func eachEngineKeepsItsOwnPort() {
+    let settings = AppSettings(defaults: freshDefaults())
+    settings.enginePort = 11435
+    settings.engine = .lmStudio
+    #expect(settings.enginePort == 1234)
+    settings.enginePort = 4567
+    settings.engine = .ollama
+    #expect(settings.enginePort == 11435)
+}
+
+/// Switching the engine changes what every model property answers, and this is the only kind of
+/// test that can see it: the hand-written `access(keyPath:)` calls are what make SwiftUI notice,
+/// and a per-engine getter that registered only its *own* key would leave a picker showing the
+/// other engine's model until something unrelated invalidated the view.
+@Test func switchingTheEngineNotifiesWhoeverIsReadingAModelName() {
+    let settings = AppSettings(defaults: freshDefaults())
+    let fired = FiredFlag()
+    withObservationTracking {
+        _ = settings.interactiveModel
+    } onChange: {
+        fired.value = true
+    }
+    settings.engine = .lmStudio
+    #expect(fired.value)
+}
+
+@Test func theThinkDecisionIsMadePerEngineBecauseTheTwoServersAnswerOppositeQuestions() {
+    let settings = AppSettings(defaults: freshDefaults())
+    settings.gptOssThinkingLevel = .medium
+
+    // Ollama: blind, so `ModelPolicy`'s tables decide. A plain model is asked to stop.
+    settings.interactiveModel = "aya-expanse:8b"
+    #expect(settings.chatOptions(model: "aya-expanse:8b").think == .off)
+    // …and the one family that ignores being switched off is graded instead.
+    #expect(settings.chatOptions(model: "gpt-oss:20b").think == .level(.medium))
+
+    // LM Studio: the intent travels and the transport resolves it against what the model says
+    // it accepts. Passing `ModelPolicy`'s answer would be quietly wrong — its prefixes match no
+    // publisher-qualified name, so «Длина рассуждения» would be read by nobody.
+    settings.engine = .lmStudio
+    #expect(settings.chatOptions(model: "openai/gpt-oss-20b").think == .level(.medium))
+    #expect(settings.chatOptions(model: "qwen/qwen3.8-27b").think == .level(.medium))
+}
+
+@Test func askingForNoQuietSendsNothingOnEitherEngine() {
+    // The user wants the model's own behaviour: no key on the wire, whichever server it is.
+    let settings = AppSettings(defaults: freshDefaults())
+    settings.quietThinking = false
+    #expect(settings.chatOptions(model: "gpt-oss:20b").think == nil)
+    settings.engine = .lmStudio
+    #expect(settings.chatOptions(model: "openai/gpt-oss-20b").think == nil)
+}
+
+// MARK: - What gets warmed at launch
+
+@Test func ollamaWarmsBothHotkeyModelsAndLMStudioWarmsOnlyTheOneThatTranslates() {
+    // Not a transport difference — a memory one. Two Ollama models that fit stay resident
+    // together (measured 2026-08-18); the LM Studio install here is all MLX with the 27B class
+    // at 22.81 GB apiece against 48 GB, so warming two at *login* would either fail or swap.
+    let settings = AppSettings(defaults: freshDefaults())
+    settings.interactiveModel = "aya-expanse:8b"
+    settings.proofreadModel = "gemma4:26b"
+    #expect(WarmUpPlan.models(for: settings) == ["aya-expanse:8b", "gemma4:26b"])
+
+    settings.engine = .lmStudio
+    settings.interactiveModel = "qwen/qwen3.8-27b"
+    settings.proofreadModel = "google/gemma-4-e4b"
+    #expect(WarmUpPlan.models(for: settings) == ["qwen/qwen3.8-27b"])
+}
+
+@Test func nothingIsWarmedBeforeAModelHasBeenChosen() {
+    // The state LM Studio starts in. Asking a server to load «» is a refusal with a confusing
+    // message on it, at launch, about something the user never asked for.
+    let settings = AppSettings(defaults: freshDefaults())
+    settings.engine = .lmStudio
+    #expect(WarmUpPlan.models(for: settings).isEmpty)
+    settings.interactiveModel = "qwen/qwen3.8-27b"
+    #expect(WarmUpPlan.models(for: settings) == ["qwen/qwen3.8-27b"])
+}
+
+@Test func warmingUpIsSkippedEntirelyWhenTheSettingIsOff() {
+    let settings = AppSettings(defaults: freshDefaults())
+    settings.warmUpOnLaunch = false
+    #expect(WarmUpPlan.models(for: settings).isEmpty)
+}
+
+@Test func onlyOneModelIsWarmedWhenBothRolesUseTheSameOne() {
+    // The default state: `proofreadModel` is nil, so both roles resolve to the same name and
+    // warming it twice would be two requests for one load.
+    let settings = AppSettings(defaults: freshDefaults())
+    settings.interactiveModel = "translategemma:27b"
+    #expect(WarmUpPlan.models(for: settings) == ["translategemma:27b"])
+}

@@ -168,6 +168,17 @@ public struct PullProgress: Sendable, Equatable {
     public let status: String
     public let completed: Int64
     public let total: Int64
+
+    /// Public because the app's engine router builds one of these from the *other* engine's
+    /// progress value: `LMStudioKit` deliberately does not depend on this module, so the two
+    /// vocabularies meet in the app layer, which is the one place that knows which engine is
+    /// selected. Before that, this initialiser was internal and only `@testable import` could
+    /// reach it.
+    public init(status: String, completed: Int64, total: Int64) {
+        self.status = status
+        self.completed = completed
+        self.total = total
+    }
     /// Nil when the server sent no byte counts — many pull lines are bare status
     /// updates, and a fabricated 0% would make the bar jump backwards.
     public var fraction: Double? {
@@ -202,6 +213,35 @@ extension OllamaClient {
             throw OllamaError.decoding("unexpected /api/ps shape")
         }
         return raw.compactMap { ($0["name"] as? String).map(RunningModel.init(name:)) }
+    }
+
+    /// Frees a model's memory. See `OllamaUnloadBody` for why the body looks like a translation
+    /// request with nothing to translate.
+    ///
+    /// `Timeout.probe` rather than `interactive`: nothing is generated, the server answers as
+    /// soon as it has dropped the weights.
+    public func unload(model: String) async throws {
+        var request = request("api/chat", timeout: Timeout.probe, method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: OllamaUnloadBody.json(model: model))
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch { throw Self.mapTransportError(error) }
+        guard let http = response as? HTTPURLResponse else { throw OllamaError.notRunning }
+        guard http.statusCode == 200 else {
+            throw OllamaError.httpStatus(http.statusCode, String(data: data, encoding: .utf8) ?? "")
+        }
+        // HTTP 200 is not the confirmation — `done_reason` is. See
+        // `OllamaUnloadBody.confirmsUnload`: a server that ignored the zero would answer 200
+        // with `done_reason: "stop"`, and reporting that as a successful unload would leave the
+        // user looking at a «выгружено» message and an unchanged memory figure. An unreadable
+        // body is accepted rather than treated as failure: this call's whole subject is a
+        // documented behaviour nobody here has yet seen on the wire.
+        if OllamaUnloadBody.confirmsUnload(data) == false {
+            throw OllamaError.decoding("the model was not unloaded: \(String(data: data, encoding: .utf8) ?? "")")
+        }
     }
 
     public func pull(model: String) -> AsyncThrowingStream<PullProgress, Error> {

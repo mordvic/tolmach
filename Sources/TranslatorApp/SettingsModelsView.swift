@@ -1,6 +1,5 @@
 // Sources/TranslatorApp/SettingsModelsView.swift
 import SwiftUI
-import OllamaKit
 import TranslationCore
 
 struct SettingsModelsView: View {
@@ -17,7 +16,8 @@ struct SettingsModelsView: View {
     /// `OllamaStatusModel` already backs the main window's status line, and a second probe
     /// on a second timer would show two answers about the one thing Ollama is or is not
     /// doing.
-    let status: OllamaStatus
+    let status: EngineStatus
+    let engineName: String
     var onRefresh: () async -> Void
 
     /// The text of the download field is UI state with no meaning outside this pane, so it
@@ -30,9 +30,18 @@ struct SettingsModelsView: View {
 
     var body: some View {
         Form {
-            Section("Ollama") {
+            Section("Движок") {
+                // The switch itself. A `Picker` and not two radio rows, because the pane is a
+                // grouped `Form` and every other choice in it is a picker; `RussianCopy` owns
+                // the names, exhaustive with no `default:`, so a third engine could not ship
+                // with an empty label.
+                Picker("Движок", selection: $settings.engine) {
+                    ForEach(ModelEngine.allCases, id: \.self) { engine in
+                        Text(RussianCopy.engineName(engine)).tag(engine)
+                    }
+                }
                 LabeledContent("Состояние") {
-                    Label(status.label, systemImage: status.isHealthy
+                    Label(RussianCopy.engineStatus(status, engineName: engineName), systemImage: status.isHealthy
                           ? "checkmark.circle" : "exclamationmark.triangle.fill")
                         // `StatusColour`, like every other status hue in the app. This row
                         // was missed when the three colours were spelled: on a white grouped
@@ -43,18 +52,40 @@ struct SettingsModelsView: View {
                                                           : StatusColour.warning)
                         .labelStyle(.titleAndIcon)
                 }
-                // Spec §5.3 asks this section for three things: whether Ollama is running,
-                // the address, and a re-check. The address was missing until now. Read from
-                // `OllamaClient.defaultBaseURL` rather than typed here, because a literal in
-                // a view can disagree with the address the app is actually calling, and a
-                // wrong address is worse than none — it is the first thing a user checks
-                // when the state above says «не запущена».
-                LabeledContent("Адрес") {
-                    Text(OllamaClient.defaultBaseURL.absoluteString)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
+                // Spec §5.3 asks this section for whether the engine is running, its address,
+                // and a re-check. The address is now a **port**, and the host is not settable
+                // at all: `127.0.0.1` is what makes «текст не покидает машину» a property of
+                // this code rather than of what somebody typed into a field. The whole address
+                // is still shown, because it is the first thing a user checks when the state
+                // above says there is no connection — and it is built from the same setting the
+                // app calls, so the two cannot disagree.
+                LabeledContent("Порт") {
+                    HStack(spacing: 8) {
+                        TextField("Порт", value: $settings.enginePort,
+                                  format: .number.grouping(.never))
+                            .frame(width: 80)
+                            .labelsHidden()
+                        Text("127.0.0.1:\(settings.enginePort)")
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
                 }
-                Button("Проверить снова") { Task { await refresh() } }
+                HStack {
+                    Button("Проверить снова") { Task { await refresh() } }
+                    // Offered only while the engine is silent, and only when its application is
+                    // actually installed — Ollama is commonly a Homebrew binary with no bundle
+                    // anywhere, and a button that cannot do anything is worse than none.
+                    //
+                    // It *reveals* the application; it does not start or stop a server. The
+                    // reasoning is on `EngineApplication`, and it closes design spec §8's
+                    // never-implemented «Запустить Ollama» button: the user starts the server
+                    // where they started it before.
+                    if !status.isHealthy, EngineApplication.url(for: settings.engine) != nil {
+                        Button("Открыть \(RussianCopy.engineName(settings.engine))") {
+                            EngineApplication.reveal(settings.engine)
+                        }
+                    }
+                }
             }
 
             Section("Модель для перевода") {
@@ -101,16 +132,37 @@ struct SettingsModelsView: View {
             Section("Установленные модели") {
                 if models.installed.isEmpty {
                     Text(models.error == nil
-                         ? "Ollama не сообщила ни одной модели."
+                         ? "\(engineName) не сообщил ни одной модели."
                          : "Список не получен.")
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
                     ForEach(models.installed, id: \.name) { model in
                         LabeledContent(model.name) {
-                            Text(models.resident.contains(model.name)
-                                 ? RussianCopy.modelSize(model.sizeBytes) + " · в памяти"
-                                 : RussianCopy.modelSize(model.sizeBytes))
-                                .foregroundStyle(.secondary)
+                            HStack(spacing: 8) {
+                                Text(models.isResident(model)
+                                     ? RussianCopy.modelSize(model.sizeBytes) + " · в памяти"
+                                     : RussianCopy.modelSize(model.sizeBytes))
+                                    .foregroundStyle(.secondary)
+                                // Per row, and only for a model the engine says it is holding.
+                                // There is deliberately no «выгрузить всё»: a loaded instance
+                                // reports its id and its configuration and nothing about who
+                                // loaded it, so a blanket command could only reach another
+                                // application's model or lie about its own scope.
+                                if models.isResident(model) {
+                                    Button("Выгрузить") {
+                                        Task {
+                                            await models.unload(model)
+                                            // The status line and the menu-bar glyph both read
+                                            // residency, and neither is on a timer — so the
+                                            // action that changes it is the one that has to say
+                                            // so, or the app goes on claiming the model is
+                                            // resident until something unrelated refreshes.
+                                            await onRefresh()
+                                        }
+                                    }
+                                    .disabled(models.isPulling)
+                                }
+                            }
                         }
                     }
                 }
@@ -186,6 +238,19 @@ struct SettingsModelsView: View {
                      + "в память.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if settings.engine == .lmStudio {
+                    // The `keepAlive` field below is Ollama's `keep_alive` and nothing else:
+                    // LM Studio's chat endpoint **rejects** a `ttl` field outright (measured
+                    // 2026-08-21 — HTTP 400, «Unrecognized key(s) in object: 'ttl'»), and a
+                    // model this app loads explicitly stays until it is unloaded. Hidden rather
+                    // than disabled, because a disabled field invites the reader to look for
+                    // the switch that enables it, and there is none.
+                    Text("LM Studio держит модель до выгрузки — время простоя задаётся в самом "
+                         + "LM Studio, а не здесь. Выгрузить вручную можно в «Установленных "
+                         + "моделях».")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
                 TextField("Держать модель в памяти", text: $settings.keepAlive)
                 // Guillemets, not backticks: building the string with `+` forces `Text`'s
                 // plain-`String` initialiser instead of the `LocalizedStringKey` one, so
@@ -196,6 +261,7 @@ struct SettingsModelsView: View {
                      + "переводу после паузы.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                }
             }
 
             Section("Качество перевода") {
@@ -244,8 +310,13 @@ struct SettingsModelsView: View {
                      + "приложение отбрасывает такой текст, — но тратит время до первого слова.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                if settings.usesGptOss {
-                    Picker("Длина рассуждения у gpt-oss:", selection: $settings.gptOssThinkingLevel) {
+                // Not `settings.usesGptOss` any more: on LM Studio no publisher-qualified name
+                // matches `ModelPolicy`'s prefix table, so that rule would never draw the row
+                // there. `ModelsViewModel` asks the right question per engine — the table on
+                // Ollama, and «offers levels but cannot be silenced» on LM Studio, which is
+                // also what keeps this control from contradicting the checkbox above it.
+                if models.showsReasoningLength(for: settings) {
+                    Picker("Длина рассуждения:", selection: $settings.gptOssThinkingLevel) {
                         ForEach(ThinkRequest.Level.allCases, id: \.self) { level in
                             Text(level.russianName).tag(level)
                         }
@@ -253,7 +324,7 @@ struct SettingsModelsView: View {
                     // Disabled rather than hidden: a control that vanished when an unrelated
                     // switch moved would read as a bug rather than as a dependency.
                     .disabled(!settings.quietThinking)
-                    Text("gpt-oss не умеет выключать рассуждение — только укоротить.")
+                    Text("Эта модель не умеет выключать рассуждение — только укоротить.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

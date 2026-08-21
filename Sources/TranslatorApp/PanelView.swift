@@ -101,6 +101,13 @@ struct PanelView: View {
     var onOpenInWindow: () -> Void = {}
     var onRetry: () -> Void = {}
     var onGrantPermission: () -> Void = {}
+    /// Opens the settings window on «Модели». The panel's counterpart to the window's
+    /// «выберите модель» line: there is no picker next to the pointer, so the way out is
+    /// offered rather than described.
+    var onOpenSettings: () -> Void = {}
+    /// Set when the press could not translate because no model is chosen — see
+    /// `HotkeyCoordinator.needsModelChoice`.
+    var needsModelChoice = false
     /// The header's «Перевод | Правка» switch. Re-runs the captured selection under the
     /// chosen operation rather than reading a new one — see
     /// `HotkeyCoordinator.switchOperation(to:)`.
@@ -309,12 +316,20 @@ struct PanelView: View {
     /// flat layout the controller measures still sums to something real.
     @ViewBuilder private var content: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Exhaustive with no `default:` on purpose: a fourth `SelectionResult` case
-            // should fail to compile here rather than open an empty panel.
-            switch selection {
-            case .notPermitted: permissionPrompt
-            case .empty: emptyHint
-            case .text: translation
+            // Checked before the capture's own outcome, because it outranks it: with no model
+            // chosen, what was selected does not matter yet. It is *not* a fourth
+            // `SelectionResult` case — that enum belongs to `TextCapture`, which knows nothing
+            // about models, and putting an app-layer refusal in it would be the wrong layer.
+            if needsModelChoice {
+                modelChoicePrompt
+            } else {
+                // Exhaustive with no `default:` on purpose: a fourth `SelectionResult` case
+                // should fail to compile here rather than open an empty panel.
+                switch selection {
+                case .notPermitted: permissionPrompt
+                case .empty: emptyHint
+                case .text: translation
+                }
             }
         }
     }
@@ -472,6 +487,21 @@ struct PanelView: View {
                 // every new user sees before anything else works.
                 .fixedSize(horizontal: false, vertical: true)
             Button("Открыть настройки системы", action: onGrantPermission)
+        }
+    }
+
+    /// Shaped like `permissionPrompt` rather than like a failure: nothing went wrong, the app
+    /// is simply not configured yet, and «Повторить» would fail identically every time.
+    private var modelChoicePrompt: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            header
+            Text("Модель для перевода не выбрана. Откройте «Модели» в настройках и выберите её.")
+                .font(.callout)
+                // The same `fixedSize` as the permission prompt, and for the reason recorded
+                // there: at the panel's 300 pt floor a sentence this long is cut, and what gets
+                // cut is the half that says where to go.
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Настройки", action: onOpenSettings)
         }
     }
 

@@ -335,6 +335,15 @@ final class HotkeyCoordinator {
     /// so this is true for a handful of milliseconds and false for everything else.
     private(set) var isStartingRun = false
 
+    /// Whether the last press could not translate because no model is chosen.
+    ///
+    /// The state LM Studio starts in: it has no honest default, nothing is auto-selected, and
+    /// this is the surface with no other way out. The window can disable its button and point at
+    /// a setting on screen; a panel next to the pointer has one message row and a button row, so
+    /// it says the same sentence and offers the settings window — the same shape as the
+    /// Accessibility prompt, which is the other case where a press cannot proceed.
+    private(set) var needsModelChoice = false
+
     /// Read the selection, then translate it. Everything the panel shows is decided here so
     /// the view stays a readout.
     ///
@@ -456,8 +465,14 @@ final class HotkeyCoordinator {
         // for the same reason — an empty or unpermitted capture draws neither the row nor the
         // switch, so there is nothing for a stale value to be right or wrong about.
         panelModel.operation = operation
-        isStartingRun = true
+        // Refused **before** the panel is measured, because the panel is measured inside
+        // `afterCapture()` and this decides which content it holds. Nothing is translated and
+        // nothing already on screen is cleared: a press that cannot run must cost the previous
+        // reply nothing, exactly as a failed run does not clobber it.
+        needsModelChoice = settings.hasNoTranslationModel
+        isStartingRun = !needsModelChoice
         afterCapture()
+        if needsModelChoice { return }
         // Cleared **here**, not after the run. `afterCapture()` is the whole of what the flag
         // is for — `PanelController.show(at:)` takes its measurement inside it — and nothing
         // between this line and `state = .running` can observe the gap: there is no suspension

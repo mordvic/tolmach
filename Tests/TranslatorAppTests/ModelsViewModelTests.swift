@@ -3,6 +3,7 @@ import Foundation
 @testable import TranslatorApp
 @testable import TranslationCore
 @testable import OllamaKit
+@testable import LMStudioKit
 
 /// `PullProgress`'s memberwise initialiser is internal (the struct is public, its `init` is
 /// not), so the stream stubs below need `@testable import OllamaKit` rather than a plain one.
@@ -16,7 +17,7 @@ private func makeModel(installed: [String] = [],
                        puller: @escaping ModelsViewModel.Puller = silentPuller()) -> ModelsViewModel {
     // Callers only ever care about names here; the size-carrying tests build `StubProbe`
     // directly instead of going through this helper.
-    let models = installed.map { OllamaModel(name: $0, sizeBytes: 0) }
+    let models = installed.map { EngineModel(name: $0, sizeBytes: 0) }
     return ModelsViewModel(probe: StubProbe(installed: models, failure: failure), puller: puller)
 }
 
@@ -232,7 +233,7 @@ private func makeModel(installed: [String] = [],
     #expect(model.availability(of: "gpt-oss:20b") == .unknown)
 }
 
-/// `OllamaProbe` is `Sendable` and `installedModels()` is `async`, so the switchable flag
+/// `EngineProbe` is `Sendable` and `installedModels()` is `async`, so the switchable flag
 /// cannot be a plain `var` on a struct. Access is confined to the main actor by the tests
 /// that use it, which is what `@unchecked` is asserting here.
 ///
@@ -243,12 +244,12 @@ private func makeModel(installed: [String] = [],
 /// afterwards changes nothing the view model sees. That gap is exactly what let
 /// `aFailedReloadStopsClaimingAnythingIsInMemory` pass whether or not `reload()`'s `catch`
 /// actually cleared `resident` — see that test's own comment.
-private final class FlakyProbe: OllamaProbe, @unchecked Sendable {
+private final class FlakyProbe: EngineProbe, @unchecked Sendable {
     var fail = false
     var resident: [String] = []
-    func installedModels() async throws -> [OllamaModel] {
+    func installedModels() async throws -> [EngineModel] {
         if fail { throw OllamaError.notRunning }
-        return [OllamaModel(name: "gpt-oss:20b", sizeBytes: 0)]
+        return [EngineModel(name: "gpt-oss:20b", sizeBytes: 0)]
     }
     func residentModels() async throws -> [String] {
         if fail { throw OllamaError.notRunning }
@@ -261,7 +262,7 @@ private final class FlakyProbe: OllamaProbe, @unchecked Sendable {
     // The size is what makes the list worth showing: a user deciding whether to pull a
     // second model is deciding about disk space. It exists in `OllamaModel` already and
     // used to be discarded at the protocol boundary.
-    let probe = StubProbe(installed: [OllamaModel(name: "aya-expanse:8b", sizeBytes: 5_100_273_664)])
+    let probe = StubProbe(installed: [EngineModel(name: "aya-expanse:8b", sizeBytes: 5_100_273_664)])
     let model = ModelsViewModel(probe: probe, puller: { _ in .init { $0.finish() } })
     await model.reload()
     #expect(model.installed.first?.sizeBytes == 5_100_273_664)
@@ -290,3 +291,97 @@ private final class FlakyProbe: OllamaProbe, @unchecked Sendable {
     #expect(models.resident.isEmpty)
 }
 
+
+// MARK: - The engine wave: unloading, and the reasoning-length row
+
+@MainActor @Test func onlyAModelTheEngineIsHoldingCanBeUnloaded() async {
+    let resident = EngineModel(name: "openai/gpt-oss-20b", sizeBytes: 12_100_000_000,
+                               loadedInstanceIDs: ["openai/gpt-oss-20b"])
+    let idle = EngineModel(name: "qwen/qwen3.8-27b", sizeBytes: 22_810_000_000)
+    let model = ModelsViewModel(probe: StubProbe(installed: [resident, idle], resident: []),
+                                puller: { _ in .init { $0.finish() } })
+    await model.reload()
+    #expect(model.isResident(resident))
+    #expect(model.isResident(idle) == false)
+}
+
+@MainActor @Test func ollamaReportsResidencyAsAListAndItStillDecidesTheButton() async {
+    // Ollama says nothing per model — residency is a separate list — so a row must be able to
+    // learn it from there rather than from the model's own instances.
+    let model = ModelsViewModel(
+        probe: StubProbe(installed: [EngineModel(name: "aya-expanse:8b", sizeBytes: 0)],
+                         resident: ["aya-expanse:8b"]),
+        puller: { _ in .init { $0.finish() } })
+    await model.reload()
+    #expect(model.isResident(EngineModel(name: "aya-expanse:8b", sizeBytes: 0)))
+}
+
+@MainActor @Test func unloadingFreesTheModelAndThenRereadsTheLists() async {
+    let asked = UnloadRecorder()
+    let model = ModelsViewModel(
+        probe: StubProbe(installed: [EngineModel(name: "openai/gpt-oss-20b", sizeBytes: 1,
+                                                loadedInstanceIDs: ["openai/gpt-oss-20b"])],
+                         resident: ["openai/gpt-oss-20b"]),
+        puller: { _ in .init { $0.finish() } },
+        unloader: { await asked.add($0.name) })
+    await model.reload()
+    await model.unload(model.installed[0])
+    #expect(await asked.names == ["openai/gpt-oss-20b"])
+    // Re-read afterwards, or the row goes on saying «в памяти» about memory that is now free —
+    // the same reason the status is refreshed after this action.
+    #expect(model.listIsConfirmed)
+}
+
+@MainActor @Test func aFailedUnloadSaysSoRatherThanReportingSuccessQuietly() async {
+    let model = ModelsViewModel(
+        probe: StubProbe(installed: [EngineModel(name: "aya-expanse:8b", sizeBytes: 0)]),
+        puller: { _ in .init { $0.finish() } },
+        unloader: { _ in throw LMStudioError.notRunning })
+    await model.reload()
+    await model.unload(model.installed[0])
+    #expect(model.error != nil)
+    #expect(model.error?.isEmpty == false)
+}
+
+@MainActor @Test func theReasoningLengthRowFollowsWhatTheModelAllowsAndNotItsName() async {
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "reasoning-row"))
+
+    // Ollama: the prefix table, exactly as before this wave.
+    settings.interactiveModel = "gpt-oss:20b"
+    let ollama = ModelsViewModel(probe: StubProbe(), puller: { _ in .init { $0.finish() } })
+    #expect(ollama.showsReasoningLength(for: settings))
+    settings.interactiveModel = "aya-expanse:8b"
+    #expect(ollama.showsReasoningLength(for: settings) == false)
+
+    // LM Studio: what the server said. `openai/gpt-oss-20b` cannot be silenced — measured, its
+    // `allowed_options` are low/medium/high — so the length is the only control that applies.
+    settings.engine = .lmStudio
+    settings.interactiveModel = "openai/gpt-oss-20b"
+    let lmStudio = ModelsViewModel(
+        probe: StubProbe(installed: [
+            EngineModel(name: "openai/gpt-oss-20b", sizeBytes: 1,
+                        reasoningOptions: ["low", "medium", "high"]),
+            EngineModel(name: "qwen/qwen3.8-27b", sizeBytes: 1,
+                        reasoningOptions: ["off", "low", "medium", "xhigh", "on"]),
+            EngineModel(name: "qwen3.5-27b", sizeBytes: 1),
+        ]),
+        puller: { _ in .init { $0.finish() } })
+    await lmStudio.reload()
+    #expect(lmStudio.showsReasoningLength(for: settings))
+
+    // A model that *can* be silenced obeys the checkbox outright, so offering a length beside
+    // it would be offering a value the app then ignores.
+    settings.interactiveModel = "qwen/qwen3.8-27b"
+    #expect(lmStudio.showsReasoningLength(for: settings) == false)
+    // And a model that reports nothing gets no row either — «not known» is not «graded».
+    settings.interactiveModel = "qwen3.5-27b"
+    #expect(lmStudio.showsReasoningLength(for: settings) == false)
+    // The name would have decided it under the old rule, and decided it wrongly: no
+    // publisher-qualified identifier matches `ModelPolicy`'s `gpt-oss` prefix.
+    #expect(settings.usesGptOss == false)
+}
+
+private actor UnloadRecorder {
+    private(set) var names: [String] = []
+    func add(_ name: String) { names.append(name) }
+}

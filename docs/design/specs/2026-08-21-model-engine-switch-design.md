@@ -397,6 +397,23 @@ Here the server answers, so «this family only grades, it cannot be silenced» s
 table and becomes the third row above — which is why §4 leaves the table alone instead of
 extending it with LM Studio names.
 
+> **Corrected during implementation (2026-08-21).** The table collapses `.off` and `.level` into
+> one column, which would send the *lowest* level to a model offering several — and that makes
+> «Длина рассуждения» inert on this engine, the very control §6.3 draws from `allowed_options`.
+> `ReasoningChoice` therefore honours a requested level when the model allows it (`.level(.high)`
+> on `gpt-oss` sends `"high"`), and when it does not, falls back to the nearest level **not
+> louder** than the one asked for — `.level(.high)` against `qwen/qwen3.8-27b`'s
+> `["off","low","medium","xhigh","on"]` sends `"medium"`. Only when nothing quieter exists does
+> it take the quietest option on offer. An earlier draft of this note said «the quietest option»
+> outright, which a review showed meant that moving «Длина рассуждения» from «Средне» to
+> «Подробно» on that model switched reasoning **off**. `.off` behaves exactly as the table says.
+> What this leaves open is an
+> **app-layer** question for the settings wave rather than a transport one:
+> `ModelPolicy.thinkRequest` answers `.off` for every LM Studio identifier, because its prefix
+> table matches no publisher-qualified name — so as things stand nothing would ever *pass* a
+> level, and the control §6.3 draws would be read by nobody. However that is resolved, the
+> transport already does the right thing with either intent.
+
 ### 5.6 Models, downloads, errors
 
 - `GET /api/v1/models` → the probe's `installedModels()` and `residentModels()`. `key` is the
@@ -410,6 +427,14 @@ extending it with LM Studio names.
   has to be polled. `ModelsViewModel.Puller` is already
   `(String) -> AsyncThrowingStream<PullProgress, Error>`, so the client synthesises the stream
   by polling and the app layer does not learn that the two engines differ.
+
+  > **Corrected during implementation (2026-08-21).** The synthesised stream carries
+  > `ModelDownloadProgress`, a value of this module's own with `PullProgress`'s shape, **not**
+  > `PullProgress` itself — that type lives in `OllamaKit`, and `LMStudioKit` deliberately does
+  > not depend on it (`Package.swift` says why). The adaptation therefore happens in the engine
+  > router, which is the one place that already knows which движок is selected; the view model
+  > still does not learn. The alternative — moving `PullProgress` down into `TranslationCore` —
+  > would put a transport concern in the domain layer to save one adapter.
 
   Three decisions rather than measurements, because there is nothing here to measure:
 
@@ -480,6 +505,13 @@ The property behind that last row is renamed from `usesGptOss` to something that
 question — `offersReasoningLevelsOnly` — while the stored key `"gptOssThinkingLevel"` stays put,
 because renaming a key discards what a user chose.
 
+> **Corrected during implementation (2026-08-21).** The rule could not live on `AppSettings`:
+> answering it on LM Studio needs each model's `allowed_options`, and that list is read by the
+> probe, not by the settings. It is `ModelsViewModel.showsReasoningLength(for:)` instead — the
+> view model already holds the installed list — and `usesGptOss` stays where it was, still
+> correct and still used, as the Ollama half of that answer. The stored key is untouched as
+> planned.
+
 ### 6.4 Untouched
 
 Languages, tone, правка degree and style, `contentFont`, both shortcuts, `autoCopy`,
@@ -509,7 +541,17 @@ struct EngineClient: LLMClient {           // reads the setting on every call
 ```
 
 Reading the setting **per call** rather than at construction is what makes the switch take
-effect without a relaunch, and it is why this is a router rather than a stored choice. Both
+effect without a relaunch, and it is why this is a router rather than a stored choice.
+
+> **Corrected during implementation (2026-08-21).** Not closures over `AppSettings`, as sketched
+> above: that class is `@Observable` and not `Sendable`, and capturing it in a router `LLMClient`
+> requires to be `Sendable` is a warning today and a data race the day it gains a stored
+> property. The router reads the two values out of the **defaults store** through
+> `AppSettings.engine(in:)` / `enginePort(in:)`, which is not a shortcut around that type but a
+> consequence of its shape — it has no stored properties, so the store is the source of truth and
+> the object a typed view of it. `UserDefaults` is documented thread-safe and is held
+> `nonisolated(unsafe)`, the same escape `HotkeyManager` uses for its own unshareable stored
+> value. Both
 clients exist for the whole process — two `URLSession`s instead of one, which is the one place
 this design spends something the old comment on `TranslatorApp.client` was proud of not
 spending. It is worth it: the alternative is rebuilding three view models when a radio button

@@ -18,7 +18,7 @@ struct TranslatorApp: App {
     // reach the window, and the view model would translate with stale settings.
     @State private var settings: AppSettings
     @State private var glossary: GlossaryStore
-    @State private var statusModel: OllamaStatusModel
+    @State private var statusModel: EngineStatusModel
     @State private var translation: TranslationViewModel
     /// The file queue — the window's third model, beside its own `translation` and the
     /// panel's inside `coordinator`.
@@ -30,13 +30,13 @@ struct TranslatorApp: App {
     /// Owned here rather than created inside the settings pane so the installed list and a
     /// download in progress survive the settings window being closed and reopened.
     @State private var models: ModelsViewModel
-    /// The **only** `OllamaClient` this process builds, and therefore the only `URLSession`.
+    /// The **only** `EngineRouter` this process builds, and therefore the owner of every client.
     ///
     /// It backs all five things that talk to Ollama: both view models' translations through
     /// `Translator`, `warmUp()`, the health probe behind the menu-bar glyph, the installed and
     /// resident lists in «Модели», and model downloads. Sharing it is what the doc comment here
     /// always claimed — see `init`, which carries what was actually happening instead.
-    @State private var client: OllamaClient
+    @State private var client: EngineRouter
     /// The hotkey path, which owns a `TranslationViewModel` of its own — see the comment on
     /// `HotkeyCoordinator.panelModel`. It shares this app's `settings`, `glossary` and
     /// `client`; only the view model is separate.
@@ -66,21 +66,22 @@ struct TranslatorApp: App {
             glossary.lastProblem = "Не удалось прочитать глоссарий, перевод идёт без него. "
                 + "Файл на диске не изменён: \(error.localizedDescription)"
         }
-        // One client for the whole process, and it has to be built before anything that talks
-        // to Ollama rather than after.
+        // One router for the whole process, built before anything that talks to a server.
         //
-        // The comment on `client` above has said since it was written that it is shared «so
-        // `warmUp()` can reuse it instead of standing up a second `URLSession` for one request
-        // at launch». That was true of `warmUp()` and false of the app: `OllamaStatusModel()`
-        // and `ModelsViewModel()` each defaulted to a `LiveOllamaProbe` that built an
-        // `OllamaClient` of its own, and `ModelsViewModel`'s default puller built **another one
-        // per download**. Three sessions at launch, and one more every time a model is pulled,
-        // under a comment explaining why there is one.
+        // It replaces the single `OllamaClient` this line used to hold, and the reason is the
+        // engine switch: `AppSettings.engine` is read on **every** call the router makes, so
+        // choosing the other engine takes effect on the next request rather than at the next
+        // launch. Capturing the choice here instead would mean rebuilding the three
+        // `Translator`s below — and the three view models that own them — whenever a radio
+        // button moved.
         //
-        // The defaults stay where they are — they are what lets a test construct either model
-        // without an Ollama — but nothing in the app takes them now.
-        let client = OllamaClient()
-        let statusModel = OllamaStatusModel(probe: LiveOllamaProbe(client: client))
+        // The history the previous comment recorded still applies to what is shared: every
+        // model here takes *this* router, so there is one client per engine and port rather
+        // than one per view model. `ModelsViewModel` and `EngineStatusModel` no longer have
+        // defaults to fall back to; a test constructs them with a stub, which is what the
+        // defaults were for.
+        let client = EngineRouter(defaults: .standard)
+        let statusModel = EngineStatusModel(probe: client)
         let translation = TranslationViewModel(
             translator: Translator(client: client),
             settings: settings,
@@ -110,18 +111,26 @@ struct TranslatorApp: App {
                 await Task.detached(priority: .userInitiated) {
                     TranslatedFileWriter.write(text, to: url)
                 }.value
+            },
+            // Why a queue run puts its own model in memory first is on `FileQueueModel.run`.
+            // Failure is swallowed here on purpose: a queue whose model could not be
+            // pre-loaded still translates — it just pays a cold load, and possibly an
+            // eviction — so refusing to start would be worse than the delay it avoids.
+            prepareModel: { model in
+                try? await client.warmUp(model: model,
+                                         options: AppSettings(defaults: .standard).chatOptions(model: model))
             })
         _settings = State(initialValue: settings)
         _glossary = State(initialValue: glossary)
         _statusModel = State(initialValue: statusModel)
         _translation = State(initialValue: translation)
         _queue = State(initialValue: queue)
-        // Both halves of this take the shared client: the probe behind the installed and
-        // resident lists, and the puller behind «Скачать». `OllamaClient` is a `Sendable`
+        // Both halves of this take the shared router: the probe behind the installed and
+        // resident lists, and the downloader behind «Скачать». `EngineRouter` is a `Sendable`
         // struct — `LLMClient` requires it — so the closure may capture it.
         _models = State(initialValue: ModelsViewModel(
-            probe: LiveOllamaProbe(client: client),
-            puller: { model in client.pull(model: model) }))
+            probe: client,
+            puller: { model in client.download(model: model) }))
         _client = State(initialValue: client)
         _coordinator = State(initialValue: coordinator)
         // Content is a placeholder until `configurePanel()` runs at launch. Everything the
@@ -140,7 +149,8 @@ struct TranslatorApp: App {
         // (`Scene.defaultLaunchBehavior(.suppressed)`, the declarative fix, is macOS 15+
         // and the platform floor here is macOS 14.)
         MenuBarExtra {
-            MenuContent(status: statusModel.status)
+            MenuContent(status: statusModel.status,
+                        engineName: RussianCopy.engineName(settings.engine))
         } label: {
             // The `MenuBarExtra(_:systemImage:)` convenience initialiser this used to be
             // takes no view, and `warmUp()` needs one to hang a `.task` on — this label is
@@ -159,6 +169,7 @@ struct TranslatorApp: App {
         Window("Толмач", id: TranslatorApp.mainWindowID) {
             MainWindowView(model: translation,
                            glossary: glossary, status: statusModel.status,
+                           engineName: RussianCopy.engineName(settings.engine),
                            onRunFinished: {
                                await statusModel.refresh(interactiveModel: settings.interactiveModel)
                            },
@@ -266,7 +277,8 @@ struct TranslatorApp: App {
                 // window sitting idle in either mode still declines ⌘. and lets the panel
                 // have it. What changed is that «running» now means the visible mode's run
                 // rather than the text model's.
-                let action = PrimaryAction.forMode(mode, text: translation, queue: queue)
+                let action = PrimaryAction.forMode(mode, text: translation, queue: queue,
+                                                   hasModel: !settings.hasNoTranslationModel)
                 Button(action.startTitle) { Task { await action.start() } }
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(action.isRunning || !action.canStart || !statusModel.status.isHealthy)
@@ -331,6 +343,7 @@ struct TranslatorApp: App {
                     .tabItem { Label("Основные", systemImage: "gearshape") }
                 SettingsModelsView(settings: settings, models: models,
                                    status: statusModel.status,
+                                   engineName: RussianCopy.engineName(settings.engine),
                                    onRefresh: {
                                        await statusModel.refresh(
                                            interactiveModel: settings.interactiveModel)
@@ -537,6 +550,13 @@ struct TranslatorApp: App {
                     PermissionsGate.requestTrust()
                     PermissionsGate.openSettings()
                 },
+                // macOS 14 renamed this selector from `showPreferencesWindow:`, and the
+                // platform floor here is 14, so the new name is the only one needed. Sent
+                // through `NSApp` because `SettingsLink` is a *view* and this content is built
+                // outside any view hierarchy — `PanelController` holds the builder.
+                onOpenSettings: {
+                    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                },
                 onSwitchOperation: { op in Task { await coordinator.switchOperation(to: op) } },
                 onAnotherVariant: { Task { await coordinator.anotherVariant() } },
                 settings: settings,
@@ -655,25 +675,23 @@ struct TranslatorApp: App {
     /// model resident. `chat` is the layer that actually carries `keep_alive` to the server,
     /// which is the entire job.
     private func warmUp() async {
-        guard settings.warmUpOnLaunch else { return }
-        // Both models a hotkey can reach, when they differ — ⌥⌘T's and ⌥⌘R's. One after the
-        // other rather than in parallel: Ollama serialises loads anyway, and two requests in
-        // flight at launch would only make the failure log below ambiguous about which one
-        // failed. Ollama keeps both resident when they fit (measured, `AppSettings.proofreadModel`),
-        // so this is not paying a load that the first press would immediately undo.
-        var models = [settings.interactiveModel]
-        if settings.proofreadModelDiffersFromInteractive { models.append(settings.resolvedProofreadModel) }
+        // Which models, and why the count differs by engine, is `WarmUpPlan` — extracted so a
+        // test can read the rule, since nothing in a test process can reach a private method on
+        // a scene. One after the other rather than in parallel: Ollama serialises loads anyway,
+        // and two requests in flight at launch would only make the failure log below ambiguous
+        // about which one failed.
+        let models = WarmUpPlan.models(for: settings)
         for model in models {
             // The same options a real run gets, think decision included: a warm-up that
             // reasoned while the run did not would page the model in under a regime nothing
             // else uses.
             let options = settings.chatOptions(model: model)
             do {
-                // Drained rather than abandoned after the first event: dropping the stream runs
-                // `onTermination`, which cancels the request, and there is nothing to save by
-                // cutting off a reply this short.
-                for try await _ in client.chat(messages: [ChatMessage(role: "user", content: "ok")],
-                                               options: options) {}
+                // What «warm» means differs by engine — a one-token chat on Ollama, an explicit
+                // load on LM Studio, where a chat would JIT-load and the next JIT load would
+                // evict it. `EngineRouter.warmUp` owns that difference; this loop owns which
+                // models and in what order.
+                try await client.warmUp(model: model, options: options)
             } catch {
                 // Still swallowed as far as the user is concerned, and that part is right: a
                 // warm-up is by definition something they did not ask for, so its failure must
@@ -723,6 +741,8 @@ private struct PanelHost: View {
     let onOpenInWindow: () -> Void
     let onClose: () -> Void
     let onGrantPermission: () -> Void
+    /// Opens the settings window, for the press that had no model to translate with.
+    let onOpenSettings: () -> Void
     /// The header's «Перевод | Правка» switch, threaded to `PanelView` like every other
     /// callback here — see `HotkeyCoordinator.switchOperation(to:)`.
     let onSwitchOperation: (TextOperation) -> Void
@@ -748,6 +768,7 @@ private struct PanelHost: View {
         PanelView(model: coordinator.panelModel,
                   selection: coordinator.selection,
                   awaitingRun: coordinator.isStartingRun,
+
                   adoptionRefusal: windowModel.adoptionRefusal(from: coordinator.panelModel),
                   onCopy: onCopy,
                   onReplace: onReplace,
@@ -755,6 +776,10 @@ private struct PanelHost: View {
                   onOpenInWindow: onOpenInWindow,
                   onRetry: { Task { await coordinator.retry() } },
                   onGrantPermission: onGrantPermission,
+                  // Read here, inside `body`, for the reason `settings` is: the controller
+                  // keeps one hosting view, so a value resolved at the call site would freeze.
+                  onOpenSettings: onOpenSettings,
+                  needsModelChoice: coordinator.needsModelChoice,
                   onSwitchOperation: onSwitchOperation,
                   onAnotherVariant: onAnotherVariant,
                   proofreadingLevel: settings.defaultProofreadingLevel,
@@ -812,12 +837,13 @@ private struct MenuContent: View {
     /// to re-run `.task`/`.onAppear` on every opening (it is cached and reused on some macOS
     /// versions and rebuilt on others), so that refresh would have been unreliable exactly
     /// when a user opens the menu to check. That trigger is dropped rather than shipped
-    /// silently broken; see `OllamaStatus.menuBarSymbol`'s doc comment for what does drive
+    /// silently broken; see `EngineStatus.menuBarSymbol`'s doc comment for what does drive
     /// the refresh instead.
-    let status: OllamaStatus
+    let status: EngineStatus
+    let engineName: String
 
     var body: some View {
-        Text(status.label)
+        Text(RussianCopy.engineStatus(status, engineName: engineName))
         Divider()
         Button("Открыть окно перевода") {
             openWindow(id: TranslatorApp.mainWindowID)

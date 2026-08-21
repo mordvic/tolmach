@@ -260,6 +260,42 @@ into another application, so every test here fakes the paste trigger — `Select
 | **The CI workflow's first run** | Written but never executed. Two things could be wrong and neither is knowable from here: whether `macos-15` ships an Xcode new enough for `swift-tools-version: 6.0` and `.swiftLanguageMode(.v6)`, and whether `ls -d /Applications/Xcode*.app \| sort -V \| tail -1` picks the right one on that image. If it fails, the fix is a pinned `xcode-version`, not a change to the package | `.github/workflows/ci.yml` |
 | ⇧⌘C and the drop target not fighting the `TextEditor` | Both are new on a pane that already owns the keyboard | `SourceEditor`, `.commands` |
 
+**Owed by `LMStudioKit` (2026-08-21, the engine wave's transport).** The module is pinned
+offline, and every property re-verified by mutation — but a transport's real subject
+is a server, and `swift test` never opens a socket. Everything below was read off the live
+server *by hand* on 2026-08-21 or is documented behaviour this code now depends on; none of it
+is exercised by anything that runs in CI.
+
+| What to check | Why it needs a live server | Code |
+|---|---|---|
+| **Ollama's unload round trip** | The body is built and pinned (empty message list, `keep_alive` as a JSON zero), and the behaviour is documented — «if the messages array is empty and the `keep_alive` parameter is set to `0`, a model will be unloaded», answering `done_reason: "unload"`. It has never been sent: at the time it was written this install had no resident model, and loading 17.4 GB to watch it unload was not worth doing unasked | `OllamaClient.unload(model:)`, `OllamaUnloadBody` |
+| **An `error` event arriving mid-stream** | The one path that turns a partial translation into a thrown error, and the hardest to provoke: the request has to succeed, start streaming, and then fail. The reader is pinned against the documented payload — which does carry a top-level `"type":"error"`, checked against the parameter table — but no such frame has been observed | `LMStudioEventReader.events(for:)` |
+| **A real download, polled to completion** | `already_downloaded`, `paused`, `completed` and `failed` are pinned at the parser. What is unexercised is the loop around it: one poll a second, the job id in the path, and the stream finishing rather than spinning. Provoking it means downloading a model | `LMStudioClient.download(model:)` |
+| **A 401 from «Require Authentication»** | Authentication was measured *off* (HTTP 200 with no header), so the mapping to «switch it off in Developer → Server Settings» has never been produced by a real refusal | `LMStudioErrorParser.parse(body:status:)` |
+| **Whether an explicitly loaded model survives the 60-minute idle TTL** | Documented for `lms load` («no TTL, remains loaded until you manually unload»), and `/api/v1/models/load` takes no `ttl` field — but observing it costs an hour of waiting, so warm-up's promise of a resident model rests on documentation rather than on measurement | `LMStudioClient.load(model:)` |
+| **`qwen/qwen3.8-27b` under `reasoning: "off"`** | The separation of trace from answer is measured on `gpt-oss-20b` (16 `reasoning.delta` events, 0 characters of trace in the message). The model that reasons at `xhigh` by default has not been asked to be silent | `ReasoningChoice`, `LMStudioEventReader` |
+
+**Owed by the engine switch's app layer and panes (2026-08-21).** Everything below is drawn, and
+nothing in this environment can see a drawn thing. The rules behind each are unit-tested; that
+they *look* right, fit, and behave under a hand is what a person still owes.
+
+| What to check | Why it needs eyes | Code |
+|---|---|---|
+| «Модели» at 560 × 480 with the engine picker and the port field added | The pane carried seven sections before this wave and `OPEN-ITEMS` already recorded that nobody had checked whether five fit. It now gains two controls in the first section and, on LM Studio, loses one section — so the count is 7 on Ollama and 6 on LM Studio, and neither has been seen | `SettingsModelsView.swift`, `settingsPane()` |
+| The «Выгрузить» button in a resident model's row | Its rule is tested (`isResident`, and that a failure surfaces rather than reporting success) and its placement is not: it sits inside a `LabeledContent`'s trailing content beside the size, which is the tightest horizontal space in the pane | `SettingsModelsView.swift`, `ModelsViewModel.unload` |
+| «Открыть LM Studio» appearing only while the engine is silent, and only when the app is installed | `EngineApplication.url(for:)` answers from `NSWorkspace`, which a test process can call but cannot verify against what a user has installed — and for Ollama the ordinary case is a Homebrew binary with no bundle at all, so the button should simply not appear | `EngineApplication.swift`, `SettingsModelsView.swift` |
+| The panel's «Модель для перевода не выбрана» prompt and its «Настройки» button | The one surface with no picker beside it. Two things unverified: that the sentence is not cut at the panel's 300 pt floor — the same defect the permission prompt records — and that `NSApp.sendAction(Selector(("showSettingsWindow:")))` actually opens the settings window from a `.nonactivatingPanel` that is key but whose app is not active | `PanelView.modelChoicePrompt`, `TranslatorApp`'s `onOpenSettings` |
+| Switching the engine with the settings window open | Every model setting answers per engine and the dependency is registered by reading `engine` inside each getter. The values are tested; whether the *pickers* redraw immediately is an observation about SwiftUI's tracking that only a running app can make | `AppSettings`, `SettingsModelsView` |
+| «Длина рассуждения» appearing for `openai/gpt-oss-20b` and not for `qwen/qwen3.8-27b` | The rule is tested against synthetic capability lists; that the row appears and disappears as the picker above it moves has not been watched | `ModelsViewModel.showsReasoningLength(for:)` |
+| The port field accepting and rejecting sensibly | It is a `TextField` over an `Int` with `.number.grouping(.never)`; what a user typing letters into it sees is a platform behaviour nothing here pins | `SettingsModelsView.swift` |
+
+Accepted rather than owed: **`ModelPolicy.blacklist` and the think tables match no LM Studio
+name.** `gemma3n`, `qwen3:30b` and `gpt-oss` are Ollama tags, and LM Studio's identifiers are
+publisher-qualified (`openai/gpt-oss-20b`), so a blacklisted model carries no warning on that
+движок. Extending the tables by guesswork would put a *false* warning beside a model nobody
+measured, which is worse; the reasoning tables are not needed there at all, because the server
+states what it accepts. See `docs/design/specs/2026-08-21-model-engine-switch-design.md` §4.
+
 **Owed by the UI redesign, Task 13 — the menu bar glyph and status row.** The whole visible
 result of this task is unobserved: it is a menu-bar icon and a new first row of menu text, and
 nothing in this environment can see either.

@@ -465,3 +465,42 @@ pays the whole system prompt — 255 tokens against the native prompt's 203 — 
 that prompt is a live cost there in a way it is not on aya.
 → `Sources/acceptance/main.swift` (`RunConfiguration.gatesTTFT`), `PromptBuilder.swift`,
 `GlossaryMerge.forPrompt`
+
+
+---
+
+## LM Studio's native API (measured 2026-08-21, LM Studio 0.4.21)
+
+Three of these are places where the vendor's documentation and the running server disagree, and
+two of them would have shipped a client that parses nothing.
+
+- **An unknown JSON key is rejected, not ignored.** `{"ttl": 1800}` in a `/api/v1/chat` body
+  answers HTTP 400 `"Unrecognized key(s) in object: 'ttl'"`. The documentation says `ttl` works
+  «for requests targeting both the OpenAI compatibility API and LM Studio's REST API»; that is
+  true of `/api/v0/chat/completions` and not of this endpoint. Consequence: the request body is a
+  closed list of keys, and nothing may be sent «just in case».
+  → `Sources/LMStudioKit/LMStudioChatBody.swift`
+- **`message.delta` carries `content`, and `chat.end` nests everything under `result`.** The docs
+  site names the first field `content` and the context7 index of the same page names it `delta`;
+  the server says `content`. For `chat.end` the documentation shows flat `message` / `usage`
+  fields and the server nests them. Either mistake yields a client that streams nothing or
+  reports no statistics.
+  → `Sources/LMStudioKit/LMStudioEventReader.swift`
+- **An `error` event does not end the stream.** The documentation is explicit — «the final payload
+  will still be sent in `chat.end`» — so a reader that simply reads to the end returns a *partial
+  translation as a success*. Same hazard as `AsyncThrowingStream` finishing rather than throwing
+  on cancellation, and it gets the same treatment: an explicit throw. A payload carrying an error
+  object with no top-level `type` is treated as an error too, because the failure directions are
+  not equally bad.
+  → `Sources/LMStudioKit/SSEFrameParser.swift`, `LMStudioEventReader.swift`
+- **`reasoning: "off"` is HTTP 400 on a model that cannot be silenced**, which inverts Ollama's
+  asymmetry: there `false` is the value that is safe everywhere and `true` is what fails. Read
+  `capabilities.reasoning.allowed_options` and send only a member of it; treat «no capabilities»
+  and «lookup failed» as «send nothing».
+  → `Sources/LMStudioKit/ReasoningChoice.swift`, `docs/adr/0010`
+- **`store` defaults to `true`.** Every request would leave a copy of the translation in LM
+  Studio's own storage. → `docs/adr/0009`
+- **A loaded instance says nothing about who loaded it.** `/api/v1/models` reports `id` and
+  `config` per instance and no more, so nothing can distinguish a model this app loaded from one
+  another client is using. That is why there is no «выгрузить всё» anywhere in this codebase.
+  → `Sources/TranslatorApp/ModelsViewModel.swift`
