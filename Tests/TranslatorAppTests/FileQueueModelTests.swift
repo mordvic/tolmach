@@ -1897,3 +1897,49 @@ private final class SaveCall: @unchecked Sendable {
     #expect(queue.targetOverride == .de)
     #expect(queue.toneOverride == .technical)
 }
+
+// MARK: - The queue's model, and the eviction it would otherwise meet
+
+@MainActor @Test func aQueueWhoseModelDiffersPutsItInMemoryBeforeTheFirstFile() async {
+    // Protection from eviction rather than an optimisation. On LM Studio a model loaded on
+    // demand is exactly what Auto-Evict throws out when the next on-demand load arrives, so one
+    // ⌥⌘T on a third model during a long run would take the queue's model out of memory between
+    // files and every remaining файл would pay a cold load — 5.6–8.1 s each, measured.
+    let prepared = Prepared()
+    let client = QueueClient(replies: ["один"])
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "queue-prepare"))
+    settings.interactiveModel = "aya-expanse:8b"
+    settings.batchModel = "gpt-oss:20b"
+    let model = FileQueueModel(
+        translator: Translator(client: client), settings: settings, glossary: scratchGlossary(),
+        save: { source, _, _ in .saved(source.appendingPathExtension("ru")) },
+        saveAs: { _, url in .saved(url) },
+        prepareModel: { await prepared.add($0) },
+        pasteboard: NSPasteboard(name: .init("queue-prepare")))
+    model.add([queueJob("a.md", "first")])
+    await model.run()
+    #expect(await prepared.models == ["gpt-oss:20b"])
+}
+
+@MainActor @Test func aQueueUsingTheModelAlreadyWarmedAsksForNothing() async {
+    // The default state — `batchModel` nil, so the queue runs on the model warm-up already
+    // loaded. A second load would be a request for something that is already true.
+    let prepared = Prepared()
+    let client = QueueClient(replies: ["один"])
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "queue-prepare-same"))
+    settings.interactiveModel = "aya-expanse:8b"
+    let model = FileQueueModel(
+        translator: Translator(client: client), settings: settings, glossary: scratchGlossary(),
+        save: { source, _, _ in .saved(source.appendingPathExtension("ru")) },
+        saveAs: { _, url in .saved(url) },
+        prepareModel: { await prepared.add($0) },
+        pasteboard: NSPasteboard(name: .init("queue-prepare-same")))
+    model.add([queueJob("a.md", "first")])
+    await model.run()
+    #expect(await prepared.models.isEmpty)
+}
+
+private actor Prepared {
+    private(set) var models: [String] = []
+    func add(_ model: String) { models.append(model) }
+}

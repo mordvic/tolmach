@@ -50,14 +50,24 @@ private let gemma = ["off", "on"]                        // google/gemma-4-e4b, 
     #expect(ReasoningChoice.value(for: .level(.high), allowed: gemma) == "off")
 }
 
-@Test func aLevelTheModelLacksFallsToTheNearestQuieterOneRatherThanToSilence() {
-    // The real `qwen/qwen3.8-27b` list, which has `off` and levels but not `high`. A caller
-    // asking for `high` has said «a trace this long is acceptable», so answering `off` would
-    // contradict the request rather than approximate it — and would mean that moving «Длина
-    // рассуждения» from «Средне» to «Подробно» switched reasoning off altogether.
-    #expect(ReasoningChoice.value(for: .level(.high), allowed: qwen) == "medium")
-    #expect(ReasoningChoice.value(for: .level(.medium), allowed: qwen) == "medium")
-    // Nothing quieter than the request exists, so the quietest option on offer is the answer.
+@Test func aLevelIsACeilingSoSilenceStillWinsWhereTheModelOffersIt() {
+    // `.level(x)` means «as quiet as possible, no louder than x». On the real
+    // `qwen/qwen3.8-27b` list — which has both `off` and levels — that is silence, whatever
+    // level the ceiling names.
+    for level in ThinkRequest.Level.allCases {
+        #expect(ReasoningChoice.value(for: .level(level), allowed: qwen) == "off")
+    }
+    // The contradiction a review worried about — «Подробно» switching reasoning off — is
+    // prevented by the pane, which draws that control only for a model offering levels and no
+    // `off`. gpt-oss is that model, and there the ceiling is what is sent.
+    #expect(ReasoningChoice.value(for: .level(.high), allowed: gptOss) == "high")
+}
+
+@Test func aCeilingTheModelLacksFallsToTheLoudestOptionStillUnderIt() {
+    // No `off`, and no `xhigh` on offer: the answer is the loudest level that still respects
+    // the ceiling, not the quietest available and not a level above it.
+    #expect(ReasoningChoice.value(for: .level(.high), allowed: ["low", "medium"]) == "medium")
+    // Nothing under the ceiling at all, so the quietest thing on offer is the answer.
     #expect(ReasoningChoice.value(for: .level(.low), allowed: ["medium", "high"]) == "medium")
 }
 

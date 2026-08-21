@@ -102,10 +102,11 @@ struct MainWindowView: View {
     /// Plain `let`, not `@Bindable`: nothing here binds to the store, it is only read
     /// (`lastProblem`) and messaged (`mute`/`save`). Observation still tracks the reads.
     let glossary: GlossaryStore
-    /// The value, not the `OllamaStatusModel`. The window only reads the status; the app
+    /// The value, not the `EngineStatusModel`. The window only reads the status; the app
     /// owns the model and the refresh schedule.
-    let status: OllamaStatus
-    /// Refreshes `OllamaStatusModel` whenever this window's `state` moves to anything that is
+    let status: EngineStatus
+    let engineName: String
+    /// Refreshes `EngineStatusModel` whenever this window's `state` moves to anything that is
     /// not `.running` — the window's own half of the "after a translation attempt" trigger;
     /// `PanelHost` covers the hotkey half. That guard is deliberately wider than "a run
     /// settled": `swapLanguages()` and `adopt(from:)` both write `state` without a run having
@@ -231,7 +232,7 @@ struct MainWindowView: View {
                                 font: settings.contentFont)
             }
             Divider()
-            RunStatusBar(model: model, status: status,
+            RunStatusBar(model: model, status: status, engineName: engineName,
                          queue: mode == .files ? queue : nil,
                          glossaryProblem: glossary.lastProblem,
                          onMute: mute,

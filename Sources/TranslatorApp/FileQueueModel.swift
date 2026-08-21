@@ -109,15 +109,25 @@ final class FileQueueModel {
     /// `markInterrupted`, which is the one path with no `TranslationOutcome` to ask.
     private var termsWait: TimeInterval = 0
 
+    /// Puts the queue's model in memory before the first файл, when that model is not the one
+    /// already warmed at launch.
+    ///
+    /// Injected rather than reached for, like `save`: a test runs a whole queue without a
+    /// server, and this is the only part of a run that is about memory rather than about
+    /// translating. Nil in every test that does not care.
+    private let prepareModel: (@Sendable (String) async -> Void)?
+
     init(translator: Translator, settings: AppSettings, glossary: GlossaryStore,
          save: @escaping @Sendable (URL, String, Language) async -> SaveOutcome,
          saveAs: @escaping @Sendable (String, URL) async -> SaveOutcome,
+         prepareModel: (@Sendable (String) async -> Void)? = nil,
          pasteboard: NSPasteboard = .general) {
         self.translator = translator
         self.settings = settings
         self.glossary = glossary
         self.save = save
         self.saveAs = saveAs
+        self.prepareModel = prepareModel
         self.pasteboard = pasteboard
     }
 
@@ -444,6 +454,20 @@ final class FileQueueModel {
         if !resuming { suppressTermsForThisRun = false }
         cancelled = false
         defer { isRunning = false }
+
+        // The queue's model is put in memory **before** the first файл, and only when it is not
+        // the model warm-up already loaded.
+        //
+        // This is not an optimisation, it is protection from eviction. On LM Studio a model
+        // loaded on demand is exactly the kind Auto-Evict throws out when the next on-demand
+        // load arrives (measured 2026-08-21: an explicitly loaded model was *not* evicted, a
+        // JIT-loaded one is the case the setting exists for). So one ⌥⌘T on a third model
+        // during a long run would take the queue's model out of memory between files, and every
+        // remaining файл would pay a cold load — 5.6–8.1 s each on this machine. Loading it
+        // explicitly puts it outside that reach.
+        if let prepareModel, settings.batchModelDiffersFromInteractive {
+            await prepareModel(settings.resolvedBatchModel)
+        }
 
         // The work list is re-asked after every pass, but never for a задание **this run**
         // has already attempted. Both halves are load-bearing, and each closes the failure

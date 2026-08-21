@@ -17,7 +17,8 @@ struct SettingsModelsView: View {
     /// `OllamaStatusModel` already backs the main window's status line, and a second probe
     /// on a second timer would show two answers about the one thing Ollama is or is not
     /// doing.
-    let status: OllamaStatus
+    let status: EngineStatus
+    let engineName: String
     var onRefresh: () async -> Void
 
     /// The text of the download field is UI state with no meaning outside this pane, so it
@@ -32,7 +33,7 @@ struct SettingsModelsView: View {
         Form {
             Section("Ollama") {
                 LabeledContent("Состояние") {
-                    Label(status.label, systemImage: status.isHealthy
+                    Label(RussianCopy.engineStatus(status, engineName: engineName), systemImage: status.isHealthy
                           ? "checkmark.circle" : "exclamationmark.triangle.fill")
                         // `StatusColour`, like every other status hue in the app. This row
                         // was missed when the three colours were spelled: on a white grouped

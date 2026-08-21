@@ -6,11 +6,11 @@ import TranslationCore
 
 /// Three states rather than a `Bool`, because «this model is not installed» and «I could
 /// not ask» send the user to different places: the first to the download field below, the
-/// second to starting Ollama. An unreachable server answers with an empty list, so a
-/// two-state answer would report every model as missing the moment Ollama stops.
+/// second to starting the engine. An unreachable server answers with an empty list, so a
+/// two-state answer would report every model as missing the moment the engine stops.
 enum ModelAvailability: Equatable { case installed, notInstalled, unknown }
 
-/// `@MainActor` for the same reason `OllamaStatusModel` is: every mutation here happens
+/// `@MainActor` for the same reason `EngineStatusModel` is: every mutation here happens
 /// after an `await` on the probe or the pull stream, and without actor isolation those
 /// assignments would resume on a cooperative-pool thread with SwiftUI observing from the
 /// main one.
@@ -19,16 +19,16 @@ enum ModelAvailability: Equatable { case installed, notInstalled, unknown }
 final class ModelsViewModel {
     typealias Puller = @Sendable (String) -> AsyncThrowingStream<PullProgress, Error>
 
-    private let probe: OllamaProbe
+    private let probe: EngineProbe
     private let puller: Puller
 
-    var installed: [OllamaModel] = []
+    var installed: [EngineModel] = []
 
     /// The names alone, for the picker and for `availability(of:)`. A computed property
     /// rather than a second stored one, so the two cannot fall out of step.
     var installedNames: [String] { installed.map(\.name) }
 
-    /// Which installed models Ollama currently holds in memory. Read from `/api/ps` on the
+    /// Which installed models the engine currently holds in memory. Read on the
     /// same reload as the installed list, so the two describe the same moment.
     var resident: [String] = []
 
@@ -46,8 +46,7 @@ final class ModelsViewModel {
     /// out from under the other.
     private(set) var isPulling = false
 
-    init(probe: OllamaProbe = LiveOllamaProbe(),
-         puller: @escaping Puller = { model in OllamaClient().pull(model: model) }) {
+    init(probe: EngineProbe, puller: @escaping Puller) {
         self.probe = probe
         self.puller = puller
     }

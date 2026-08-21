@@ -12,7 +12,10 @@ import TranslationCore
 /// or not it was being read.
 struct RunStatusBar: View {
     let model: TranslationViewModel
-    let status: OllamaStatus
+    let status: EngineStatus
+    /// The engine's name, so the status line needs nothing from this view about which
+    /// server it is describing. See `RussianCopy.engineStatus`.
+    let engineName: String
     /// Non-nil when the window is showing «Файлы». The bar then reports the queue rather
     /// than the text model — one row, two sources, chosen here so neither pane has to grow
     /// a status bar of its own.
@@ -180,7 +183,7 @@ struct RunStatusBar: View {
                 // «Текст» branch has always spelled it.
                 Text(summary).font(.caption).foregroundStyle(.secondary)
             } else {
-                Text(self.status.label).font(.caption).foregroundStyle(.secondary)
+                Text(RussianCopy.engineStatus(self.status, engineName: self.engineName)).font(.caption).foregroundStyle(.secondary)
             }
         } else {
             textModeLine
@@ -190,7 +193,7 @@ struct RunStatusBar: View {
     @ViewBuilder private var textModeLine: some View {
         switch model.state {
         case .idle:
-            Text(status.label).font(.caption).foregroundStyle(.secondary)
+            Text(RussianCopy.engineStatus(status, engineName: engineName)).font(.caption).foregroundStyle(.secondary)
         case .running:
             if model.isAwaitingTerms {
                 Label("Жду ваших правок…", systemImage: "square.and.pencil")

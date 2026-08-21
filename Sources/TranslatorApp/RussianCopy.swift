@@ -131,6 +131,48 @@ enum RussianCopy {
     ///
     /// The count's sign is irrelevant to the grammar, so the magnitude decides. Taking
     /// `% 100` before `abs` keeps `Int.min` from overflowing.
+    /// The engine's own name, untranslated: both are proper nouns, and an app that wrote
+    /// «Оллама» would be inventing a spelling nobody else uses.
+    static func engineName(_ engine: ModelEngine) -> String {
+        switch engine {
+        case .ollama: "Ollama"
+        case .lmStudio: "LM Studio"
+        }
+    }
+
+    /// The status line, in one form for every engine.
+    ///
+    /// «Нет связи с LM Studio» rather than «LM Studio не запущен», and that is a decision about
+    /// grammar rather than tone: the previous wording, «Ollama не запущена», agrees with its
+    /// subject, so a template would have to inflect for each name it is given — and a template
+    /// that inflects is a template that will be wrong for the next name. This form takes the
+    /// name in the genitive and needs nothing from it.
+    static func engineStatus(_ status: EngineStatus, engineName: String) -> String {
+        switch status {
+        case .unknown: "Проверяю \(engineName)…"
+        case .notAnswering: "Нет связи с \(engineName)"
+        case .running(true): "\(engineName) работает, модель в памяти"
+        case .running(false): "\(engineName) работает, модель не загружена"
+        }
+    }
+
+    /// What to say when the engine refuses. Keyed on the machine-readable code rather than on
+    /// the server's prose, which is English and free to be rephrased.
+    static func lmStudioRefusal(code: String?, message: String) -> String {
+        switch code {
+        case "model_not_found":
+            "LM Studio не знает такой модели. Проверьте «Модель для перевода» в настройках."
+        case "invalid_value":
+            "LM Studio отклонил параметр запроса: \(message)"
+        case "unrecognized_keys":
+            "LM Studio отклонил неизвестное поле запроса: \(message)"
+        case "internal_error":
+            "Внутренняя ошибка LM Studio: \(message)"
+        default:
+            "LM Studio отклонил запрос: \(message)"
+        }
+    }
+
     static func plural(_ count: Int, _ one: String, _ few: String, _ many: String) -> String {
         let lastTwo = abs(count % 100)
         if (11...14).contains(lastTwo) { return many }
@@ -292,6 +334,13 @@ enum RussianCopy {
         "removing unused layers": "Убираю неиспользуемые слои…",
         "removing any unused layers": "Убираю неиспользуемые слои…",
         "success": "Готово.",
+        // LM Studio's five, beside Ollama's rather than instead of them: this function
+        // translates the *server's* own words, and there are two servers now.
+        "downloading": "Скачиваю…",
+        "paused": "Скачивание приостановлено.",
+        "completed": "Готово.",
+        "already_downloaded": "Уже установлена.",
+        "failed": "Скачать не удалось.",
     ]
 
     static func pullStatus(_ raw: String) -> String {

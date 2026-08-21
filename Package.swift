@@ -25,9 +25,9 @@ let package = Package(
         // would land in a `LocalTranslator_TranslatorApp.bundle` that the assembled app does
         // not look inside, and `Bundle.main.localizations` — the whole reason the directory
         // exists — would still answer empty.
-        .executableTarget(name: "TranslatorApp", dependencies: ["TranslationCore", "OllamaKit", "TextCapture"],
+        .executableTarget(name: "TranslatorApp", dependencies: ["TranslationCore", "OllamaKit", "LMStudioKit", "TextCapture"],
                           exclude: ["Info.plist", "Resources"], swiftSettings: [.swiftLanguageMode(.v6)]),
-        .testTarget(name: "TranslatorAppTests", dependencies: ["TranslatorApp", "TranslationCore", "OllamaKit", "TextCapture"],
+        .testTarget(name: "TranslatorAppTests", dependencies: ["TranslatorApp", "TranslationCore", "OllamaKit", "LMStudioKit", "TextCapture"],
                     swiftSettings: [.swiftLanguageMode(.v6)]),
         // Depends on no product: it reads Package.swift and the documents as text, and exists
         // so that documentation drift fails the build the way a broken test does.

@@ -340,3 +340,48 @@ func pullStatusesAreShownInRussian(raw: String, expected: String) {
     // row rendering as its raw English value.
     #expect(Set(ThinkRequest.Level.allCases.map(\.russianName)).count == ThinkRequest.Level.allCases.count)
 }
+
+// MARK: - The engine's own words
+
+@Test func everyEngineHasANameAndAStatusLineForEveryState() {
+    // Exhaustive over both dimensions on purpose: a new engine or a new status must not reach
+    // the user as an empty caption.
+    for engine in ModelEngine.allCases {
+        let name = RussianCopy.engineName(engine)
+        #expect(!name.isEmpty)
+        for status in [EngineStatus.unknown, .notAnswering,
+                       .running(modelResident: true), .running(modelResident: false)] {
+            let line = RussianCopy.engineStatus(status, engineName: name)
+            #expect(line.contains(name), "«\(line)» does not say which engine it is about")
+            #expect(!line.isEmpty)
+        }
+    }
+}
+
+@Test func theStatusLineNeedsNothingFromTheEnginesNameGrammatically() {
+    // The reason for «Нет связи с …» rather than «… не запущена»: the old wording agreed with
+    // its subject, so a template would have to inflect for each name it is given — and a
+    // template that inflects is one that will be wrong for the next name.
+    #expect(RussianCopy.engineStatus(.notAnswering, engineName: "Ollama") == "Нет связи с Ollama")
+    #expect(RussianCopy.engineStatus(.notAnswering, engineName: "LM Studio") == "Нет связи с LM Studio")
+}
+
+@Test func aRefusalIsTranslatedByItsCodeAndNotByItsProse() {
+    // The server's message is English and free to be rephrased, so the code is what the copy
+    // keys on. An unknown code still reaches the user with the server's own words rather than
+    // as silence.
+    #expect(RussianCopy.lmStudioRefusal(code: "model_not_found", message: "Invalid model identifier")
+        .contains("не знает такой модели"))
+    let unknown = RussianCopy.lmStudioRefusal(code: "something_new", message: "боком вышло")
+    #expect(unknown.contains("боком вышло"))
+}
+
+@Test func bothEnginesDownloadStatusesReachTheUserInRussian() {
+    // LM Studio's five sit beside Ollama's rather than instead of them: this function
+    // translates the server's own words, and there are two servers now.
+    for status in ["downloading", "paused", "completed", "already_downloaded", "failed"] {
+        let russian = RussianCopy.pullStatus(status)
+        #expect(russian != status, "«\(status)» still reaches the user in English")
+    }
+    #expect(RussianCopy.pullStatus("verifying sha256 digest") == "Проверяю контрольную сумму…")
+}

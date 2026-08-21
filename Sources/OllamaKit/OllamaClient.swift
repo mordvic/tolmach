@@ -168,6 +168,17 @@ public struct PullProgress: Sendable, Equatable {
     public let status: String
     public let completed: Int64
     public let total: Int64
+
+    /// Public because the app's engine router builds one of these from the *other* engine's
+    /// progress value: `LMStudioKit` deliberately does not depend on this module, so the two
+    /// vocabularies meet in the app layer, which is the one place that knows which engine is
+    /// selected. Before that, this initialiser was internal and only `@testable import` could
+    /// reach it.
+    public init(status: String, completed: Int64, total: Int64) {
+        self.status = status
+        self.completed = completed
+        self.total = total
+    }
     /// Nil when the server sent no byte counts — many pull lines are bare status
     /// updates, and a fabricated 0% would make the bar jump backwards.
     public var fraction: Double? {

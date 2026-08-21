@@ -16,7 +16,7 @@ private func makeModel(installed: [String] = [],
                        puller: @escaping ModelsViewModel.Puller = silentPuller()) -> ModelsViewModel {
     // Callers only ever care about names here; the size-carrying tests build `StubProbe`
     // directly instead of going through this helper.
-    let models = installed.map { OllamaModel(name: $0, sizeBytes: 0) }
+    let models = installed.map { EngineModel(name: $0, sizeBytes: 0) }
     return ModelsViewModel(probe: StubProbe(installed: models, failure: failure), puller: puller)
 }
 
@@ -232,7 +232,7 @@ private func makeModel(installed: [String] = [],
     #expect(model.availability(of: "gpt-oss:20b") == .unknown)
 }
 
-/// `OllamaProbe` is `Sendable` and `installedModels()` is `async`, so the switchable flag
+/// `EngineProbe` is `Sendable` and `installedModels()` is `async`, so the switchable flag
 /// cannot be a plain `var` on a struct. Access is confined to the main actor by the tests
 /// that use it, which is what `@unchecked` is asserting here.
 ///
@@ -243,12 +243,12 @@ private func makeModel(installed: [String] = [],
 /// afterwards changes nothing the view model sees. That gap is exactly what let
 /// `aFailedReloadStopsClaimingAnythingIsInMemory` pass whether or not `reload()`'s `catch`
 /// actually cleared `resident` — see that test's own comment.
-private final class FlakyProbe: OllamaProbe, @unchecked Sendable {
+private final class FlakyProbe: EngineProbe, @unchecked Sendable {
     var fail = false
     var resident: [String] = []
-    func installedModels() async throws -> [OllamaModel] {
+    func installedModels() async throws -> [EngineModel] {
         if fail { throw OllamaError.notRunning }
-        return [OllamaModel(name: "gpt-oss:20b", sizeBytes: 0)]
+        return [EngineModel(name: "gpt-oss:20b", sizeBytes: 0)]
     }
     func residentModels() async throws -> [String] {
         if fail { throw OllamaError.notRunning }
@@ -261,7 +261,7 @@ private final class FlakyProbe: OllamaProbe, @unchecked Sendable {
     // The size is what makes the list worth showing: a user deciding whether to pull a
     // second model is deciding about disk space. It exists in `OllamaModel` already and
     // used to be discarded at the protocol boundary.
-    let probe = StubProbe(installed: [OllamaModel(name: "aya-expanse:8b", sizeBytes: 5_100_273_664)])
+    let probe = StubProbe(installed: [EngineModel(name: "aya-expanse:8b", sizeBytes: 5_100_273_664)])
     let model = ModelsViewModel(probe: probe, puller: { _ in .init { $0.finish() } })
     await model.reload()
     #expect(model.installed.first?.sizeBytes == 5_100_273_664)

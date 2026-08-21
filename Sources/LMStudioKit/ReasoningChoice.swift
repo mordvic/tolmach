@@ -33,16 +33,27 @@ enum ReasoningChoice {
         case .off:
             return quietestFirst.first(where: allowed.contains)
         case let .level(level):
+            // `.level(x)` reads «as quiet as this model allows, and **no louder than x** if it
+            // cannot be silenced». So silence still wins where it is on offer, and the level is
+            // a *ceiling* rather than a target.
+            //
+            // That is the app's only intent here — the setting behind it is «Отключать
+            // рассуждение модели», and «Длина рассуждения» exists precisely for the models
+            // that cannot honour it. An earlier revision of this function read the level as a
+            // target, on a review's finding that a request for `high` against
+            // `qwen/qwen3.8-27b` came back `off`. Building the app layer showed the finding had
+            // the right defect and the wrong owner: with a target, the app could not express
+            // «quiet, but no louder than x» without knowing each model's capabilities, which
+            // live here rather than there. The contradiction the review found is settled where
+            // it belongs — the pane draws «Длина рассуждения» only for a model that offers
+            // levels and no `off`, so a model that can be silenced never shows a control whose
+            // value it would then ignore.
+            if allowed.contains("off") { return "off" }
             if allowed.contains(level.rawValue) { return level.rawValue }
-            // The nearest level **not louder** than the one asked for, and only then the
-            // quietest thing on offer. A caller reaching this case has said «a trace this long
-            // is acceptable», so answering with silence contradicts the request rather than
-            // approximating it: measured against the real `qwen/qwen3.8-27b` list
-            // — `["off","low","medium","xhigh","on"]` — a request for `high` used to come back
-            // `off`, i.e. moving «Длина рассуждения» from «Средне» to «Подробно» switched
-            // reasoning off altogether.
-            let quieterThanAsked = quietestFirst.prefix { $0 != level.rawValue }
-            return quieterThanAsked.last(where: allowed.contains)
+            // Nothing at the ceiling, so the loudest option still under it — and failing that,
+            // the quietest on offer.
+            let underTheCeiling = quietestFirst.prefix { $0 != level.rawValue }
+            return underTheCeiling.last(where: allowed.contains)
                 ?? quietestFirst.first(where: allowed.contains)
         }
     }
