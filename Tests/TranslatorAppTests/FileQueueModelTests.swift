@@ -123,6 +123,36 @@ func queueJob(_ name: String, _ text: String) -> FileJob {
     FileJob(url: URL(fileURLWithPath: "/tmp/\(name)"), text: text, partsTotal: 1)
 }
 
+/// Polls a condition by yielding, bounded by a **deadline** rather than by a count of yields.
+///
+/// The distinction cost a red CI run to notice. These waits were written as
+/// `for _ in 0..<20_000 { … await Task.yield() }`, which spends a budget of *scheduler turns* —
+/// and a turn is not a unit of time. On a machine with fewer cores and more work in flight,
+/// twenty thousand turns can pass while the task being waited on has not run at all. Measured:
+/// `theStatusLineCountsOnlyWhatActuallyHappened` recorded «the model was never asked» on a
+/// GitHub runner at 809 tests, while the same commit passed locally twice, once with ten busy
+/// shells competing for the cores.
+///
+/// **Yielding rather than sleeping**, unlike the sibling helpers in `HotkeyCoordinatorTests` and
+/// `TranslationViewModelTests`, and that is load-bearing here: the doc comments below promise
+/// that the gap between observing a state and the caller's `cancel()` is a single yield, so a
+/// paced reply cannot land inside it. A 2 ms sleep loop would break that promise.
+///
+/// Ten seconds is not a performance claim — every one of these is satisfied in milliseconds when
+/// the code works. It is the point past which «not yet» has become «never», kept far from the
+/// real duration because a bound near it is the bound that fails on someone else's machine.
+@MainActor
+private func yieldUntil(_ condition: () -> Bool, within seconds: Double = 10) async -> Bool {
+    let deadline = ContinuousClock.now + .seconds(seconds)
+    while ContinuousClock.now < deadline {
+        if condition() { return true }
+        await Task.yield()
+    }
+    // Checked once more past the deadline: the last yield may be what made it true, and failing
+    // in that window would be reporting the clock rather than the code.
+    return condition()
+}
+
 /// Waits until the model has actually been asked for something.
 ///
 /// Stronger than `waitUntilRunning`, which returns as soon as the row's state flips —
@@ -130,10 +160,7 @@ func queueJob(_ name: String, _ text: String) -> FileJob {
 /// the one intended.
 @MainActor
 private func waitUntilCalled(_ client: QueueClient, _ count: Int = 1) async {
-    for _ in 0..<20_000 {
-        if client.callCount >= count { return }
-        await Task.yield()
-    }
+    if await yieldUntil({ client.callCount >= count }) { return }
     Issue.record("the model was never asked")
 }
 
@@ -145,10 +172,7 @@ private func waitUntilCalled(_ client: QueueClient, _ count: Int = 1) async {
 /// interrupted with nothing in it, which is a different case entirely.
 @MainActor
 private func waitUntilStreaming(_ model: FileQueueModel) async {
-    for _ in 0..<20_000 {
-        if !model.streamingText.isEmpty { return }
-        await Task.yield()
-    }
+    if await yieldUntil({ !model.streamingText.isEmpty }) { return }
     Issue.record("no text ever reached the pane")
 }
 
@@ -172,10 +196,7 @@ private func waitUntilStreaming(_ model: FileQueueModel) async {
 @MainActor
 private func waitUntilRunning(_ model: FileQueueModel, _ index: Int,
                               _ comment: Comment = "the задание never started") async {
-    for _ in 0..<20_000 {
-        if case .running = model.jobs[index].state { return }
-        await Task.yield()
-    }
+    if await yieldUntil({ if case .running = model.jobs[index].state { true } else { false } }) { return }
     Issue.record(comment)
 }
 
@@ -1749,9 +1770,8 @@ private final class SaveCall: @unchecked Sendable {
     let run = Task { await model.run() }
     // The second файл running *and* something of its own already on the stream — the exact
     // window in which a selection can be read while another задание streams.
-    for _ in 0..<20_000 {
-        if case .running = model.jobs[1].state, !model.streamingText.isEmpty { break }
-        await Task.yield()
+    _ = await yieldUntil {
+        if case .running = model.jobs[1].state, !model.streamingText.isEmpty { true } else { false }
     }
     model.selection = model.jobs[0].id
     let shown = model.selectedText
@@ -1777,9 +1797,8 @@ private final class SaveCall: @unchecked Sendable {
     model.add([queueJob("a.md", "first"), queueJob("b.md", "second"), queueJob("c.md", "third")])
 
     let run = Task { await model.run() }
-    for _ in 0..<20_000 {
-        if case .running = model.jobs[1].state, !model.streamingText.isEmpty { break }
-        await Task.yield()
+    _ = await yieldUntil {
+        if case .running = model.jobs[1].state, !model.streamingText.isEmpty { true } else { false }
     }
     // `a.md` goes; `b.md` is now at index 0 and `c.md` at index 1.
     model.jobs.remove(at: 0)
