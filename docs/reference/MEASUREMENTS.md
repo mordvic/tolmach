@@ -67,6 +67,24 @@ From the throwaway prototype that preceded the engine. See the note below about 
 | **255 / 203** tokens; **354 / 634 / 1382** ms cold, **27 / 85 / 180** ms cached | The app's translation system prompt against TranslateGemma's native one, and what prefilling the app's prompt costs on `aya-expanse:8b` / `translategemma:12b` / `:27b` cold and on a byte-identical repeat. Why the TTFT gate follows the policy model. | `docs/reference/PLATFORM-TRAPS.md`, `Sources/acceptance/main.swift` |
 | **379 → 101 ms**, **672 → 672 ms** | Second chunk's prefill when the stable document-glossary block precedes the per-chunk user block instead of following it — on aya-expanse:8b (prefix cache by common prefix) and translategemma:12b (all-or-nothing: same system prompt with a new text costs a full cold prefill, 474 vs 477 ms). Why `GlossaryMerge.forPrompt` orders the prompt document-first, and why that buys nothing on TranslateGemma. | `GlossaryMerge.forPrompt`, `docs/reference/PLATFORM-TRAPS.md` |
 
+---
+
+## Durable — LM Studio (measured 2026-08-21, LM Studio 0.4.21, this machine)
+
+| Figure | Meaning | Owner |
+|---|---|---|
+| `off / low / medium / xhigh / on` vs `low / medium / high` vs **nothing** | What three installed models answer for `capabilities.reasoning.allowed_options` — `qwen/qwen3.8-27b` (default `xhigh`), `openai/gpt-oss-20b` (**no `off`**), and `qwen3.5-27b`, which reports no capabilities at all. The first is why «Отключать рассуждение» earns its default here more than on Ollama; the second is why `off` cannot be sent blind; the third is why «not known» must mean «send nothing». | `ReasoningChoice.swift`, `docs/adr/0010` |
+| **HTTP 400** on `reasoning: "off"` | `openai/gpt-oss-20b` refusing the value that is safe on every Ollama model. The inversion this whole engine rests on. | `ReasoningChoice.swift` |
+| **HTTP 400** `unrecognized_keys` | `{"ttl": 1800}` in a `/api/v1/chat` body. An unknown key is rejected, not ignored — which is why the request body is a closed list and why residency is «loaded until unloaded». | `LMStudioChatBody.swift` |
+| **5.603 s** / **8.134 s** | Explicit load of `google/gemma-4-e4b` (8.97 GB) and `openai/gpt-oss-20b` (12.10 GB), both MLX. Against Ollama's ~2000 ms cold load: the engine where skipping the warm-up costs most, and the reason `Timeout.load` is pull-sized rather than probe-sized. | `LMStudioClient.Timeout.load` |
+| **both resident** | Auto-Evict exempting an explicitly loaded model: `gemma-4-e4b` loaded through `/api/v1/models/load`, then `gpt-oss-20b` JIT-loaded by a chat, and `/api/v1/models` reported both. This is what makes the file queue's explicit load worth doing. | `FileQueueModel.run`, `EngineRouter.warmUp` |
+| **10.19 GB → 0.37 GB** | Resident set before and after `POST /api/v1/models/unload`. What the «Выгрузить» button actually frees. | `EngineRouter.unload` |
+| **63 MB** vs **17.4 GB** | `ollama serve` holding no model, against one `translategemma:27b`. Why there is no «stop the server» button: the memory worth freeing is freed by unloading a model. | `EngineApplication.swift`, `docs/design/specs/2026-08-21-model-engine-switch-design.md` §3.3 |
+| **10.19 GB** vs **10.21 GB** | The same model loaded at `context_length` 131072 (its maximum, and the default) and at 8192. MLX allocates its KV cache lazily, so capping the context saves nothing — a hypothesis measurement killed before it became a setting. | design spec §2.3 |
+| **0.107 s** / **3.182 s** | Server-reported time to first token, `gemma-4-e4b` and `gpt-oss-20b` with `reasoning: low`. Recorded and **not used**: `docs/adr/0006` defines TTFT as the first *visible* emission, and the second figure fires while the trace is still streaming. | `LMStudioEventReader.swift` |
+
+---
+
 ### The prototype is not in this repository
 
 The model figures above came from a throwaway prototype that the design spec cites as

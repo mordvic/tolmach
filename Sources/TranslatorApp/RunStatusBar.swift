@@ -16,6 +16,9 @@ struct RunStatusBar: View {
     /// The engine's name, so the status line needs nothing from this view about which
     /// server it is describing. See `RussianCopy.engineStatus`.
     let engineName: String
+    /// Whether the selected engine has a model to translate with. False turns the idle line
+    /// into the one instruction that unblocks the window — see `RussianCopy.idleLine`.
+    let hasModel: Bool
     /// Non-nil when the window is showing «Файлы». The bar then reports the queue rather
     /// than the text model — one row, two sources, chosen here so neither pane has to grow
     /// a status bar of its own.
@@ -183,7 +186,7 @@ struct RunStatusBar: View {
                 // «Текст» branch has always spelled it.
                 Text(summary).font(.caption).foregroundStyle(.secondary)
             } else {
-                Text(RussianCopy.engineStatus(self.status, engineName: self.engineName)).font(.caption).foregroundStyle(.secondary)
+                Text(RussianCopy.idleLine(self.status, engineName: self.engineName, hasModel: self.hasModel)).font(.caption).foregroundStyle(.secondary)
             }
         } else {
             textModeLine
@@ -193,7 +196,7 @@ struct RunStatusBar: View {
     @ViewBuilder private var textModeLine: some View {
         switch model.state {
         case .idle:
-            Text(RussianCopy.engineStatus(status, engineName: engineName)).font(.caption).foregroundStyle(.secondary)
+            Text(RussianCopy.idleLine(status, engineName: engineName, hasModel: hasModel)).font(.caption).foregroundStyle(.secondary)
         case .running:
             if model.isAwaitingTerms {
                 Label("Жду ваших правок…", systemImage: "square.and.pencil")

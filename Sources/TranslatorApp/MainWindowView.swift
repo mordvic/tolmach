@@ -44,9 +44,15 @@ struct PrimaryAction {
     let canSwap: Bool
     let swap: () -> Void
 
+    /// - Parameter hasModel: whether the selected engine has a model to translate with. False
+    ///   only on an engine with no honest default — LM Studio, until someone chooses — and it
+    ///   disables starting in **both** modes, because neither can run without one. The window
+    ///   says which setting to fill in its status line; the panel, which has no picker beside
+    ///   it, offers the settings window instead.
     static func forMode(_ mode: SourceMode,
                         text: TranslationViewModel,
-                        queue: FileQueueModel) -> PrimaryAction {
+                        queue: FileQueueModel,
+                        hasModel: Bool = true) -> PrimaryAction {
         switch mode {
         case .text:
             PrimaryAction(
@@ -54,7 +60,7 @@ struct PrimaryAction {
                 // Not while the queue is running: one model lives in Ollama's memory, and
                 // the mode switch no longer stands between the user and a second run.
                 canStart: !text.sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    && !queue.isRunning,
+                    && !queue.isRunning && hasModel,
                 startTitle: text.operation == .proofread ? "Исправить" : "Перевести",
                 start: { await text.run() },
                 cancel: { text.cancel() },
@@ -73,7 +79,7 @@ struct PrimaryAction {
                 // promises this button and the stop-on-warnings pause cannot disagree, and
                 // a copy of the condition is how a seventh `FileJob.State` gets remembered
                 // in one place and forgotten in the other.
-                canStart: queue.hasWorkLeft && text.state != .running,
+                canStart: queue.hasWorkLeft && text.state != .running && hasModel,
                 // «Файлы» is translation-only — the queue never proofs — so unlike `.text`
                 // this title never varies with the text model's switch.
                 startTitle: "Перевести",
@@ -146,7 +152,9 @@ struct MainWindowView: View {
     @State private var presented: DocumentTermsRequest?
 
     /// Every mode-sensitive control in this window reads this one value.
-    private var action: PrimaryAction { .forMode(mode, text: model, queue: queue) }
+    private var action: PrimaryAction {
+        .forMode(mode, text: model, queue: queue, hasModel: !settings.hasNoTranslationModel)
+    }
 
     /// Looking is always allowed. **Starting** is what must not happen twice.
     ///
@@ -233,6 +241,7 @@ struct MainWindowView: View {
             }
             Divider()
             RunStatusBar(model: model, status: status, engineName: engineName,
+                         hasModel: !settings.hasNoTranslationModel,
                          queue: mode == .files ? queue : nil,
                          glossaryProblem: glossary.lastProblem,
                          onMute: mute,

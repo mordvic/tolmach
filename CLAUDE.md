@@ -4,8 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-«Толмач» (`LocalTranslator`) — a macOS translator running entirely on local LLMs through
-Ollama at `http://127.0.0.1:11434`. Text never leaves the machine. Three surfaces: a global
+«Толмач» (`LocalTranslator`) — a macOS translator running entirely on local LLMs, through
+**Ollama** (`127.0.0.1:11434`) or **LM Studio** (`127.0.0.1:1234`), chosen in «Модели» →
+«Движок» and defaulting to Ollama. Text never leaves the machine, and that is a property of the
+code rather than of a setting: only the port is configurable, the host is loopback in two places
+and nowhere else (`docs/adr/0009`). Three surfaces: a global
 hotkey that translates the current selection into a floating panel, a main window, and — in
 that window's «Файлы» mode — a queue of files translated one after another and written back
 to disk.
@@ -28,9 +31,11 @@ swiftc -O -o /tmp/tf Scripts/toolbar-fit.swift && /tmp/tf   # narrowest width th
 swiftc -O -o /tmp/tbh Scripts/toolbar-height.swift && /tmp/tbh   # what the toolbar band costs, per style
 swiftc -O -o /tmp/cf Scripts/content-font.swift && /tmp/cf   # every measurement behind «Шрифт текста»
 swiftc -O -o /tmp/vm Scripts/view-menu.swift && /tmp/vm   # which menu the размер items land in, and how ⌘+ is stored
-swift run translate-cli --to ru --tone technical "text"   # needs a live Ollama; reads stdin if no text
-swift run acceptance              # live-Ollama corpus run; MUST run from the package root (reads ./corpus)
+swift run translate-cli --to ru --tone technical "text"   # needs a live engine; reads stdin if no text
+swift run translate-cli --engine lmstudio --model qwen/qwen3.8-27b --to ru "text"   # the other engine
+swift run acceptance              # live corpus run; MUST run from the package root (reads ./corpus)
 swift run acceptance --model translategemma:12b --chunk 4000   # any installed model / the chunk budget you actually run
+swift run acceptance --engine lmstudio --model google/gemma-4-e4b   # the other engine; both gates go info-only
 ```
 
 No test count here on purpose: it went stale twice in one review cycle, and a number nothing
@@ -47,10 +52,12 @@ same hardware.
 `swift test` never touches the network. `translate-cli` and `acceptance` do — `acceptance` is
 the deliberately-not-in-CI harness that measures TTFT, markup integrity and term consistency
 against the thresholds in spec §10, and exits 1 on regression. **Its two gates are properties
-of `aya-expanse:8b`, and the harness says so on its first line**: the TTFT ceiling and the
-`known`/`known-limitation` sets apply only when that is the model under test. Under `--model`
-anything else, TTFT is printed `info only` and every markup diff is unaccepted — measured, not
-certified.
+of `aya-expanse:8b` on Ollama, and the harness says so on its first line**: the TTFT ceiling and
+the `known`/`known-limitation` sets apply only when that is the model *and* that is the engine.
+Under `--model` anything else, or `--engine lmstudio`, TTFT is printed `info only` and every
+markup diff is unaccepted — measured, not certified. `--think` is refused outright on
+`--engine lmstudio`: it exists to force a bare value past `ModelPolicy`, and there is no bare
+value to force where the server validates against the model's own capabilities.
 
 **There is CI, and it is the offline half only** (`.github/workflows/ci.yml`): build with
 tests, a gate that fails on any warning, then `swift test`. `acceptance` stays out for the
@@ -181,9 +188,16 @@ Facts that will bite you if you "tidy" them:
   reaches the prompt only under `.errorsAndStyle` — `PromptBuilder` enforces it and the
   UI disables the control. See `docs/design/specs/2026-08-10-proofreading-design.md`.
 
-### Ollama rules (empirical, non-negotiable)
+### Engine rules (empirical, non-negotiable)
 
-- `message.thinking` in a response is read and **discarded**.
+**There are two engines**, chosen by `AppSettings.engine` and defaulting to Ollama, so an
+existing install is unchanged until someone touches the switch. Everything in this section that
+names Ollama is about Ollama; the LM Studio half is below it, and the difference between them is
+not cosmetic — **the safe direction is inverted**. See
+`docs/design/specs/2026-08-21-model-engine-switch-design.md` and `docs/adr/0010`.
+
+- A model's reasoning is read and **discarded** on both — `message.thinking` on Ollama,
+  `reasoning.delta` events on LM Studio.
 - **In the app, whether the `think` parameter is sent, and what value, is decided per model by
   `ModelPolicy.thinkRequest(for:quiet:level:)` — never sent as a bare, unconditional value.**
   The trap is a property of a model, not of the protocol: `"think": false` genuinely silences
@@ -199,6 +213,11 @@ Facts that will bite you if you "tidy" them:
   `gpt-oss:20b` and nothing else here (15/441/889 characters of trace at 0.49/1.99/3.77 s to
   first token, warm — its only lever, since it ignores `false`); on `qwen3`/`gemma4` a level
   means no more than «on». The full table is in `docs/reference/PLATFORM-TRAPS.md`.
+- **«Длина рассуждения» is drawn from what the model allows, not from its name.**
+  `ModelsViewModel.showsReasoningLength(for:)` asks `ModelPolicy`'s prefix table on Ollama and
+  `allowed_options` on LM Studio, where no publisher-qualified identifier (`openai/gpt-oss-20b`)
+  matches that table. It is offered only for a model that has levels and **cannot** be silenced,
+  so the control and the «Отключать рассуждение модели» checkbox can never contradict each other.
 - **The controls are `AppSettings.quietThinking` plus `gptOssThinkingLevel`.** `quietThinking`
   defaults to **true** — a deliberate change to what the app does: Ollama enables thinking by
   default for a capable model, so the app was paying for a trace it discards whenever the
@@ -208,7 +227,28 @@ Facts that will bite you if you "tidy" them:
   stay outside it on purpose — a harness that followed a user setting would move its own
   baseline, and `translate-cli --think` exists precisely to force a bare value past the policy
   and re-take a measurement.
-- Ollama reports durations in nanoseconds; convert to ms at the client boundary.
+- Ollama reports durations in nanoseconds; convert to ms at the client boundary. LM Studio
+  reports seconds and a *rate* rather than a duration, so `LMStudioEventReader` inverts
+  `tokens_per_second` — leaving it at zero made a model generating 57.7 tokens a second report a
+  flat 0 through `ChatStats.tokensPerSecond`.
+- **On LM Studio, what to send about reasoning is read from the model, not guessed.**
+  `reasoning: "off"` is HTTP 400 on `openai/gpt-oss-20b` (measured 2026-08-21) — the exact
+  inverse of Ollama, where `false` is the safe value everywhere. `ReasoningChoice` sends only a
+  member of `capabilities.reasoning.allowed_options`; a model that reports no capabilities, and a
+  failed lookup, both send **no key at all**. `AppSettings.thinkRequest(for:)` is where the
+  per-engine decision is made, and on LM Studio it carries the user's chosen length as a
+  *ceiling*: `.level(x)` means «as quiet as this model allows, no louder than x».
+- **An unknown JSON key is rejected by LM Studio, not ignored** — `{"ttl": 1800}` answers HTTP
+  400 `unrecognized_keys`. So `LMStudioChatBody` is a closed list of keys, `keepAlive` never
+  reaches that wire, and residency there is «loaded until unloaded» rather than a duration:
+  `/api/v1/models/load` is what warm-up calls, because a chat JIT-loads and the next JIT load
+  evicts it (Auto-Evict exempts an explicit load — measured).
+- **`store: false` on every LM Studio request.** It defaults to `true`, i.e. the server keeps
+  every translation. `docs/adr/0009` is the decision, together with the rule that only the
+  *port* is settable and the host is loopback in code.
+- An `error` event mid-stream does **not** end LM Studio's stream — `chat.end` still follows — so
+  the reader turns it into a thrown error. A client that merely read to the end would return a
+  partial translation as a success, the same shape as the cancellation rule above.
 - `ModelPolicy` pins `aya-expanse:8b` for the interactive path (TTFT < 1 s is a hard requirement)
   and `gpt-oss:20b` for the background path, and carries a blacklist with measured reasons.
   Those reasons are English and reach `translate-cli`; the settings pane renders
@@ -248,9 +288,13 @@ Facts that will bite you if you "tidy" them:
   must copy that directory in **before** `codesign`, like the icon. `CommandGroup(replacing:)`
   empties a menu but does not remove it, so `pruneEmptyMenus()` takes away whatever is left
   with no items.
-- **Three** models over one shared `OllamaClient`: two `TranslationViewModel` instances, one for
+- **Three** models over one shared `EngineRouter`: two `TranslationViewModel` instances, one for
   the window and one owned by `HotkeyCoordinator` for the panel, plus `FileQueueModel` for the
-  file queue. They must not be merged: a hotkey translation must never overwrite the window, and
+  file queue. The router is what makes the engine switch take effect without a relaunch — it
+  reads the setting on **every** call, so nothing above it has to be rebuilt — and it reads that
+  setting out of the defaults store rather than out of `AppSettings`, because it is `Sendable`
+  and runs off the main actor while that class is `@Observable`. `ClientPool` holds one client
+  per engine per port for the life of the process. They must not be merged: a hotkey translation must never overwrite the window, and
   the re-entrancy guard is per instance. All three are built in `TranslatorApp.init` — the app
   owns the models, the scenes read them. **The toolbar's «Из», «В» and «Тон» belong to whichever
   model owns the visible mode** — `FileQueueModel`'s own in «Файлы», the text model's in
@@ -354,6 +398,19 @@ Facts that will bite you if you "tidy" them:
   the way out. They differ in one argument only — `hotkey` falls back to its default because it
   is the only door to the panel, and `proofreadHotkey` does so for the weaker reason that a
   setting whose stored state and behaviour disagree cannot be reasoned about.
+- **Three settings answer per engine, and the Ollama scope is the key an install already wrote.**
+  `interactiveModel`, `batchModel` (still stored under `"backgroundModel"`) and `proofreadModel`
+  gain a `".lmStudio"` suffix for the second engine and nothing else — so there is no migration
+  and no risk to a stored value. LM Studio has **no** default translation model: it reads back
+  empty, `hasNoTranslationModel` is what the window and the panel key off, and nothing is
+  auto-selected, because flipping a radio button may not silently pick a 22.81 GB model and load
+  it at the next warm-up. `engine` and `enginePort` are the two new keys; `AppSettings.engine(in:)`
+  and `enginePort(in:)` are static readers over a store, for `EngineRouter`'s sake.
+- **`keepAlive` is Ollama's alone.** LM Studio rejects a `ttl` field in a chat request, so the
+  «Держать модель в памяти» field is hidden there and `WarmUpPlan` warms one model instead of
+  two — 22.81 GB apiece against 48 GB is the reason, and it is about memory rather than
+  transport. A queue whose model differs loads it explicitly before the first файл, which puts it
+  outside Auto-Evict's reach.
 - `GlossaryStore` persists `~/Library/Application Support/LocalTranslator/glossary.json` (hand-editable,
   git-trackable by design). `save()` is gated on a successful `load()` and on a file stamp check, so
   the app cannot overwrite a file edited behind its back.

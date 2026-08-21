@@ -275,6 +275,20 @@ is exercised by anything that runs in CI.
 | **Whether an explicitly loaded model survives the 60-minute idle TTL** | Documented for `lms load` («no TTL, remains loaded until you manually unload»), and `/api/v1/models/load` takes no `ttl` field — but observing it costs an hour of waiting, so warm-up's promise of a resident model rests on documentation rather than on measurement | `LMStudioClient.load(model:)` |
 | **`qwen/qwen3.8-27b` under `reasoning: "off"`** | The separation of trace from answer is measured on `gpt-oss-20b` (16 `reasoning.delta` events, 0 characters of trace in the message). The model that reasons at `xhigh` by default has not been asked to be silent | `ReasoningChoice`, `LMStudioEventReader` |
 
+**Owed by the engine switch's app layer and panes (2026-08-21).** Everything below is drawn, and
+nothing in this environment can see a drawn thing. The rules behind each are unit-tested; that
+they *look* right, fit, and behave under a hand is what a person still owes.
+
+| What to check | Why it needs eyes | Code |
+|---|---|---|
+| «Модели» at 560 × 480 with the engine picker and the port field added | The pane carried seven sections before this wave and `OPEN-ITEMS` already recorded that nobody had checked whether five fit. It now gains two controls in the first section and, on LM Studio, loses one section — so the count is 7 on Ollama and 6 on LM Studio, and neither has been seen | `SettingsModelsView.swift`, `settingsPane()` |
+| The «Выгрузить» button in a resident model's row | Its rule is tested (`isResident`, and that a failure surfaces rather than reporting success) and its placement is not: it sits inside a `LabeledContent`'s trailing content beside the size, which is the tightest horizontal space in the pane | `SettingsModelsView.swift`, `ModelsViewModel.unload` |
+| «Открыть LM Studio» appearing only while the engine is silent, and only when the app is installed | `EngineApplication.url(for:)` answers from `NSWorkspace`, which a test process can call but cannot verify against what a user has installed — and for Ollama the ordinary case is a Homebrew binary with no bundle at all, so the button should simply not appear | `EngineApplication.swift`, `SettingsModelsView.swift` |
+| The panel's «Модель для перевода не выбрана» prompt and its «Настройки» button | The one surface with no picker beside it. Two things unverified: that the sentence is not cut at the panel's 300 pt floor — the same defect the permission prompt records — and that `NSApp.sendAction(Selector(("showSettingsWindow:")))` actually opens the settings window from a `.nonactivatingPanel` that is key but whose app is not active | `PanelView.modelChoicePrompt`, `TranslatorApp`'s `onOpenSettings` |
+| Switching the engine with the settings window open | Every model setting answers per engine and the dependency is registered by reading `engine` inside each getter. The values are tested; whether the *pickers* redraw immediately is an observation about SwiftUI's tracking that only a running app can make | `AppSettings`, `SettingsModelsView` |
+| «Длина рассуждения» appearing for `openai/gpt-oss-20b` and not for `qwen/qwen3.8-27b` | The rule is tested against synthetic capability lists; that the row appears and disappears as the picker above it moves has not been watched | `ModelsViewModel.showsReasoningLength(for:)` |
+| The port field accepting and rejecting sensibly | It is a `TextField` over an `Int` with `.number.grouping(.never)`; what a user typing letters into it sees is a platform behaviour nothing here pins | `SettingsModelsView.swift` |
+
 Accepted rather than owed: **`ModelPolicy.blacklist` and the think tables match no LM Studio
 name.** `gemma3n`, `qwen3:30b` and `gpt-oss` are Ollama tags, and LM Studio's identifiers are
 publisher-qualified (`openai/gpt-oss-20b`), so a blacklisted model carries no warning on that

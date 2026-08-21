@@ -156,6 +156,14 @@ enum RussianCopy {
         }
     }
 
+    /// The window's idle line: the engine's state, unless there is a more actionable thing to
+    /// say. «Выберите модель» outranks «работает»: a running server the app cannot use yet is
+    /// not what the reader needs to know.
+    static func idleLine(_ status: EngineStatus, engineName: String, hasModel: Bool) -> String {
+        guard hasModel else { return "Модель для перевода не выбрана — «Модели» в настройках." }
+        return engineStatus(status, engineName: engineName)
+    }
+
     /// What to say when the engine refuses. Keyed on the machine-readable code rather than on
     /// the server's prose, which is English and free to be rephrased.
     static func lmStudioRefusal(code: String?, message: String) -> String {

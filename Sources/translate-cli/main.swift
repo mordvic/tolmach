@@ -1,6 +1,7 @@
 // Sources/translate-cli/main.swift
 import Foundation
 import OllamaKit
+import LMStudioKit
 import TranslationCore
 
 /// Parse failure reason, kept distinct from `Options.text` values so a plain `String`
@@ -14,6 +15,9 @@ struct Options {
     var model: String?
     var chunk = 900
     var think: ThinkRequest?
+    /// Which local server to talk to. Defaults to Ollama, like the app's own setting, so an
+    /// existing invocation keeps working unchanged.
+    var engine = "ollama"
     var text: [String] = []
 }
 
@@ -61,6 +65,12 @@ func parse(_ args: [String]) -> Result<Options, ParseFailure> {
                 // would make a mistyped flag look like a measurement.
                 return .failure(ParseFailure(message: "--think needs one of off|low|medium|high, got \"\(value)\""))
             }
+        case "--engine":
+            guard let value = takeValue() else { return .failure(ParseFailure(message: "--engine needs a value")) }
+            guard value == "ollama" || value == "lmstudio" else {
+                return .failure(ParseFailure(message: "--engine needs ollama or lmstudio, got \"\(value)\""))
+            }
+            options.engine = value
         default:
             // Everything not consumed as a flag value is text — including a word
             // that happens to equal a default, and including text starting with "--".
@@ -74,7 +84,7 @@ func parse(_ args: [String]) -> Result<Options, ParseFailure> {
     return .success(options)
 }
 
-let usage = "usage: translate-cli --to <ru|en|de|fr|es|pt|it|zh|ja> [--from L] [--tone neutral|formal|casual|technical|literal] [--model NAME] [--chunk N] [--think off|low|medium|high] [text]\n"
+let usage = "usage: translate-cli --to <ru|en|de|fr|es|pt|it|zh|ja> [--from L] [--tone neutral|formal|casual|technical|literal] [--engine ollama|lmstudio] [--model NAME] [--chunk N] [--think off|low|medium|high] [text]\n"
 
 func fail(_ message: String) -> Never {
     FileHandle.standardError.write(Data((message + "\n").utf8))
@@ -120,7 +130,17 @@ if let reason = ModelPolicy.blacklistReason(for: model) {
     FileHandle.standardError.write(Data("warning: model \(model) is blacklisted — \(reason)\n".utf8))
 }
 
-let translator = Translator(client: OllamaClient())
+// `--think` exists to force a bare value past `ModelPolicy` and re-take a measurement, and
+// on LM Studio there is no bare value to force: `reasoning` is validated against the model's
+// own `allowed_options`, and «off» on a model that cannot be silenced is HTTP 400 (measured
+// 2026-08-21). Rejected rather than ignored, for `--chunk`'s reason — a flag that quietly did
+// nothing would make a mistyped measurement look like a result.
+if parsed.engine == "lmstudio", parsed.think != nil {
+    fail("--think applies to Ollama only; LM Studio resolves reasoning from the model's own capabilities")
+}
+let translator = Translator(client: parsed.engine == "lmstudio"
+                            ? LMStudioClient() as any LLMClient
+                            : OllamaClient() as any LLMClient)
 // Straight into `ChatOptions`, deliberately bypassing `ModelPolicy.thinkRequest`: this flag
 // exists to reproduce measurements, and a harness that refused to send `false` to `qwen3:30b`
 // could not reproduce the leak that policy is built around. The app is where a user is

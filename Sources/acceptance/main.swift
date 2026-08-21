@@ -1,6 +1,7 @@
 // Sources/acceptance/main.swift
 import Foundation
 import OllamaKit
+import LMStudioKit
 import TranslationCore
 
 /// What one run measures. Both fields were hard-coded until 2026-08-18 — `aya-expanse:8b`, the
@@ -11,6 +12,10 @@ import TranslationCore
 struct RunConfiguration {
     let model: String
     let maxChunkCharacters: Int
+    /// Which server this run measured. Both gates below are properties of one model **on one
+    /// server**, so a run against the other engine is measured and never certified — the same
+    /// rule `--model` already established, extended by one dimension.
+    var engine = "ollama"
     /// The 1000 ms TTFT ceiling is a property of the *interactive path*, and it was measured on
     /// the model `ModelPolicy` pins for that path. Another model passed through `--model` is
     /// being measured, not certified: its single-chunk TTFT is printed and recorded, never
@@ -19,19 +24,22 @@ struct RunConfiguration {
     /// `translategemma:12b` pays 634 ms of prefill alone on a cold prefix for the app's
     /// translation prompt (`translategemma:27b`: 1382 ms), so the ceiling would fail on
     /// prefill before the model had produced a token.
-    var gatesTTFT: Bool { model == ModelPolicy.defaultModel(for: .interactive) }
+    var gatesTTFT: Bool {
+        engine == "ollama" && model == ModelPolicy.defaultModel(for: .interactive)
+    }
     /// The `known` / `known-limitation` sets below were each measured on `measuredOn` and name
     /// it in their reasons. For any other model every diff is reported as unaccepted, so a
     /// new model's first entry shows what it actually does — accepting a limitation is a
     /// decision recorded in BASELINE.md, not something a reason string written about a
     /// different model can confer.
-    var appliesKnownLimitations: Bool { model == Self.measuredOn }
+    var appliesKnownLimitations: Bool { engine == "ollama" && model == Self.measuredOn }
     static let measuredOn = "aya-expanse:8b"
 }
 
 func usage(_ message: String) -> Never {
     print("acceptance: \(message)")
-    print("usage: swift run acceptance [--model <ollama model>] [--chunk <characters>]")
+    print("usage: swift run acceptance [--engine ollama|lmstudio] [--model <model>] [--chunk <characters>]")
+    print("  --engine defaults to ollama; the two gates apply to ollama only")
     print("  --model  defaults to ModelPolicy's interactive model (\(ModelPolicy.defaultModel(for: .interactive)))")
     print("  --chunk  maxChunkCharacters, defaults to 900 — the app's own default")
     exit(2)
@@ -40,6 +48,7 @@ func usage(_ message: String) -> Never {
 func parseConfiguration(_ arguments: ArraySlice<String>) -> RunConfiguration {
     var model = ModelPolicy.defaultModel(for: .interactive)
     var chunk = 900
+    var engine = "ollama"
     var iterator = arguments.makeIterator()
     while let argument = iterator.next() {
         switch argument {
@@ -51,21 +60,29 @@ func parseConfiguration(_ arguments: ArraySlice<String>) -> RunConfiguration {
                 usage("--chunk needs a positive integer")
             }
             chunk = parsed
+        case "--engine":
+            guard let value = iterator.next(), value == "ollama" || value == "lmstudio" else {
+                usage("--engine needs ollama or lmstudio")
+            }
+            engine = value
         default:
             usage("unknown argument \"\(argument)\"")
         }
     }
-    return RunConfiguration(model: model, maxChunkCharacters: chunk)
+    return RunConfiguration(model: model, maxChunkCharacters: chunk, engine: engine)
 }
 
 let config = parseConfiguration(CommandLine.arguments.dropFirst())
 let model = config.model
-let client = OllamaClient()
+// One client, chosen by `--engine`. `any LLMClient` rather than a concrete type: this harness
+// only ever calls `chat`, and the two transports differ in nothing else it uses.
+let client: any LLMClient = config.engine == "lmstudio" ? LMStudioClient() : OllamaClient()
 let translator = Translator(client: client)
 // The first line of every run names what it measured, so a BASELINE.md entry pasted from the
 // output cannot silently describe a different configuration than its heading claims.
-print("acceptance: model \(config.model) · chunk \(config.maxChunkCharacters) chars · " +
-      "TTFT gate \(config.gatesTTFT ? "enforced" : "info only — not the interactive-policy model") · " +
+print("acceptance: engine \(config.engine) · model \(config.model) · " +
+      "chunk \(config.maxChunkCharacters) chars · " +
+      "TTFT gate \(config.gatesTTFT ? "enforced" : "info only — not Ollama's interactive-policy model") · " +
       "known-limitation set \(config.appliesKnownLimitations ? "applied" : "not applied — measured on \(RunConfiguration.measuredOn)")")
 // A missing or unreadable corpus directory must become a legible line naming the
 // cause and the expected working directory, not an uncaught throw that dies with

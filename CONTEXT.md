@@ -81,6 +81,20 @@ _Avoid_: стиль, манера
 
 ---
 
+## Движок
+
+**Движок** — *engine*
+The local server the app sends its requests to: Ollama or LM Studio. Chosen in «Модели» →
+«Движок», stored in `AppSettings.engine`, and read by `EngineRouter` on every call — so the
+choice takes effect on the next request rather than at the next launch. Only the *port* is
+configurable; the host is `127.0.0.1` in the code and nowhere else.
+→ `ModelEngine`, `EngineRouter`, `AppSettings.engine`, `EngineStatus`
+_Avoid_: бэкенд, провайдер, API; **сервер** — that is the process the движок runs, and «сервер
+не запущен» is about the process while «движок» is about the choice
+_On screen_: the engine's own name, untranslated — «Ollama», «LM Studio» — because both are
+proper nouns and «Оллама» is a spelling nobody else uses. The word «движок» appears as the
+section and picker label only.
+
 ## Execution paths
 
 **Интерактивный путь** — *interactive path*

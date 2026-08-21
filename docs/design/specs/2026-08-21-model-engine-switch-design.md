@@ -505,6 +505,13 @@ The property behind that last row is renamed from `usesGptOss` to something that
 question — `offersReasoningLevelsOnly` — while the stored key `"gptOssThinkingLevel"` stays put,
 because renaming a key discards what a user chose.
 
+> **Corrected during implementation (2026-08-21).** The rule could not live on `AppSettings`:
+> answering it on LM Studio needs each model's `allowed_options`, and that list is read by the
+> probe, not by the settings. It is `ModelsViewModel.showsReasoningLength(for:)` instead — the
+> view model already holds the installed list — and `usesGptOss` stays where it was, still
+> correct and still used, as the Ollama half of that answer. The stored key is untouched as
+> planned.
+
 ### 6.4 Untouched
 
 Languages, tone, правка degree and style, `contentFont`, both shortcuts, `autoCopy`,
@@ -534,7 +541,17 @@ struct EngineClient: LLMClient {           // reads the setting on every call
 ```
 
 Reading the setting **per call** rather than at construction is what makes the switch take
-effect without a relaunch, and it is why this is a router rather than a stored choice. Both
+effect without a relaunch, and it is why this is a router rather than a stored choice.
+
+> **Corrected during implementation (2026-08-21).** Not closures over `AppSettings`, as sketched
+> above: that class is `@Observable` and not `Sendable`, and capturing it in a router `LLMClient`
+> requires to be `Sendable` is a warning today and a data race the day it gains a stored
+> property. The router reads the two values out of the **defaults store** through
+> `AppSettings.engine(in:)` / `enginePort(in:)`, which is not a shortcut around that type but a
+> consequence of its shape — it has no stored properties, so the store is the source of truth and
+> the object a typed view of it. `UserDefaults` is documented thread-safe and is held
+> `nonisolated(unsafe)`, the same escape `HotkeyManager` uses for its own unshareable stored
+> value. Both
 clients exist for the whole process — two `URLSession`s instead of one, which is the one place
 this design spends something the old comment on `TranslatorApp.client` was proud of not
 spending. It is worth it: the alternative is rebuilding three view models when a radio button

@@ -10,6 +10,11 @@ if a number looks wrong later, that is a finding, not a typo.
 
 Run it from the package root; the harness reads `./corpus` relative to the working directory.
 
+Since 2026-08-21 it also takes `--engine ollama|lmstudio`, and **both gates are properties of
+`aya-expanse:8b` on Ollama**: under the other engine the TTFT ceiling prints `info only` and every
+markup diff is unaccepted, so a first entry for a new engine shows what that engine's model
+actually does rather than inheriting a verdict measured elsewhere.
+
 Since 2026-08-18 the harness takes `--model <ollama model>` and `--chunk <characters>`
 (defaults: `ModelPolicy`'s interactive model, 900). **An entry must say which it ran** — the
 harness prints that as its first line, paste it. Entries for different models or chunk budgets
@@ -644,3 +649,53 @@ harness translates only): three seeded texts × 5 runs, old wrapper vs plain han
 aya-expanse:8b and translategemma:12b — language kept 15/15 on both shapes on both models,
 no marker echo, no answering, seeded fixes present 5/15 → 5/15 (aya) and 13/15 → 14/15 (12b).
 Neutral, as expected; the runner was throwaway, as the правка calibration's was.
+
+
+---
+
+## 2026-08-21 — first LM Studio entry: `google/gemma-4-e4b`, and it is not a recommendation
+
+The first run through the second engine, taken to prove the transport end to end rather than to
+choose a model. `google/gemma-4-e4b` was picked because it is the smallest model on this install
+(8.97 GB, MLX) and therefore the cheapest to load — not because it is a translation model. Read
+the verdict as being about that model. Machine: M5 Pro / 48 GB, macOS 26.5.2, LM Studio 0.4.21.
+
+```
+acceptance: engine lmstudio · model google/gemma-4-e4b · chunk 900 chars · TTFT gate info only — not Ollama's interactive-policy model · known-limitation set not applied — measured on aya-expanse:8b
+article-en.md: run1 80.6% (29/36) · run2 86.1% (31/36) · run3 88.9% (32/36) · average 85.2% · 3 chunks · 20 terms · TTFT 29979/25932/34796 ms (info only — multi-chunk, not asserted)
+email-en.md: adherence n/a (single model-bound chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 8737 ms (info only — TTFT not gated for this model)
+snippet-en.md: adherence n/a (single model-bound chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 634 ms (info only — TTFT not gated for this model)
+techdoc-en.md: run1 90.0% (45/50) · run2 90.0% (45/50) · run3 90.0% (45/50) · average 90.0% · 6 chunks (4 model-bound) · 20 terms · TTFT 23560/17022/18055 ms (info only — multi-chunk, not asserted)
+techdoc-ru.md: run1 89.8% (44/49) · run2 91.8% (45/49) · run3 91.8% (45/49) · average 91.2% · 5 chunks (4 model-bound) · 20 terms · TTFT 15023/17180/16668 ms (info only — multi-chunk, not asserted)
+    markup run1: expected Optional(TranslationCore.MarkupToken.inlineCode("/session/sync")) actual nil
+    markup run1: expected Optional(TranslationCore.MarkupToken.inlineCode("Authorization")) actual nil
+    markup run2: expected Optional(TranslationCore.MarkupToken.inlineCode("Authorization")) actual nil
+    markup run3: expected Optional(TranslationCore.MarkupToken.inlineCode("/session/sync")) actual nil
+    markup run3: expected Optional(TranslationCore.MarkupToken.inlineCode("Authorization")) actual nil
+FAILED
+  - techdoc-ru.md: unaccepted markup diff — expected Optional(TranslationCore.MarkupToken.inlineCode("/session/sync")) actual nil (2/3 runs)
+  - techdoc-ru.md: unaccepted markup diff — expected Optional(TranslationCore.MarkupToken.inlineCode("Authorization")) actual nil (3/3 runs)
+EXIT: 1
+```
+
+**What this says about the engine: it works.** The corpus went through `/api/v1/chat` end to end,
+the document glossary was built and injected, adherence came back in the range this corpus
+produces on Ollama — 85.2 / 90.0 / 91.2 % against the 80 % floor — and `snippet-en.md` returned
+its first token in **634 ms**, inside the second the interactive path is designed around, on an
+engine whose TTFT gate is not even enforced.
+
+**What this says about the model is a finding, not a pass:** `gemma-4-e4b` **drops inline code**.
+`techdoc-ru.md` lost `Authorization` in 3 of 3 runs and `/session/sync` in 2 of 3, so the run
+exits 1. Note what did *not* happen: the loss was detected rather than papered over. Inline spans
+are restored positionally under an **equal-count** gate, so a model returning fewer spans than it
+was given fails the diff instead of having something plausible pasted back in. This is the
+`gemma3n` failure family — the reason that model is blacklisted — caught on a different model by
+the corpus that exists for it.
+
+**TTFT on the multi-chunk files is 15–35 s** and is not comparable with anything above: it
+carries a cold load (5.6 s, measured separately) plus the preparatory term-list call, on a 4B
+model at 900-character chunks. Recorded, not gated.
+
+**Not measured here:** `qwen/qwen3.8-27b` and `openai/gpt-oss-20b`, the two models on this
+install that would actually be candidates for use. Each is large enough that a three-run corpus
+pass is a long job, and neither has an entry yet. That is the next thing this file wants.

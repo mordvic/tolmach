@@ -277,7 +277,8 @@ struct TranslatorApp: App {
                 // window sitting idle in either mode still declines ⌘. and lets the panel
                 // have it. What changed is that «running» now means the visible mode's run
                 // rather than the text model's.
-                let action = PrimaryAction.forMode(mode, text: translation, queue: queue)
+                let action = PrimaryAction.forMode(mode, text: translation, queue: queue,
+                                                   hasModel: !settings.hasNoTranslationModel)
                 Button(action.startTitle) { Task { await action.start() } }
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(action.isRunning || !action.canStart || !statusModel.status.isHealthy)
@@ -549,6 +550,13 @@ struct TranslatorApp: App {
                     PermissionsGate.requestTrust()
                     PermissionsGate.openSettings()
                 },
+                // macOS 14 renamed this selector from `showPreferencesWindow:`, and the
+                // platform floor here is 14, so the new name is the only one needed. Sent
+                // through `NSApp` because `SettingsLink` is a *view* and this content is built
+                // outside any view hierarchy — `PanelController` holds the builder.
+                onOpenSettings: {
+                    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                },
                 onSwitchOperation: { op in Task { await coordinator.switchOperation(to: op) } },
                 onAnotherVariant: { Task { await coordinator.anotherVariant() } },
                 settings: settings,
@@ -733,6 +741,8 @@ private struct PanelHost: View {
     let onOpenInWindow: () -> Void
     let onClose: () -> Void
     let onGrantPermission: () -> Void
+    /// Opens the settings window, for the press that had no model to translate with.
+    let onOpenSettings: () -> Void
     /// The header's «Перевод | Правка» switch, threaded to `PanelView` like every other
     /// callback here — see `HotkeyCoordinator.switchOperation(to:)`.
     let onSwitchOperation: (TextOperation) -> Void
@@ -758,6 +768,7 @@ private struct PanelHost: View {
         PanelView(model: coordinator.panelModel,
                   selection: coordinator.selection,
                   awaitingRun: coordinator.isStartingRun,
+
                   adoptionRefusal: windowModel.adoptionRefusal(from: coordinator.panelModel),
                   onCopy: onCopy,
                   onReplace: onReplace,
@@ -765,6 +776,10 @@ private struct PanelHost: View {
                   onOpenInWindow: onOpenInWindow,
                   onRetry: { Task { await coordinator.retry() } },
                   onGrantPermission: onGrantPermission,
+                  // Read here, inside `body`, for the reason `settings` is: the controller
+                  // keeps one hosting view, so a value resolved at the call site would freeze.
+                  onOpenSettings: onOpenSettings,
+                  needsModelChoice: coordinator.needsModelChoice,
                   onSwitchOperation: onSwitchOperation,
                   onAnotherVariant: onAnotherVariant,
                   proofreadingLevel: settings.defaultProofreadingLevel,

@@ -15,8 +15,8 @@ let package = Package(
         // second engine's design set out to avoid.
         .target(name: "LMStudioKit", dependencies: ["TranslationCore"], swiftSettings: [.swiftLanguageMode(.v6)]),
         .testTarget(name: "LMStudioKitTests", dependencies: ["LMStudioKit", "TranslationCore"], swiftSettings: [.swiftLanguageMode(.v6)]),
-        .executableTarget(name: "translate-cli", dependencies: ["TranslationCore", "OllamaKit"], swiftSettings: [.swiftLanguageMode(.v6)]),
-        .executableTarget(name: "acceptance", dependencies: ["TranslationCore", "OllamaKit"], swiftSettings: [.swiftLanguageMode(.v6)]),
+        .executableTarget(name: "translate-cli", dependencies: ["TranslationCore", "OllamaKit", "LMStudioKit"], swiftSettings: [.swiftLanguageMode(.v6)]),
+        .executableTarget(name: "acceptance", dependencies: ["TranslationCore", "OllamaKit", "LMStudioKit"], swiftSettings: [.swiftLanguageMode(.v6)]),
         .target(name: "TextCapture", swiftSettings: [.swiftLanguageMode(.v6)]),
         .testTarget(name: "TextCaptureTests", dependencies: ["TextCapture"], swiftSettings: [.swiftLanguageMode(.v6)]),
         // `Resources` is excluded rather than declared with `resources:` because this target is
