@@ -24,7 +24,7 @@ final class ModelsViewModel {
 
     private let probe: EngineProbe
     private let puller: Puller
-    private let unloader: Unloader?
+    private let unloader: Unloader
 
     var installed: [EngineModel] = []
 
@@ -50,7 +50,14 @@ final class ModelsViewModel {
     /// out from under the other.
     private(set) var isPulling = false
 
-    init(probe: EngineProbe, puller: @escaping Puller, unloader: Unloader? = nil) {
+    /// **No default for `unloader`, and that is the fix for a shipped defect rather than a
+    /// preference.** It had one — `nil` — so `TranslatorApp.init` compiled without passing it,
+    /// «Выгрузить» appeared on every resident row and did nothing at all, and every test here
+    /// passed because each one supplies its own. That is `docs/reference/TESTING.md`'s fifth
+    /// shape from the other side: the tests exercised the builder and nothing exercised the
+    /// wiring. A required parameter makes the omission a compile error; a test asserting «the
+    /// app passes one» cannot be written, because nothing in a test process can build a scene.
+    init(probe: EngineProbe, puller: @escaping Puller, unloader: @escaping Unloader) {
         self.probe = probe
         self.puller = puller
         self.unloader = unloader
@@ -77,7 +84,7 @@ final class ModelsViewModel {
     /// caught before this comment was written. The lists are re-read either way: a refusal does
     /// not prove the model is still resident.
     func unload(_ model: EngineModel) async {
-        guard let unloader, !isPulling else { return }
+        guard !isPulling else { return }
         do {
             try await unloader(model)
             await reload()
