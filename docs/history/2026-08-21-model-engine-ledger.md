@@ -141,3 +141,29 @@ port field's behaviour under a typo.
 Accepted rather than owed: `ModelPolicy.blacklist` and the think tables match no
 publisher-qualified LM Studio name, so a blacklisted model carries no warning there. Extending
 those tables by guesswork would put a false warning beside a model nobody measured.
+
+
+---
+
+## Postscript: the first defect a user found, minutes after installing
+
+«Выгрузить» appeared on every resident row and did **nothing**. `ModelsViewModel`'s `unloader`
+parameter had a `nil` default, `TranslatorApp.init` never passed one, and `unload` returned at
+its first line — `guard let unloader`.
+
+Three things about it are worth keeping, because the shape recurs:
+
+- **The default is what allowed it.** A required parameter would have made the omission a
+  compile error. It had one so that tests which do not unload need not supply a closure — an
+  argument that reads as convenience and buys nothing: those tests can pass a recorder that
+  fails if called, which is now exactly what they do.
+- **The tests were green about the wrong thing.** Every construction in `ModelsViewModelTests`
+  supplied its own unloader, so the suite exercised the *builder* thoroughly and the *wiring*
+  not at all. This is `TESTING.md`'s fifth shape for the third time in this piece of work, and
+  the third time it was found by something other than a test — a mutation harness twice, a user
+  once.
+- **The thing it was supposed to call was fine.** The Ollama unload round trip — listed as owed,
+  because loading 17.4 GB to watch a model unload had not seemed worth doing unasked — was
+  verified when the report came in: `done_reason: "unload"`, `/api/ps` empty afterwards. So the
+  transport was right and only the last wire was missing, which is the least diagnosable shape a
+  defect can take from a user's chair: everything works and nothing happens.

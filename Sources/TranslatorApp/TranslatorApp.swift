@@ -130,7 +130,11 @@ struct TranslatorApp: App {
         // struct — `LLMClient` requires it — so the closure may capture it.
         _models = State(initialValue: ModelsViewModel(
             probe: client,
-            puller: { model in client.download(model: model) }))
+            puller: { model in client.download(model: model) },
+            // «Выгрузить» in a resident model's row. Verified against a live Ollama on
+            // 2026-08-21: the request answers `done_reason: "unload"` and `/api/ps` comes back
+            // empty, i.e. the memory is really freed.
+            unloader: { model in try await client.unload(model: model) }))
         _client = State(initialValue: client)
         _coordinator = State(initialValue: coordinator)
         // Content is a placeholder until `configurePanel()` runs at launch. Everything the

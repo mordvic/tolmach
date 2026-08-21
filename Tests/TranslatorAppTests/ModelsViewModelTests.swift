@@ -5,6 +5,13 @@ import Foundation
 @testable import OllamaKit
 @testable import LMStudioKit
 
+/// Says out loud that a test does not exercise unloading. Before the parameter was required,
+/// every construction here supplied one anyway — which is exactly why nothing noticed that the
+/// *app* did not.
+private let unusedUnloader: ModelsViewModel.Unloader = { _ in
+    Issue.record("this test was not supposed to unload anything")
+}
+
 /// `PullProgress`'s memberwise initialiser is internal (the struct is public, its `init` is
 /// not), so the stream stubs below need `@testable import OllamaKit` rather than a plain one.
 private func silentPuller() -> ModelsViewModel.Puller {
@@ -18,7 +25,8 @@ private func makeModel(installed: [String] = [],
     // Callers only ever care about names here; the size-carrying tests build `StubProbe`
     // directly instead of going through this helper.
     let models = installed.map { EngineModel(name: $0, sizeBytes: 0) }
-    return ModelsViewModel(probe: StubProbe(installed: models, failure: failure), puller: puller)
+    return ModelsViewModel(probe: StubProbe(installed: models, failure: failure), puller: puller,
+                           unloader: unusedUnloader)
 }
 
 // MARK: - Blacklist warnings
@@ -75,7 +83,7 @@ private func makeModel(installed: [String] = [],
     // `reload()`'s `catch` preserves anything. `FlakyProbe`, reused across both calls on one
     // `model`, is what lets the assertion below actually depend on that behaviour.
     let probe = FlakyProbe()
-    let model = ModelsViewModel(probe: probe, puller: silentPuller())
+    let model = ModelsViewModel(probe: probe, puller: silentPuller(), unloader: unusedUnloader)
     await model.reload()
     #expect(model.installedNames == ["gpt-oss:20b"])
     probe.fail = true
@@ -225,7 +233,7 @@ private func makeModel(installed: [String] = [],
 @MainActor
 @Test func aFailedReloadAfterAGoodOneGoesBackToUnknown() async {
     let probe = FlakyProbe()
-    let model = ModelsViewModel(probe: probe, puller: silentPuller())
+    let model = ModelsViewModel(probe: probe, puller: silentPuller(), unloader: unusedUnloader)
     await model.reload()
     #expect(model.availability(of: "gpt-oss:20b") == .installed)
     probe.fail = true
@@ -263,7 +271,8 @@ private final class FlakyProbe: EngineProbe, @unchecked Sendable {
     // second model is deciding about disk space. It exists in `OllamaModel` already and
     // used to be discarded at the protocol boundary.
     let probe = StubProbe(installed: [EngineModel(name: "aya-expanse:8b", sizeBytes: 5_100_273_664)])
-    let model = ModelsViewModel(probe: probe, puller: { _ in .init { $0.finish() } })
+    let model = ModelsViewModel(probe: probe, puller: { _ in .init { $0.finish() } },
+                                unloader: unusedUnloader)
     await model.reload()
     #expect(model.installed.first?.sizeBytes == 5_100_273_664)
     #expect(model.installedNames == ["aya-expanse:8b"])
@@ -283,7 +292,7 @@ private final class FlakyProbe: EngineProbe, @unchecked Sendable {
     // the first `reload()` is a mutation the *same* `models` instance's next `reload()` sees.
     let probe = FlakyProbe()
     probe.resident = ["gpt-oss:20b"]
-    let models = ModelsViewModel(probe: probe, puller: silentPuller())
+    let models = ModelsViewModel(probe: probe, puller: silentPuller(), unloader: unusedUnloader)
     await models.reload()
     #expect(models.resident == ["gpt-oss:20b"])
     probe.fail = true
@@ -299,7 +308,7 @@ private final class FlakyProbe: EngineProbe, @unchecked Sendable {
                                loadedInstanceIDs: ["openai/gpt-oss-20b"])
     let idle = EngineModel(name: "qwen/qwen3.8-27b", sizeBytes: 22_810_000_000)
     let model = ModelsViewModel(probe: StubProbe(installed: [resident, idle], resident: []),
-                                puller: { _ in .init { $0.finish() } })
+                                puller: { _ in .init { $0.finish() } }, unloader: unusedUnloader)
     await model.reload()
     #expect(model.isResident(resident))
     #expect(model.isResident(idle) == false)
@@ -311,7 +320,7 @@ private final class FlakyProbe: EngineProbe, @unchecked Sendable {
     let model = ModelsViewModel(
         probe: StubProbe(installed: [EngineModel(name: "aya-expanse:8b", sizeBytes: 0)],
                          resident: ["aya-expanse:8b"]),
-        puller: { _ in .init { $0.finish() } })
+        puller: { _ in .init { $0.finish() } }, unloader: unusedUnloader)
     await model.reload()
     #expect(model.isResident(EngineModel(name: "aya-expanse:8b", sizeBytes: 0)))
 }
@@ -348,7 +357,8 @@ private final class FlakyProbe: EngineProbe, @unchecked Sendable {
 
     // Ollama: the prefix table, exactly as before this wave.
     settings.interactiveModel = "gpt-oss:20b"
-    let ollama = ModelsViewModel(probe: StubProbe(), puller: { _ in .init { $0.finish() } })
+    let ollama = ModelsViewModel(probe: StubProbe(), puller: { _ in .init { $0.finish() } },
+                                 unloader: unusedUnloader)
     #expect(ollama.showsReasoningLength(for: settings))
     settings.interactiveModel = "aya-expanse:8b"
     #expect(ollama.showsReasoningLength(for: settings) == false)
@@ -365,7 +375,7 @@ private final class FlakyProbe: EngineProbe, @unchecked Sendable {
                         reasoningOptions: ["off", "low", "medium", "xhigh", "on"]),
             EngineModel(name: "qwen3.5-27b", sizeBytes: 1),
         ]),
-        puller: { _ in .init { $0.finish() } })
+        puller: { _ in .init { $0.finish() } }, unloader: unusedUnloader)
     await lmStudio.reload()
     #expect(lmStudio.showsReasoningLength(for: settings))
 
