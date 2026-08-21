@@ -401,8 +401,13 @@ extending it with LM Studio names.
 > one column, which would send the *lowest* level to a model offering several — and that makes
 > «Длина рассуждения» inert on this engine, the very control §6.3 draws from `allowed_options`.
 > `ReasoningChoice` therefore honours a requested level when the model allows it (`.level(.high)`
-> on `gpt-oss` sends `"high"`) and falls back to the quietest option only when the requested one
-> is not on offer; `.off` behaves exactly as the table says. What this leaves open is an
+> on `gpt-oss` sends `"high"`), and when it does not, falls back to the nearest level **not
+> louder** than the one asked for — `.level(.high)` against `qwen/qwen3.8-27b`'s
+> `["off","low","medium","xhigh","on"]` sends `"medium"`. Only when nothing quieter exists does
+> it take the quietest option on offer. An earlier draft of this note said «the quietest option»
+> outright, which a review showed meant that moving «Длина рассуждения» from «Средне» to
+> «Подробно» on that model switched reasoning **off**. `.off` behaves exactly as the table says.
+> What this leaves open is an
 > **app-layer** question for the settings wave rather than a transport one:
 > `ModelPolicy.thinkRequest` answers `.off` for every LM Studio identifier, because its prefix
 > table matches no publisher-qualified name — so as things stand nothing would ever *pass* a

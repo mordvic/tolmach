@@ -52,3 +52,36 @@ import Foundation
         try LMStudioDownloadParser.progress(Data(#"{"job_id":"job_1","status":"failed","message":"no space"}"#.utf8))
     }
 }
+
+@Test func aPollWithoutATotalKeepsTheSizeTheStartResponseAlreadyGave() throws {
+    // A paused download answers with no counts, and the bar must not lose the position it had:
+    // the start response reported the total, so it is carried into every sample.
+    let progress = try LMStudioDownloadParser.progress(
+        Data(#"{"job_id":"job_1","status":"paused","downloaded_bytes":525000000}"#.utf8),
+        totalBytes: 2_100_000_000)
+    #expect(progress.total == 2_100_000_000)
+    #expect(progress.fraction == 0.25)
+}
+
+@Test func anAlreadyInstalledModelIsATerminalSampleAndNotAnUnfinishedOne() throws {
+    // It is the only sample such a «download» produces, so a pane keyed on `isFinished` would
+    // otherwise sit on an empty bar for a model that is already on disk.
+    let sample = ModelDownloadProgress(status: "already_downloaded", completed: 0, total: 0)
+    #expect(sample.isFinished)
+    #expect(sample.invitesAnotherPoll == false)
+}
+
+@Test func onlyTheTwoStatesThatResumeInviteAnotherPoll() throws {
+    // `downloading` and `paused` come back; a cancellation performed in LM Studio's own window,
+    // or a status a later version adds, must end the stream rather than being polled once a
+    // second for ever.
+    for status in ["downloading", "paused"] {
+        let progress = try LMStudioDownloadParser.progress(Data(#"{"status":"\#(status)"}"#.utf8))
+        #expect(progress.invitesAnotherPoll, "\(status) should keep the stream open")
+    }
+    for status in ["cancelled", "queued", "something-new"] {
+        let progress = try LMStudioDownloadParser.progress(Data(#"{"status":"\#(status)"}"#.utf8))
+        #expect(progress.invitesAnotherPoll == false, "\(status) should end the stream")
+        #expect(progress.isFinished == false)
+    }
+}

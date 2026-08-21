@@ -43,6 +43,12 @@ public struct LMStudioClient: LLMClient {
         public static let load: TimeInterval = 120
         /// One poll of a download's status. It answers from memory like the probe.
         public static let downloadPoll: TimeInterval = 10
+        /// Reading `capabilities.reasoning` before a translation, which happens **in front of**
+        /// the chat request and therefore outside its timeout. Tighter than the probe on
+        /// purpose: the interactive path's whole target is a first token inside a second, and
+        /// this lookup has a safe answer when it fails — no `reasoning` key, i.e. the model's
+        /// own default. Waiting ten seconds to learn something optional is the worse trade.
+        public static let capabilities: TimeInterval = 3
     }
 
     /// How often a download's status is polled. A choice, not a measurement: these are
@@ -62,7 +68,10 @@ public struct LMStudioClient: LLMClient {
         // Built from locals rather than from `self`, which does not exist yet. The catalogue
         // exists so that `chat` can resolve a `reasoning` value the model actually accepts
         // without paying a round trip per chunk.
-        self.catalogue = ModelCatalogue { try await LMStudioClient.models(from: baseURL, session: session) }
+        self.catalogue = ModelCatalogue {
+            try await LMStudioClient.models(from: baseURL, session: session,
+                                            timeout: Timeout.capabilities)
+        }
     }
 
     /// Every request this client makes is built here, so «which timeout applies to which call»
@@ -157,11 +166,16 @@ public struct LMStudioClient: LLMClient {
     // MARK: - Models
 
     public func models() async throws -> [LMStudioModel] {
-        try await Self.models(from: baseURL, session: session)
+        let models = try await Self.models(from: baseURL, session: session, timeout: Timeout.probe)
+        // The probe pays for this list on its own schedule; the catalogue takes it rather than
+        // re-reading the same endpoint on the next translation.
+        await catalogue.absorb(models)
+        return models
     }
 
-    static func models(from baseURL: URL, session: URLSession) async throws -> [LMStudioModel] {
-        let request = request("api/v1/models", timeout: Timeout.probe, baseURL: baseURL)
+    static func models(from baseURL: URL, session: URLSession,
+                       timeout: TimeInterval) async throws -> [LMStudioModel] {
+        let request = request("api/v1/models", timeout: timeout, baseURL: baseURL)
         let (data, response) = try await send(request, on: session)
         try validate(response, data)
         return try LMStudioModelList.parse(data)
@@ -212,7 +226,8 @@ public struct LMStudioClient: LLMClient {
                     switch try LMStudioDownloadParser.started(data) {
                     case .alreadyDownloaded:
                         // Nothing to poll, and not a failure. The pane says «уже установлена»
-                        // and stops.
+                        // and stops — `isFinished` is true for this status precisely because it
+                        // is the only sample such a «download» ever produces.
                         continuation.yield(ModelDownloadProgress(status: "already_downloaded",
                                                                  completed: 0, total: 0))
                     case let .job(id, totalBytes):
@@ -234,9 +249,14 @@ public struct LMStudioClient: LLMClient {
                                        timeout: Timeout.downloadPoll)
             let (data, response) = try await Self.send(request, on: session)
             try Self.validate(response, data)
-            let progress = try LMStudioDownloadParser.progress(data)
+            // The start response's size is carried in, because a paused poll answers without
+            // one and a bar that forgets the total it already knew loses its position.
+            let progress = try LMStudioDownloadParser.progress(data, totalBytes: totalBytes)
             continuation.yield(progress)
-            if progress.isFinished { return }
+            // Ends on completion *and* on any state that does not invite another poll — a
+            // cancellation performed in LM Studio's own window, or a status a later version
+            // introduces. The alternative is one request a second with no ceiling.
+            if progress.isFinished || !progress.invitesAnotherPoll { return }
             try await Task.sleep(for: Self.downloadPollInterval)
         }
     }
@@ -262,6 +282,11 @@ public struct LMStudioClient: LLMClient {
 /// after a single blip, and the cheaper mistake is to ask again.
 actor ModelCatalogue {
     private var cached: [LMStudioModel]?
+    /// The read in flight, if any. Held so that concurrent askers share one request instead of
+    /// each starting their own: `reasoningOptions` suspends at its `await`, and this app shares
+    /// one client across the window, the panel and the queue, so a hotkey press landing while
+    /// the window translates is the ordinary case rather than the exotic one.
+    private var inFlight: Task<[LMStudioModel], Never>?
     private let fetch: @Sendable () async throws -> [LMStudioModel]
 
     init(fetch: @escaping @Sendable () async throws -> [LMStudioModel]) {
@@ -269,12 +294,39 @@ actor ModelCatalogue {
     }
 
     func reasoningOptions(for model: String) async -> [String]? {
-        if cached == nil { cached = try? await fetch() }
-        // Two distinct nils that must not be conflated by a caller and are not conflated here:
-        // «the catalogue could not be read» and «this model reports no reasoning capability».
-        // `ReasoningChoice` answers «send nothing» to both, which is why they may share a
-        // return type at this boundary.
+        if let known = await options(for: model, refetching: false) { return known }
+        // A model absent from the cached list is the case that used to fail quietly *for the
+        // rest of the session*: the list is read once, so a model installed or first selected
+        // in LM Studio's own window after that read was permanently «not known», which sends no
+        // `reasoning` key and leaves «Отключать рассуждение модели» inert — on `qwen3.8-27b`
+        // that is a full `xhigh` trace per chunk. Re-read once instead of answering from a list
+        // that predates the model.
+        guard cached?.contains(where: { $0.key == model }) != true else { return nil }
+        return await options(for: model, refetching: true)
+    }
+
+    /// The list, from cache or from the wire, and then one lookup in it.
+    ///
+    /// Nil covers two distinct states, deliberately: «the catalogue could not be read» and
+    /// «this model reports no reasoning capability». `ReasoningChoice` answers «send nothing» to
+    /// both, which is what lets them share a return type here.
+    private func options(for model: String, refetching: Bool) async -> [String]? {
+        if refetching { cached = nil }
+        if cached == nil {
+            let task = inFlight ?? Task { (try? await fetch()) ?? [] }
+            inFlight = task
+            let models = await task.value
+            inFlight = nil
+            cached = models.isEmpty ? nil : models
+        }
         return cached?.first { $0.key == model }?.reasoningOptions
+    }
+
+    /// Fills the cache from a list somebody else already paid for — the health probe reads
+    /// `/api/v1/models` on its own schedule, and throwing that answer away only to re-read it
+    /// on the next translation is waste with a stale window in it.
+    func absorb(_ models: [LMStudioModel]) {
+        cached = models.isEmpty ? nil : models
     }
 
     func invalidate() { cached = nil }

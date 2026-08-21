@@ -261,7 +261,7 @@ into another application, so every test here fakes the paste trigger — `Select
 | ⇧⌘C and the drop target not fighting the `TextEditor` | Both are new on a pane that already owns the keyboard | `SourceEditor`, `.commands` |
 
 **Owed by `LMStudioKit` (2026-08-21, the engine wave's transport).** The module is pinned
-offline — 47 tests, and every property re-verified by mutation — but a transport's real subject
+offline, and every property re-verified by mutation — but a transport's real subject
 is a server, and `swift test` never opens a socket. Everything below was read off the live
 server *by hand* on 2026-08-21 or is documented behaviour this code now depends on; none of it
 is exercised by anything that runs in CI.

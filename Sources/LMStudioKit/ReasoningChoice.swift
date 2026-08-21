@@ -33,10 +33,17 @@ enum ReasoningChoice {
         case .off:
             return quietestFirst.first(where: allowed.contains)
         case let .level(level):
-            // The caller's level if the model takes it, otherwise the nearest one it does —
-            // never a *louder* value than asked for unless nothing quieter exists.
             if allowed.contains(level.rawValue) { return level.rawValue }
-            return quietestFirst.first(where: allowed.contains)
+            // The nearest level **not louder** than the one asked for, and only then the
+            // quietest thing on offer. A caller reaching this case has said «a trace this long
+            // is acceptable», so answering with silence contradicts the request rather than
+            // approximating it: measured against the real `qwen/qwen3.8-27b` list
+            // — `["off","low","medium","xhigh","on"]` — a request for `high` used to come back
+            // `off`, i.e. moving «Длина рассуждения» from «Средне» to «Подробно» switched
+            // reasoning off altogether.
+            let quieterThanAsked = quietestFirst.prefix { $0 != level.rawValue }
+            return quieterThanAsked.last(where: allowed.contains)
+                ?? quietestFirst.first(where: allowed.contains)
         }
     }
 }

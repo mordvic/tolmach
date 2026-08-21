@@ -38,3 +38,18 @@ import Foundation
     #expect(SSEFrameParser.frame(from: #"data: {"content":"Привет"}"#) == nil)
     #expect(SSEFrameParser.frame(from: #"data: ["message.delta"]"#) == nil)
 }
+
+@Test func anErrorPayloadWithoutATypeIsStillReadAsAnErrorFrame() {
+    // The documented event always carries `"type":"error"`, so this is a shape nobody has seen
+    // — and it is handled because the two failure directions are not equally bad. Dropped, such
+    // a frame lets a run finish as a success with half a translation in it, which is the one
+    // outcome the reader's throw exists to prevent.
+    let frame = SSEFrameParser.frame(from: #"data: {"error":{"message":"boom","code":"internal_error"}}"#)
+    #expect(frame?.type == "error")
+}
+
+@Test func aPayloadWithNeitherATypeNorAnErrorIsStillIgnored() {
+    // The hardening above must not turn every unreadable frame into a failed translation.
+    #expect(SSEFrameParser.frame(from: #"data: {"content":"Привет"}"#) == nil)
+    #expect(SSEFrameParser.frame(from: #"data: {"error":"boom"}"#) == nil)
+}

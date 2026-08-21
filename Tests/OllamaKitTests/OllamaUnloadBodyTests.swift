@@ -27,3 +27,18 @@ import Foundation
         try JSONSerialization.data(withJSONObject: OllamaUnloadBody.json(model: "aya-expanse:8b"))
     }
 }
+
+@Test func onlyADoneReasonOfUnloadConfirmsTheModelWasFreed() {
+    // HTTP 200 is not the confirmation. A server that ignored the zero answers 200 with
+    // `done_reason: "stop"`, and calling that a successful unload would show «выгружено» over
+    // an unchanged memory figure.
+    #expect(OllamaUnloadBody.confirmsUnload(Data(#"{"done":true,"done_reason":"unload"}"#.utf8)) == true)
+    #expect(OllamaUnloadBody.confirmsUnload(Data(#"{"done":true,"done_reason":"stop"}"#.utf8)) == false)
+}
+
+@Test func anUnreadableReplyIsNotReadAsARefusalToUnload() {
+    // Nil, not false: this round trip has never been seen on a live server, so «said nothing»
+    // must not be reported to the user as «said no».
+    #expect(OllamaUnloadBody.confirmsUnload(Data("not json".utf8)) == nil)
+    #expect(OllamaUnloadBody.confirmsUnload(Data(#"{"done":true}"#.utf8)) == nil)
+}

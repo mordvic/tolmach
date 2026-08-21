@@ -222,6 +222,15 @@ extension OllamaClient {
         guard http.statusCode == 200 else {
             throw OllamaError.httpStatus(http.statusCode, String(data: data, encoding: .utf8) ?? "")
         }
+        // HTTP 200 is not the confirmation — `done_reason` is. See
+        // `OllamaUnloadBody.confirmsUnload`: a server that ignored the zero would answer 200
+        // with `done_reason: "stop"`, and reporting that as a successful unload would leave the
+        // user looking at a «выгружено» message and an unchanged memory figure. An unreadable
+        // body is accepted rather than treated as failure: this call's whole subject is a
+        // documented behaviour nobody here has yet seen on the wire.
+        if OllamaUnloadBody.confirmsUnload(data) == false {
+            throw OllamaError.decoding("the model was not unloaded: \(String(data: data, encoding: .utf8) ?? "")")
+        }
     }
 
     public func pull(model: String) -> AsyncThrowingStream<PullProgress, Error> {

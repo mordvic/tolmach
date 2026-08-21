@@ -29,3 +29,10 @@ import Foundation
     let mapped = LMStudioErrorParser.parse(body: Data("<html>502</html>".utf8), status: 502)
     #expect(mapped == .httpStatus(502, "<html>502</html>"))
 }
+
+@Test func aJSONBodyThatIsNotTheServersErrorObjectStillKeepsItsStatus() {
+    // A proxy or a later version answering with valid JSON of another shape. «Could not decode»
+    // alone would throw away the only diagnosable part of the failure — the 503.
+    let mapped = LMStudioErrorParser.parse(body: Data(#"{"status":"overloaded"}"#.utf8), status: 503)
+    #expect(mapped == .httpStatus(503, #"{"status":"overloaded"}"#))
+}

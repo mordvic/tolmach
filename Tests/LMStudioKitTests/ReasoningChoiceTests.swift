@@ -28,9 +28,12 @@ private let gemma = ["off", "on"]                        // google/gemma-4-e4b, 
     #expect(ReasoningChoice.value(for: .level(.low), allowed: nil) == nil)
 }
 
-@Test func aFailedCapabilityLookupSendsNoReasoningKeyEither() {
-    // The client reports a failed `/api/v1/models` read as «not known», i.e. the same empty
-    // list. Paying for a trace is recoverable; a refused value is a failed translation.
+@Test func aModelReportingAnEmptyListOfOptionsIsSentNoReasoningKey() {
+    // Named for what it pins. It used to be called «a failed capability lookup…» and claimed
+    // the client reports a failed read as this empty list — it does not, it reports `nil`, and
+    // that path is covered by `anUnreadCatalogueLeavesReasoningUnsentRatherThanGuessing` in
+    // `LMStudioClientTests`. `docs/reference/TESTING.md`'s fifth shape, in a comment rather
+    // than in code.
     #expect(ReasoningChoice.value(for: .off, allowed: []) == nil)
 }
 
@@ -45,6 +48,17 @@ private let gemma = ["off", "on"]                        // google/gemma-4-e4b, 
     #expect(ReasoningChoice.value(for: .level(.medium), allowed: gptOss) == "medium")
     // gemma offers no levels at all, so the quietest thing it does offer is silence.
     #expect(ReasoningChoice.value(for: .level(.high), allowed: gemma) == "off")
+}
+
+@Test func aLevelTheModelLacksFallsToTheNearestQuieterOneRatherThanToSilence() {
+    // The real `qwen/qwen3.8-27b` list, which has `off` and levels but not `high`. A caller
+    // asking for `high` has said «a trace this long is acceptable», so answering `off` would
+    // contradict the request rather than approximate it — and would mean that moving «Длина
+    // рассуждения» from «Средне» to «Подробно» switched reasoning off altogether.
+    #expect(ReasoningChoice.value(for: .level(.high), allowed: qwen) == "medium")
+    #expect(ReasoningChoice.value(for: .level(.medium), allowed: qwen) == "medium")
+    // Nothing quieter than the request exists, so the quietest option on offer is the answer.
+    #expect(ReasoningChoice.value(for: .level(.low), allowed: ["medium", "high"]) == "medium")
 }
 
 @Test func aModelOfferingOnlyOnGetsNoKeyBecauseOnIsNotQuieterThanItsDefault() {

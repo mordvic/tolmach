@@ -36,9 +36,13 @@ enum LMStudioChatBody {
     /// (`LMStudioClient.load`), not a duration attached to a request.
     ///
     /// Turns the app's two-turn message list into this endpoint's two fields. One system turn
-    /// and one user turn is what `PromptBuilder` produces; several turns of the same role are
-    /// joined rather than dropped, so a future prompt shape degrades loudly in one place
-    /// instead of silently losing a turn.
+    /// and one user turn is what `PromptBuilder` produces, and several turns of the *same* role
+    /// are joined rather than dropped.
+    ///
+    /// A turn in any **other** role — an assistant turn, say — is dropped here without a
+    /// signal, and that is a limitation rather than a design: this endpoint has no field for
+    /// one (design §5.3, «if one ever is, this is the line that has to change»). Nothing in the
+    /// app builds such a turn today; if something does, this function is where it will vanish.
     private static func text(of role: String, in messages: [ChatMessage]) -> String {
         messages.filter { $0.role == role }.map(\.content).joined(separator: "\n\n")
     }

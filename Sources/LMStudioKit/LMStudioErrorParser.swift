@@ -29,9 +29,16 @@ enum LMStudioErrorParser {
     /// server happened to send.
     static func parse(body data: Data, status: Int) -> LMStudioError {
         if status == 401 { return .authenticationRequired }
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return .httpStatus(status, String(data: data, encoding: .utf8) ?? "")
+        let text = String(data: data, encoding: .utf8) ?? ""
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              case let parsed = parse(object), !parsed.isUndecodable else {
+            // Valid JSON that is not this server's error object — a proxy answering
+            // `{"status":"overloaded"}`, or a shape a later version introduces — must keep its
+            // status code. Reporting «could not decode» alone would throw away the only part of
+            // the failure that says anything: HTTP 503 is diagnosable, a decoding complaint
+            // about an unnamed body is not.
+            return .httpStatus(status, text)
         }
-        return parse(object)
+        return parsed
     }
 }

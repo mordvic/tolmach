@@ -20,6 +20,15 @@ public enum LMStudioError: LocalizedError, Equatable {
     case httpStatus(Int, String)
     case decoding(String)
 
+    /// Whether this is «I could not read the answer» rather than «the server refused».
+    ///
+    /// Read by `LMStudioErrorParser.parse(body:status:)` to decide whether an HTTP failure's
+    /// status is still the most informative thing it has.
+    var isUndecodable: Bool {
+        if case .decoding = self { return true }
+        return false
+    }
+
     public var errorDescription: String? {
         switch self {
         case .notRunning:

@@ -95,7 +95,50 @@ import Foundation
     #expect(await calls.value == 2)
 }
 
+@Test func aModelMissingFromTheFirstReadIsLookedUpAgainRatherThanAnsweredFromAStaleList() async {
+    // The quiet failure this guards: the list is read once, so a model installed or first
+    // selected in LM Studio's own window afterwards was «not known» for the rest of the
+    // session — no `reasoning` key, and «Отключать рассуждение модели» silently inert. On
+    // `qwen3.8-27b`, whose default is `xhigh`, that is a full trace per chunk.
+    let installed = Mutable(["google/gemma-4-e4b"])
+    let catalogue = ModelCatalogue {
+        await installed.value.map {
+            LMStudioModel(key: $0, displayName: $0, sizeBytes: 1, format: "mlx",
+                          loadedInstanceIDs: [], reasoningOptions: ["off", "on"])
+        }
+    }
+    #expect(await catalogue.reasoningOptions(for: "google/gemma-4-e4b") == ["off", "on"])
+    #expect(await catalogue.reasoningOptions(for: "qwen/qwen3.8-27b") == nil)
+
+    await installed.set(["google/gemma-4-e4b", "qwen/qwen3.8-27b"])
+    #expect(await catalogue.reasoningOptions(for: "qwen/qwen3.8-27b") == ["off", "on"],
+            "the newly installed model must not stay unknown for the session")
+}
+
+@Test func twoTranslationsStartingTogetherShareOneCatalogueRead() async {
+    // One client is shared by the window, the panel and the queue, so a hotkey press landing
+    // while the window translates is the ordinary case. Both askers suspend at the same await;
+    // without an in-flight task held on the actor, each starts its own request.
+    let calls = Counter()
+    let catalogue = ModelCatalogue {
+        await calls.increment()
+        try? await Task.sleep(for: .milliseconds(20))
+        return [LMStudioModel(key: "google/gemma-4-e4b", displayName: "Gemma", sizeBytes: 1,
+                              format: "mlx", loadedInstanceIDs: [], reasoningOptions: ["off"])]
+    }
+    async let first = catalogue.reasoningOptions(for: "google/gemma-4-e4b")
+    async let second = catalogue.reasoningOptions(for: "google/gemma-4-e4b")
+    _ = await (first, second)
+    #expect(await calls.value == 1)
+}
+
 private actor Counter {
     private(set) var value = 0
     func increment() { value += 1 }
+}
+
+private actor Mutable<T: Sendable> {
+    private(set) var value: T
+    init(_ value: T) { self.value = value }
+    func set(_ new: T) { value = new }
 }

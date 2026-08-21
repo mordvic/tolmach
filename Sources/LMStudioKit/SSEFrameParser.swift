@@ -26,9 +26,19 @@ enum SSEFrameParser {
     static func frame(from line: String) -> SSEFrame? {
         guard let payload = payload(of: line), payload != "[DONE]",
               let data = payload.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let type = object["type"] as? String else { return nil }
-        return SSEFrame(type: type, json: object)
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        if let type = object["type"] as? String { return SSEFrame(type: type, json: object) }
+        // A payload carrying an error object but **no** `type` is still an error frame.
+        //
+        // The documented event always has one — «The type of the event. Always `error`» — so
+        // this branch is for a shape nobody has seen. It exists because the two failure
+        // directions are not equally bad: dropping such a frame lets the run finish as a
+        // success with half a translation in it, which is the one outcome the reader's throw
+        // exists to prevent, while treating it as an error costs a spurious failure on a frame
+        // this server does not send.
+        if object["error"] is [String: Any] { return SSEFrame(type: "error", json: object) }
+        return nil
     }
 
     /// `data:` with or without the conventional single space after the colon — both are legal

@@ -35,7 +35,20 @@ public struct ModelDownloadProgress: Sendable, Equatable {
     /// Nil when the server sent no byte counts — the reason `PullProgress.fraction` is optional
     /// too: a fabricated 0% makes the bar jump backwards.
     public var fraction: Double? { total > 0 ? Double(completed) / Double(total) : nil }
-    public var isFinished: Bool { status == "completed" }
+
+    /// Whether this sample is the last one.
+    ///
+    /// `already_downloaded` counts, and that is not a detail: it is the *only* sample a
+    /// download of an installed model produces, so a stream contract keyed on «completed»
+    /// alone would leave the pane treating a finished non-download as still running.
+    public var isFinished: Bool { status == "completed" || status == "already_downloaded" }
+
+    /// Whether polling should continue. A download this client does not recognise the state of
+    /// is **not** polled forever: `downloading` and `paused` are the two states that resume,
+    /// and anything else — a cancellation performed in LM Studio's own window, a status added
+    /// by a later version — ends the stream rather than spinning at one request a second with
+    /// no ceiling.
+    public var invitesAnotherPoll: Bool { status == "downloading" || status == "paused" }
 }
 
 enum LMStudioDownloadParser {
@@ -54,7 +67,10 @@ enum LMStudioDownloadParser {
     /// `failed` throws rather than returning a sample: a download that stopped for good is not
     /// a progress value, and the caller's stream has to end with an error or the pane will sit
     /// on a stalled bar. `paused` is a sample — the user may resume it.
-    static func progress(_ data: Data) throws -> ModelDownloadProgress {
+    /// - Parameter totalBytes: the size the *start* response reported, used when a poll omits
+    ///   it. A paused download answers with no counts at all (measured shape), and a bar that
+    ///   forgets the size it already knew loses its position for as long as the pause lasts.
+    static func progress(_ data: Data, totalBytes: Int64 = 0) throws -> ModelDownloadProgress {
         let object = try json(data)
         guard let status = object["status"] as? String else {
             throw LMStudioError.decoding("download status without a status field")
@@ -63,10 +79,11 @@ enum LMStudioDownloadParser {
             throw LMStudioError.server(code: "download_failed", type: nil,
                                        message: object["message"] as? String ?? "download failed")
         }
+        let reported = (object["total_size_bytes"] as? NSNumber)?.int64Value ?? 0
         return ModelDownloadProgress(
             status: status,
             completed: (object["downloaded_bytes"] as? NSNumber)?.int64Value ?? 0,
-            total: (object["total_size_bytes"] as? NSNumber)?.int64Value ?? 0)
+            total: reported > 0 ? reported : totalBytes)
     }
 
     private static func json(_ data: Data) throws -> [String: Any] {
