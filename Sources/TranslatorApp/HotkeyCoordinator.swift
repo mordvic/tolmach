@@ -539,8 +539,8 @@ final class HotkeyCoordinator {
     }
 
     /// «Ещё вариант» — the same re-run under the same operation; temperature is what
-    /// varies the rendering. Offered by the view only for a finished «ошибки и стиль»
-    /// правка (`offersAnotherVariant`).
+    /// varies the rendering. Offered by the view only for a finished правка whose
+    /// степень allowed wording to move — never «только ошибки» (`offersAnotherVariant`).
     func anotherVariant() async {
         guard case .text = selection, panelModel.state != .running else { return }
         await runTranslation()

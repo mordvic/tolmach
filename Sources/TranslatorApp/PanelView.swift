@@ -112,8 +112,8 @@ struct PanelView: View {
     /// chosen operation rather than reading a new one — see
     /// `HotkeyCoordinator.switchOperation(to:)`.
     var onSwitchOperation: (TextOperation) -> Void = { _ in }
-    /// «Ещё вариант», offered only for a finished «ошибки и стиль» правка
-    /// (`model.offersAnotherVariant`).
+    /// «Ещё вариант», offered only for a finished правка whose степень allowed wording
+    /// to move — never «только ошибки» (`model.offersAnotherVariant`).
     var onAnotherVariant: () -> Void = {}
     /// The степень and стиль the next правка will use — the *settings*, passed in rather than
     /// read here, because this view is a readout: `HotkeyCoordinator` owns every decision a

@@ -158,7 +158,9 @@ struct SettingsGeneralView: View {
                     ForEach(ProofreadingLevel.allCases, id: \.self) { Text($0.russianName).tag($0) }
                 }
                 Text("«Только ошибки» — орфография, пунктуация и грамматика, формулировки не "
-                     + "трогаются. «Ошибки и стиль» — плюс канцелярит, повторы и неуклюжие обороты.")
+                     + "трогаются. «Ошибки и стиль» — плюс канцелярит, повторы и неуклюжие обороты. "
+                     + "«Переписать» — свободная переработка каждой фразы с сохранением всех фактов "
+                     + "и структуры документа.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Picker("Стиль по умолчанию", selection: $settings.defaultRewriteStyle) {
