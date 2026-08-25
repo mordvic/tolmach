@@ -236,6 +236,7 @@ so the wiring is pinned at `pressAction(for:)` and the rest is eyes-only.
 | Two recorders in «Основные» | The section is two rows, a three-sentence caption and a conditional orange row now, inside a pane with a fixed 560 × 480 frame. The refusal on a duplicate combination is a beep with no words: check that the caption's last sentence is visible without scrolling, since it is the only thing that explains the beep | `SettingsGeneralView.swift` |
 | **The inherited collision**, if you can reproduce it | Set перевод to ⌥⌘R, quit, delete the `proofreadHotkey` key (`defaults delete <domain> proofreadHotkey`), relaunch. Expected: перевод still works on ⌥⌘R, правка's shortcut does nothing, and «Основные» carries the orange row explaining why. This is the one state the recorder is written to prevent and cannot, so it is worth seeing once | `AppSettings.shortcutsCollide`, `HotkeyCoordinator.shouldRegister` |
 | A степень changed from the panel | Change it and watch two things: the правка re-runs on the same text, and «Основные» shows the new value afterwards. The setting is written deliberately (design §6) — if that ever reads as surprising, this is where the complaint will start | `HotkeyCoordinator.setProofreadingLevel` |
+| **The степень menu with three items** (issue #40) | Nobody has opened the picker since «переписать» joined it. The probe re-measured the row at 242 × 16 with the third item in the menu (2026-08-25 — a `.menu` picker's width follows the selected label, and «переписать» is the shortest of the three), so the open question is purely visual: the menu drawing three rows in the `.nonactivatingPanel`, and «Стиль» enabling when «переписать» is selected | `PanelView.proofreadingControls`, `Scripts/panel-proofread-row.swift` |
 
 **Owed by «Заменить» (issue #27).** Nothing in a test process can synthesize a real keystroke
 into another application, so every test here fakes the paste trigger — `SelectionWriter`'s and
@@ -332,6 +333,81 @@ nothing in this environment can see either.
   through that fix and are recorded as an honest model limitation with
   `aya-expanse:8b`, not an open merge question — see «Part A verification and the
   style matrix (2026-08-10, follow-up)» in §5 below for the full counts.
+- **The «переписать» calibration gate (issue #40): decision half passed 2026-08-25
+  (results below), and the branch merged to main the same day on the maintainer's
+  instruction.** At merge time criterion (2)'s human read — of the two clunky files and
+  of the «простой» borderline recorded below — was still formally owed; the merge was
+  ordered with that flag on the table, so the residual watch item is: if «переписать» +
+  «простой» is ever seen dropping substance in real use, the 3/3 attribution-drop below
+  is where it was first measured. The third степень `rewrite` is a
+  sentence-level lossless rewrite (structure stays with the untouched shared protection
+  rules; the instruction deliberately never says «structure»). The measured background
+  making the gate non-negotiable is §5 below: under «ошибки и стиль» the styles no-opped
+  3/3 («дружеский», «простой») and 2/3 («профессиональный»), and two rounds of prompt
+  strengthening changed nothing observable. The new level asks for strictly more freedom.
+  **Protocol**: `translate-cli --proofread --level rewrite [--style …]` (temperature is the
+  CLI's fixed 0.2 — the same value as the 2026-08-10 calibration, so series are
+  comparable), 3 runs × file × style over `docs/proofreading-gate/`; per-model results
+  recorded separately; `diff -q` output-vs-input as the cheap no-op filter before any
+  reading. **The ship decision reads `translategemma:12b` alone**; `aya-expanse:8b` runs
+  are the comparison point against §5's baseline, never averaged in. **Criteria**:
+  (1) non-no-op against the annotated targets below in ≥2/3 runs — a borderline 2/3
+  escalates to a 5–6 run series rather than passing; (2) zero lost facts across clunky
+  runs (human read); (3) on the inline-code files the equal-count restoration gate holds,
+  and when it holds the spans are byte-identical — restoration-by-construction makes
+  «spans intact» near-guaranteed, so the real signal is how often a rewrite breaks the
+  count; (4) «деловой» and «простой» produce a discernible register shift ≥2/3 on a clunky
+  file («дружеский» is excluded — §5 records it as a model limitation). Any failure: the
+  case does not reach a release and the result is recorded here as a measured limitation.
+  The targets are annotated **here rather than in a header inside the files** — a
+  deliberate deviation from issue #40's wording: the file's bytes are the model's input,
+  so an in-file header would itself be rewritten, and no existing gate file carries one
+  either (the issue's premise was wrong; verified against all twelve). Both files are
+  **synthetic and still owed the human read** the issue requires before the gate's
+  verdict counts.
+  **Annotated targets in `ru-clunky.txt`** (157 words by `wc -w`): the 51-word opening sentence and
+  the 43-word second-paragraph sentence are splitting targets; «предлагаем осуществить» ×2
+  and «в кратчайшие сроки» ×2 are verbatim-repetition targets; «Данная ситуация… Данная
+  процедура…» is a merge target; the bureaucratisms («в рамках проводимой работы», «имеет
+  место быть», «на сегодняшний день», «в целях обеспечения», «в связи с вышеизложенным»,
+  «осуществ-» forms ×4) are dissolution targets. Facts that must survive: пять
+  инстанций, сокращение до двух, одиннадцать рабочих дней, электронный вид, срыв сроков.
+  (Every count here is a script's output over the committed bytes, not an estimate — the
+  first version of this entry wrote estimates as measurements and a review caught three
+  of them wrong.)
+  **Annotated targets in `en-clunky.txt`** (211 words by `wc -w`, the same document mirrored): the
+  75-word opening sentence and the 57-word second-paragraph sentence; the near-verbatim
+  pair «we propose to carry out» / «we also propose to carry out» and «as soon as
+  possible» ×2; «This situation… This procedure…»; the
+  bureaucratisms («in the context of», «it should be noted that», «at the present time»,
+  «on a manual basis», «in order to ensure», «aforementioned», «there exists a situation
+  in which», «in view of the above»). Facts that must survive: five stages, reduction to
+  two, electronic form, missed deadlines. (The en file carries no «eleven working days»
+  figure — the ru file gained it after mirroring, deliberately left asymmetric so the
+  lossless check has one fact only one language carries.)
+  **Decision-half results (2026-08-25, translategemma:12b, Ollama, temperature 0.2,
+  `--chunk 4000`, 27 runs, all exit 0, single chunk each, TTFT ~0.65–0.70 s):**
+  criterion (1) **passed 18/18** — zero byte-identical no-ops, the 51-word ru opener and
+  75-word en opener gone in every run (longest surviving sentence ≤38 ru / ≤27 en words),
+  both verbatim-repetition pairs dissolved 18/18, every listed bureaucratism gone 18/18;
+  criterion (3) **passed 9/9** — inline spans and the fenced block byte-identical on all
+  inline-code and fenced runs, the equal-count gate never broke, and **0 markup diffs
+  across all 27 runs**; criterion (4) **passed 3/3 both languages** — «простой» is
+  discernibly plainer (max sentence 17 en / 22–31 ru vs 24–38 unstyled; «Сейчас», “takes
+  too long”), «деловой» discernibly formal 3/3 (retains/normalises «в связи с
+  вышеизложенным», «корреспонденция», «обращаем/просим вас»; “we request a prompt
+  review”, “transitioning… correspondence”) — with the honest note that the clunky source
+  is itself business-register, so the «деловой» shift is confirmatory rather than
+  dramatic; criterion (2) **passed by machine proxy 18/18** (every must-survive fact
+  present in every run, including the ru-only «одиннадцать рабочих дней») **and still
+  owed the human read**, with one flagged borderline: ru «простой» drops the secondary
+  attribution «утверждённых руководством организации» in 3/3 runs — «действующих
+  регламентов» survives, its approver does not; whether that is «substance» under the
+  lossless contract is exactly the judgement the human read exists for. **The comparison
+  half (aya-expanse:8b against §5's baseline) is not run: the model is not installed**
+  (only translategemma:12b/27b and aya-expanse:32b are) — informational only, the ship
+  decision above reads translategemma:12b alone. Raw outputs: session scratchpad
+  `calib/`; the runner is `calib-run.sh` beside it (temperature and chunk as above).
 - **The 700 pt toolbar minimum is now assumed, not measured.** The translate-mode toolbar
   gained the «Перевод | Правка» operation switch, and the 650/680 pt fit measurements it
   rests on — and the 700 pt minimum `MainWindowView.swift` derives from them — predate that
@@ -677,7 +753,8 @@ prompt-improvement pass (specs/2026-08-10-prompt-improvement-design.md §3.2). C
 11 texts (verbatim below with their seeded errors); runner: throwaway scratchpad script;
 model: aya-expanse:8b, temperature 0.2, 3 runs per text per wording. This corpus is a
 parallel one, assembled before this run noticed that a committed gate corpus already
-exists at `docs/proofreading-gate/` (10 files, named in §1 above); that committed corpus
+exists at `docs/proofreading-gate/` (10 files then; 12 since the two `-clunky` files
+arrived with the «переписать» gate entry above); that committed corpus
 was not used by this run and remains un-run.
 
 `01-ru-letter.txt` (seeded: «колега»→коллега; missing comma before «что»; «будующем»→будущем):

@@ -307,6 +307,7 @@ func pullStatusesAreShownInRussian(raw: String, expected: String) {
 @Test func proofreadingLevelsAndStylesHaveRussianNames() {
     #expect(ProofreadingLevel.errorsOnly.russianName == "только ошибки")
     #expect(ProofreadingLevel.errorsAndStyle.russianName == "ошибки и стиль")
+    #expect(ProofreadingLevel.rewrite.russianName == "переписать")
     #expect(RewriteStyle.original.russianName == "как в оригинале")
     #expect(RewriteStyle.friendly.russianName == "дружеский")
     #expect(RewriteStyle.business.russianName == "деловой")

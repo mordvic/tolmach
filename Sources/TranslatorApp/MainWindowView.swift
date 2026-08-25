@@ -438,7 +438,7 @@ struct MainWindowView: View {
             if mode == .text, model.operation == .proofread {
                 directionMenu(label: "Стиль",
                               value: model.rewriteStyleOverride?.russianName ?? Self.toneDefault,
-                              help: "В какой стиль переписать; доступно при «ошибки и стиль»") {
+                              help: "В какой стиль переписать; недоступно при «только ошибки»") {
                     Picker("Стиль", selection: $model.rewriteStyleOverride) {
                         Text(Self.toneDefault).tag(RewriteStyle?.none)
                         ForEach(RewriteStyle.allCases, id: \.self) { style in

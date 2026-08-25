@@ -11,7 +11,14 @@ struct ParseFailure: Error { let message: String }
 struct Options {
     var to: String?
     var from: String?
-    var tone = "neutral"
+    /// Optional with a late default rather than `= "neutral"`: «rejected under
+    /// --proofread» is decidable only if an explicit value is distinguishable from the
+    /// default — with an eager default the rejection would be unreachable and the flag
+    /// would quietly do nothing, the `--from` defect's exact shape.
+    var tone: String?
+    var proofread = false
+    var level: ProofreadingLevel?
+    var style: RewriteStyle?
     var model: String?
     var chunk = 900
     var think: ThinkRequest?
@@ -65,6 +72,23 @@ func parse(_ args: [String]) -> Result<Options, ParseFailure> {
                 // would make a mistyped flag look like a measurement.
                 return .failure(ParseFailure(message: "--think needs one of off|low|medium|high, got \"\(value)\""))
             }
+        case "--proofread":
+            options.proofread = true
+        case "--level":
+            guard let value = takeValue() else { return .failure(ParseFailure(message: "--level needs a value")) }
+            // Read through `init(rawValue:)` with the choices listed from `allCases`, the
+            // `--think` pattern: a level added to the enum is accepted and advertised here
+            // without an edit, and cannot be accepted by the enum but refused by the flag.
+            guard let level = ProofreadingLevel(rawValue: value) else {
+                return .failure(ParseFailure(message: "--level needs one of \(ProofreadingLevel.allCases.map(\.rawValue).joined(separator: "|")), got \"\(value)\""))
+            }
+            options.level = level
+        case "--style":
+            guard let value = takeValue() else { return .failure(ParseFailure(message: "--style needs a value")) }
+            guard let style = RewriteStyle(rawValue: value) else {
+                return .failure(ParseFailure(message: "--style needs one of \(RewriteStyle.allCases.map(\.rawValue).joined(separator: "|")), got \"\(value)\""))
+            }
+            options.style = style
         case "--engine":
             guard let value = takeValue() else { return .failure(ParseFailure(message: "--engine needs a value")) }
             guard value == "ollama" || value == "lmstudio" else {
@@ -85,6 +109,7 @@ func parse(_ args: [String]) -> Result<Options, ParseFailure> {
 }
 
 let usage = "usage: translate-cli --to <ru|en|de|fr|es|pt|it|zh|ja> [--from L] [--tone neutral|formal|casual|technical|literal] [--engine ollama|lmstudio] [--model NAME] [--chunk N] [--think off|low|medium|high] [text]\n"
+    + "       translate-cli --proofread [--level errorsOnly|errorsAndStyle|rewrite] [--style original|friendly|business|professional|plain] [--from L] [--engine ollama|lmstudio] [--model NAME] [--chunk N] [--think off|low|medium|high] [text]\n"
 
 func fail(_ message: String) -> Never {
     FileHandle.standardError.write(Data((message + "\n").utf8))
@@ -99,8 +124,26 @@ case .success(let options): parsed = options
 case .failure(let failure): fail(failure.message)
 }
 
-guard let toRaw = parsed.to, let target = Language(rawValue: toRaw) else {
-    fail(parsed.to == nil ? "--to is required" : "--to needs one of ru|en|de|fr|es|pt|it|zh|ja, got \"\(parsed.to!)\"")
+// The operation split. Each side's inapplicable flags are **rejected**, never ignored,
+// for `--think`-on-LM-Studio's reason: a flag that quietly did nothing would make a
+// mistyped measurement look like a result — and this tool exists to take measurements
+// (the правка calibration gate, issue #40, runs through it).
+var target: Language?
+if parsed.proofread {
+    if parsed.to != nil {
+        fail("--to applies to translation only; a proofread stays in the text's own language")
+    }
+    if parsed.tone != nil {
+        fail("--tone applies to translation only; under --proofread the register is --style")
+    }
+} else {
+    if parsed.level != nil || parsed.style != nil {
+        fail("--level and --style apply to --proofread only")
+    }
+    guard let toRaw = parsed.to, let parsedTarget = Language(rawValue: toRaw) else {
+        fail(parsed.to == nil ? "--to is required" : "--to needs one of ru|en|de|fr|es|pt|it|zh|ja, got \"\(parsed.to!)\"")
+    }
+    target = parsedTarget
 }
 // Failed on loudly, exactly like `--to` above. `flatMap` alone turned a typo into
 // «detect it», so `--from ge` translated from whatever the detector guessed and said
@@ -112,8 +155,21 @@ if let fromRaw = parsed.from {
     }
     source = parsedSource
 }
-guard let tone = Tone(rawValue: parsed.tone) else {
-    fail("--tone needs one of neutral|formal|casual|technical|literal, got \"\(parsed.tone)\"")
+// The default lands here, not in `Options`: an explicit value had to stay
+// distinguishable for the rejection above. "neutral" always parses, so the `!` in the
+// message is reachable only with a user-supplied value to show.
+guard let tone = Tone(rawValue: parsed.tone ?? "neutral") else {
+    fail("--tone needs one of neutral|formal|casual|technical|literal, got \"\(parsed.tone!)\"")
+}
+// The defaults land late, like --tone's, and for the same reason: the presence of an
+// explicit value drives the rejections here and in the operation split above.
+let level = parsed.level ?? .errorsOnly
+let style = parsed.style ?? .original
+// The same availability rule every UI surface reads, applied as a rejection: the engine
+// would drop the style silently under a level that forbids it (the prompt-builder guard),
+// which is correct for the app and exactly the «quietly did nothing» shape here.
+if parsed.style != nil, !level.allowsRewriteStyle {
+    fail("--style needs a level whose wording may move, got --level \(level.rawValue)")
 }
 let model = parsed.model ?? ModelPolicy.defaultModel(for: .interactive)
 // No --two-pass flag: the second pass is cut from v1 (see Global Constraints).
@@ -148,16 +204,26 @@ let translator = Translator(client: parsed.engine == "lmstudio"
 let chatOptions = ChatOptions(model: model, temperature: 0.2, keepAlive: "30m", think: parsed.think)
 
 do {
-    let outcome = try await translator.translate(
-        text: text, target: target, tone: tone, userGlossary: nil,
-        // Passed. It was parsed at the top and then never read again, so `--from` was
-        // advertised in the usage string and did nothing at all: the prompt, the tagger
-        // `TermExtractor` parses with and the footer's detected language all came from the
-        // detector regardless. Before `translate(source:)` existed there was nowhere to put
-        // it; there is now, and CLAUDE.md says every caller states its language.
-        source: source,
-        options: chatOptions, maxChunkCharacters: chunk,
-        onToken: { FileHandle.standardOutput.write(Data($0.utf8)) })
+    let outcome: TranslationOutcome
+    if parsed.proofread {
+        outcome = try await translator.proofread(
+            text: text, level: level, style: style, source: source,
+            options: chatOptions, maxChunkCharacters: chunk,
+            onToken: { FileHandle.standardOutput.write(Data($0.utf8)) })
+    } else {
+        // Non-nil by the operation split above; the guard keeps the unwrap honest.
+        guard let target else { fail("--to is required") }
+        outcome = try await translator.translate(
+            text: text, target: target, tone: tone, userGlossary: nil,
+            // Passed. It was parsed at the top and then never read again, so `--from` was
+            // advertised in the usage string and did nothing at all: the prompt, the tagger
+            // `TermExtractor` parses with and the footer's detected language all came from the
+            // detector regardless. Before `translate(source:)` existed there was nowhere to put
+            // it; there is now, and CLAUDE.md says every caller states its language.
+            source: source,
+            options: chatOptions, maxChunkCharacters: chunk,
+            onToken: { FileHandle.standardOutput.write(Data($0.utf8)) })
+    }
     FileHandle.standardOutput.write(Data("\n".utf8))
     let ttftDescription = outcome.timeToFirstTokenMS.map { "\(Int($0))ms" } ?? "—"
     var footer = "\n— \(ttftDescription) TTFT · \(Int(outcome.totalMS))ms total · \(outcome.chunks.count) chunk(s)"

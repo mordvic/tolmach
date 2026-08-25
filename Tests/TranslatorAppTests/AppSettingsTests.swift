@@ -317,6 +317,10 @@ private final class FiredFlag: @unchecked Sendable {
     settings.defaultRewriteStyle = rewriteValue
     #expect(settings.defaultProofreadingLevel == styleValue)
     #expect(settings.defaultRewriteStyle == rewriteValue)
+    // «Переписать» stores under the same key — no migration, and a downgrade to a build
+    // without the case reads it as the unknown-value fallback below (issue #40).
+    settings.defaultProofreadingLevel = .rewrite
+    #expect(settings.defaultProofreadingLevel == .rewrite)
     // A plist is user-writable; an unreadable value falls back to the default
     // rather than to a crash or an absent control.
     defaults.set("nonsense", forKey: "proofreadingLevel")

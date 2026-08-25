@@ -4,9 +4,40 @@ import Foundation
 /// like `Tone.instruction`; the Russian labels live in the app layer
 /// (`RussianCopy.swift`), keeping this target UI-agnostic.
 public enum ProofreadingLevel: String, CaseIterable, Sendable {
-    case errorsOnly, errorsAndStyle
+    case errorsOnly, errorsAndStyle, rewrite
 
-    public var instruction: String {
+    public var instruction: String { instruction(styleGovernsVoice: false) }
+
+    /// The single availability rule for the style controls: a rewrite style is a change
+    /// of wording, so it is expressible wherever wording may change — every level above
+    /// «только ошибки». The toolbar and the settings pane both read this rather than
+    /// restating the comparison — a restated condition is how two surfaces come to
+    /// disagree (spec §7).
+    public var allowsRewriteStyle: Bool { self != .errorsOnly }
+
+    /// The action the anti-answering rule names for this level. A property with an
+    /// exhaustive switch rather than a comparison at the call site, so a fourth level
+    /// must decide its verb at compile time instead of silently inheriting «correct» —
+    /// the `offersAnotherVariant` lesson (issue #40): a restated case comparison is
+    /// invisible until the case it misses ships.
+    public var antiAnsweringVerb: String {
+        switch self {
+        case .errorsOnly, .errorsAndStyle: "correct"
+        // «Correct» would carry the corrector's frame into the one level that must not
+        // have it.
+        case .rewrite: "rewrite"
+        }
+    }
+
+    /// Each level's prompt sentence, written **once**: when a named style accompanies a
+    /// level, only the clause naming what the style now owns leaves the preservation
+    /// list — «voice» for `errorsAndStyle`, «the author's register» for `rewrite` —
+    /// because keeping both instructions produced measured 3/3 no-ops on «дружеский» and
+    /// «простой» (spec §3.1; docs/reference/OPEN-ITEMS.md §5). The shared head and tail
+    /// are single literals so a calibration rewording cannot split the styled and
+    /// unstyled prompts beyond that clause. `errorsOnly` ignores the flag: no style ever
+    /// accompanies it.
+    public func instruction(styleGovernsVoice: Bool) -> String {
         switch self {
         case .errorsOnly:
             // 2026-08-10 calibration: the baseline corpus run (docs/reference/OPEN-ITEMS.md, правка
@@ -17,32 +48,31 @@ public enum ProofreadingLevel: String, CaseIterable, Sendable {
             // persisted 3/3, byte-identical to the pre-edit output, so the append changed
             // nothing observable. Reverted; the failure is recorded as a model limitation
             // in docs/reference/OPEN-ITEMS.md rather than left as a silent, ineffective prompt edit.
-            "Fix only objective errors: spelling, punctuation, and clear grammatical mistakes. "
-            + "Do not rephrase, do not reorder, do not restyle — keep every wording choice the "
-            + "author made. The result must differ from the original only where an error was corrected."
+            return "Fix only objective errors: spelling, punctuation, and clear grammatical mistakes. "
+                + "Do not rephrase, do not reorder, do not restyle — keep every wording choice the "
+                + "author made. The result must differ from the original only where an error was corrected."
         case .errorsAndStyle:
-            "Fix spelling, punctuation, and grammatical errors, and also smooth awkward phrasing: "
-            + "remove bureaucratic constructions, needless repetition, and clumsy word order. "
-            + "Preserve the author's meaning, voice, and overall structure."
+            return "Fix spelling, punctuation, and grammatical errors, and also smooth awkward phrasing: "
+                + "remove bureaucratic constructions, needless repetition, and clumsy word order. "
+                + (styleGovernsVoice
+                   ? "Preserve the author's meaning and overall structure."
+                   : "Preserve the author's meaning, voice, and overall structure.")
+        case .rewrite:
+            // «At the sentence level», and the word «structure» deliberately absent: the
+            // shared protection rules two lines below this in the prompt demand exact
+            // structure preservation, and an instruction inviting restructuring would
+            // fight its own rule list — which rule wins is a lottery per model. Free
+            // structural rewriting is a recorded non-goal (issue #40, the «rewrite
+            // within structure» decision); the pipeline enforces the same boundary by
+            // construction anyway — chunk separators are the source's own bytes.
+            return "Rewrite the text freely at the sentence level: reorder, split, or merge "
+                + "sentences, replace wording, and dissolve bureaucratic phrasing wherever it "
+                + "helps clarity and flow. "
+                + (styleGovernsVoice
+                   ? "Preserve the meaning and every fact. "
+                   : "Preserve the meaning, every fact, and the author's register. ")
+                + "Add nothing; omit nothing of substance."
         }
-    }
-
-    /// The single availability rule for the style controls: a rewrite style is a change
-    /// of wording, so it is expressible only where wording may change. The toolbar and
-    /// the settings pane both read this rather than restating the comparison — a restated
-    /// condition is how two surfaces come to disagree (spec §7).
-    public var allowsRewriteStyle: Bool { self == .errorsAndStyle }
-
-    /// The style-aware variant. When a named style accompanies this level, «voice»
-    /// leaves the preservation list — the style owns the voice, and keeping both
-    /// instructions produced measured 3/3 no-ops on «дружеский» and «простой»
-    /// (spec §3.1; docs/reference/OPEN-ITEMS.md §5). `errorsOnly` ignores the flag: no style
-    /// ever accompanies it.
-    public func instruction(styleGovernsVoice: Bool) -> String {
-        guard self == .errorsAndStyle, styleGovernsVoice else { return instruction }
-        return "Fix spelling, punctuation, and grammatical errors, and also smooth awkward phrasing: "
-            + "remove bureaucratic constructions, needless repetition, and clumsy word order. "
-            + "Preserve the author's meaning and overall structure."
     }
 }
 

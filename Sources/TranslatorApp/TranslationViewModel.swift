@@ -279,15 +279,19 @@ final class TranslationViewModel {
     }
 
     /// «Ещё вариант» is offered only where variance is the point: a finished правка run
-    /// whose степень allowed wording to move. Under «только ошибки» the promise is a
-    /// deterministic minimal diff — another variant of that promise is a contradiction
-    /// (spec §2, product review 2026-08-10). The `operation == .proofread` conjunct is not
-    /// redundant with `resolvedProofreadingLevel`: without it, flipping the toolbar switch
-    /// to «Перевод» after a finished правка left the button lit and re-running it would
-    /// translate rather than re-proof — the button must disappear rather than lie about
-    /// which operation it is about to run.
+    /// whose степень allowed wording to move — `allowsRewriteStyle`, read from the level
+    /// type rather than restated as a case comparison, so a new level cannot silently
+    /// miss the button (this was the codebase's one restated level comparison; issue #40).
+    /// Under «только ошибки» the promise is a deterministic minimal diff — another variant
+    /// of that promise is a contradiction (spec §2, product review 2026-08-10). The
+    /// `operation == .proofread` conjunct is not redundant with
+    /// `resolvedProofreadingLevel`: without it, flipping the toolbar switch to «Перевод»
+    /// after a finished правка left the button lit and re-running it would translate
+    /// rather than re-proof — the button must disappear rather than lie about which
+    /// operation it is about to run.
     var offersAnotherVariant: Bool {
-        state == .finished && operation == .proofread && resolvedProofreadingLevel == .errorsAndStyle
+        state == .finished && operation == .proofread
+            && resolvedProofreadingLevel?.allowsRewriteStyle == true
             // Re-running an identity is not a variant (spec §2.1).
             && (outcome?.modelChunkCount ?? 0) > 0
     }
