@@ -12,10 +12,38 @@ import Testing
     #expect(ProofreadingLevel.errorsAndStyle.instruction.lowercased().contains("awkward"))
 }
 
-@Test func onlyErrorsAndStyleAllowsARewriteStyle() {
+@Test func everyLevelAboveErrorsOnlyAllowsARewriteStyle() {
     // The one availability rule both the toolbar and the settings pane read (spec §7).
     #expect(!ProofreadingLevel.errorsOnly.allowsRewriteStyle)
     #expect(ProofreadingLevel.errorsAndStyle.allowsRewriteStyle)
+    #expect(ProofreadingLevel.rewrite.allowsRewriteStyle)
+}
+
+@Test func rewriteFreesTheSentenceAndNeverNamesStructure() {
+    // «Structure» must not appear: the shared protection rules two lines below the level
+    // instruction demand exact structure preservation, and an instruction fighting its own
+    // rule list is a lottery per model (issue #40 — the Q15 «rewrite within structure»
+    // decision).
+    let instruction = ProofreadingLevel.rewrite.instruction
+    #expect(instruction.contains("sentence level"))
+    #expect(!instruction.lowercased().contains("structure"))
+    // Lossless rewrite, not a summary — the trust contract behind «Заменить».
+    #expect(instruction.contains("every fact"))
+    #expect(instruction.contains("omit nothing"))
+}
+
+@Test func rewriteKeepsTheRegisterOnlyUntilAStyleGovernsIt() {
+    // Same mechanism as errorsAndStyle dropping «voice»: with «как в оригинале» the level
+    // owns the register; a named style takes it over, so the clause leaves the instruction
+    // rather than fighting the style beside it (measured 3/3 no-ops on the errorsAndStyle
+    // pair, spec §3.1 — the same conflict shape, avoided rather than re-measured).
+    #expect(ProofreadingLevel.rewrite.instruction.contains("author's register"))
+    let governed = ProofreadingLevel.rewrite.instruction(styleGovernsVoice: true)
+    #expect(!governed.contains("register"))
+    #expect(governed.contains("every fact"))
+    // errorsOnly still ignores the flag: no style ever accompanies it.
+    #expect(ProofreadingLevel.errorsOnly.instruction(styleGovernsVoice: true)
+            == ProofreadingLevel.errorsOnly.instruction)
 }
 
 @Test func originalContributesNoInstructionAndEveryOtherStyleDoes() {

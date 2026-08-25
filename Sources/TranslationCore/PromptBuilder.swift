@@ -153,7 +153,13 @@ public enum PromptBuilder {
             "Rules:",
             "- Output ONLY the corrected text. No preamble, no notes, no explanation, no quotes around it.",
         ]
-        lines.append(antiAnsweringRule(verb: "correct"))
+        // Verb per level: «rewrite them exactly as written» for the level whose action is
+        // rewriting — «correct» would carry the corrector's frame into the one level that
+        // must not have it. The opener above keeps «Correct the user's text» for every
+        // level pending calibration evidence (issue #40): the 2026-08-10 calibration
+        // reverted four «obviously better» prompt edits as unmeasurable, so the opener
+        // changes only with a measurement behind it.
+        lines.append(antiAnsweringRule(verb: level == .rewrite ? "rewrite" : "correct"))
         lines.append(contentsOf: protectionRules)
         let styleGovernsVoice = level.allowsRewriteStyle && style.instruction != nil
         lines.append("- \(level.instruction(styleGovernsVoice: styleGovernsVoice))")

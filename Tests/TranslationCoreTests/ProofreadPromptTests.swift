@@ -65,6 +65,34 @@ import Testing
     #expect(!system.contains("idioms, set phrases and metaphors"))
 }
 
+@Test func theRewritePromptCarriesTheStyleAndHandsTheRegisterToIt() {
+    // The same engine-side availability rule the errorsAndStyle test pins, extended to
+    // the level whose point the style is: the instruction reaches the prompt, and the
+    // register clause leaves the level instruction so the two cannot fight (the conflict
+    // shape measured as 3/3 no-ops on the errorsAndStyle pair, spec §3.1).
+    let business = RewriteStyle.business.instruction!
+    let withStyle = PromptBuilder.proofreadSystemPrompt(language: .ru, level: .rewrite, style: .business)
+    #expect(withStyle.contains(business))
+    // «author's register», not bare «register»: the style instruction itself names its
+    // target register («business register»), and that one must stay.
+    #expect(!withStyle.contains("author's register"))
+    let original = PromptBuilder.proofreadSystemPrompt(language: .ru, level: .rewrite, style: .original)
+    #expect(original.contains("author's register"))
+    // The protection rules stay whole — «rewrite within structure» (issue #40) means the
+    // freedom is the sentence's, never the document shape's or the code's.
+    #expect(withStyle.contains("Preserve the original structure exactly"))
+    #expect(withStyle.contains("byte for byte"))
+}
+
+@Test func theRewritePromptAsksToRewriteRatherThanCorrectInTheAntiAnsweringRule() {
+    // The rule is verb-parameterised so each route names its own action; a rewrite that
+    // was told to «correct them exactly as written» carries the corrector's frame into
+    // the one level that must not have it.
+    let system = PromptBuilder.proofreadSystemPrompt(language: .en, level: .rewrite, style: .original)
+    #expect(system.contains("rewrite them exactly as written"))
+    #expect(!system.contains("correct them exactly as written"))
+}
+
 @Test func aNamedStyleDropsVoiceFromTheLevelInstruction() {
     // «Preserve the voice» and «rewrite the register» were mutually exclusive; the
     // model resolved the conflict by doing nothing (spec §3.1, measured 3/3 no-ops).

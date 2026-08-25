@@ -4,7 +4,7 @@ import Foundation
 /// like `Tone.instruction`; the Russian labels live in the app layer
 /// (`RussianCopy.swift`), keeping this target UI-agnostic.
 public enum ProofreadingLevel: String, CaseIterable, Sendable {
-    case errorsOnly, errorsAndStyle
+    case errorsOnly, errorsAndStyle, rewrite
 
     public var instruction: String {
         switch self {
@@ -24,25 +24,49 @@ public enum ProofreadingLevel: String, CaseIterable, Sendable {
             "Fix spelling, punctuation, and grammatical errors, and also smooth awkward phrasing: "
             + "remove bureaucratic constructions, needless repetition, and clumsy word order. "
             + "Preserve the author's meaning, voice, and overall structure."
+        case .rewrite:
+            // «At the sentence level», and the word «structure» deliberately absent: the
+            // shared protection rules two lines below this in the prompt demand exact
+            // structure preservation, and an instruction inviting restructuring would
+            // fight its own rule list — which rule wins is a lottery per model. Free
+            // structural rewriting is a recorded non-goal (issue #40, the «rewrite
+            // within structure» decision); the pipeline enforces the same boundary by
+            // construction anyway — chunk separators are the source's own bytes.
+            "Rewrite the text freely at the sentence level: reorder, split, or merge "
+            + "sentences, replace wording, and dissolve bureaucratic phrasing wherever it "
+            + "helps clarity and flow. Preserve the meaning, every fact, and the author's "
+            + "register. Add nothing; omit nothing of substance."
         }
     }
 
     /// The single availability rule for the style controls: a rewrite style is a change
-    /// of wording, so it is expressible only where wording may change. The toolbar and
-    /// the settings pane both read this rather than restating the comparison — a restated
-    /// condition is how two surfaces come to disagree (spec §7).
-    public var allowsRewriteStyle: Bool { self == .errorsAndStyle }
+    /// of wording, so it is expressible wherever wording may change — every level above
+    /// «только ошибки». The toolbar and the settings pane both read this rather than
+    /// restating the comparison — a restated condition is how two surfaces come to
+    /// disagree (spec §7).
+    public var allowsRewriteStyle: Bool { self != .errorsOnly }
 
-    /// The style-aware variant. When a named style accompanies this level, «voice»
-    /// leaves the preservation list — the style owns the voice, and keeping both
-    /// instructions produced measured 3/3 no-ops on «дружеский» and «простой»
-    /// (spec §3.1; docs/reference/OPEN-ITEMS.md §5). `errorsOnly` ignores the flag: no style
-    /// ever accompanies it.
+    /// The style-aware variant. When a named style accompanies a level, the clause naming
+    /// what the style now owns leaves the preservation list — «voice» for `errorsAndStyle`,
+    /// «the author's register» for `rewrite` — because keeping both instructions produced
+    /// measured 3/3 no-ops on «дружеский» and «простой» (spec §3.1;
+    /// docs/reference/OPEN-ITEMS.md §5). `errorsOnly` ignores the flag: no style ever
+    /// accompanies it.
     public func instruction(styleGovernsVoice: Bool) -> String {
-        guard self == .errorsAndStyle, styleGovernsVoice else { return instruction }
-        return "Fix spelling, punctuation, and grammatical errors, and also smooth awkward phrasing: "
-            + "remove bureaucratic constructions, needless repetition, and clumsy word order. "
-            + "Preserve the author's meaning and overall structure."
+        guard styleGovernsVoice else { return instruction }
+        switch self {
+        case .errorsOnly:
+            return instruction
+        case .errorsAndStyle:
+            return "Fix spelling, punctuation, and grammatical errors, and also smooth awkward phrasing: "
+                + "remove bureaucratic constructions, needless repetition, and clumsy word order. "
+                + "Preserve the author's meaning and overall structure."
+        case .rewrite:
+            return "Rewrite the text freely at the sentence level: reorder, split, or merge "
+                + "sentences, replace wording, and dissolve bureaucratic phrasing wherever it "
+                + "helps clarity and flow. Preserve the meaning and every fact. "
+                + "Add nothing; omit nothing of substance."
+        }
     }
 }
 
