@@ -17,8 +17,8 @@ struct Options {
     /// would quietly do nothing, the `--from` defect's exact shape.
     var tone: String?
     var proofread = false
-    var level: String?
-    var style: String?
+    var level: ProofreadingLevel?
+    var style: RewriteStyle?
     var model: String?
     var chunk = 900
     var think: ThinkRequest?
@@ -76,10 +76,19 @@ func parse(_ args: [String]) -> Result<Options, ParseFailure> {
             options.proofread = true
         case "--level":
             guard let value = takeValue() else { return .failure(ParseFailure(message: "--level needs a value")) }
-            options.level = value
+            // Read through `init(rawValue:)` with the choices listed from `allCases`, the
+            // `--think` pattern: a level added to the enum is accepted and advertised here
+            // without an edit, and cannot be accepted by the enum but refused by the flag.
+            guard let level = ProofreadingLevel(rawValue: value) else {
+                return .failure(ParseFailure(message: "--level needs one of \(ProofreadingLevel.allCases.map(\.rawValue).joined(separator: "|")), got \"\(value)\""))
+            }
+            options.level = level
         case "--style":
             guard let value = takeValue() else { return .failure(ParseFailure(message: "--style needs a value")) }
-            options.style = value
+            guard let style = RewriteStyle(rawValue: value) else {
+                return .failure(ParseFailure(message: "--style needs one of \(RewriteStyle.allCases.map(\.rawValue).joined(separator: "|")), got \"\(value)\""))
+            }
+            options.style = style
         case "--engine":
             guard let value = takeValue() else { return .failure(ParseFailure(message: "--engine needs a value")) }
             guard value == "ollama" || value == "lmstudio" else {
@@ -152,23 +161,10 @@ if let fromRaw = parsed.from {
 guard let tone = Tone(rawValue: parsed.tone ?? "neutral") else {
     fail("--tone needs one of neutral|formal|casual|technical|literal, got \"\(parsed.tone!)\"")
 }
-// Read through `init(rawValue:)` with the choices listed from `allCases`, the `--think`
-// pattern: a level or style added to the enum is accepted and advertised here without an
-// edit, and cannot be accepted by the enum but refused by the flag.
-var level: ProofreadingLevel = .errorsOnly
-if let levelRaw = parsed.level {
-    guard let parsedLevel = ProofreadingLevel(rawValue: levelRaw) else {
-        fail("--level needs one of \(ProofreadingLevel.allCases.map(\.rawValue).joined(separator: "|")), got \"\(levelRaw)\"")
-    }
-    level = parsedLevel
-}
-var style: RewriteStyle = .original
-if let styleRaw = parsed.style {
-    guard let parsedStyle = RewriteStyle(rawValue: styleRaw) else {
-        fail("--style needs one of \(RewriteStyle.allCases.map(\.rawValue).joined(separator: "|")), got \"\(styleRaw)\"")
-    }
-    style = parsedStyle
-}
+// The defaults land late, like --tone's, and for the same reason: the presence of an
+// explicit value drives the rejections here and in the operation split above.
+let level = parsed.level ?? .errorsOnly
+let style = parsed.style ?? .original
 // The same availability rule every UI surface reads, applied as a rejection: the engine
 // would drop the style silently under a level that forbids it (the prompt-builder guard),
 // which is correct for the app and exactly the «quietly did nothing» shape here.
