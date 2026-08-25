@@ -376,6 +376,29 @@ nothing in this environment can see either.
   two, electronic form, missed deadlines. (The en file carries no «eleven working days»
   figure — the ru file gained it after mirroring, deliberately left asymmetric so the
   lossless check has one fact only one language carries.)
+  **Decision-half results (2026-08-25, translategemma:12b, Ollama, temperature 0.2,
+  `--chunk 4000`, 27 runs, all exit 0, single chunk each, TTFT ~0.65–0.70 s):**
+  criterion (1) **passed 18/18** — zero byte-identical no-ops, the 51-word ru opener and
+  75-word en opener gone in every run (longest surviving sentence ≤38 ru / ≤27 en words),
+  both verbatim-repetition pairs dissolved 18/18, every listed bureaucratism gone 18/18;
+  criterion (3) **passed 9/9** — inline spans and the fenced block byte-identical on all
+  inline-code and fenced runs, the equal-count gate never broke, and **0 markup diffs
+  across all 27 runs**; criterion (4) **passed 3/3 both languages** — «простой» is
+  discernibly plainer (max sentence 17 en / 22–31 ru vs 24–38 unstyled; «Сейчас», “takes
+  too long”), «деловой» discernibly formal 3/3 (retains/normalises «в связи с
+  вышеизложенным», «корреспонденция», «обращаем/просим вас»; “we request a prompt
+  review”, “transitioning… correspondence”) — with the honest note that the clunky source
+  is itself business-register, so the «деловой» shift is confirmatory rather than
+  dramatic; criterion (2) **passed by machine proxy 18/18** (every must-survive fact
+  present in every run, including the ru-only «одиннадцать рабочих дней») **and still
+  owed the human read**, with one flagged borderline: ru «простой» drops the secondary
+  attribution «утверждённых руководством организации» in 3/3 runs — «действующих
+  регламентов» survives, its approver does not; whether that is «substance» under the
+  lossless contract is exactly the judgement the human read exists for. **The comparison
+  half (aya-expanse:8b against §5's baseline) is not run: the model is not installed**
+  (only translategemma:12b/27b and aya-expanse:32b are) — informational only, the ship
+  decision above reads translategemma:12b alone. Raw outputs: session scratchpad
+  `calib/`; the runner is `calib-run.sh` beside it (temperature and chunk as above).
 - **The 700 pt toolbar minimum is now assumed, not measured.** The translate-mode toolbar
   gained the «Перевод | Правка» operation switch, and the 650/680 pt fit measurements it
   rests on — and the 700 pt minimum `MainWindowView.swift` derives from them — predate that
