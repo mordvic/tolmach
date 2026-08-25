@@ -73,6 +73,10 @@ extension ProofreadingLevel {
         switch self {
         case .errorsOnly: "только ошибки"
         case .errorsAndStyle: "ошибки и стиль"
+        // Not «вольная правка» (collides with the operation's own name) and not
+        // «свободный стиль» (collides with the neighbouring стиль control — the
+        // term-collision rule that already rejected «тон», spec terminology table).
+        case .rewrite: "переписать"
         }
     }
 }

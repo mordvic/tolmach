@@ -817,6 +817,19 @@ private func waitForSheet(_ model: TranslationViewModel,
     #expect(model.offersAnotherVariant)
 }
 
+@MainActor @Test func anotherVariantIsOfferedForAFinishedRewriteRun() async {
+    // The offer rule is «the степень allowed wording to move», read from the level type —
+    // not a restated case comparison, which is how the third level would silently miss
+    // the button no existing test guards (issue #40).
+    let (model, _) = makeModel(responses: ["Переписано."])
+    model.sourceText = "Превет."
+    model.operation = .proofread
+    model.proofreadingLevelOverride = .rewrite
+    await model.run()
+    #expect(model.state == .finished)
+    #expect(model.offersAnotherVariant)
+}
+
 @MainActor @Test func offersReplaceOnlyOnceTheRunHasSettled() async {
     // The seam `PanelView`'s «Заменить» button (issue #27) reads its `.disabled` rule from,
     // the same way `offersAnotherVariant` above is the seam its own button reads from — not
