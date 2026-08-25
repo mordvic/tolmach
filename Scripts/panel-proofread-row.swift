@@ -13,12 +13,14 @@
 // which measures what it is showing rather than what the content wants.
 //
 // The labels are the longest of each set, so the figure is the worst case rather than the
-// common one: «ошибки и стиль» of the two степень values, «профессиональный» of the five
-// стиль ones.
+// common one: «ошибки и стиль» of the three степень values (a `.menu` picker's width
+// follows the *selected* label, and «переписать» is shorter — re-measured 2026-08-25,
+// still 242 × 16 with the third item in the menu), «профессиональный» of the five стиль
+// ones.
 import SwiftUI
 import AppKit
 
-let levels = ["только ошибки", "ошибки и стиль"]
+let levels = ["только ошибки", "ошибки и стиль", "переписать"]
 let styles = ["как в оригинале", "дружеский", "деловой", "профессиональный", "простой и ясный"]
 let stacked = ProcessInfo.processInfo.environment["V"] == "stacked"
 

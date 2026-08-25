@@ -33,6 +33,7 @@ swiftc -O -o /tmp/cf Scripts/content-font.swift && /tmp/cf   # every measurement
 swiftc -O -o /tmp/vm Scripts/view-menu.swift && /tmp/vm   # which menu the размер items land in, and how ⌘+ is stored
 swift run translate-cli --to ru --tone technical "text"   # needs a live engine; reads stdin if no text
 swift run translate-cli --engine lmstudio --model qwen/qwen3.8-27b --to ru "text"   # the other engine
+swift run translate-cli --proofread --level rewrite --style business --from ru "text"   # правка route; --to/--tone are refused here, --level/--style only here
 swift run acceptance              # live corpus run; MUST run from the package root (reads ./corpus)
 swift run acceptance --model translategemma:12b --chunk 4000   # any installed model / the chunk budget you actually run
 swift run acceptance --engine lmstudio --model google/gemma-4-e4b   # the other engine; both gates go info-only
@@ -185,8 +186,13 @@ Facts that will bite you if you "tidy" them:
   with `translate`, and runs **no** glossary stage: no term-list call, no review hook,
   no `GlossaryVerifier`. It returns `TranslationOutcome` with honestly empty glossary
   fields (`documentGlossaryAttempted == false` is the marker). The style instruction
-  reaches the prompt only under `.errorsAndStyle` — `PromptBuilder` enforces it and the
-  UI disables the control. See `docs/design/specs/2026-08-10-proofreading-design.md`.
+  reaches the prompt only where the level allows it — `ProofreadingLevel.allowsRewriteStyle`
+  is the one rule, `PromptBuilder` enforces it and the UI disables the control. Three
+  levels: `errorsOnly`, `errorsAndStyle`, and `rewrite` («переписать») — a **sentence-level**
+  free rewrite whose instruction deliberately never says «structure», because the shared
+  protection rules demand exact structure preservation two lines below it and the two must
+  not fight (issue #40; merge is gated on the calibration protocol in
+  `docs/reference/OPEN-ITEMS.md`). See `docs/design/specs/2026-08-10-proofreading-design.md`.
 
 ### Engine rules (empirical, non-negotiable)
 

@@ -191,20 +191,24 @@ translating it. One switch selects between «Перевод» and «Правка
 _Avoid_: корректура, редактура, улучшение
 
 **Степень** — *degree*
-How freely правка may change wording: «только ошибки» / «ошибки и стиль».
+How freely правка may change wording: «только ошибки» / «ошибки и стиль» /
+«переписать» — monotonic in freedom, and «переписать» frees the *sentence*, never
+the document's structure (issue #40).
 → `ProofreadingLevel`
-_Avoid_: уровень, глубина
+_Avoid_: уровень, глубина; for «переписать» also вольная правка (collides with the
+operation's name) and свободный стиль (collides with the стиль control)
 
 **Стиль (правки)** — *rewrite style*
 The register a rewrite aims at: «как в оригинале», «дружеский», «деловой»,
-«профессиональный», «простой и ясный». Meaningful only under «ошибки и стиль».
+«профессиональный», «простой и ясный». Meaningful wherever wording may move —
+every степень above «только ошибки» (`allowsRewriteStyle`).
 → `RewriteStyle`
 _Avoid_: тон — that word belongs to translation's `Tone`
 
 **«Ещё вариант»** — *another variant*
-Re-run the same правка for a different rendering. Offered only for a finished
-«ошибки и стиль» run — «ещё вариант» of a deterministic minimal diff is a
-contradiction.
+Re-run the same правка for a different rendering. Offered for a finished run of
+any степень whose wording may move — «ещё вариант» of «только ошибки»'s
+deterministic minimal diff is a contradiction.
 _Avoid_: «Повторить» — that is the failure retry
 
 ---
