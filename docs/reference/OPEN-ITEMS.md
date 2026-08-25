@@ -333,8 +333,13 @@ nothing in this environment can see either.
   through that fix and are recorded as an honest model limitation with
   `aya-expanse:8b`, not an open merge question — see «Part A verification and the
   style matrix (2026-08-10, follow-up)» in §5 below for the full counts.
-- **The «переписать» calibration gate (issue #40) has not been run, and
-  `feat/rewrite-level` must not merge until it passes.** The third степень `rewrite` is a
+- **The «переписать» calibration gate (issue #40): decision half passed 2026-08-25
+  (results below), and the branch merged to main the same day on the maintainer's
+  instruction.** At merge time criterion (2)'s human read — of the two clunky files and
+  of the «простой» borderline recorded below — was still formally owed; the merge was
+  ordered with that flag on the table, so the residual watch item is: if «переписать» +
+  «простой» is ever seen dropping substance in real use, the 3/3 attribution-drop below
+  is where it was first measured. The third степень `rewrite` is a
   sentence-level lossless rewrite (structure stays with the untouched shared protection
   rules; the instruction deliberately never says «structure»). The measured background
   making the gate non-negotiable is §5 below: under «ошибки и стиль» the styles no-opped
@@ -360,16 +365,20 @@ nothing in this environment can see either.
   either (the issue's premise was wrong; verified against all twelve). Both files are
   **synthetic and still owed the human read** the issue requires before the gate's
   verdict counts.
-  **Annotated targets in `ru-clunky.txt`** (157 words by `wc -w`): the 55-word opening sentence and
-  the 40-word second-paragraph sentence are splitting targets; «предлагаем осуществить» ×2
+  **Annotated targets in `ru-clunky.txt`** (157 words by `wc -w`): the 51-word opening sentence and
+  the 43-word second-paragraph sentence are splitting targets; «предлагаем осуществить» ×2
   and «в кратчайшие сроки» ×2 are verbatim-repetition targets; «Данная ситуация… Данная
   процедура…» is a merge target; the bureaucratisms («в рамках проводимой работы», «имеет
   место быть», «на сегодняшний день», «в целях обеспечения», «в связи с вышеизложенным»,
-  «осуществить/осуществляется» ×3) are dissolution targets. Facts that must survive: пять
+  «осуществ-» forms ×4) are dissolution targets. Facts that must survive: пять
   инстанций, сокращение до двух, одиннадцать рабочих дней, электронный вид, срыв сроков.
+  (Every count here is a script's output over the committed bytes, not an estimate — the
+  first version of this entry wrote estimates as measurements and a review caught three
+  of them wrong.)
   **Annotated targets in `en-clunky.txt`** (211 words by `wc -w`, the same document mirrored): the
-  50+-word opening sentence and the 45-word second-paragraph sentence; «we propose to
-  carry out» ×2 and «as soon as possible» ×2; «This situation… This procedure…»; the
+  75-word opening sentence and the 57-word second-paragraph sentence; the near-verbatim
+  pair «we propose to carry out» / «we also propose to carry out» and «as soon as
+  possible» ×2; «This situation… This procedure…»; the
   bureaucratisms («in the context of», «it should be noted that», «at the present time»,
   «on a manual basis», «in order to ensure», «aforementioned», «there exists a situation
   in which», «in view of the above»). Facts that must survive: five stages, reduction to
