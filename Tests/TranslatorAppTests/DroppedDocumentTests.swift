@@ -115,3 +115,62 @@ private func withTempFile<T>(named name: String, containing text: String,
         .appendingPathComponent("no-such-file-\(UUID().uuidString).txt")
     #expect(DroppedDocument.text(of: gone) == nil)
 }
+
+// MARK: - The ceiling is about the bytes, not about what the filesystem said
+
+/// A directory of real files, for the cases that need two paths at once. Removed in `deinit`.
+private final class Scratch {
+    let directory: URL
+    init() {
+        directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dropped-document-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+    deinit { try? FileManager.default.removeItem(at: directory) }
+
+    func file(_ name: String, bytes: Int) -> URL {
+        let url = directory.appendingPathComponent(name)
+        try? Data(repeating: UInt8(ascii: "a"), count: bytes).write(to: url)
+        return url
+    }
+
+    func file(_ name: String, _ contents: String) -> URL {
+        let url = directory.appendingPathComponent(name)
+        try? Data(contents.utf8).write(to: url)
+        return url
+    }
+}
+
+/// The defect this pane had and `QueueDrop` did not: `attributesOfItem` reports on the link —
+/// the length of its target *path*, a few dozen bytes — while `Data(contentsOf:)` follows it.
+/// A symlink named `notes.md` pointing at something enormous therefore walked straight past the
+/// 256 KB ceiling and loaded the whole target, against this file's own comment.
+@Test func aSymlinkCannotSmuggleALargeFileIntoTheSourcePane() throws {
+    let scratch = Scratch()
+    let big = scratch.file("big.md", bytes: DroppedDocument.maximumBytes + 1)
+    let link = scratch.directory.appendingPathComponent("notes.md")
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: big)
+
+    // Both halves, because they refuse for different reasons and only the first one refuses
+    // *without loading the target* — which is the property this file's doc comment claims.
+    #expect(!DroppedDocument.plausible(link))
+    #expect(DroppedDocument.text(of: link) == nil)
+}
+
+/// The other half of the pair: resolving must not make an ordinary symlink unreadable.
+@Test func aSymlinkToSomethingSmallStillReachesTheSourcePane() throws {
+    let scratch = Scratch()
+    let real = scratch.file("real.md", "текст")
+    let link = scratch.directory.appendingPathComponent("notes.md")
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+
+    #expect(DroppedDocument.plausible(link))
+    #expect(DroppedDocument.text(of: link) == "текст")
+}
+
+// No test for the `data.count` re-check, deliberately. Every case it refuses, `plausible`
+// already refuses one step earlier now that it resolves — a test written for it stayed green
+// with the line deleted, which is `docs/reference/TESTING.md`'s first rule failing out loud.
+// It is defence in depth against the window between the stat and the read, and that window
+// cannot be opened from a test process without racing the filesystem. `QueueDrop` carries the
+// same unpinned pair.

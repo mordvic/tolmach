@@ -46,6 +46,14 @@ final class FileQueueModel {
     private let pasteboard: NSPasteboard
 
     private var current: Task<TranslationOutcome, Error>?
+    /// Whether the current file's run handle is still held.
+    ///
+    /// Exists for one test, and narrowly on purpose: the handle itself stays `private`, because
+    /// nothing outside this type has any business cancelling or awaiting it. What the test needs
+    /// is the fact — a settled run's handle is dropped, so its `TranslationOutcome` is no longer
+    /// reachable — and `TranslationOutcome` is a struct, so there is no weak reference that could
+    /// observe the release directly.
+    var isHoldingARunHandle: Bool { current != nil }
 
     var jobs: [FileJob] = []
     var selection: FileJob.ID?
@@ -691,6 +699,11 @@ final class FileQueueModel {
         // reach: `current` was still the previous run's. The task then finished normally
         // and the user's «Отмена» did nothing to the file it was pressed on.
         if cancelled { run.cancel() }
+        // Dropped again once the file has settled. A finished `Task` retains its result, so
+        // this handle pinned the last file's whole `TranslationOutcome` — exactly the several
+        // copies of a 2 MB document that the trimmed `JobResult` below exists to avoid holding.
+        // Compared rather than assigned blindly, so this can never clear a newer file's handle.
+        defer { if current == run { current = nil } }
 
         func drain() async {
             continuation.finish()
@@ -703,9 +716,12 @@ final class FileQueueModel {
             let outcome = try await run.value
             await drain()
             guard let at = row() else { return false }
-            guard outcome.timeToFirstTokenMS != nil else {
+            guard !outcome.isEmptyReply else {
                 // The engine's «nothing was ever emitted» signal. Reporting success would
-                // write an empty file beside the source.
+                // write an empty file beside the source. Read off the outcome rather than
+                // spelled here: this copy of the rule was missing the `modelChunkCount`
+                // half, so an all-code document failed in this pane and succeeded in the
+                // other one.
                 jobs[at].state = .failed("Модель вернула пустой ответ.")
                 return false
             }

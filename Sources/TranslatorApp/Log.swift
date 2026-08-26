@@ -27,9 +27,14 @@ import os
 ///
 /// Error descriptions are marked `.public` on purpose. `Logger`'s default for an interpolated
 /// value is `.private`, which renders as `<private>` in `log show` and would make every entry
-/// here useless for the diagnosis it exists to serve. They are safe to reveal because the only
-/// values reaching them are `OllamaError` cases and `URLError` descriptions — transport
-/// failures naming a loopback address — never anything derived from what the user translated.
+/// here useless for the diagnosis it exists to serve. They are safe to reveal because none of
+/// them is derived from what the user translated: they are `OllamaError` cases, `URLError`
+/// descriptions, and the message an engine sent back about a request.
+///
+/// **That last kind is not bounded, and must go through `capped(_:)`.** LM Studio's mid-stream
+/// `error` frame carries a server-chosen string of any length; interpolated whole it would put
+/// as much of it into the unified log as the server cared to send. `capped` is the only thing
+/// standing between «diagnosable» and «a log-writing primitive on the loopback port».
 ///
 /// ## Reading it
 ///
@@ -58,4 +63,19 @@ enum Log {
     /// project and often an employer, and this file's own rule is that nothing derived
     /// from the user's text reaches the unified log.
     static let files = Logger(subsystem: subsystem, category: "files")
+
+    /// The most of a server-supplied string that is worth writing down.
+    ///
+    /// Long enough for the messages both engines actually send — `unrecognized_keys`,
+    /// `invalid_value`, «pull model manifest: file does not exist» are all well under it — and
+    /// short enough that a server sending a megabyte writes 240 characters instead.
+    static let maxServerMessage = 240
+
+    /// One server-supplied string, bounded. The ellipsis is deliberate: a truncated message a
+    /// reader mistakes for the whole one is worse than a long one.
+    static func capped(_ message: String) -> String {
+        message.count <= maxServerMessage
+            ? message
+            : String(message.prefix(maxServerMessage)) + "…"
+    }
 }

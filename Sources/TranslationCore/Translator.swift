@@ -81,6 +81,18 @@ public struct TranslationOutcome: Sendable {
     /// this count before reading that nil as a failure (spec §2.1, the renegotiated
     /// contract; `TranslationViewModel` is the consumer that got this wrong first).
     public let modelChunkCount: Int
+
+    /// «The model was asked for something and returned nothing» — the only reading of a nil
+    /// `timeToFirstTokenMS` that is a failure.
+    ///
+    /// **Here rather than at each consumer, because writing it twice is what went wrong.**
+    /// The rule above was stated in prose on `modelChunkCount` and implemented separately by
+    /// the window and by the queue; the window's copy was right and the queue's checked only
+    /// the nil, so a document that was entirely one fenced code block translated fine in
+    /// «Текст» and landed `.failed("Модель вернула пустой ответ.")` in «Файлы» — never
+    /// written, and identically unfixable on every retry. A rule with two implementations has
+    /// no single place to be correct in.
+    public var isEmptyReply: Bool { modelChunkCount > 0 && timeToFirstTokenMS == nil }
 }
 
 // Every other public value type in this API is already Sendable; the entry point

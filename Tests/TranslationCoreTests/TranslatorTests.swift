@@ -1330,3 +1330,39 @@ final class EmissionClock: @unchecked Sendable {
     #expect(outcome.final == "Выполните команду `git comit --amend` сейчас.")
     #expect(collector.text == outcome.final)
 }
+
+// MARK: - `isEmptyReply`: one rule, one place
+
+/// The rule `modelChunkCount`'s doc comment states in prose, made into a value both the window
+/// and the queue read. It was written twice instead, and the queue's copy — which checked only
+/// the nil — failed every all-code document (see `FileQueueModelTests`).
+@Test func anAllCodeDocumentIsNotAnEmptyReplyEvenThoughNothingWasEverEmitted() async throws {
+    let translator = Translator(client: FakeLLMClient(responses: []))
+    let outcome = try await translator.translate(
+        text: "```sh\nls -la\n```", target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "fake"), maxChunkCharacters: 900)
+    #expect(outcome.timeToFirstTokenMS == nil)   // the signal on its own says «nothing emitted»
+    #expect(outcome.modelChunkCount == 0)        // …but nothing was ever asked of the model
+    #expect(outcome.isEmptyReply == false)
+}
+
+/// The other half, so the property cannot be satisfied by a constant `false`: a document the
+/// model *was* asked about, which answered nothing, is an empty reply.
+@Test func aModelBoundChunkThatEmittedNothingIsAnEmptyReply() async throws {
+    let translator = Translator(client: FakeLLMClient(responses: [""]))
+    let outcome = try await translator.translate(
+        text: "Одна строка прозы.", target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "fake"), maxChunkCharacters: 900)
+    #expect(outcome.timeToFirstTokenMS == nil)
+    #expect(outcome.modelChunkCount == 1)
+    #expect(outcome.isEmptyReply)
+}
+
+/// And an ordinary run is neither.
+@Test func anOrdinaryRunIsNotAnEmptyReply() async throws {
+    let translator = Translator(client: FakeLLMClient(responses: ["Перевод."]))
+    let outcome = try await translator.translate(
+        text: "Одна строка прозы.", target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "fake"), maxChunkCharacters: 900)
+    #expect(outcome.isEmptyReply == false)
+}

@@ -208,7 +208,7 @@ actor ClientPool {
 
     func ollama(port: Int) -> OllamaClient {
         if let existing = ollamaClients[port] { return existing }
-        let client = OllamaClient(baseURL: URL(string: "http://127.0.0.1:\(port)")!)
+        let client = OllamaClient(baseURL: OllamaClient.baseURL(port: port))
         ollamaClients[port] = client
         return client
     }

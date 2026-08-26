@@ -665,3 +665,45 @@ private final class FiredFlag: @unchecked Sendable {
     settings.interactiveModel = "translategemma:27b"
     #expect(WarmUpPlan.models(for: settings) == ["translategemma:27b"])
 }
+
+// MARK: - The port is a port
+
+/// The «Порт» field is a `TextField` over an `Int` with `.number` formatting, which parses a
+/// negative happily — and `URL(string: "http://127.0.0.1:-1")` answers nil, which both call
+/// sites force-unwrapped. `warmUpOnLaunch` is on by default and routes through the pool at every
+/// start, so a stored `-1` was a crash at every launch that survived the crash.
+@Test func aPortOutsideTheTCPRangeFallsBackToTheEnginesDefault() {
+    let settings = AppSettings(defaults: freshDefaults())
+    for refused in [-1, 0, 65536, 70000] {
+        settings.enginePort = refused
+        #expect(settings.enginePort == ModelEngine.ollama.defaultPort,
+                "\(refused) is not a port and must not be stored as one")
+    }
+    // Both ends of the range itself are ports and must survive.
+    settings.enginePort = 1
+    #expect(settings.enginePort == 1)
+    settings.enginePort = 65535
+    #expect(settings.enginePort == 65535)
+}
+
+/// The setter is not the only writer — `defaults write com.mordvic.localtranslator enginePort
+/// -int -1` is — so the clamp has to be on the way out as well as on the way in. Same reasoning
+/// as `contentFontSize`, which this follows.
+@Test func aPortPlantedPastTheSetterIsStillRefusedOnTheWayOut() {
+    let defaults = freshDefaults()
+    defaults.set(-1, forKey: "enginePort")
+    #expect(AppSettings(defaults: defaults).enginePort == ModelEngine.ollama.defaultPort)
+    // `EngineRouter` reads through the static reader rather than the instance, and it is the
+    // one that actually builds the URL — so it needs the same guarantee, not a parallel one.
+    #expect(AppSettings.enginePort(in: defaults) == ModelEngine.ollama.defaultPort)
+}
+
+/// The fallback is the *selected* engine's default, not a fixed number: the two servers listen
+/// in different places and «not a port» has a different right answer for each.
+@Test func theFallbackPortFollowsTheSelectedEngine() {
+    let settings = AppSettings(defaults: freshDefaults())
+    settings.engine = .lmStudio
+    settings.enginePort = -1
+    #expect(settings.enginePort == ModelEngine.lmStudio.defaultPort)
+    #expect(settings.enginePort != ModelEngine.ollama.defaultPort)
+}

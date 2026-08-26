@@ -94,12 +94,18 @@ final class AppSettings {
 
     /// The port the selected engine is expected on. Per engine, because the two defaults differ
     /// and a user who moved one has not moved the other.
+    ///
+    /// Clamped in both directions by `ModelEngine.portOrDefault`, which carries the reason.
     var enginePort: Int {
         get {
             access(keyPath: \.enginePort)
-            return int(key("enginePort"), engine.defaultPort)
+            return engine.portOrDefault(int(key("enginePort"), engine.defaultPort))
         }
-        set { withMutation(keyPath: \.enginePort) { defaults.set(newValue, forKey: key("enginePort")) } }
+        set {
+            withMutation(keyPath: \.enginePort) {
+                defaults.set(engine.portOrDefault(newValue), forKey: key("enginePort"))
+            }
+        }
     }
 
     /// The engine choice, read straight from a defaults store.
@@ -114,8 +120,9 @@ final class AppSettings {
 
     static func enginePort(in defaults: UserDefaults) -> Int {
         let engine = engine(in: defaults)
-        return defaults.object(forKey: "enginePort" + engine.settingsKeySuffix) as? Int
-            ?? engine.defaultPort
+        return engine.portOrDefault(
+            defaults.object(forKey: "enginePort" + engine.settingsKeySuffix) as? Int
+                ?? engine.defaultPort)
     }
 
     /// A settings key in the selected engine's scope. See `ModelEngine.settingsKeySuffix` for

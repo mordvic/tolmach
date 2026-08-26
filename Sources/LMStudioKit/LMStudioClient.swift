@@ -16,8 +16,20 @@ public struct LMStudioClient: LLMClient {
     /// this code into a matter of what someone typed.
     public static let defaultPort = 1234
 
+    /// **The host, written once** — the same single line `OllamaClient.loopbackHost` is, and for
+    /// the same reason: ADR 0009's «only the port is settable» has to be checkable by reading
+    /// one line per transport module.
+    public static let loopbackHost = "127.0.0.1"
+
+    /// Where LM Studio is expected to be.
+    public static let defaultBaseURL = URL(string: "http://\(loopbackHost):\(defaultPort)")!
+
+    /// **Not failable**, for the reason `OllamaClient.baseURL(port:)` records at length: the
+    /// port is the only variable in the string, a value outside the TCP range makes it
+    /// unparseable, and the force-unwrap this replaces was a launch-time crash a stored setting
+    /// could reproduce for ever.
     public static func baseURL(port: Int = defaultPort) -> URL {
-        URL(string: "http://127.0.0.1:\(port)")!
+        URL(string: "http://\(loopbackHost):\(port)") ?? defaultBaseURL
     }
 
     let baseURL: URL

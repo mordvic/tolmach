@@ -17,12 +17,34 @@ public struct OllamaModel: Sendable {
 }
 
 public struct OllamaClient: LLMClient {
-    /// Where Ollama is expected to be, and the one place that address is written.
+    /// **The host, written once — this line is the whole of ADR 0009's first promise.**
+    /// Everything below composes it, so «only the port is settable» is checkable by reading
+    /// one line per transport module rather than by trusting that nobody wrote a second
+    /// address somewhere.
+    public static let loopbackHost = "127.0.0.1"
+
+    /// The port Ollama listens on out of the box.
+    public static let defaultPort = 11434
+
+    /// Where Ollama is expected to be.
     ///
     /// Public because the settings pane shows it to the user — spec §5.3 asks the «Ollama»
     /// section for whether it is running, *the address*, and a re-check — and an address
     /// typed into a view is an address that can disagree with the one being called.
-    public static let defaultBaseURL = URL(string: "http://127.0.0.1:11434")!
+    public static let defaultBaseURL = URL(string: "http://\(loopbackHost):\(defaultPort)")!
+
+    /// The same address on another port.
+    ///
+    /// **Not failable, and that is the point.** `URL(string:)` is, the port is the only variable
+    /// in the string, and the app force-unwrapped the result at its own call site — so a stored
+    /// `-1` (which the «Порт» field parses, and `defaults write` can plant) made
+    /// `http://127.0.0.1:-1` unparseable and turned every launch into a trap, `warmUpOnLaunch`
+    /// being on by default. `AppSettings` clamps the setting, which is the real guarantee; this
+    /// is what stops the next caller from having to know that. Falling back to the default
+    /// address keeps the property that matters: whatever this answers is on loopback.
+    public static func baseURL(port: Int = defaultPort) -> URL {
+        URL(string: "http://\(loopbackHost):\(port)") ?? defaultBaseURL
+    }
 
     let baseURL: URL
     let session: URLSession

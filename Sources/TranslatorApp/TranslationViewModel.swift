@@ -40,6 +40,14 @@ final class TranslationViewModel {
     /// same reasoning and the same default as `HotkeyCoordinator.pasteboard`.
     private let pasteboard: NSPasteboard
     private var task: Task<TranslationOutcome, Error>?
+    /// Whether a run's handle is still held.
+    ///
+    /// Exists for one test, and narrowly on purpose: the handle itself stays `private`, because
+    /// nothing outside this type has any business cancelling or awaiting it. What the test needs
+    /// is the fact — a settled run's handle is dropped, so its `TranslationOutcome` is no longer
+    /// reachable — and `TranslationOutcome` is a struct, so there is no weak reference that could
+    /// observe the release directly.
+    var isHoldingARunHandle: Bool { task != nil }
     private var clearedPrevious = false
     /// Whether this run reached the review point at all. See `documentTermsUnavailable`.
     private var raisedTermsSheet = false
@@ -413,7 +421,7 @@ final class TranslationViewModel {
                 Log.engine.error("""
                     document glossary abandoned; this run translated \
                     \(result.chunks.count, privacy: .public) chunks without the terminology \
-                    pass: \(failure, privacy: .public)
+                    pass: \(Log.capped(failure), privacy: .public)
                     """)
             }
         })
@@ -530,6 +538,15 @@ final class TranslationViewModel {
         // cancellation from the task that created it.
         let run = start({ continuation.yield($0) })
         task = run
+        // Dropped again once the run has settled, and that is not tidiness: a finished `Task`
+        // retains its result for as long as the handle lives, so holding it pinned the whole
+        // previous `TranslationOutcome` — `final`, `chunks` and `translatedChunks` — until the
+        // next run replaced it. For a menu-bar app idle for days that is two copies of the last
+        // document held for no reason, and it defeated the paths that deliberately set
+        // `outcome = nil` (`swapLanguages()`), which released a reference the task still had.
+        //
+        // Compared rather than assigned blindly, so this can never clear a *newer* run's handle.
+        defer { if task == run { task = nil } }
 
         do {
             let result = try await run.value
@@ -541,7 +558,7 @@ final class TranslationViewModel {
             // all-code document legitimately finishes with nil TTFT and modelChunkCount == 0
             // (spec §2.1, the renegotiated contract — pass-through chunks made the old reading
             // fail a successful run).
-            guard result.modelChunkCount == 0 || result.timeToFirstTokenMS != nil else {
+            guard !result.isEmptyReply else {
                 state = .failed("Модель вернула пустой ответ. Попробуйте ещё раз.")
                 return
             }
