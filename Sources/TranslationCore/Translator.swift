@@ -624,15 +624,56 @@ public struct Translator: Sendable {
         var buffer = ""    // raw text seen so far; meaningful only outside .incremental
         var collected = "" // exactly what has been handed to `onToken` for this chunk
 
+        // **Whitespace at the edges is held rather than emitted, and this is what makes the
+        // incremental path agree with the buffered one.**
+        //
+        // Every buffered path ends at `ResponseCleaner.clean`, which trims both edges. The
+        // incremental path had no equivalent and could not simply gain one: bytes handed to
+        // `onToken` cannot be recalled, so trimming `collected` at the end would break
+        // `theStreamReconstructsExactlyWhatFinalContains`. Holding is the shape that works —
+        // whitespace waits until it is known to be *interior*, and is dropped if it never is.
+        //
+        // What it fixes, in the order the review found them:
+        //   * a chunk reply ending in a newline kept it, so `final` gained a blank line the
+        //     same reply produced nowhere else and the markup diff reported a phantom
+        //     «added paragraphBreak» on a faithful translation — output bytes that depended on
+        //     token timing;
+        //   * the preamble branch trimmed `rest` at **both** ends, so a single event spanning
+        //     the preamble's newline and ending in a space lost that space:
+        //     `["Here is the translation:\nПривет ", "мир"]` gave `"Приветмир"`;
+        //   * `emit` filtered only `isEmpty`, so a whitespace-only first emission stamped
+        //     `timeToFirstTokenMS` on invisible content — the pane stayed blank while the
+        //     empty-reply guard, which reads that stamp, passed.
+        //
+        // `TranslationViewModel` holds separator whitespace one layer up for a related reason
+        // and says so; this is the same idea inside the engine.
+        var heldWhitespace = ""
+        var emittedContent = false
+
         func emit(_ text: String) {
             guard !text.isEmpty else { return }
+            let combined = heldWhitespace + text
+            guard let lastContent = combined.lastIndex(where: { !$0.isWhitespace }) else {
+                // Nothing but whitespace. Before any content it is the leading edge and is
+                // dropped outright; after content it may yet turn out to be interior.
+                heldWhitespace = emittedContent ? combined : ""
+                return
+            }
+            let contentEnd = combined.index(after: lastContent)
+            heldWhitespace = String(combined[contentEnd...])
+            var out = String(combined[..<contentEnd])
+            if !emittedContent {
+                out = String(out.drop(while: \.isWhitespace))
+                emittedContent = true
+            }
             // Measures perceived latency, so it is stamped here — the moment
             // content actually reaches the consumer — not at the first raw
             // wire token, which on the buffered paths can arrive well before
-            // anything is decided to be worth showing.
+            // anything is decided to be worth showing, and not on whitespace,
+            // which the consumer cannot see.
             if acc.firstTokenAt == nil { acc.firstTokenAt = Date() }
-            onToken(text)
-            collected += text
+            onToken(out)
+            collected += out
         }
 
         for try await event in client.chat(messages: messages, options: options) {
@@ -641,6 +682,15 @@ public struct Translator: Sendable {
                 if mode == .incremental { emit(token); continue }
                 buffer += token
                 guard mode == .buffering else { continue } // .bufferedToEnd: keep accumulating only
+
+                // `clean()` trims before it decides anything, and this twin must decide on the
+                // same bytes or it decides something else. It did: a reply beginning `"\n"`
+                // gave `firstLine == ""`, which is not a preamble, so the whole buffer —
+                // preamble line included — streamed as content; and `"\n\`\`\`"` never matched
+                // the fence check above. Dropping the leading whitespace here costs nothing,
+                // because `emit` drops it at the leading edge anyway.
+                buffer = String(buffer.drop(while: \.isWhitespace))
+                guard !buffer.isEmpty else { continue }
 
                 // Ahead of the three conditions below, on every token: once the
                 // buffer opens a fence, the whole-answer unwrap might apply,
@@ -668,13 +718,9 @@ public struct Translator: Sendable {
                     // newline, which would silently lose the first line
                     // whenever it wasn't a preamble.
                     mode = .incremental
-                    let rest: String
-                    if ResponseCleaner.isPreambleLine(completedFirstLine) {
-                        rest = afterFirstLine.trimmingCharacters(in: .whitespacesAndNewlines)
-                    } else {
-                        rest = buffer
-                    }
-                    emit(rest)
+                    // Neither branch trims: `emit` owns both edges now, and trimming here as
+                    // well is what cost an interior space when one event spanned the newline.
+                    emit(ResponseCleaner.isPreambleLine(completedFirstLine) ? afterFirstLine : buffer)
                 } else if ResponseCleaner.normalizedForPreambleCheck(buffer).count
                             > ResponseCleaner.preambleLineMaxLength {
                     // Condition 2: no "\n" yet, but the buffer's normalised
@@ -695,6 +741,18 @@ public struct Translator: Sendable {
             }
         }
 
+        // **Cancellation, before anything else is emitted.** `AsyncThrowingStream` *finishes*
+        // on cancellation instead of throwing — this project's own rule, stated in `CLAUDE.md`
+        // — so the loop above exits normally with a partial buffer, and everything below would
+        // clean it, restore it and hand it to `onToken` as a completed chunk. Only afterwards
+        // does the caller's check throw. The existing cancellation test passed because its
+        // cancel lands before the first token: true of that fixture, not of the mechanism. On
+        // the `bufferedToEnd` inline path a coincidentally equal span count could even splice
+        // source bytes into a truncated reply.
+        try Task.checkCancellation()
+
+        // Whatever whitespace is still held is the trailing edge and is dropped by never being
+        // emitted — the same thing `clean()` does to a buffered reply's tail.
         if mode == .incremental { return collected }
         // Either the reply opened with a fence (unwrap deferred to the end,
         // exactly as documented above), or the stream ended without ever
