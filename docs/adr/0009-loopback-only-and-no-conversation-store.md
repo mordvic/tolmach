@@ -7,8 +7,25 @@ property of the code rather than of somebody's care.
 ## Only the port is settable
 
 `ModelEngine` carries a `defaultPort`; `AppSettings.enginePort` lets a person change it; the
-host is written once, in `LMStudioClient.baseURL(port:)` and in `ClientPool.ollama(port:)`, and
-it is `127.0.0.1` both times. There is no field for it and no setting behind it.
+host is written once per transport module — `OllamaClient.loopbackHost` and
+`LMStudioClient.loopbackHost` — and it is `127.0.0.1` both times. There is no field for it and
+no setting behind it.
+
+**That count is a test now, not a promise.** It was prose until the review of 2026-08-26, and
+prose drifted: the address had reached four places, one of them an error string naming
+`127.0.0.1:11434` at a client built for a different port, and one of them the «Модели» pane's
+own label — a *display* of the address that could disagree with the target it claimed to
+describe. `theLoopbackAddressIsWrittenInExactlyTwoLinesOfCode` counts the code lines carrying
+the literal and fails at three; the pane now asks `ModelEngine.address(port:)`, which asks the
+client, so what is shown and what is dialled are the same value. Raising that number is a change
+to this decision, and the test says so where it fails.
+
+**The port is clamped, and that is part of the same decision.** A stored value outside
+`1...65535` is not a port, and it made `URL(string:)` answer nil at two force-unwrapped call
+sites — a crash at every launch that survived the crash, because the value was in the defaults.
+`ModelEngine.portOrDefault` refuses it in both directions, and `OllamaClient.baseURL(port:)` and
+its LM Studio twin degrade to the default address rather than trapping. Whatever they answer is
+on loopback, which is the property this decision is about.
 
 The alternative — a free-text address, which is what «engine on port N» invites — was rejected
 because of what it converts. Today the promise is checkable by reading two lines of code. With

@@ -708,7 +708,7 @@ struct TranslatorApp: App {
                 // first translation is always slow» has somewhere to be answered from.
                 Log.engine.debug("""
                     warm-up of \(model, privacy: .public) failed, its first run will pay the cold-load cost: \
-                    \(error.localizedDescription, privacy: .public)
+                    \(Log.capped(error.localizedDescription), privacy: .public)
                     """)
             }
         }

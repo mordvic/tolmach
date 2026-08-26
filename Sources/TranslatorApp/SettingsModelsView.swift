@@ -65,7 +65,7 @@ struct SettingsModelsView: View {
                                   format: .number.grouping(.never))
                             .frame(width: 80)
                             .labelsHidden()
-                        Text("127.0.0.1:\(settings.enginePort)")
+                        Text(settings.engine.address(port: settings.enginePort))
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                     }

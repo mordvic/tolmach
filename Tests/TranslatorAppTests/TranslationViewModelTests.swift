@@ -1001,3 +1001,57 @@ private func waitForSheet(_ model: TranslationViewModel,
     #expect(window.targetOverride == nil)
     #expect(window.toneOverride == nil)
 }
+
+// MARK: - A settled run's handle is dropped
+
+/// A finished `Task` retains its result for as long as its handle lives, so holding the handle
+/// after the run settled pinned the whole previous `TranslationOutcome` — `final`, `chunks`
+/// and `translatedChunks` — until the next press replaced it. For a menu-bar app idle for days
+/// that is the last document held for no reason, and it defeated `swapLanguages()`, which sets
+/// `outcome = nil` while the task kept the same value reachable.
+///
+/// Split into three rather than asserting «held, then dropped» in one, because the first half
+/// is only observable *while* a run is in flight — and racing an assertion against a run that
+/// is trying to finish is how a test becomes flaky under a loaded suite. Each half below is
+/// given a run that cannot reach the other state on its own.
+///
+/// The «held» half is not optional decoration: without it a model that never stored the handle
+/// at all would satisfy the other two, and would take cancellation with it.
+@MainActor @Test func theRunHandleIsHeldWhileARunIsInFlight() async {
+    // Ten seconds a token: this run cannot finish while the assertion below runs, no matter how
+    // little of the machine this test gets. Cancelling aborts the sleep, so it costs nothing.
+    let model = makeModel(ScriptedClient(responses: ["перевод"], delayPerToken: .seconds(10)))
+    model.sourceText = "Одна строка прозы."
+
+    let run = Task { await model.translate() }
+    await waitUntil("the run is in flight") { model.state == .running }
+    #expect(model.isHoldingARunHandle)
+
+    model.cancel()
+    await run.value
+}
+
+@MainActor @Test func aSettledRunReleasesItsHandle() async {
+    let model = makeModel(ScriptedClient(responses: ["перевод"]))
+    model.sourceText = "Одна строка прозы."
+
+    await model.translate()
+
+    #expect(model.state == .finished)
+    #expect(!model.isHoldingARunHandle)
+}
+
+/// The path a run does not finish on: a cancelled run must release its handle too, or «Отмена»
+/// becomes the way to hold a document for ever.
+@MainActor @Test func aCancelledRunAlsoDropsItsHandle() async {
+    let model = makeModel(ScriptedClient(responses: ["перевод"], delayPerToken: .seconds(10)))
+    model.sourceText = "Одна строка прозы."
+
+    let run = Task { await model.translate() }
+    await waitUntil("the run is in flight") { model.state == .running }
+    model.cancel()
+    await run.value
+
+    #expect(model.state == .interrupted)
+    #expect(!model.isHoldingARunHandle)
+}

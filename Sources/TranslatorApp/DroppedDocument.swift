@@ -42,14 +42,19 @@ enum DroppedDocument {
     /// distinction the caller cannot act on is a distinction that only makes the type harder
     /// to test.
     ///
-    /// The size is read from the file's attributes before the bytes are, so an enormous file
-    /// is refused without ever being loaded.
+    /// The size is read from the file's attributes before the bytes are, so an ordinary
+    /// enormous file is refused without ever being loaded — and re-checked after the read,
+    /// because that first look is evidence rather than a guarantee.
     static func text(of url: URL) -> String? {
-        guard readableExtensions.contains(url.pathExtension.lowercased()) else { return nil }
-        guard let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int,
-              size <= maximumBytes
-        else { return nil }
+        guard plausible(url) else { return nil }
         guard let data = try? Data(contentsOf: url),
+              // Defence in depth, and **not pinned by a test**: with `plausible` resolving
+              // links, every file this refuses is one it already refused a step earlier, so a
+              // test written for this line stayed green with the line deleted. What it still
+              // covers is the window between the stat and the read — a file that grows, or a
+              // path that becomes a link — which a test process cannot open without racing
+              // the filesystem. `QueueDrop.readable` carries the same unpinned pair.
+              data.count <= maximumBytes,
               let text = String(data: data, encoding: .utf8)
         else { return nil }
         // A file of blank lines is readable and has nothing to translate. Refusing it here is
@@ -57,5 +62,27 @@ enum DroppedDocument {
         // same reason: an empty source pane with a spring-back says more than an empty source
         // pane without one.
         return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
+    }
+
+    /// The half of the check that costs nothing: the extension, and the size read from the
+    /// file's attributes rather than by loading it. A 40 MB file is refused without ever being
+    /// opened.
+    ///
+    /// **Separate from `text(of:)` so that «without ever being opened» is a checkable claim.**
+    /// Folded into the guard above it was not: the `data.count` re-check refuses the same file
+    /// a moment later, so a test asserting only «refused» stayed green with the resolution
+    /// deleted — `docs/reference/TESTING.md`'s «green for the wrong reason» exactly. `QueueDrop`
+    /// splits the same pair for the same reason.
+    static func plausible(_ url: URL) -> Bool {
+        guard readableExtensions.contains(url.pathExtension.lowercased()) else { return false }
+        // Resolved first. `attributesOfItem` reports on the link, not on its target, while
+        // `Data(contentsOf:)` follows it — so a symlink named `notes.md` pointing at a
+        // multi-gigabyte file answered «102 bytes» here and then loaded the lot. Measured.
+        // `QueueDrop.plausible` already resolved for exactly this reason; this pane had
+        // neither half of the pair.
+        guard let size = (try? FileManager.default
+                            .attributesOfItem(atPath: url.resolvingSymlinksInPath().path))?[.size] as? Int
+        else { return false }
+        return size <= maximumBytes
     }
 }

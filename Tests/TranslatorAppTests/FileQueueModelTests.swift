@@ -1943,3 +1943,67 @@ private actor Prepared {
     private(set) var models: [String] = []
     func add(_ model: String) { models.append(model) }
 }
+
+// MARK: - An all-code file is a successful translation, not an empty reply
+
+/// The queue's empty-reply guard checked only for a nil TTFT, without the `modelChunkCount`
+/// half that `TranslationOutcome`'s doc comment declares mandatory and that the window already
+/// performed. A document that is nothing but a fenced code block makes no model call at all, so
+/// its TTFT is nil **by design** — and this pane called that «Модель вернула пустой ответ.»,
+/// never wrote the file, and failed identically on every retry, while «Текст» translated the
+/// same bytes happily.
+@MainActor @Test func aFileThatIsNothingButCodeIsWrittenRatherThanCalledAnEmptyReply() async {
+    // No replies queued, and none are needed: a passthrough chunk never reaches the model.
+    let client = QueueClient(replies: [])
+    let model = makeQueueModel(client, prefix: "queue-all-code")
+    let source = "```sh\nls -la\n```"
+    model.add([queueJob("script.md", source)])
+
+    await model.run()
+
+    #expect(client.callCount == 0)
+    #expect(model.jobs[0].state == .finished)
+    #expect(model.jobs[0].result?.final == source)   // byte-for-byte, straight from the source
+    #expect(model.jobs[0].result?.savedTo?.lastPathComponent == "script.md.ru")
+}
+
+/// The other side of the same guard, so the fix cannot be «stop checking»: a file the model
+/// *was* asked about and answered nothing to is still a failure, and must not be written.
+@MainActor @Test func aFileWhoseModelAnsweredNothingIsStillAFailureAndIsNotWritten() async {
+    let model = makeQueueModel(QueueClient(replies: [""]), prefix: "queue-empty-reply")
+    model.add([queueJob("a.md", "Одна строка прозы.")])
+
+    await model.run()
+
+    #expect(model.jobs[0].state == .failed("Модель вернула пустой ответ."))
+    #expect(model.jobs[0].result?.savedTo == nil)
+}
+
+/// The queue's copy of the same defect. `current` pinned the last file's whole
+/// `TranslationOutcome` — precisely the several copies of a large document that the trimmed
+/// `JobResult` exists to avoid holding — for as long as the queue sat idle.
+@MainActor @Test func theQueueHoldsTheRunHandleWhileAFileIsInFlight() async {
+    // `holdCallAtIndex` is the fixture's ten-second hold, and it is what makes this
+    // deterministic: sixty milliseconds of pacing loses the race to a loaded suite about one
+    // run in six — measured, and recorded on `QueueClient.holdCallAtIndex` itself.
+    let client = QueueClient(replies: ["перевод"], holdCallAtIndex: 0)
+    let model = makeQueueModel(client, prefix: "queue-handle-held")
+    model.add([queueJob("a.md", "first")])
+
+    let run = Task { await model.run() }
+    await waitUntilCalled(client)
+    #expect(model.isHoldingARunHandle)
+
+    model.cancel()
+    await run.value
+}
+
+@MainActor @Test func theQueueDropsTheRunHandleOnceTheLastFileHasSettled() async {
+    let model = makeQueueModel(QueueClient(replies: ["перевод"]), prefix: "queue-handle")
+    model.add([queueJob("a.md", "first")])
+
+    await model.run()
+
+    #expect(model.jobs[0].state == .finished)
+    #expect(!model.isHoldingARunHandle)
+}
