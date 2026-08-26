@@ -80,8 +80,38 @@ public enum LemmaMatcher {
     /// true → expected lemma sequence occurs contiguously in the translation
     /// false→ it does not
     public static func matches(expected: String, in translation: String, language: Language) -> Bool? {
-        let needle = tagged(expected, language: language)
+        matches(expected: expected, in: TaggedText(translation, language: language))
+    }
+
+    /// The same decision against a haystack that has **already** been tagged.
+    ///
+    /// `tagged` builds an `NLTagger` and walks the whole text, so asking «does this term
+    /// occur» once per glossary entry re-tagged the entire translation once per entry:
+    /// O(entries × document), paid after the last token has streamed while the job still reads
+    /// `.running`. A 2 MB file with twenty terms took twenty full passes over two megabytes to
+    /// answer twenty questions about one text.
+    ///
+    /// The needle is still tagged per call, and that is right — it is a term, not a document.
+    public static func matches(expected: String, in haystack: TaggedText) -> Bool? {
+        let needle = tagged(expected, language: haystack.language)
         guard !needle.words.isEmpty else { return nil }
-        return decide(needle: needle, haystack: tagged(translation, language: language))
+        return decide(needle: needle, haystack: (haystack.words, haystack.lemmatised))
+    }
+}
+
+/// One text, tagged once, so that many questions can be asked of it without re-reading it.
+///
+/// A value rather than a cache: nothing has to decide when it is stale, and the caller that
+/// knows the text is not going to change is the one that holds it.
+public struct TaggedText: Sendable {
+    let words: [String]
+    let lemmatised: Bool
+    let language: Language
+
+    public init(_ text: String, language: Language) {
+        let tagged = LemmaMatcher.tagged(text, language: language)
+        self.words = tagged.words
+        self.lemmatised = tagged.lemmatised
+        self.language = language
     }
 }

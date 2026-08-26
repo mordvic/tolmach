@@ -810,3 +810,38 @@ of this shape has to show, and it is stable.
 where they are pinned. Adding a corpus file that exercises them would also have to survive this
 file's variance — with one term of forty flipping between runs, a new fixture needs more than
 three runs before any figure from it means anything.
+
+---
+
+## 2026-08-26 — the post-run tail stops being quadratic
+
+- Machine: Apple M5 Pro, 48 GB, macOS 26.6.1 · Ollama 0.32.14
+
+- What changed: `MarkupSkeleton.diff` gained an equal-sequence early-out, a common
+  prefix/suffix trim and a ceiling; its three `NSRegularExpression`/`NSDataDetector`
+  constructions became `static let`; `GlossaryVerifier` tags the translation once instead of
+  once per entry; the window's `LanguageDetector.detect` moved off the main actor.
+- Why: issues #44 and #57 items 6, 7 and 8. All four fire on the unconditional tail of both
+  routes, after the last token, and scale with document size — for a queue that accepts 2 MB.
+
+### Run H — `--model translategemma:12b --chunk 4000`, verdict **ACCEPTED**
+
+```
+techdoc-en.md: run1 92.5% · run2 92.5% · run3 95.0% · average 93.3% · 5 chunks (3 model-bound) · 20 terms
+techdoc-ru.md: run1 92.9% · run2 92.9% · run3 92.9% · average 92.9% · 3 chunks (2 model-bound) · 20 terms
+ACCEPTED
+```
+
+Identical to Runs F and G on every figure that is not a timing, and inside the variance the
+control run established for `techdoc-en.md` (92.5 ↔ 95.0 per run, average 93.3 ↔ 94.2).
+
+**No `markup` line on any file, and no `markup-not-compared` line either** — which is the
+result to look for here, because this change is the first that could produce one. It does not on
+this corpus, and it should not: these documents' skeletons are preserved, so the equal-sequence
+early-out answers before any matrix is allocated.
+
+**The ceiling is not exercised by this corpus and cannot be.** It needs two skeletons that stay
+more than 16 million cells apart *after* the common prefix and suffix are trimmed — hundreds of
+thousands of divergent structural tokens, which is a 2 MB file the model rewrote wholesale. That
+is pinned offline (`twoLargeAndWhollyDifferentSkeletonsAreRefusedRatherThanAligned`), where the
+inputs can simply be written down.

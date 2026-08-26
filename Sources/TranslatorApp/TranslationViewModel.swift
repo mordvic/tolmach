@@ -48,6 +48,8 @@ final class TranslationViewModel {
     /// reachable — and `TranslationOutcome` is a struct, so there is no weak reference that could
     /// observe the release directly.
     var isHoldingARunHandle: Bool { task != nil }
+    /// Set by `cancel()` when there is no task yet to cancel. See `cancel()`.
+    private var cancelledBeforeStart = false
     private var clearedPrevious = false
     /// Whether this run reached the review point at all. See `documentTermsUnavailable`.
     private var raisedTermsSheet = false
@@ -340,16 +342,40 @@ final class TranslationViewModel {
         let text = sourceText
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
-        let detected = sourceOverride ?? LanguageDetector.detect(text)
-        let target = targetOverride ?? settings.targetLanguage(forDetected: detected)
-        let tone = toneOverride ?? settings.defaultTone
-        let options = settings.chatOptions(model: settings.interactiveModel)
-
+        // **Claimed before the first suspension**, and that ordering is load-bearing rather
+        // than tidy. Detection moved off the main actor below, which makes this function
+        // suspend before it used to; with the assignment left where it was, the model read
+        // `.idle` for the whole of that scan — so the re-entrancy guard above let a second
+        // «Перевести» through, and `adoptionRefusal` reported a busy model as free. Four
+        // existing tests caught it, which is the reason to move the line rather than to argue
+        // about whether the window is wide.
         state = .running
         // Reset beside the other per-run state: a notice that outlived its run would say
         // this translation went without its terms when the previous one did.
         documentTermsUnavailable = false
         raisedTermsSheet = false
+        cancelledBeforeStart = false
+
+        // **Off the main actor**, like every other expensive read in this app.
+        // `NLLanguageRecognizer` has no prefix cap and this pane accepts a 256 KB paste, so a
+        // full scan of it ran on the UI thread. The queue and the hotkey path were both moved
+        // off it with a comment saying why (`FileQueueModel`'s detect, `QueueDrop.read`,
+        // `Chunker.plan`); the window's own paste path was the one that stayed.
+        //
+        // Skipped entirely when «Из» is set, which is the point of `sourceOverride`: a stated
+        // language is the answer, and scanning to confirm it would be the second full read of
+        // the same text that `translate(source:)` exists to avoid.
+        let detected: Language?
+        if let sourceOverride {
+            detected = sourceOverride
+        } else {
+            detected = await Task.detached(priority: .userInitiated) {
+                LanguageDetector.detect(text)
+            }.value
+        }
+        let target = targetOverride ?? settings.targetLanguage(forDetected: detected)
+        let tone = toneOverride ?? settings.defaultTone
+        let options = settings.chatOptions(model: settings.interactiveModel)
 
         // Only when asked for. A nil hook is byte-for-byte the behaviour that shipped,
         // which is what the engine's pinning test guarantees.
@@ -453,6 +479,7 @@ final class TranslationViewModel {
         // either — same reset `translate()` performs.
         documentTermsUnavailable = false
         raisedTermsSheet = false
+        cancelledBeforeStart = false
         // Frozen for the whole run, here at its start. See `LLMClient.pinnedForRun()`: a
         // translation is many calls and they must all reach one server, while the router
         // underneath deliberately re-reads «Движок» on every call so a *new* run follows the
@@ -548,6 +575,8 @@ final class TranslationViewModel {
         // cancellation from the task that created it.
         let run = start({ continuation.yield($0) })
         task = run
+        // A ⌘. that landed while the detector was running had no task to reach — see `cancel()`.
+        if cancelledBeforeStart { run.cancel() }
         // Dropped again once the run has settled, and that is not tidiness: a finished `Task`
         // retains its result for as long as the handle lives, so holding it pinned the whole
         // previous `TranslationOutcome` — `final`, `chunks` and `translatedChunks` — until the
@@ -600,6 +629,12 @@ final class TranslationViewModel {
     /// `DocumentTermsRequest` exists.
     func cancel() {
         pendingTermsRequest?.cancel()
+        // **Remembered, not just forwarded.** Since detection moved off the main actor, a run
+        // claims `.running` and then suspends *before* its task exists — so a ⌘. landing in that
+        // window had nothing to reach, and the run went on to completion with the user watching
+        // a «Отмена» they had already pressed. `FileQueueModel` carries the same flag for the
+        // same reason and says so at its own `current = run`.
+        if task == nil, state == .running { cancelledBeforeStart = true }
         task?.cancel()
     }
 

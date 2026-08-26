@@ -157,6 +157,7 @@ struct RunStatusBar: View {
             // paragraph was rewritten. Following the half that was left would put
             // «N+1 предупреждение» back beside a file row saying «N».
             return WarningsView(checks: result.checks, markupDiffs: result.markupDiffs,
+                                markupNotCompared: result.markupNotCompared,
                                 documentGlossary: result.documentGlossary,
                                 target: queue.selectedTarget, onMute: onMute)
         }

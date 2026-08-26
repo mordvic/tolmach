@@ -1033,6 +1033,7 @@ private func resizablePanel(text: String)
         markupDiffs: (0..<60).map { _ in
             MarkupDiff(expected: nil, actual: nil, note: "потеряно: граница абзаца")
         },
+        markupNotCompared: false,
         stats: [], timeToFirstTokenMS: 12, totalMS: 34,
         documentGlossaryFailure: nil, documentGlossaryAttempted: false,
         modelChunkCount: 1)

@@ -10,6 +10,10 @@ struct WarningsView: View {
     // A second copy of this view is how two surfaces come to describe one run differently.
     let checks: [GlossaryCheck]
     let markupDiffs: [MarkupDiff]
+    /// See `TranslationOutcome.markupNotCompared`. An empty `markupDiffs` means «the structure
+    /// survived»; this is the other thing an empty list could have meant, and it has to be said
+    /// out loud or a document nobody checked reads as a clean one.
+    let markupNotCompared: Bool
     let documentGlossary: [GlossaryEntry]
     /// The target `TranslationViewModel` actually resolved for this run. Needed because
     /// `GlossaryEntry.translations` is keyed by language and `TranslationOutcome` does not
@@ -25,11 +29,13 @@ struct WarningsView: View {
     /// `RunStatusBar` draws it as an always-visible row of its own instead.
     var onMute: (String) -> Void = { _ in }
 
-    init(checks: [GlossaryCheck], markupDiffs: [MarkupDiff], documentGlossary: [GlossaryEntry],
+    init(checks: [GlossaryCheck], markupDiffs: [MarkupDiff], markupNotCompared: Bool = false,
+         documentGlossary: [GlossaryEntry],
          target: Language? = nil,
          onMute: @escaping (String) -> Void = { _ in }) {
         self.checks = checks
         self.markupDiffs = markupDiffs
+        self.markupNotCompared = markupNotCompared
         self.documentGlossary = documentGlossary
         self.target = target
         self.onMute = onMute
@@ -40,6 +46,7 @@ struct WarningsView: View {
     init(outcome: TranslationOutcome, target: Language? = nil,
          onMute: @escaping (String) -> Void = { _ in }) {
         self.init(checks: outcome.checks, markupDiffs: outcome.markupDiffs,
+                  markupNotCompared: outcome.markupNotCompared,
                   documentGlossary: outcome.documentGlossary,
                   target: target, onMute: onMute)
     }
@@ -67,6 +74,7 @@ struct WarningsView: View {
     /// and its label read that one value.
     var warningCount: Int {
         markupDiffs.count
+            + (markupNotCompared ? 1 : 0)
             + glossaryWarnings.count
             + (documentGlossary.isEmpty ? 0 : 1)
     }
@@ -98,6 +106,14 @@ struct WarningsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if markupNotCompared {
+                // Deliberately not phrased as a fault in the translation: nothing was found
+                // wrong with it, and nothing was found right either.
+                section("Разметка не сверялась") {
+                    Text("• Структура документа и перевода разошлись слишком сильно, "
+                         + "чтобы их сопоставить.").font(.caption)
+                }
+            }
             if !markupDiffs.isEmpty {
                 section("Разметка изменилась") {
                     ForEach(Array(markupDiffs.enumerated()), id: \.offset) { _, diff in

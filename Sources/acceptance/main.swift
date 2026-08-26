@@ -247,6 +247,11 @@ for name in corpus {
     var unacceptedDiffCounts: [MarkupDiffKey: Int] = [:]
 
     func checkMarkup(_ outcome: TranslationOutcome, label: String) {
+        // Before the diffs, because there are none to read when this is true and an empty loop
+        // would otherwise let a document nobody compared pass as a clean one.
+        if outcome.markupNotCompared {
+            print("    markup-not-compared\(label): the two skeletons were too far apart to align")
+        }
         for diff in outcome.markupDiffs {
             let expected = String(describing: diff.expected), actual = String(describing: diff.actual)
             if config.appliesKnownLimitations, isKnownModelBehaviour(diff) {

@@ -51,6 +51,7 @@ private func quietOutcome(documentGlossary: [GlossaryEntry] = [],
                        detectedSource: .en,
                        checks: checks,
                        markupDiffs: markupDiffs,
+                       markupNotCompared: false,
                        stats: [],
                        timeToFirstTokenMS: 12,
                        totalMS: 34,
@@ -143,4 +144,34 @@ private func quietOutcome(documentGlossary: [GlossaryEntry] = [],
     // «What is under the chevron» — and it is the view's own count, asked of the view.
     #expect(result.disclosureCount == view.warningCount)
     #expect(view.warningCount == 3)
+}
+
+// MARK: - «Not compared» is a warning, not an absence of one
+
+/// An empty `markupDiffs` means «the structure survived». When the comparison was refused for
+/// being too large there are also no diffs — so without a separate signal the two are
+/// indistinguishable, and a document nobody looked at renders as a clean one.
+@MainActor @Test func aRefusedMarkupComparisonIsCountedAndShown() {
+    let clean = WarningsView(checks: [], markupDiffs: [], documentGlossary: [])
+    #expect(clean.warningCount == 0)
+    #expect(!clean.hasContent)
+
+    let refused = WarningsView(checks: [], markupDiffs: [], markupNotCompared: true,
+                               documentGlossary: [])
+    #expect(refused.warningCount == 1)
+    #expect(refused.hasContent)
+}
+
+/// The queue's reduced result carries it too, or the file rows and the status bar disagree with
+/// the disclosure they summarise.
+@MainActor @Test func aQueueResultCountsARefusedComparisonAsAWarning() {
+    let clean = JobResult(final: "", checks: [], markupDiffs: [], documentGlossary: [],
+                          elapsedMS: 0)
+    #expect(clean.warningCount == 0)
+    #expect(!clean.hasWarnings)
+
+    let refused = JobResult(final: "", checks: [], markupDiffs: [], markupNotCompared: true,
+                            documentGlossary: [], elapsedMS: 0)
+    #expect(refused.warningCount == 1)
+    #expect(refused.hasWarnings)
 }

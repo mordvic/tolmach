@@ -1020,11 +1020,14 @@ private func waitForSheet(_ model: TranslationViewModel,
 @MainActor @Test func theRunHandleIsHeldWhileARunIsInFlight() async {
     // Ten seconds a token: this run cannot finish while the assertion below runs, no matter how
     // little of the machine this test gets. Cancelling aborts the sleep, so it costs nothing.
-    let model = makeModel(ScriptedClient(responses: ["перевод"], delayPerToken: .seconds(10)))
+    let client = ScriptedClient(responses: ["перевод"], delayPerToken: .seconds(10))
+    let model = makeModel(client)
     model.sourceText = "Одна строка прозы."
 
     let run = Task { await model.translate() }
-    await waitUntil("the run is in flight") { model.state == .running }
+    // The *client* being called, not `state == .running`: the model claims `.running` before it
+    // suspends for language detection, so that state no longer means the task exists yet.
+    await waitUntil("the model has been asked") { client.callCount > 0 }
     #expect(model.isHoldingARunHandle)
 
     model.cancel()
@@ -1044,14 +1047,65 @@ private func waitForSheet(_ model: TranslationViewModel,
 /// The path a run does not finish on: a cancelled run must release its handle too, or «Отмена»
 /// becomes the way to hold a document for ever.
 @MainActor @Test func aCancelledRunAlsoDropsItsHandle() async {
-    let model = makeModel(ScriptedClient(responses: ["перевод"], delayPerToken: .seconds(10)))
+    let client = ScriptedClient(responses: ["перевод"], delayPerToken: .seconds(10))
+    let model = makeModel(client)
     model.sourceText = "Одна строка прозы."
 
     let run = Task { await model.translate() }
-    await waitUntil("the run is in flight") { model.state == .running }
+    await waitUntil("the model has been asked") { client.callCount > 0 }
     model.cancel()
     await run.value
 
     #expect(model.state == .interrupted)
     #expect(!model.isHoldingARunHandle)
+}
+
+// MARK: - Cancelling before the run's task exists
+
+/// Moving language detection off the main actor gave `translate()` a suspension point *before*
+/// its task exists, and `cancel()` only forwarded to that task — so a ⌘. landing while the
+/// detector was reading a 256 KB paste reached nothing, and the run went on to completion with
+/// the user watching a «Отмена» they had already pressed.
+///
+/// `FileQueueModel` carries the same remembered-cancel flag for the same reason. This is the
+/// window at the other model, and it did not exist until detection moved.
+@MainActor @Test func acancelDuringLanguageDetectionStillStopsTheRun() async {
+    let client = ScriptedClient(responses: ["перевод"], delayPerToken: .seconds(10))
+    let model = makeModel(client)
+    // Big enough that the detector takes real time. `NLLanguageRecognizer` has no prefix cap —
+    // measured elsewhere in this project at ~48 ms for 2 MB — and `waitUntil` polls every 2 ms,
+    // so the window this test is about is an order of magnitude wider than the poll that has to
+    // land inside it. A short string closes it in microseconds and the test passes vacuously.
+    model.sourceText = String(repeating: "Одна строка прозы про сервер и ресурс. ", count: 4000)
+
+    let run = Task { await model.translate() }
+    // Cancel as soon as the model reports itself busy — which is now *before* the model has
+    // been asked anything, i.e. exactly the window this guards.
+    await waitUntil("the model has claimed the run") { model.state == .running }
+    #expect(client.callCount == 0, "the point of this test is the window before the first call")
+    model.cancel()
+    await run.value
+
+    #expect(model.state == .interrupted)
+    #expect(!model.isHoldingARunHandle)
+}
+
+/// And the model is busy from the instant a run is asked for, not from the instant the network
+/// is. Two runs sharing `translatedText` interleave in the pane, and `adoptionRefusal` reports
+/// on the same state — both read `.running` while the detector was still reading.
+@MainActor @Test func theModelIsBusyWhileItIsStillWorkingOutWhatLanguageThisIs() async {
+    let client = ScriptedClient(responses: ["перевод"], delayPerToken: .seconds(10))
+    let model = makeModel(client)
+    model.sourceText = "Одна строка прозы."
+
+    let run = Task { await model.translate() }
+    await waitUntil("the model has claimed the run") { model.state == .running }
+    #expect(client.callCount == 0)
+
+    // A second «Перевести» in that window must be refused, exactly as it is later on.
+    await model.translate()
+    #expect(client.callCount <= 1, "a second run was started while the first was still starting")
+
+    model.cancel()
+    await run.value
 }
