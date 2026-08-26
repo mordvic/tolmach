@@ -369,6 +369,11 @@ final class TranslationViewModel {
             }
         }
 
+        // Frozen for the whole run, here at its start. See `LLMClient.pinnedForRun()`: a
+        // translation is many calls and they must all reach one server, while the router
+        // underneath deliberately re-reads «Движок» on every call so a *new* run follows the
+        // radio button. Both are wanted; this line is where the two meet.
+        let translator = translator.forRun()
         await execute(start: { onToken in
             Task { [translator, glossary, settings] in
                 try await translator.translate(
@@ -448,6 +453,11 @@ final class TranslationViewModel {
         // either — same reset `translate()` performs.
         documentTermsUnavailable = false
         raisedTermsSheet = false
+        // Frozen for the whole run, here at its start. See `LLMClient.pinnedForRun()`: a
+        // translation is many calls and they must all reach one server, while the router
+        // underneath deliberately re-reads «Движок» on every call so a *new* run follows the
+        // radio button. Both are wanted; this line is where the two meet.
+        let translator = translator.forRun()
         await execute(start: { onToken in
             Task { [translator, settings] in
                 try await translator.proofread(
@@ -647,6 +657,15 @@ extension OllamaError: OllamaErrorBridge {
             "Ollama ответила ошибкой \(code)."
         case .decoding:
             "Не удалось разобрать ответ Ollama."
+        // The detail is omitted for the same reason `httpStatus`'s body is: it is the server's
+        // own English, and what the user can act on is «this answer is incomplete, run it
+        // again». The detail still reaches `Log.engine` and `translate-cli`.
+        case .truncatedStream:
+            "Ollama оборвала ответ на середине. Попробуйте ещё раз."
+        // Not «try again»: nothing that speaks this protocol sends a line anywhere near this
+        // size, so the honest reading is that the port is answering to something else.
+        case .oversizedLine:
+            "На этом порту отвечает не Ollama."
         }
     }
 }

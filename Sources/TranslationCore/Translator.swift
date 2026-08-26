@@ -172,6 +172,14 @@ public struct Translator: Sendable {
     let client: LLMClient
     public init(client: LLMClient) { self.client = client }
 
+    /// The same translator over a client frozen for one run. See `LLMClient.pinnedForRun()`
+    /// for why a run may not straddle two servers.
+    ///
+    /// A caller that starts a run asks for this first and uses the answer for the whole of it.
+    /// `Translator` is a value with no state beyond its client, so this costs an allocation of
+    /// nothing; the app's three long-lived translators stay exactly as they are.
+    public func forRun() -> Translator { Translator(client: client.pinnedForRun()) }
+
     /// - Parameter source: the language to translate *from*, when the caller already knows.
     ///
     ///   Nil means «detect it», which is what every call did until now — and that was a

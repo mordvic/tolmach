@@ -63,6 +63,27 @@ public enum ChatEvent: Sendable {
 
 public protocol LLMClient: Sendable {
     func chat(messages: [ChatMessage], options: ChatOptions) -> AsyncThrowingStream<ChatEvent, Error>
+
+    /// This client, frozen for the duration of one run.
+    ///
+    /// **A run must not straddle two servers.** A translation is many `chat` calls — a term
+    /// list, then a call per часть — and everything downstream of the first one assumes they
+    /// all reached the same place: the document glossary was built by that model, the chunks
+    /// are joined into one document, and `ChatOptions` were resolved once at the start. A
+    /// client free to answer somewhere else between calls turns a mid-run settings change into
+    /// half a document translated by one server and half refused by another.
+    ///
+    /// The default implementation returns `self`, which is the right answer for every client
+    /// that has one target: a plain transport, and every fake in the test suite. Only a client
+    /// that *chooses* its target per call has anything to freeze — in this app that is
+    /// `EngineRouter`, whose whole design is to read the «Движок» setting on every call so the
+    /// radio button takes effect without a relaunch. Both properties are wanted; this is the
+    /// seam that lets them coexist.
+    func pinnedForRun() -> any LLMClient
+}
+
+extension LLMClient {
+    public func pinnedForRun() -> any LLMClient { self }
 }
 
 extension ChatStats: Equatable {}

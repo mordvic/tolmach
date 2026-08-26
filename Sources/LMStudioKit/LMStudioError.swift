@@ -19,6 +19,9 @@ public enum LMStudioError: LocalizedError, Equatable {
     case server(code: String?, type: String?, message: String)
     case httpStatus(Int, String)
     case decoding(String)
+    /// One line of a 200 response grew past `BoundedLines.defaultMaxBytes`. Nothing this server
+    /// sends comes close; something answering on its port is not speaking this protocol.
+    case oversizedLine(Int)
 
     /// Whether this is «I could not read the answer» rather than «the server refused».
     ///
@@ -41,6 +44,8 @@ public enum LMStudioError: LocalizedError, Equatable {
             "LM Studio returned HTTP \(code): \(body)"
         case let .decoding(detail):
             "Could not decode LM Studio response: \(detail)"
+        case let .oversizedLine(limit):
+            "A single response line exceeded \(limit) bytes; this is not LM Studio's protocol."
         }
     }
 }

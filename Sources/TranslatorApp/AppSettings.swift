@@ -119,8 +119,17 @@ final class AppSettings {
     }
 
     static func enginePort(in defaults: UserDefaults) -> Int {
-        let engine = engine(in: defaults)
-        return engine.portOrDefault(
+        enginePort(in: defaults, for: engine(in: defaults))
+    }
+
+    /// The port for an engine the caller has **already** read.
+    ///
+    /// Exists so that «which engine» and «which port» can be one decision. The overload above
+    /// reads the engine key itself, so a caller that had already read it — `EngineRouter`, on
+    /// every single call — read it twice, and a «Движок» flip landing between the two reads sent
+    /// one engine's port to the other engine's branch.
+    static func enginePort(in defaults: UserDefaults, for engine: ModelEngine) -> Int {
+        engine.portOrDefault(
             defaults.object(forKey: "enginePort" + engine.settingsKeySuffix) as? Int
                 ?? engine.defaultPort)
     }
