@@ -1419,3 +1419,150 @@ final class EmissionClock: @unchecked Sendable {
     #expect(!outcome.final.contains("Here is"), "the preamble reached the translation")
     #expect(collector.text == outcome.final)
 }
+
+// MARK: - The stream and the buffered path agree at the edges
+
+/// The defect. Every buffered path ends at `ResponseCleaner.clean`, which trims both edges; the
+/// incremental path returned `collected` untrimmed. So a chunk reply ending in a newline kept
+/// it, and `final` gained a blank line the same reply produced nowhere else — with the markup
+/// diff then reporting a phantom «added paragraphBreak» on a faithful translation. Which path a
+/// chunk took depended on token timing, so the output bytes did too.
+@Test func achunkReplyEndingInANewlineDoesNotAddABlankLineToFinal() async throws {
+    let fake = FakeLLMClient(responses: [
+        "resource => ресурс",                       // the term-list call
+        "Первый абзац.\nВторая строка.\n",          // multi-line, no preamble → incremental
+        "Второй абзац.",
+    ])
+    let collector = TokenCollector()
+    let outcome = try await Translator(client: fake).translate(
+        text: multiChunkText, target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 200,
+        onToken: collector.onToken)
+
+    #expect(outcome.final == "Первый абзац.\nВторая строка.\n\nВторой абзац.")
+    #expect(!outcome.final.contains("\n\n\n"), "a blank line was added that the reply never had")
+    #expect(outcome.markupDiffs.isEmpty, "a phantom paragraph break was reported")
+    #expect(collector.text == outcome.final)
+}
+
+/// The same reply on a *buffered* path, so the assertion above is about the edges and not about
+/// the reply. A single-line reply never goes incremental, and `clean()` has always trimmed it.
+@Test func aBufferedChunkReplyEndingInANewlineIsTrimmedAsItAlwaysWas() async throws {
+    let fake = FakeLLMClient(responses: ["resource => ресурс", "Первый.\n", "Второй."])
+    let outcome = try await Translator(client: fake).translate(
+        text: multiChunkText, target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 200)
+    #expect(outcome.final == "Первый.\n\nВторой.")
+}
+
+/// Interior whitespace is *not* the trailing edge and must survive. The preamble branch trimmed
+/// `rest` at both ends, so a single event spanning the preamble's newline and ending in a space
+/// lost that space — legal per the `LLMClient` contract, impossible to reach with a
+/// character-per-token fake, and delivered for real by any batching server or proxy.
+@Test func aSpaceAtTheEndOfAnEventIsKeptWhenMoreContentFollows() async throws {
+    let fake = FakeLLMClient(
+        responses: ["Here is the translation:\nПривет мир"],
+        tokenizer: { _ in ["Here is the translation:\nПривет ", "мир"] })
+    let collector = TokenCollector()
+    let outcome = try await Translator(client: fake).translate(
+        text: "Hello world", target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "fake"), maxChunkCharacters: 900,
+        onToken: collector.onToken)
+
+    #expect(outcome.final == "Привет мир")
+    #expect(collector.text == outcome.final)
+}
+
+/// The leading edge, character by character — the shape the fake produces by default and the
+/// one the streaming decision actually got wrong. `clean()` trims before it decides anything;
+/// the twin did not, so `"\n"` gave `firstLine == ""`, which is not a preamble, and the whole
+/// buffer streamed as content with the preamble in it.
+@Test func areplyBeginningWithANewlineStillHasItsPreambleStripped() async throws {
+    let fake = FakeLLMClient(responses: ["\nHere is the translation:\nПривет, мир."])
+    let collector = TokenCollector()
+    let outcome = try await Translator(client: fake).translate(
+        text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "fake"), maxChunkCharacters: 900,
+        onToken: collector.onToken)
+
+    #expect(outcome.final == "Привет, мир.")
+    #expect(collector.text == outcome.final)
+}
+
+/// The fence half of the same finding, now reachable character by character rather than only
+/// with a hand-cut event.
+@Test func areplyBeginningWithANewlineAndAFenceIsUnwrappedCharacterByCharacter() async throws {
+    let fake = FakeLLMClient(responses: ["\n```\nПривет, мир.\n```"])
+    let outcome = try await Translator(client: fake).translate(
+        text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "fake"), maxChunkCharacters: 900)
+    #expect(outcome.final == "Привет, мир.")
+    #expect(outcome.markupDiffs.isEmpty)
+}
+
+/// `emit` filtered only `isEmpty`, so a whitespace-only first emission stamped
+/// `timeToFirstTokenMS`. The pane stayed blank — `TranslationViewModel` reads a whitespace-only
+/// piece as a chunk separator and writes nothing — while the empty-reply guard, which is that
+/// stamp, passed. «Готово» over an empty pane.
+@Test func awhitespaceOnlyReplyLeavesTimeToFirstTokenNil() async throws {
+    let fake = FakeLLMClient(responses: ["   \n  \n "])
+    let collector = TokenCollector()
+    let outcome = try await Translator(client: fake).translate(
+        text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "fake"), maxChunkCharacters: 900,
+        onToken: collector.onToken)
+
+    #expect(outcome.timeToFirstTokenMS == nil, "invisible content must not read as an answer")
+    #expect(outcome.isEmptyReply, "and the models must be able to call it what it is")
+    #expect(collector.text.isEmpty)
+}
+
+// MARK: - Cancellation, between the loop and the post-loop emit
+
+/// A cancelled run must not deliver the chunk it was cancelled inside.
+///
+/// `AsyncThrowingStream` *finishes* on cancellation instead of throwing — this project's rule —
+/// so the token loop exited normally with a partial buffer, and the code after it cleaned that
+/// buffer, restored inline spans into it, and handed it to `onToken` as a completed chunk. Only
+/// then did the caller's own check throw. The existing cancellation test passes without this
+/// guard because its cancel lands before the first token ever arrives: true of that fixture,
+/// not of the mechanism it names.
+///
+/// The cancel is triggered from the fake's own per-token hook rather than from a sleep, so
+/// «after the first token» is a fact and not a guess — and the hook then **holds the stream
+/// open** until it is cancelled, so the run cannot finish out from under the assertion.
+///
+/// The hold is not belt-and-braces. An earlier version signalled and returned, leaving the
+/// remaining 200 ms-per-token pieces to race the test's own resumption; it was green locally and
+/// **red on CI**, where the run completed first and the cancellation landed on nothing.
+/// `QueueClient.holdCallAtIndex` records the same lesson from the other model.
+@MainActor @Test func cancellingAfterTheFirstTokenDeliversNoChunkAtAll() async throws {
+    let firstToken = AsyncStream<Int>.makeStream()
+    let fake = FakeLLMClient(
+        // Single-line and short, so the chunk stays on the buffered path all the way to the
+        // post-loop emit — the code this guard protects.
+        responses: ["Привет, мир"],
+        delayPerToken: .milliseconds(1),
+        onTokenYielded: { index in
+            guard index == 0 else { return }
+            firstToken.continuation.yield(index)
+            // Held until the cancellation aborts it. A minute cannot be lost — the consumer
+            // stops the moment the run is cancelled — and cannot be raced either.
+            try? await Task.sleep(for: .seconds(60))
+        })
+
+    let received = TokenCollector()
+    let run = Task {
+        try await Translator(client: fake).translate(
+            text: "Hello, world", target: .ru, tone: .neutral, userGlossary: nil,
+            options: ChatOptions(model: "fake"), maxChunkCharacters: 900,
+            onToken: received.onToken)
+    }
+
+    var iterator = firstToken.stream.makeAsyncIterator()
+    _ = await iterator.next()
+    run.cancel()
+
+    await #expect(throws: CancellationError.self) { _ = try await run.value }
+    #expect(received.text.isEmpty, "a cancelled chunk was handed to onToken as if it had finished")
+}

@@ -739,7 +739,9 @@ machine:
 | `markup` lines | none on any file | none on any file |
 
 Chunking, term counts and markup are **identical**. The single 95.0 % run is the model's own
-sampling and is not claimed as an improvement — the other five runs reproduce Run C exactly.
+sampling and is not claimed as an improvement — and that is now measured rather than assumed:
+see the control run recorded with Run G below, which produced a *third* triple from the
+**unchanged** base.
 
 **This run cannot confirm the fix, and says so rather than being read as if it did.** Every file
 in `corpus/` is pure LF — checked, zero CR bytes across all five — so none of the paths this
@@ -751,3 +753,60 @@ where the inputs can be written down.
 
 A CRLF corpus file would close that gap and is worth adding; it is not added here, because a
 sixth file changes every future run's comparability and that is a decision of its own.
+
+---
+
+## 2026-08-26 — the stream and the buffered path agree at both edges
+
+- Machine: Apple M5 Pro, 48 GB, macOS 26.6.1
+- Ollama 0.32.14
+
+- What changed: `Translator.streamChunkReply` holds edge whitespace instead of emitting it,
+  trims the leading edge while buffering, and checks cancellation before the post-loop emit.
+- Why: issues #49, #50, #51 and #57 item 10. The incremental path returned `collected`
+  untrimmed while every buffered path ends at `ResponseCleaner.clean`, which trims both edges —
+  so which path a chunk took changed the bytes in `final`.
+
+### Run G — `--model translategemma:12b --chunk 4000`, verdict **ACCEPTED**
+
+```
+techdoc-en.md: run1 92.5% (37/40) · run2 92.5% (37/40) · run3 95.0% (38/40) · average 93.3% · 5 chunks (3 model-bound) · 20 terms · TTFT 7967/7653/7433 ms
+techdoc-ru.md: run1 92.9% (26/28) · run2 92.9% (26/28) · run3 92.9% (26/28) · average 92.9% · 3 chunks (2 model-bound) · 20 terms · TTFT 7243/7299/7241 ms
+ACCEPTED — engine meets the recalibrated baseline
+```
+
+(The three single-chunk files are `n/a` for adherence as always, at TTFT 1506 / 718 / 1031 ms.)
+
+### The control run, and what it settles
+
+Run F and Run G produced **identical** triples for `techdoc-en.md` — 92.5 / 92.5 / 95.0 — where
+Run C on 2026-08-18 had produced 92.5 / 92.5 / 92.5. Two runs agreeing on a figure that had been
+stable before them is the shape of a real change, so it was checked rather than explained away:
+the harness was run once more from the **unchanged base** (the commit before the line-discipline
+work), same model, same budget, same machine, same session.
+
+```
+techdoc-en.md: run1 95.0% · run2 92.5% · run3 95.0% · average 94.2%
+techdoc-ru.md: run1 92.9% · run2 92.9% · run3 92.9% · average 92.9%
+```
+
+A **third** triple, from code that changed nothing. So:
+
+- `techdoc-en.md` adherence on `translategemma:12b` alternates between **92.5 % and 95.0 %**
+  run to run — one term of forty — and the three-run average moves between 93.3 % and 94.2 %
+  accordingly. Nothing sets a seed, and `temperature` is 0.2 rather than 0.
+- Run C's 92.5 / 92.5 / 92.5 was therefore **one sample of a varying quantity**, not a fixed
+  property of that commit. Read it, and every other single figure in this file for this model,
+  with that in mind.
+- `techdoc-ru.md` did **not** vary: 92.9 % in all nine runs across the three versions. The
+  variance is a property of one file, not of the corpus.
+
+What both changed versions do reproduce exactly, in every run: **5 chunks (3 model-bound) and
+3 (2), 20 document terms each, and no `markup` line on any file.** That is the part a refactor
+of this shape has to show, and it is stable.
+
+**Neither Run F nor Run G can confirm the fixes**, for the reason Run F's entry already gives:
+`corpus/` is pure LF, and none of these edge cases is reachable from it. The offline suite is
+where they are pinned. Adding a corpus file that exercises them would also have to survive this
+file's variance — with one term of forty flipping between runs, a new fixture needs more than
+three runs before any figure from it means anything.

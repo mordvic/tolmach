@@ -32,16 +32,34 @@ final class FakeLLMClient: LLMClient, @unchecked Sendable {
     /// one character at a time cannot reach it: the review of 2026-08-26 found two such places,
     /// and neither had a test because neither could have had one.
     private let tokenizer: @Sendable (String) -> [String]
+    /// Invoked immediately **after** each `.token` event is yielded, with its zero-based index
+    /// within the current call.
+    ///
+    /// The same reasoning as `onCallStart` one property up, one step finer: a test that means to
+    /// cancel a run *after* the first token has arrived would otherwise race a guessed sleep
+    /// against the stream, and pin the timing on one machine. Some behaviour in
+    /// `Translator.streamChunkReply` only exists between the first token and the end of the
+    /// stream — the post-loop emit on a buffered path — and «after the first token» is the only
+    /// way to reach it.
+    ///
+    /// **`async`, so the hook can hold the stream open.** Signalling and returning is not enough:
+    /// the remaining tokens then race the test's own resumption, and on a loaded runner the run
+    /// finishes first and the cancellation lands on nothing. `QueueClient.holdCallAtIndex`
+    /// carries the same measurement for the same reason — «60 ms of pacing … is not enough for a
+    /// test that means to cancel».
+    private let onTokenYielded: (@Sendable (Int) async -> Void)?
     private var callCount = 0
 
     init(responses: [String], delayPerToken: Duration? = nil, errors: [Error?] = [],
          onCallStart: (@Sendable (Int) -> Void)? = nil,
-         tokenizer: @escaping @Sendable (String) -> [String] = { $0.map(String.init) }) {
+         tokenizer: @escaping @Sendable (String) -> [String] = { $0.map(String.init) },
+         onTokenYielded: (@Sendable (Int) async -> Void)? = nil) {
         self.responses = responses
         self.delayPerToken = delayPerToken
         self.errors = errors
         self.onCallStart = onCallStart
         self.tokenizer = tokenizer
+        self.onTokenYielded = onTokenYielded
     }
 
     func chat(messages: [ChatMessage], options: ChatOptions) -> AsyncThrowingStream<ChatEvent, Error> {
@@ -53,15 +71,17 @@ final class FakeLLMClient: LLMClient, @unchecked Sendable {
         let error = errors.isEmpty ? nil : errors.removeFirst()
         let delayPerToken = delayPerToken
         let pieces = tokenizer(reply)
+        let onTokenYielded = onTokenYielded
         return AsyncThrowingStream { continuation in
             let producer = Task {
                 if let error {
                     continuation.finish(throwing: error)
                     return
                 }
-                for piece in pieces {
+                for (index, piece) in pieces.enumerated() {
                     if let delayPerToken { try? await Task.sleep(for: delayPerToken) }
                     continuation.yield(.token(piece))
+                    await onTokenYielded?(index)
                 }
                 continuation.yield(.done(ChatStats(loadDurationMS: 10, promptEvalCount: 5,
                     promptEvalDurationMS: 5, evalCount: reply.count, evalDurationMS: 20)))
