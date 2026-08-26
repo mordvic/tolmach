@@ -63,6 +63,27 @@ public struct PasteboardSnapshot: Equatable {
         return PasteboardSnapshot(items: captured, changeCount: pasteboard.changeCount)
     }
 
+    /// Restores this snapshot **only if the board is still the one the caller accepted**.
+    ///
+    /// `restore` clears and rewrites unconditionally, which is right when the only thing that
+    /// touched the board is this app's own synthetic ⌘C — and wrong when something else wrote
+    /// afterwards. The ⌘C poll waits up to half a second, fully exposed when the target app
+    /// ignores the keystroke, and a Universal Clipboard delivery inside that window used to be
+    /// both returned as «the selection» and then overwritten with the stale snapshot, so the
+    /// user's next ⌘V pasted old content.
+    ///
+    /// - Parameter changeCount: what `NSPasteboard.changeCount` read when the caller took the
+    ///   value it is about to return. Not this snapshot's own count — by the time a restore is
+    ///   due, the ⌘C has already moved the board past that.
+    /// - Returns: whether anything was written back. False means the board had moved on and was
+    ///   left alone, which is a decision and not a failure.
+    @discardableResult
+    public func restoreIfUnchanged(to pasteboard: NSPasteboard, since changeCount: Int) -> Bool {
+        guard pasteboard.changeCount == changeCount else { return false }
+        restore(to: pasteboard)
+        return true
+    }
+
     public func restore(to pasteboard: NSPasteboard) {
         // Cleared unconditionally, including when there is nothing to write back. An empty
         // snapshot means the user's clipboard was empty, and leaving the text this app

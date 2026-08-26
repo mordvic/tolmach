@@ -74,7 +74,10 @@ public struct LMStudioClient: LLMClient {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = Timeout.load
         config.timeoutIntervalForResource = 900
-        let session = URLSession(configuration: config)
+        // `RedirectPolicy` — see that type. Without a delegate, a `307` from whatever is
+        // answering on this port re-POSTs the user's text somewhere else.
+        let session = URLSession(configuration: config, delegate: RedirectPolicy(),
+                                 delegateQueue: nil)
         self.baseURL = baseURL
         self.session = session
         // Built from locals rather than from `self`, which does not exist yet. The catalogue

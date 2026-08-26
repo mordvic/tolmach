@@ -64,6 +64,19 @@ final class GlossaryStore {
         return FileStamp(modified: modified, size: size)
     }
 
+    /// Where this store actually reads and writes.
+    ///
+    /// **Symlinks are resolved, and that is about not destroying one.** `write(to:options:.atomic)`
+    /// writes a temporary file and renames it into place, which replaces a symlinked
+    /// `glossary.json` with a regular file — so a user who keeps this file in a dotfiles
+    /// repository and links it into Application Support loses the link on the first save, and
+    /// every later edit goes to a copy their repository no longer sees. The stamp had the same
+    /// blindness in the other direction: it described the link, not the file being compared.
+    ///
+    /// Resolved once, at construction, rather than per call: a path that changed meaning between
+    /// the stamp and the write would reintroduce exactly the race the stamp exists to catch.
+    private var resolved: URL { url.resolvingSymlinksInPath() }
+
     init(url: URL = GlossaryStore.defaultURL) { self.url = url }
 
     static var defaultURL: URL {
@@ -78,6 +91,7 @@ final class GlossaryStore {
     /// on the throwing path and `save()` refuses — but the caller still has to be told,
     /// or the user is left believing an unread glossary is an empty one.
     func load() throws {
+        let url = resolved
         guard FileManager.default.fileExists(atPath: url.path) else {
             file = GlossaryFile(); stamp = nil; isLoaded = true; return
         }
@@ -104,6 +118,7 @@ final class GlossaryStore {
     }
 
     func save() throws {
+        let url = resolved
         // Both guards go before anything touches the filesystem. A guard placed after the
         // write would still have destroyed the file it exists to protect.
         guard isLoaded else { throw GlossaryStoreError.saveBeforeLoad }
@@ -117,7 +132,14 @@ final class GlossaryStore {
         // The file is hand-editable and git-tracked (spec 9), so key order must be stable
         // or every save produces a spurious diff.
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(file).write(to: url, options: .atomic)
+        let data = try encoder.encode(file)
+        // **Re-checked immediately before the write**, with the encode and the directory
+        // creation — the two slow steps — already done. The check and the write cannot be one
+        // transaction without file locking, so what is available is to make the gap as small as
+        // the language allows: an edit landing inside it is still overwritten, and that residual
+        // is the honest state of this guard rather than something the narrower window removes.
+        guard Self.fileStamp(of: url) == stamp else { throw GlossaryStoreError.fileChangedOnDisk }
+        try data.write(to: url, options: .atomic)
         // Our own write moved the file on. Without this the second save of a session would
         // report the store's own previous save as an edit behind its back.
         stamp = Self.fileStamp(of: url)

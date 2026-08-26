@@ -53,3 +53,48 @@ clipboard outright.
 
 `Sources/TextCapture/PasteboardSnapshot.swift`, `Sources/TextCapture/GeneralPasteboard.swift`,
 and `SelectionReader.clipboardText()`.
+
+---
+
+## What the fallback costs, written down (2026-08-26)
+
+Two things the ⌘C fallback does that no snapshot can undo. Neither is a defect in this
+implementation; both were unrecorded, which is the defect this section fixes.
+
+### The selection is placed on the general pasteboard
+
+Posting ⌘C is what puts the user's selection there, so for the length of the poll it is visible
+to every clipboard-history manager on the machine and to Universal Clipboard. «Текст не покидает
+машину» is a statement about what this app sends over the network; it has this caveat, and the
+caveat had been written down nowhere.
+
+The Accessibility read is tried first precisely because it costs nothing of the sort — this is
+the price of the path taken when that read comes back empty, which is the path a user with a
+non-cooperating application is always on.
+
+`org.nspasteboard.ConcealedType` would opt a well-behaved history manager out. It is not
+adopted here: it is a convention rather than an API, honoured by some managers and not others,
+and adopting it would make this section read as though the exposure had been solved. It is a
+reasonable thing to add later, with a measurement of which managers actually honour it.
+
+### A concurrent write is mistaken for the selection
+
+The poll accepts *any* change to `changeCount` inside its half-second window, because
+`NSPasteboard` has no owner and nothing in this app can ask who wrote. So a third-party write
+landing in that window is returned as «the selection», sent to the model and shown in the panel.
+The window is fully exposed when the target application ignores ⌘C, which is exactly the case
+the fallback exists for.
+
+Two halves of this are fixed and one is not:
+
+- **The restore no longer destroys the newer content.** `PasteboardSnapshot.restoreIfUnchanged`
+  puts the snapshot back only if the board is still the one the poll accepted. Before this, a
+  copy arriving from the user's iPhone was both read as their selection *and* then overwritten
+  with this app's stale snapshot, so their next ⌘V pasted old content.
+- **Universal Clipboard is recognised and refused.** Content handed over from another device
+  carries `com.apple.is-remote-clipboard`; it is the one third-party write that identifies
+  itself, so it is the one that can be excluded by name.
+- **The general case remains.** Any other process writing inside the window is still mistaken
+  for the selection. There is no API that would distinguish it, and inventing a heuristic —
+  «text that does not look like a selection» — would fail in the direction that loses the user's
+  actual selection. Accepted, and recorded here rather than left to be rediscovered.
