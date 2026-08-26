@@ -40,15 +40,22 @@ swift run acceptance --engine lmstudio --model google/gemma-4-e4b   # the other 
 ```
 
 No test count here on purpose: it went stale twice in one review cycle, and a number nothing
-checks is a contract nobody can keep. The suite is offline and reads **~2.1 s**, so there is
-no reason not to run it. Nearly all of that is one test
-(`aFileInterruptedFromTheTermsSheetDoesNotReportTheReadersDeliberation`) that sleeps a
-deliberate second — the property it pins, that a reader's time in the terms sheet is not
-reported as the machine's, can only be seen by letting real time pass — stretched from
-~1.05 s to ~1.97 s by contention with `TranslationPanelTests`' real `NSPanel`s. Watch that
-test's figure, not the total; if the suite reads much above ~2.1 s, suspect the machine before
-the code — a leaked load generator once made the same commit measure 0.87 s and 3.0 s on the
-same hardware.
+checks is a contract nobody can keep. The suite is offline and reads **~2.8 s** (2026-08-26;
+it read ~2.1 s before that day's review work), so there is no reason not to run it. Most of
+that is **two** tests that spend real time on purpose:
+
+- `aFileInterruptedFromTheTermsSheetDoesNotReportTheReadersDeliberation` sleeps a deliberate
+  second — the property it pins, that a reader's time in the terms sheet is not reported as the
+  machine's, can only be seen by letting real time pass. Alone it reads ~1.13 s, stretched to
+  ~2.7 s by contention with `TranslationPanelTests`' real `NSPanel`s.
+- `acancelDuringLanguageDetectionStillStopsTheRun` translates a 150 KB source so the detector
+  runs long enough for its poll to land inside the window it is about — with a short string the
+  window closes in microseconds and the test passes with the fix removed, which was measured
+  rather than guessed.
+
+Watch those two figures, not the total; if the suite reads much above ~2.8 s, suspect the
+machine before the code — a leaked load generator once made the same commit measure 0.87 s and
+3.0 s on the same hardware.
 
 `swift test` never touches the network. `translate-cli` and `acceptance` do — `acceptance` is
 the deliberately-not-in-CI harness that measures TTFT, markup integrity and term consistency
@@ -126,6 +133,18 @@ Facts that will bite you if you "tidy" them:
   a cancelled run returns a truncated document as a success. Cancellation must surface as
   `CancellationError`. The one deliberate exception: a failed document-glossary call is swallowed
   (it is an enhancement, not the result) — but a cancellation inside it still propagates.
+  **The same rule applies to the *end of a stream*, not only to the calls around it**: the check
+  before `streamChunkReply`'s post-loop emit is what stops a cancelled chunk's partial buffer
+  being cleaned, inline-restored and handed to `onToken` as a completed chunk. And it applies at
+  the transport: `OllamaChatReader` refuses a stream that ended without its `done` frame, and
+  `OllamaStreamParser` throws on an in-stream `{"error": …}` line, because both otherwise report
+  half a document as a success — the failure `LMStudioEventReader` has always thrown to prevent.
+- **The edges belong to `emit`, not to a trim at the end.** Every buffered path ends at
+  `ResponseCleaner.clean`, which trims both edges; the incremental path cannot, because bytes
+  handed to `onToken` are unrecallable. So `streamChunkReply` *holds* edge whitespace — it waits
+  until it is known to be interior and is dropped if it never is — and the buffer is
+  leading-trimmed while buffering, so the streaming decision runs on the same bytes `clean()`
+  would decide on. Without that, which path a chunk took changed the bytes in `final`.
 - **`final` and the `onToken` stream must agree exactly.** Cleaning (preamble stripping, whole-answer
   fence unwrap) can only be decided on the whole first line / whole reply, so `streamChunkTranslation`
   buffers until the shape is settled, then goes incremental. Chunks are joined by each chunk's
@@ -143,7 +162,14 @@ Facts that will bite you if you "tidy" them:
   before a fence, a blank line carrying spaces) forces a chunk boundary and never reaches the
   model at all. Accepting every convention is not a relaxation: the model may normalise an
   interior `"\r\n"` to `"\n"`, but `MarkupSkeleton` shares `LineScanner`, which reads either as
-  one line break, so the diff cannot cry wolf. **Do not re-spell this rule as a list of
+  one line break, so the diff cannot cry wolf. **`ResponseCleaner`, `InlineCodeRestorer` and
+  `streamChunkReply` share it too, since 2026-08-26** — each had its own discipline and each was
+  wrong differently: a lone CR paired backticks across a line break and spliced the wrong source
+  bytes over real code; `firstIndex(of: "\n")` never matched the single `Character` `"\r\n"`; and
+  `components(separatedBy: .newlines)` split `"\r\n"` into two breaks and fabricated a paragraph.
+  `LineScanner.pieces` carries each line's own terminator, so a caller that takes a document
+  apart puts back the bytes it found — use it wherever `components(separatedBy:)` suggests
+  itself. **Do not re-spell this rule as a list of
   literals** — that list was the defect twice over: `"\n\n"` alone cost a CRLF document *every*
   merge (measured: 30 chunks and 31 model calls against the LF copy's 2 and 3), and adding
   `"\r\n\r\n"` left CR-only and mixed-EOL documents in the same hole. **Indentation is not a
@@ -178,7 +204,11 @@ Facts that will bite you if you "tidy" them:
   dead-coded. `PromptBuilder.userPrompt(for:)` carries the measurement; the aya-expanse:8b
   before/after is in `docs/reference/BASELINE.md`.
 - `timeToFirstTokenMS` is `nil` when nothing was ever emitted — that nil *is* the empty-reply
-  signal. Do not substitute a sentinel; it makes an absent response read as a slow one.
+  signal. Do not substitute a sentinel; it makes an absent response read as a slow one. It is
+  only a *failure* together with `modelChunkCount > 0`, and that pairing is
+  `TranslationOutcome.isEmptyReply` — **one place, because it was two and one of them was
+  wrong**: the queue checked the nil alone and failed every all-code document, which «Текст»
+  translated happily. Whitespace does not stamp it either; invisible content is not an answer.
 - `stats` covers the per-chunk translation calls only, never the term-list call.
 - **Правка is a second route through the same pipeline, not a second pipeline.**
   `Translator.proofread` shares the chunking, the per-chunk streaming
@@ -249,6 +279,12 @@ not cosmetic — **the safe direction is inverted**. See
   reaches that wire, and residency there is «loaded until unloaded» rather than a duration:
   `/api/v1/models/load` is what warm-up calls, because a chat JIT-loads and the next JIT load
   evicts it (Auto-Evict exempts an explicit load — measured).
+- **Nothing answering on the loopback port is trusted to be the engine.** Redirects are refused
+  by a session delegate in each transport module (`RedirectPolicy`) — without one, a `307` from
+  anything squatting the port re-POSTs the user's text off-box, and there is no configuration
+  flag for it — and a 200 stream's lines are bounded (`BoundedLines`), because `bytes.lines`
+  buffers a whole line with no ceiling while every arriving byte resets the inter-data timeout.
+  Both are in `docs/adr/0009` with the rest of that promise.
 - **`store: false` on every LM Studio request.** It defaults to `true`, i.e. the server keeps
   every translation. `docs/adr/0009` is the decision, together with the rule that only the
   *port* is settable and the host is loopback in code.
@@ -294,6 +330,14 @@ not cosmetic — **the safe direction is inverted**. See
   must copy that directory in **before** `codesign`, like the icon. `CommandGroup(replacing:)`
   empties a menu but does not remove it, so `pruneEmptyMenus()` takes away whatever is left
   with no items.
+- **A run must not straddle two servers.** The router reads «Движок» on every call, which is
+  what makes the radio button take effect without a relaunch — but a translation is many calls,
+  so each run freezes its target at the start through `LLMClient.pinnedForRun()` (defaulting to
+  `self`, so no fake and no plain transport is affected) and `Translator.forRun()`. Before that,
+  a flip mid-document sent one engine's model tag and protocol to the other engine's server,
+  failed the файл being translated and every файл behind it, and cached a junk client in the
+  pool. `EngineTarget` is the pair, because reading «which engine» and «which port» separately
+  is what tore.
 - **Three** models over one shared `EngineRouter`: two `TranslationViewModel` instances, one for
   the window and one owned by `HotkeyCoordinator` for the panel, plus `FileQueueModel` for the
   file queue. The router is what makes the engine switch take effect without a relaunch — it
@@ -346,7 +390,12 @@ not cosmetic — **the safe direction is inverted**. See
   choice made where правка is used survives the panel closing and the window follows it
   wherever it has no override of its own. See
   `docs/design/specs/2026-08-15-proofread-hotkey-design.md`.
-- **The panel sizes itself to its content and is not `.titled`.** Three types share the job and
+- **The panel sizes itself to its content, and it *is* `.titled`.** This sentence used to say
+  the opposite, and following it would kill hand-resize and flip `canBecomeKey` — the exact
+  defect `a57efa1` fixed on 2026-07-31, one day after the wrong sentence was written.
+  `.resizable` alone never worked; the 22 pt of titlebar is made invisible by
+  `titlebarAppearsTransparent` plus `.fullSizeContentView`, and the three standard buttons are
+  hidden. Three types share the job and
   none of them may be collapsed into another: `PanelSizer` owns the rules (width clamped to
   300–560 pt and frozen for a whole presentation; height floored at 120 pt, monotonic within a
   presentation and capped at 0.6 of `visibleFrame`, past which the content scrolls; a
@@ -356,9 +405,12 @@ not cosmetic — **the safe direction is inverted**. See
   view), `fittingSize` for the ideal width then `sizeThatFits(in:)` for the height at that
   width, and `layoutSubtreeIfNeeded()` after reassigning `rootView`, which is load-bearing.
   All four measuring facts are in `docs/reference/PLATFORM-TRAPS.md` with their measurements.
-- **«Шрифт текста» reaches three `Text`s and nothing else, and one of them is invisible.**
-  `ContentFont` (гарнитура + размер, 11–32 pt, default 13) is applied to the исходник, the
-  перевод and the panel's reply — never to a label, a button, a status row or a table, because
+- **«Шрифт текста» reaches four surfaces and nothing else, and one of them is invisible.** The
+  исходник (`SourceEditor`'s hosted `NSTextView`, not a `Text` at all), the перевод, the panel's
+  reply, and the panel's hidden reservation `Text` — that last one being the load-bearing pairing
+  and the one an earlier count of «three `Text`s» left out.
+  `ContentFont` (гарнитура + размер, 11–32 pt, default 13) reaches those four and nothing
+  else — never a label, a button, a status row or a table, because
   `PanelSizer.minHeight` 132 and `dragMinHeight` 164 are measurements of the *pinned* block at
   the system size and would otherwise become functions of a preference. `docs/adr/0008` is the
   decision. Three things about it are load-bearing: the panel's **hidden reservation `Text`
@@ -387,6 +439,16 @@ not cosmetic — **the safe direction is inverted**. See
   which makes the system spring the item back. That is the entire error channel and is
   deliberate: there is no error surface in that window, and inventing one to say «this is not
   text» would be worse than the feedback the platform already draws.
+- **An empty `markupDiffs` means «the structure survived», and nothing else may be read into
+  it.** `MarkupSkeleton.compare` refuses two skeletons still more than
+  `maximumComparisonCells` apart *after* the common prefix and suffix are trimmed — the dense
+  LCS matrix is quadratic and the queue takes 2 MB files — and that refusal travels as
+  `TranslationOutcome.markupNotCompared`, which every surface rendering «no problems» reads
+  (`WarningsView`, `JobResult`, `translate-cli`, `acceptance`). Returning `[]` for it would be
+  the quietest possible lie. **Trimming is not output-preserving**: measured over 4000 generated
+  pairs, 427 give a different script — same count and same multiset, different order — which is
+  why both consumers are order-independent by construction and a test keeps the old algorithm
+  beside the new one.
 - The main window is a toolbar plus `SourceEditor`/`FileQueuePane` | `TranslationPane` over a
   collapsible `RunStatusBar`; the translation side is a read-only `Text`, deliberately, because
   the `TextEditor` it replaced took a caret and discarded typing. The settings are **four**
@@ -404,14 +466,20 @@ not cosmetic — **the safe direction is inverted**. See
   the way out. They differ in one argument only — `hotkey` falls back to its default because it
   is the only door to the panel, and `proofreadHotkey` does so for the weaker reason that a
   setting whose stored state and behaviour disagree cannot be reasoned about.
-- **Three settings answer per engine, and the Ollama scope is the key an install already wrote.**
-  `interactiveModel`, `batchModel` (still stored under `"backgroundModel"`) and `proofreadModel`
-  gain a `".lmStudio"` suffix for the second engine and nothing else — so there is no migration
+- **Four settings answer per engine, and the Ollama scope is the key an install already wrote.**
+  `interactiveModel`, `batchModel` (still stored under `"backgroundModel"`), `proofreadModel`
+  **and `enginePort`** gain a `".lmStudio"` suffix for the second engine. This said «three … and
+  nothing else» until 2026-08-26, and tooling written from it read the wrong port key. There is
+  no migration
   and no risk to a stored value. LM Studio has **no** default translation model: it reads back
   empty, `hasNoTranslationModel` is what the window and the panel key off, and nothing is
   auto-selected, because flipping a radio button may not silently pick a 22.81 GB model and load
-  it at the next warm-up. `engine` and `enginePort` are the two new keys; `AppSettings.engine(in:)`
-  and `enginePort(in:)` are static readers over a store, for `EngineRouter`'s sake.
+  it at the next warm-up. `engine` is the one unsuffixed new key; `AppSettings.engine(in:)`,
+  `enginePort(in:)` and `enginePort(in:for:)` are static readers over a store, for
+  `EngineRouter`'s sake — the last of them so that «which engine» and «which port» can be **one**
+  read. `ModelEngine.portOrDefault` clamps the port in both directions: a stored value outside
+  `1...65535` made `URL(string:)` answer nil at two force-unwrapped call sites, and
+  `warmUpOnLaunch` turned that into a crash at every launch that survived the crash.
 - **`keepAlive` is Ollama's alone.** LM Studio rejects a `ttl` field in a chat request, so the
   «Держать модель в памяти» field is hidden there and `WarmUpPlan` warms one model instead of
   two — 22.81 GB apiece against 48 GB is the reason, and it is about memory rather than

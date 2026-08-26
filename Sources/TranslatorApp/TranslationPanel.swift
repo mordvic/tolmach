@@ -309,8 +309,11 @@ final class PanelController: NSObject, NSWindowDelegate {
         // as «97 pt of content plus the title bar»; the title bar is 22 pt, so those two come
         // to 119 and the decomposition was never the arithmetic it looked like. The 97 was the
         // ideal height the panel then reported, retired with the doc comment that held it.)
-        // Neither condition still holds: the
-        // title bar is gone with `.titled`, and there is no fixed size to come back to. Nobody
+        // Neither condition still holds: there is no fixed size to come back to, and the
+        // titlebar — still there, `.titled` having been reinstated in `a57efa1` — is drawn under
+        // rather than removed, so it is no longer a separate 22 pt to decompose. (This comment
+        // said «the title bar is gone with `.titled`» until 2026-08-26, contradicting the
+        // `safeAreaRegions` comment fifteen lines below it and `styleMask` above.) Nobody
         // can re-take that measurement from here — it needs the assembled bundle on a screen —
         // so the line stays on the strength of the mechanism above, and re-measuring it is
         // listed in `docs/reference/OPEN-ITEMS.md` §1 with everything else this task owes a human.
