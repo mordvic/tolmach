@@ -54,6 +54,15 @@ enum EngineStatus: Equatable {
 final class EngineStatusModel {
     private let probe: EngineProbe
     var status: EngineStatus = .unknown
+    /// Which refresh is the current one.
+    ///
+    /// There is no polling timer and at least five overlapping triggers, and this type awaits
+    /// **two** probes in turn on a 10 s timeout — so a slow refresh against a hung server could
+    /// resume long after a fresher one had already answered, and overwrite it. The wrong answer
+    /// then persists until someone triggers another by hand: «не отвечает» over a healthy
+    /// engine, or — worse, because nothing prompts the user to re-check — a green indicator over
+    /// a dead one.
+    private var generation = 0
 
     init(probe: EngineProbe) { self.probe = probe }
 
@@ -61,11 +70,17 @@ final class EngineStatusModel {
     /// overwhelmingly common cause, and the pane pairs it with «Открыть …»; distinguishing a
     /// crashed server from an unreachable one would give the user the same next step either way.
     func refresh(interactiveModel: String) async {
+        generation += 1
+        let mine = generation
         do {
             _ = try await probe.installedModels()
             let resident = try await probe.residentModels()
+            // Checked at the write, not at the resume: the two `await`s above are two chances
+            // for a fresher refresh to have started *and finished*, and only the write matters.
+            guard mine == generation else { return }
             status = .running(modelResident: resident.contains(interactiveModel))
         } catch {
+            guard mine == generation else { return }
             status = .notAnswering
         }
     }

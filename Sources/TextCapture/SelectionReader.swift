@@ -147,6 +147,17 @@ public struct SelectionReader: Sendable {
         GeneralPasteboard.withExclusiveAccess { clipboardTextLocked() }
     }
 
+    /// Whether this board was written by Universal Clipboard rather than by the ⌘C just posted.
+    ///
+    /// `com.apple.is-remote-clipboard` is the flavour the system attaches to content handed over
+    /// from another device. It is the only third-party write on this path that identifies
+    /// itself, which is why it is the only one that can be excluded by name.
+    static let remoteClipboardType = NSPasteboard.PasteboardType("com.apple.is-remote-clipboard")
+
+    static func isRemoteClipboard(_ pasteboard: NSPasteboard) -> Bool {
+        pasteboard.types?.contains(remoteClipboardType) ?? false
+    }
+
     /// The body of `clipboardText()`, split out so the lock is taken in exactly one place.
     private static func clipboardTextLocked() -> String? {
 
@@ -169,7 +180,15 @@ public struct SelectionReader: Sendable {
         // the lock. And `defer` runs after the return value has been read — measured, a
         // function returning a string it read from a board it clears in a `defer` still
         // returns the string — so the `return copied` below is not racing this.
-        defer { snapshot.restore(to: pasteboard) }
+        //
+        // **Conditional on the board still being the one we read.** The restore clears and
+        // rewrites, so an unconditional one destroys anything that landed after the poll
+        // accepted its value — Universal Clipboard delivering a copy from the user's iPhone
+        // inside the ≤0.5 s window is the concrete case, and the user's next ⌘V then pastes
+        // this app's stale snapshot. Putting back a clipboard is worth doing; overwriting a
+        // newer one to do it is not.
+        var acceptedChangeCount = snapshot.changeCount
+        defer { snapshot.restoreIfUnchanged(to: pasteboard, since: acceptedChangeCount) }
 
         // These two assignments are load-bearing, not tidiness. Do not delete them.
         //
@@ -195,6 +214,17 @@ public struct SelectionReader: Sendable {
         while Date() < deadline {
             if pasteboard.changeCount != snapshot.changeCount,
                let copied = pasteboard.string(forType: .string) {
+                // **A board delivered from another device is not this selection.** The poll
+                // accepts any change it sees, because `NSPasteboard` has no owner and nothing
+                // here can ask who wrote — so the one write that *can* be told apart is told
+                // apart. Universal Clipboard marks its own, and without this check that content
+                // was sent to the model and shown in the panel as the user's selection.
+                //
+                // The general case remains: any third party writing inside this window is still
+                // mistaken for the selection. That is inherent to the fallback and is recorded
+                // in ADR 0005 rather than papered over here.
+                guard !isRemoteClipboard(pasteboard) else { return nil }
+                acceptedChangeCount = pasteboard.changeCount
                 return copied
             }
             usleep(10_000)

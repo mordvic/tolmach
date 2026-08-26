@@ -109,7 +109,10 @@ public struct OllamaClient: LLMClient {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = Timeout.pull
         config.timeoutIntervalForResource = 900
-        self.session = URLSession(configuration: config)
+        // `RedirectPolicy` — see that type. Without a delegate, a `307` from whatever is
+        // answering on this port re-POSTs the user's text somewhere else.
+        self.session = URLSession(configuration: config, delegate: RedirectPolicy(),
+                                  delegateQueue: nil)
     }
 
     /// Every request this client makes is built here, so that «which timeout applies to which

@@ -263,3 +263,57 @@ private func tempURL() -> URL {
     store.mute("gamma")
     try store.save()
 }
+
+// MARK: - The file the user actually keeps
+
+/// `write(to:options:.atomic)` writes a temporary file and renames it into place, which replaces
+/// a symlinked `glossary.json` with a regular file. This file is *designed* to be hand-edited and
+/// git-tracked (spec 9), so linking it into a dotfiles repository is the documented workflow —
+/// and the first save silently broke the link, after which every edit went to a copy the
+/// repository no longer saw. The stamp had the same blindness: it described the link.
+@MainActor @Test func savingThroughASymlinkKeepsTheSymlink() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("glossary-symlink-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let real = directory.appendingPathComponent("real.json")
+    try Data(#"{"entries":[],"mutedTerms":[]}"#.utf8).write(to: real)
+    let link = directory.appendingPathComponent("glossary.json")
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+
+    let store = GlossaryStore(url: link)
+    try store.load()
+    store.replaceEntries([GlossaryEntry(term: "resource", translations: ["ru": "ресурс"])])
+    try store.save()
+
+    // The link survives…
+    let kind = try FileManager.default.attributesOfItem(atPath: link.path)[.type] as? FileAttributeType
+    #expect(kind == .typeSymbolicLink, "the atomic write replaced the symlink with a regular file")
+    // …and the bytes landed in the file the user actually keeps.
+    let written = try String(contentsOf: real, encoding: .utf8)
+    #expect(written.contains("resource"))
+}
+
+/// A second save in the same session must still work — the stamp is taken of the resolved file,
+/// so it has to be compared against the resolved file too, or the store accuses itself.
+@MainActor @Test func asecondSaveThroughASymlinkIsNotMistakenForAnEditBehindOurBack() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("glossary-symlink-twice-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let real = directory.appendingPathComponent("real.json")
+    try Data(#"{"entries":[],"mutedTerms":[]}"#.utf8).write(to: real)
+    let link = directory.appendingPathComponent("glossary.json")
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+
+    let store = GlossaryStore(url: link)
+    try store.load()
+    store.replaceEntries([GlossaryEntry(term: "a", translations: ["ru": "а"])])
+    try store.save()
+    store.replaceEntries([GlossaryEntry(term: "b", translations: ["ru": "б"])])
+    try store.save()
+
+    #expect(try String(contentsOf: real, encoding: .utf8).contains("\"b\""))
+}

@@ -1,4 +1,6 @@
 import Testing
+import Foundation
+import AppKit
 @testable import TextCapture
 
 // `accessibilityText()` and `clipboardText()` are deliberately absent from this file. Neither
@@ -105,4 +107,26 @@ import Testing
     // to make about the result that could fail, and one written anyway would read as coverage
     // it does not provide.
     _ = SelectionReader()
+}
+
+// MARK: - Universal Clipboard is not this app's selection
+
+/// The ⌘C poll accepts *any* pasteboard change it sees, because `NSPasteboard` has no owner and
+/// nothing here can ask who wrote. So the one third-party write that identifies itself is
+/// excluded by name: content handed over from another device carries
+/// `com.apple.is-remote-clipboard`, and without this check it was sent to the model and shown in
+/// the panel as the user's selection.
+///
+/// The general case remains — any other process writing inside the ≤0.5 s window is still
+/// mistaken for the selection — and ADR 0005 records that rather than this pretending otherwise.
+@Test func aBoardDeliveredFromAnotherDeviceIsRecognised() {
+    let board = NSPasteboard(name: NSPasteboard.Name("ru.tolmach.test.remote.\(UUID().uuidString)"))
+    board.clearContents()
+    board.setString("обычная копия", forType: .string)
+    #expect(!SelectionReader.isRemoteClipboard(board))
+
+    board.clearContents()
+    board.setString("с айфона", forType: .string)
+    board.setData(Data(), forType: SelectionReader.remoteClipboardType)
+    #expect(SelectionReader.isRemoteClipboard(board))
 }

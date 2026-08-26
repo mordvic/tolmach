@@ -20,6 +20,22 @@ the literal and fails at three; the pane now asks `ModelEngine.address(port:)`, 
 client, so what is shown and what is dialled are the same value. Raising that number is a change
 to this decision, and the test says so where it fails.
 
+**Redirects are refused, and that is part of the same decision.** A `URLSession` with no
+delegate follows them, and a `307`/`308` re-POSTs the *body* — so the host being a literal in
+code stops being a boundary the moment something on the port answers `307 Location: https://…`.
+Any unprivileged process can bind that port while the engine is down, and the user's selection,
+their glossary and the whole prompt would leave the machine with no error and no trace in the
+UI. `RedirectPolicy` in each transport module refuses every redirect, including one back to
+loopback: «same host» is not a property this code can check meaningfully, since whatever is
+answering chose the `Location`. There is no configuration flag for this — a delegate is the only
+mechanism — and the session holds that delegate until it is invalidated, which for a client that
+lives the whole process means it lives the whole process too.
+
+**A 200 response is bounded too.** `bytes.lines` buffers a whole line before yielding it, with
+no ceiling, and every arriving byte resets the inter-data timeout — so the same rogue process
+can answer 200 and stream newline-free bytes until the app dies. `BoundedLines` gives the
+success path the ceiling the refusal path already had.
+
 **The port is clamped, and that is part of the same decision.** A stored value outside
 `1...65535` is not a port, and it made `URL(string:)` answer nil at two force-unwrapped call
 sites — a crash at every launch that survived the crash, because the value was in the defaults.

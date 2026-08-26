@@ -195,3 +195,49 @@ private final class Promiser: NSObject, NSPasteboardItemDataProvider {
     pb.setString("новое", forType: .string)
     #expect(pb.changeCount > before.changeCount)
 }
+
+// MARK: - A restore must not overwrite somebody else's newer clipboard
+
+private func scratchBoard() -> NSPasteboard {
+    NSPasteboard(name: NSPasteboard.Name("ru.tolmach.test.restore.\(UUID().uuidString)"))
+}
+
+/// The ordinary case: nothing touched the board since the value was accepted, so the user's
+/// clipboard comes back.
+@Test func aBoardThatHasNotMovedIsRestored() {
+    let board = scratchBoard()
+    board.clearContents()
+    board.setString("исходный буфер", forType: .string)
+    let snapshot = PasteboardSnapshot.take(from: board)
+
+    // Stand in for the synthetic ⌘C: the board moves on, and that new count is what the caller
+    // accepted its value at.
+    board.clearContents()
+    board.setString("выделение", forType: .string)
+    let accepted = board.changeCount
+
+    #expect(snapshot.restoreIfUnchanged(to: board, since: accepted))
+    #expect(board.string(forType: .string) == "исходный буфер")
+}
+
+/// The defect. The ⌘C poll waits up to half a second — fully exposed when the target app ignores
+/// the keystroke — and a third-party write inside that window was overwritten by the stale
+/// snapshot, so the user's next ⌘V pasted old content. Universal Clipboard delivering a copy
+/// from the user's iPhone is the concrete case ADR 0005 now records.
+@Test func aBoardSomethingElseWroteToIsLeftAlone() {
+    let board = scratchBoard()
+    board.clearContents()
+    board.setString("исходный буфер", forType: .string)
+    let snapshot = PasteboardSnapshot.take(from: board)
+
+    board.clearContents()
+    board.setString("выделение", forType: .string)
+    let accepted = board.changeCount
+
+    // Somebody else writes after the value was accepted.
+    board.clearContents()
+    board.setString("с айфона", forType: .string)
+
+    #expect(!snapshot.restoreIfUnchanged(to: board, since: accepted))
+    #expect(board.string(forType: .string) == "с айфона", "a newer clipboard was destroyed")
+}
