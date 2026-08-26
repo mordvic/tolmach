@@ -19,6 +19,28 @@ public struct MarkupDiff: Sendable, Equatable {
     public let note: String
 }
 
+/// The result of comparing two skeletons — including the case where the comparison was not made.
+///
+/// A plain `[MarkupDiff]` could not express that: an empty array means «the structure survived»,
+/// and a check that answered the same thing for «this was too large to look at» would be lying
+/// in the quietest possible way.
+public struct MarkupComparison: Sendable, Equatable {
+    public let diffs: [MarkupDiff]
+    /// Nil when the comparison ran. Otherwise the two token counts that were too large to align,
+    /// *after* the common prefix and suffix had already been trimmed away.
+    public let notCompared: NotCompared?
+
+    public struct NotCompared: Sendable, Equatable {
+        public let sourceTokens: Int
+        public let translationTokens: Int
+    }
+
+    public init(diffs: [MarkupDiff], notCompared: NotCompared?) {
+        self.diffs = diffs
+        self.notCompared = notCompared
+    }
+}
+
 public enum MarkupSkeleton {
     public static func tokens(of text: String) -> [MarkupToken] {
         var tokens: [MarkupToken] = []
@@ -133,21 +155,88 @@ public enum MarkupSkeleton {
     /// Aligns the two token sequences and reports the minimal edit script. Index-wise
     /// comparison is wrong here: one dropped token would shift every later position and
     /// bury a single real defect under a cascade of false ones.
+    ///
+    /// The `[MarkupDiff]` face of `compare(source:translation:)`, kept because most callers only
+    /// ever want the script. **A caller that renders «no problems» from an empty result must use
+    /// `compare` instead**: an empty array means «no difference» here, and cannot also mean «not
+    /// looked at».
     public static func diff(source: String, translation: String) -> [MarkupDiff] {
+        compare(source: source, translation: translation).diffs
+    }
+
+    /// The comparison, including the case where it was not made.
+    public static func compare(source: String, translation: String) -> MarkupComparison {
         // A trailing newline is not structure. Source files end with one and
         // ResponseCleaner trims it from the model's reply, so comparing them raw
         // reports a phantom paragraph break on almost every real document.
-        let want = tokens(of: source.trimmingCharacters(in: .whitespacesAndNewlines))
-        let got = tokens(of: translation.trimmingCharacters(in: .whitespacesAndNewlines))
+        compare(want: tokens(of: source.trimmingCharacters(in: .whitespacesAndNewlines)),
+                got: tokens(of: translation.trimmingCharacters(in: .whitespacesAndNewlines)))
+    }
+
+    /// The most `(want × got)` matrix cells this will allocate, and the reason it has a ceiling
+    /// at all.
+    ///
+    /// The dense `(want+1) × (got+1)` matrix below is quadratic in token count, and the queue
+    /// accepts 2 MB files: a fully-bulleted 2 MB changelog emits on the order of 100 000 tokens
+    /// a side, which is ~80 GB of `Int` and ~10¹⁰ iterations, on a 48 GB machine, at the very
+    /// end of an otherwise successful run. The old code had no ceiling and its only guard sat
+    /// *after* the allocation. Even the window's 256 KB path reached ~1.3 GB transient.
+    ///
+    /// 16 million cells is 128 MB and, measured on this machine, well under a tenth of a second
+    /// — and it is reached only *after* the common prefix and suffix are trimmed away, which on
+    /// a faithful translation removes everything. A document that still needs more than this
+    /// after trimming has diverged from its source across thousands of structural tokens, and
+    /// what it needs is not a longer edit script.
+    static let maximumComparisonCells = 16_000_000
+
+    static func compare(want: [MarkupToken], got: [MarkupToken]) -> MarkupComparison {
+        // The overwhelmingly common case, and the one worth spending nothing on: a faithful
+        // translation preserves the skeleton exactly.
+        if want == got { return MarkupComparison(diffs: [], notCompared: nil) }
+
+        // Trim what is already aligned. This is what keeps the quadratic part below
+        // proportional to the *divergence* rather than to the document: on a translation that
+        // changed one heading in a hundred thousand tokens it leaves one against one.
+        //
+        // **It is not output-preserving, and that was checked rather than assumed.** The first
+        // version of this said it was, reasoning that `MarkupDiff` carries no positions so a
+        // matched token contributes nothing wherever it sits. Measured against the untrimmed
+        // algorithm over 4000 generated pairs, 427 produce a *different* script. What does hold,
+        // in all 4000: the same number of diffs, and the same multiset of them — only the order
+        // in which equally-minimal edits are listed can change. Both consumers are indifferent
+        // to that (`acceptance` aggregates by `(expected, actual)` and counts; `WarningsView`
+        // shows a count and a list) and neither is indifferent to count or content, which is why
+        // the distinction is pinned by a test rather than left in this comment.
+        var head = 0
+        while head < want.count, head < got.count, want[head] == got[head] { head += 1 }
+        var wantEnd = want.count, gotEnd = got.count
+        while wantEnd > head, gotEnd > head, want[wantEnd - 1] == got[gotEnd - 1] {
+            wantEnd -= 1; gotEnd -= 1
+        }
+        let want = Array(want[head..<wantEnd])
+        let got = Array(got[head..<gotEnd])
+
+        // One side empty is a pure insertion or deletion; no alignment is needed to describe it.
+        if want.isEmpty || got.isEmpty {
+            return MarkupComparison(diffs: want.map { MarkupDiff(expected: $0, actual: nil, note: droppedNote) }
+                                        + got.map { MarkupDiff(expected: nil, actual: $0, note: addedNote) },
+                                    notCompared: nil)
+        }
+
+        guard want.count * got.count <= maximumComparisonCells else {
+            // **Not an empty result.** Reporting `[]` here would say «structure preserved» about
+            // a document nobody looked at, which is the one answer this check must never give.
+            return MarkupComparison(diffs: [],
+                                    notCompared: .init(sourceTokens: want.count,
+                                                       translationTokens: got.count))
+        }
 
         // Longest common subsequence lengths.
         var lcs = Array(repeating: Array(repeating: 0, count: got.count + 1), count: want.count + 1)
-        if !want.isEmpty && !got.isEmpty {
-            for i in stride(from: want.count - 1, through: 0, by: -1) {
-                for j in stride(from: got.count - 1, through: 0, by: -1) {
-                    lcs[i][j] = want[i] == got[j] ? lcs[i + 1][j + 1] + 1
-                                                  : max(lcs[i + 1][j], lcs[i][j + 1])
-                }
+        for i in stride(from: want.count - 1, through: 0, by: -1) {
+            for j in stride(from: got.count - 1, through: 0, by: -1) {
+                lcs[i][j] = want[i] == got[j] ? lcs[i + 1][j + 1] + 1
+                                              : max(lcs[i + 1][j], lcs[i][j + 1])
             }
         }
 
@@ -156,21 +245,24 @@ public enum MarkupSkeleton {
         while i < want.count && j < got.count {
             if want[i] == got[j] { i += 1; j += 1 }
             else if lcs[i + 1][j] >= lcs[i][j + 1] {
-                diffs.append(MarkupDiff(expected: want[i], actual: nil, note: "dropped in translation"))
+                diffs.append(MarkupDiff(expected: want[i], actual: nil, note: droppedNote))
                 i += 1
             } else {
-                diffs.append(MarkupDiff(expected: nil, actual: got[j], note: "added in translation"))
+                diffs.append(MarkupDiff(expected: nil, actual: got[j], note: addedNote))
                 j += 1
             }
         }
         while i < want.count {
-            diffs.append(MarkupDiff(expected: want[i], actual: nil, note: "dropped in translation")); i += 1
+            diffs.append(MarkupDiff(expected: want[i], actual: nil, note: droppedNote)); i += 1
         }
         while j < got.count {
-            diffs.append(MarkupDiff(expected: nil, actual: got[j], note: "added in translation")); j += 1
+            diffs.append(MarkupDiff(expected: nil, actual: got[j], note: addedNote)); j += 1
         }
-        return diffs
+        return MarkupComparison(diffs: diffs, notCompared: nil)
     }
+
+    static let droppedNote = "dropped in translation"
+    static let addedNote = "added in translation"
 
     static func headingLevel(_ trimmed: String) -> Int? {
         guard trimmed.hasPrefix("#") else { return nil }
@@ -210,7 +302,7 @@ public enum MarkupSkeleton {
 
         // Markdown links are located first so a URL sitting inside one is never also
         // counted as a bare URL. A URL merely wrapped in parentheses is NOT a link.
-        if let linkRegex = try? NSRegularExpression(pattern: #"\[[^\]]*\]\(\s*([^)\s]+)(?:\s+["'][^"']*["'])?\s*\)"#) {
+        if let linkRegex = Self.linkRegex {
             for match in linkRegex.matches(in: line, range: whole) {
                 linkRanges.append(match.range)
                 let target = ns.substring(with: match.range(at: 1))
@@ -219,7 +311,7 @@ public enum MarkupSkeleton {
             }
         }
 
-        if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) {
+        if let detector = Self.linkDetector {
             for match in detector.matches(in: line, range: whole) {
                 let insideLink = linkRanges.contains { NSIntersectionRange($0, match.range).length > 0 }
                 if !insideLink { found.append((match.range.location, .url(bare: true))) }
@@ -268,11 +360,31 @@ public enum MarkupSkeleton {
         return spans.map { (range: $0.0, content: $0.1) }
     }
 
+    /// Built once for the process, not once per line.
+    ///
+    /// These three were constructed inside `inlineTokens` and `targetIsURL`, which run on every
+    /// non-blank line of the source *and* of the translation, on the unconditional tail of both
+    /// routes — so a 2 MB run paid roughly 2 × 100 000 regex compilations and as many detector
+    /// constructions to answer questions whose answers never change. `NSRegularExpression` and
+    /// `NSDataDetector` are documented thread-safe for matching, which is what makes one shared
+    /// instance correct as well as cheaper.
+    ///
+    /// Optional rather than force-unwrapped: the pattern is a literal and cannot fail today, and
+    /// a nil here degrades to «no markdown links found» exactly as the old `try?` did, rather
+    /// than trapping in the middle of someone's translation.
+    static let linkRegex = try? NSRegularExpression(
+        pattern: #"\[[^\]]*\]\(\s*([^)\s]+)(?:\s+["'][^"']*["'])?\s*\)"#)
+
+    /// See `linkRegex`. Used by `inlineTokens` for bare URLs and by `targetIsURL` for a link's
+    /// target, which is why it is one instance and not two.
+    static let linkDetector = try? NSDataDetector(
+        types: NSTextCheckingResult.CheckingType.link.rawValue)
+
     // A link target counts as a URL when the detector recognises the whole of it.
     // This accepts "https://x.org" and "www.example.com" while rejecting
     // "./file.md" and "#section", which are links but not URLs.
     static func targetIsURL(_ target: String) -> Bool {
-        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+        guard let detector = Self.linkDetector
         else { return target.contains("://") }
         let ns = target as NSString
         let whole = NSRange(location: 0, length: ns.length)

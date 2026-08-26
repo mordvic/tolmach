@@ -302,6 +302,7 @@ private func makeFinishedOutcome(detected: Language?) -> TranslationOutcome {
                        detectedSource: detected,
                        checks: [],
                        markupDiffs: [],
+        markupNotCompared: false,
                        stats: [],
                        timeToFirstTokenMS: 12,
                        totalMS: 34,

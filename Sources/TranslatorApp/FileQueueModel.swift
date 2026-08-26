@@ -732,6 +732,7 @@ final class FileQueueModel {
             }
             var result = JobResult(final: outcome.final, checks: outcome.checks,
                                    markupDiffs: outcome.markupDiffs,
+                                   markupNotCompared: outcome.markupNotCompared,
                                    documentGlossary: outcome.documentGlossary,
                                    // The engine's own measurement, not a second one taken
                                    // here: `started` is stamped before the terms sheet can

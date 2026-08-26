@@ -106,6 +106,9 @@ struct JobResult {
     let final: String
     let checks: [GlossaryCheck]
     let markupDiffs: [MarkupDiff]
+    /// See `TranslationOutcome.markupNotCompared`. One `Bool` rather than the whole outcome,
+    /// for the reason the doc comment above gives about everything else here.
+    var markupNotCompared = false
     /// Kept, unlike `chunks` and `translatedChunks`: this is a list of terms — twelve
     /// entries, not three copies of the document — and `WarningsView` shows it under its
     /// own disclosure.
@@ -121,6 +124,7 @@ struct JobResult {
     /// a `stopOnWarnings` queue on every Japanese file for no reason.
     var warningCount: Int {
         checks.filter { $0.status == .missing }.count + markupDiffs.count
+            + (markupNotCompared ? 1 : 0)
     }
     var hasWarnings: Bool { warningCount > 0 }
 

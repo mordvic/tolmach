@@ -13,6 +13,14 @@ public struct TranslationOutcome: Sendable {
     /// Empty/false for a правка run — правка builds no glossary (spec §4.3).
     public let checks: [GlossaryCheck]
     public let markupDiffs: [MarkupDiff]
+    /// True when the markup comparison was **not made** because the two skeletons were too far
+    /// apart to align inside `MarkupSkeleton.maximumComparisonCells`.
+    ///
+    /// Carried separately because `markupDiffs` cannot say it: an empty array means «the
+    /// structure survived», and a check that answered the same thing for «this was never looked
+    /// at» would be lying in the quietest way available to it. Every surface that renders «no
+    /// problems» from an empty `markupDiffs` has to read this too.
+    public let markupNotCompared: Bool
     /// One entry per translation call — the per-chunk calls only. The internal
     /// term-list call's stats are deliberately excluded, so this means "the
     /// translation calls" consistently with the token forwarding and the
@@ -449,6 +457,8 @@ public struct Translator: Sendable {
         // punished for obeying the higher-priority "reproduce code verbatim" rule.
         let allEntries = GlossaryMerge.merge(user: userGlossary?.relevantEntries(for: TermExtractor.strippingCode(text)) ?? [],
                                              document: documentEntries)
+        // One comparison, read twice — the diffs and whether they were computed at all.
+        let markup = MarkupSkeleton.compare(source: text, translation: final)
         return TranslationOutcome(
             final: final,
             chunks: chunks,
@@ -464,7 +474,8 @@ public struct Translator: Sendable {
             // Lossless chunking removed the normalisation: `ChunkPlan`'s invariant is
             // that separators reassemble byte for byte, so the source the model saw
             // and the source on disk are the same document again.
-            markupDiffs: MarkupSkeleton.diff(source: text, translation: final),
+            markupDiffs: markup.diffs,
+            markupNotCompared: markup.notCompared != nil,
             stats: acc.stats,
             // `reviewWait` comes off this too, and it has to: the review point is before the
             // per-часть loop, so every millisecond a reader spent in the sheet sits between
@@ -542,6 +553,8 @@ public struct Translator: Sendable {
         let final = plan.assembled(from: correctedChunks)
         if !chunks.isEmpty, !plan.trailingSeparator.isEmpty { onToken(plan.trailingSeparator) }
 
+        // One comparison, read twice — the diffs and whether they were computed at all.
+        let markup = MarkupSkeleton.compare(source: text, translation: final)
         return TranslationOutcome(
             final: final,
             chunks: chunks,
@@ -549,7 +562,8 @@ public struct Translator: Sendable {
             documentGlossary: [],
             detectedSource: detected,
             checks: [],
-            markupDiffs: MarkupSkeleton.diff(source: text, translation: final),
+            markupDiffs: markup.diffs,
+            markupNotCompared: markup.notCompared != nil,
             stats: acc.stats,
             timeToFirstTokenMS: acc.firstTokenAt.map { $0.timeIntervalSince(started) * 1000 },
             totalMS: Date().timeIntervalSince(started) * 1000,
