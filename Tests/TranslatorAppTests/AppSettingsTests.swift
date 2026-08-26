@@ -707,3 +707,23 @@ private final class FiredFlag: @unchecked Sendable {
     #expect(settings.enginePort == ModelEngine.lmStudio.defaultPort)
     #expect(settings.enginePort != ModelEngine.ollama.defaultPort)
 }
+
+// MARK: - One engine, one port, one decision
+
+/// `EngineRouter` read the engine key to pick its branch and then called
+/// `AppSettings.enginePort(in:)`, which read the same key *again* to know which port key to look
+/// under. A «Движок» change landing between the two reads sent one engine's port into the other
+/// engine's client. The overload taking an engine is what makes the pair one decision.
+@Test func thePortReaderCanBeToldWhichEngineItIsAnsweringAbout() {
+    let defaults = freshDefaults()
+    let settings = AppSettings(defaults: defaults)
+    settings.enginePort = 11500
+    settings.engine = .lmStudio
+    settings.enginePort = 1300
+
+    #expect(AppSettings.enginePort(in: defaults, for: .ollama) == 11500)
+    #expect(AppSettings.enginePort(in: defaults, for: .lmStudio) == 1300)
+    // The engine-reading overload still agrees with the selected engine, so nothing above it
+    // has to change.
+    #expect(AppSettings.enginePort(in: defaults) == 1300)
+}

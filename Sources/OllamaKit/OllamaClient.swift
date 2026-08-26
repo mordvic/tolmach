@@ -171,9 +171,10 @@ public struct OllamaClient: LLMClient {
                     let (bytes, response) = try await session.bytes(for: request)
                     guard let http = response as? HTTPURLResponse else { throw OllamaError.notRunning }
                     guard http.statusCode == 200 else { throw OllamaError.httpStatus(http.statusCode, "see ollama logs") }
-                    for try await line in bytes.lines {
-                        for event in OllamaStreamParser.parse(line: line) { continuation.yield(event) }
-                    }
+                    // `BoundedLines`, not `bytes.lines`: see that type for what an unbounded
+                    // line buffer costs on a port anything can bind. `OllamaChatReader` owns
+                    // what the lines mean, including when the response is over.
+                    try await OllamaChatReader.read(BoundedLines(bytes)) { continuation.yield($0) }
                     continuation.finish()
                 } catch { continuation.finish(throwing: Self.mapTransportError(error)) }
             }
@@ -209,10 +210,22 @@ public struct PullProgress: Sendable, Equatable {
 }
 
 public enum PullProgressParser {
-    public static func parse(line: String) -> PullProgress? {
+    /// **Throws on an `{"error": …}` line.** Requiring `status` meant such a line answered nil
+    /// and was dropped, so `pull` finished without throwing and a failed download read as a
+    /// success: the bar cleared, no error was set, the list reloaded, and the model was simply
+    /// not there. Measured 2026-08-26 on Ollama 0.32.14 — `POST /api/pull` for a model that does
+    /// not exist answers HTTP 200, sends `{"status":"pulling manifest"}`, then
+    /// `{"error":"pull model manifest: file does not exist"}` and nothing further.
+    /// `LMStudioDownload` throws on its equivalent (`status == "failed"`); this is the same rule
+    /// on the other engine, and the same one `OllamaStreamParser.parse` applies to chat.
+    public static func parse(line: String) throws -> PullProgress? {
         guard !line.isEmpty, let data = line.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let status = object["status"] as? String else { return nil }
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        if let message = object["error"] as? String {
+            throw OllamaError.truncatedStream(message)
+        }
+        guard let status = object["status"] as? String else { return nil }
         return PullProgress(status: status,
                             completed: (object["completed"] as? NSNumber)?.int64Value ?? 0,
                             total: (object["total"] as? NSNumber)?.int64Value ?? 0)
@@ -279,8 +292,8 @@ extension OllamaClient {
                     guard http.statusCode == 200 else {
                         throw OllamaError.httpStatus(http.statusCode, "see ollama logs")
                     }
-                    for try await line in bytes.lines {
-                        if let progress = PullProgressParser.parse(line: line) {
+                    for try await line in BoundedLines(bytes) {
+                        if let progress = try PullProgressParser.parse(line: line) {
                             continuation.yield(progress)
                         }
                     }

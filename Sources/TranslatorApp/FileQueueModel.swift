@@ -677,6 +677,11 @@ final class FileQueueModel {
             }
         }
 
+        // Frozen for this файл, at its start — see `LLMClient.pinnedForRun()`. The queue is the
+        // surface where the old behaviour hurt most: a «Движок» flip mid-document failed the
+        // файл being translated *and* every файл queued behind it, because the router answered
+        // the next call from the other engine and the pool cached a client for it.
+        let translator = translator.forRun()
         let run = Task { [translator, glossary, settings] in
             try await translator.translate(
                 text: job.text, target: target, tone: tone,

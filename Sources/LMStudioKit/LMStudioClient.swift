@@ -139,7 +139,11 @@ public struct LMStudioClient: LLMClient {
                                                               reasoning: reasoning))
                     let (bytes, response) = try await session.bytes(for: request)
                     try await Self.checkStreamStart(response, bytes: bytes)
-                    for try await line in bytes.lines {
+                    // `BoundedLines`, not `bytes.lines`: see that type for what an unbounded
+                    // line buffer costs on a port anything can bind. The 64 KB bound in
+                    // `checkStreamStart` covers only a refusal's body — this covers the half of
+                    // the response that has no natural end.
+                    for try await line in BoundedLines(bytes) {
                         guard let frame = SSEFrameParser.frame(from: line) else { continue }
                         // Throws on an `error` event. That is the whole point: this server
                         // sends `chat.end` *after* an error, so a reader that carried on would
