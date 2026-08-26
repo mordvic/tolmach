@@ -610,8 +610,12 @@ public struct Translator: Sendable {
                                   options: ChatOptions, into acc: ChunkRunAccumulators,
                                   onToken: @escaping @Sendable (String) -> Void) async throws -> String {
         enum Mode: Equatable { case buffering, bufferedToEnd, incremental }
-        let sourceSpanCount = chunk.text.components(separatedBy: "\n")
-            .reduce(0) { $0 + MarkupSkeleton.inlineCodeSpans(in: $1).count }
+        // `InlineCodeRestorer`'s own count, not a second one spelled here: this decides whether
+        // the chunk is buffered whole, and a count that disagreed with the restorer's would
+        // buffer the wrong chunks. It disagreed for real until `LineScanner` was shared — this
+        // line split on `"\n"` while the restorer's gate did too, and both were wrong together
+        // on a chunk whose interior break is a lone CR.
+        let sourceSpanCount = InlineCodeRestorer.spans(of: chunk.text).count
         // A chunk whose source carries inline code is buffered whole: the equal-count
         // restore gate is decidable only on the complete reply, and emitted bytes cannot
         // be recalled — so incremental emission would break «final and the stream agree
@@ -643,12 +647,20 @@ public struct Translator: Sendable {
                 // and that can only be decided at the end of the response — so
                 // this must win regardless of how long the buffer is or
                 // whether a "\n" has appeared yet.
-                if buffer.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+                // `.whitespacesAndNewlines`, not `.whitespaces`: that set excludes line
+                // terminators, so a reply opening `"\n```"` never matched here and the
+                // whole-answer unwrap was skipped — literal fence markers shipped into the
+                // translation, plus a phantom `codeBlock` diff. `clean()` trims first and got
+                // this right; the streaming twin did not.
+                if buffer.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("```") {
                     mode = .bufferedToEnd
                     continue
                 }
 
-                if let newline = buffer.firstIndex(of: "\n") {
+                // `LineScanner`, not `firstIndex(of: "\n")`: that is a grapheme search and the
+                // single `Character` `"\r\n"` is not `"\n"`, so a CRLF reply never reached this
+                // decision at all and streamed its preamble as content.
+                if let (completedFirstLine, afterFirstLine) = LineScanner.firstCompleteLine(buffer) {
                     // Condition 1: the first line is complete — decide the
                     // preamble on it. Only a genuine preamble line is dropped.
                     // Anything else on the first line is real content and must
@@ -656,11 +668,9 @@ public struct Translator: Sendable {
                     // newline, which would silently lose the first line
                     // whenever it wasn't a preamble.
                     mode = .incremental
-                    let firstLine = String(buffer[buffer.startIndex..<newline])
                     let rest: String
-                    if ResponseCleaner.isPreambleLine(firstLine) {
-                        rest = String(buffer[buffer.index(after: newline)...])
-                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if ResponseCleaner.isPreambleLine(completedFirstLine) {
+                        rest = afterFirstLine.trimmingCharacters(in: .whitespacesAndNewlines)
                     } else {
                         rest = buffer
                     }

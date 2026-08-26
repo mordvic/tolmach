@@ -22,14 +22,26 @@ final class FakeLLMClient: LLMClient, @unchecked Sendable {
     /// versus the first per-chunk call — instead of racing a cancellation against a
     /// guessed sleep duration, which only ever pins the timing on one machine.
     private let onCallStart: (@Sendable (Int) -> Void)?
+    /// How a reply is cut into `.token` events.
+    ///
+    /// One character per event by default, which is deterministic and matches what most of the
+    /// suite wants. It is **not** what the `LLMClient` contract says, though — nothing there
+    /// promises a token boundary anywhere in particular, and a real BPE tokeniser, a batching
+    /// server or a proxy all deliver multi-character pieces. Some behaviour in
+    /// `Translator.streamChunkReply` is decided *per event*, so a fake that can only ever emit
+    /// one character at a time cannot reach it: the review of 2026-08-26 found two such places,
+    /// and neither had a test because neither could have had one.
+    private let tokenizer: @Sendable (String) -> [String]
     private var callCount = 0
 
     init(responses: [String], delayPerToken: Duration? = nil, errors: [Error?] = [],
-         onCallStart: (@Sendable (Int) -> Void)? = nil) {
+         onCallStart: (@Sendable (Int) -> Void)? = nil,
+         tokenizer: @escaping @Sendable (String) -> [String] = { $0.map(String.init) }) {
         self.responses = responses
         self.delayPerToken = delayPerToken
         self.errors = errors
         self.onCallStart = onCallStart
+        self.tokenizer = tokenizer
     }
 
     func chat(messages: [ChatMessage], options: ChatOptions) -> AsyncThrowingStream<ChatEvent, Error> {
@@ -40,13 +52,14 @@ final class FakeLLMClient: LLMClient, @unchecked Sendable {
         let reply = responses.isEmpty ? "" : responses.removeFirst()
         let error = errors.isEmpty ? nil : errors.removeFirst()
         let delayPerToken = delayPerToken
+        let pieces = tokenizer(reply)
         return AsyncThrowingStream { continuation in
             let producer = Task {
                 if let error {
                     continuation.finish(throwing: error)
                     return
                 }
-                for piece in reply.map(String.init) {
+                for piece in pieces {
                     if let delayPerToken { try? await Task.sleep(for: delayPerToken) }
                     continuation.yield(.token(piece))
                 }

@@ -15,20 +15,33 @@ public enum ResponseCleaner {
         "voici la traduction", "traduction", "aquí está la traducción", "traducción",
     ]
 
-    /// `allowFenceUnwrap` defaults to true for standalone callers (e.g. tests probing
-    /// `clean` in isolation), but `Translator` always passes `!chunk.passthrough`
-    /// explicitly — see the false-positive case below.
+    /// `allowFenceUnwrap` defaults to true and every caller in the tree now passes nothing.
+    ///
+    /// It used to say «`Translator` always passes `!chunk.passthrough`», and that stopped being
+    /// true on 2026-08-18: `streamChunkReply` passes the constant `true`, which is safe only
+    /// because `Chunker`'s all-or-nothing fence rule keeps a passthrough chunk out of that
+    /// function entirely. The parameter stays because the false-positive case below is real and
+    /// a future caller may have to suppress it — but a contract nobody keeps is worse than no
+    /// contract, so this now describes what happens rather than what used to.
+    ///
+    /// **Lines are `LineScanner`'s throughout.** Two different disciplines lived in this
+    /// function and neither was the engine's: `firstIndex(of: "\n")` is a grapheme search that
+    /// never matches the single `Character` `"\r\n"`, so a CRLF reply's preamble was never
+    /// stripped and shipped in `final`; and `components(separatedBy: .newlines)` splits on
+    /// unicode *scalars*, so `"\r\n"` became two breaks with an empty line between them and the
+    /// fence unwrap turned ```` ```\r\na\r\nb\r\n``` ```` into `"a\n\nb"` — a paragraph break
+    /// that existed nowhere, plus a phantom «added» diff on a faithful translation.
+    /// `LineScanner` exists precisely so the layers cannot disagree; this one was not using it.
     public static func clean(_ raw: String, allowFenceUnwrap: Bool = true) -> CleanedResponse {
         var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         var stripped: String? = nil
         var unwrapped = false
 
-        if let newline = text.firstIndex(of: "\n") {
-            let firstLine = String(text[text.startIndex..<newline])
-            if isPreambleLine(firstLine) {
-                stripped = firstLine
-                text = String(text[text.index(after: newline)...]).trimmingCharacters(in: .whitespacesAndNewlines)
-            }
+        // A single-line reply is never a preamble — the same condition the `firstIndex` search
+        // expressed by failing to find a newline, said out loud.
+        if let (firstLine, rest) = LineScanner.firstCompleteLine(text), isPreambleLine(firstLine) {
+            stripped = firstLine
+            text = rest.trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
         // The whole-answer-fence unwrap assumes the model over-wrapped a plain-prose
@@ -42,12 +55,20 @@ public enum ResponseCleaner {
         // `allowFenceUnwrap` lets the caller — who knows whether the source chunk was
         // fenced — suppress the unwrap in exactly that case, while preamble stripping
         // above still applies either way.
-        let lines = text.components(separatedBy: .newlines)
+        let lines = LineScanner.pieces(text)
         if allowFenceUnwrap, lines.count >= 2,
-           lines[0].trimmingCharacters(in: .whitespaces).hasPrefix("```"),
-           lines[lines.count - 1].trimmingCharacters(in: .whitespaces) == "```",
-           !lines[1..<(lines.count - 1)].contains(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("```") }) {
-            text = lines[1..<(lines.count - 1)].joined(separator: "\n")
+           lines[0].content.trimmingCharacters(in: .whitespaces).hasPrefix("```"),
+           lines[lines.count - 1].content.trimmingCharacters(in: .whitespaces) == "```",
+           !lines[1..<(lines.count - 1)].contains(where: {
+               $0.content.trimmingCharacters(in: .whitespaces).hasPrefix("```")
+           }) {
+            // The interior lines with their own terminators, except the last one's — that
+            // terminator separated the content from the closing fence, not two lines of content.
+            let inner = Array(lines[1..<(lines.count - 1)])
+            text = inner.enumerated()
+                .map { $0.offset == inner.count - 1 ? $0.element.content
+                                                    : $0.element.content + $0.element.terminator }
+                .joined()
             unwrapped = true
         }
 

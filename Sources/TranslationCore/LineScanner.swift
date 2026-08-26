@@ -54,6 +54,39 @@ enum LineScanner {
         return lines
     }
 
+    /// One line, kept apart from the terminator that followed it.
+    ///
+    /// `terminator` is empty for a final line that has none, and is otherwise the document's
+    /// own bytes — `"\r\n"` stays `"\r\n"`. That is the whole point: a caller that takes a
+    /// document apart line by line and puts it back together must put back the terminators it
+    /// found, not the one it would have chosen. `InlineCodeRestorer` split on `"\n"` and
+    /// rejoined with `"\n"`, which was lossless only by accident.
+    struct Piece: Equatable {
+        let content: String
+        let terminator: String
+    }
+
+    /// The document as `(content, terminator)` pairs, under this type's line discipline.
+    ///
+    /// Lossless by construction: `pieces(t).map { $0.content + $0.terminator }.joined() == t`
+    /// for every `t`, and a test pins it. Use this wherever `components(separatedBy:)` was
+    /// reached for — that function is what let three layers disagree about what a line is.
+    static func pieces(_ text: String) -> [Piece] {
+        scanLines(text).map { line in
+            Piece(content: String(text[line.content]),
+                  terminator: String(text[line.content.upperBound..<line.end]))
+        }
+    }
+
+    /// The first line, split from everything after it — or nil while no terminator has arrived.
+    ///
+    /// For a caller reading a stream, where «is the first line complete yet» is the question and
+    /// a partial buffer is the normal state. `nil` means «not yet», never «no line».
+    static func firstCompleteLine(_ text: String) -> (content: String, rest: String)? {
+        guard let line = scanLines(text).first, line.end > line.content.upperBound else { return nil }
+        return (String(text[line.content]), String(text[line.end...]))
+    }
+
     /// Empty, or nothing but whitespace. A blank line separates blocks in the chunker and
     /// is a `.paragraphBreak` in the skeleton; those two must be the same predicate.
     static func isBlank(_ line: Line, in text: String) -> Bool {

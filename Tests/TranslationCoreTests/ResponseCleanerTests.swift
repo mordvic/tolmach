@@ -70,3 +70,42 @@ import Testing
     let cleaned = ResponseCleaner.clean("<text>\nGenuine content.\n</text>")
     #expect(cleaned.text == "<text>\nGenuine content.\n</text>")
 }
+
+// MARK: - CRLF replies
+
+/// `firstIndex(of: "\n")` is a grapheme search, and the single `Character` `"\r\n"` is not
+/// `"\n"` — so on a CRLF reply the search found nothing, the preamble was never even considered,
+/// and «Here is the translation:» shipped in `final`.
+@Test func apreambleIsStrippedFromACRLFReplyJustAsFromAnLFOne() {
+    #expect(ResponseCleaner.clean("Here is the translation:\r\nПривет, мир.").text == "Привет, мир.")
+    #expect(ResponseCleaner.clean("Here is the translation:\r\nПривет, мир.").strippedPreamble
+            == "Here is the translation:")
+    // Every terminator the engine recognises, not just the two common ones — the reply is the
+    // model's bytes and `LineScanner` accepts the whole family.
+    #expect(ResponseCleaner.clean("Вот перевод:\rПривет, мир.").text == "Привет, мир.")
+    #expect(ResponseCleaner.clean("Вот перевод:\u{2028}Привет, мир.").text == "Привет, мир.")
+}
+
+/// `components(separatedBy: .newlines)` splits on unicode **scalars**, so `"\r\n"` came out as
+/// two breaks with an empty line between them: the unwrap rejoined with `"\n"` and produced a
+/// paragraph break that existed nowhere, plus a phantom «added» diff on a faithful translation.
+@Test func theFenceUnwrapOfACRLFReplyInventsNoBlankLines() {
+    let cleaned = ResponseCleaner.clean("```\r\nПервая строка\r\nВторая строка\r\n```")
+    #expect(cleaned.unwrappedCodeFence)
+    #expect(cleaned.text == "Первая строка\r\nВторая строка")
+    #expect(!cleaned.text.contains("\n\n"), "a paragraph break was fabricated")
+}
+
+/// The LF case is unchanged, so the fix above is about the terminator and not about the unwrap.
+@Test func theFenceUnwrapOfAnLFReplyIsUnchanged() {
+    let cleaned = ResponseCleaner.clean("```\nПервая строка\nВторая строка\n```")
+    #expect(cleaned.unwrappedCodeFence)
+    #expect(cleaned.text == "Первая строка\nВторая строка")
+}
+
+/// A single-line reply is still never a preamble, whatever it says — the condition the old
+/// `firstIndex` search expressed by failing to find a newline.
+@Test func aSingleLineReplyIsNeverTreatedAsAPreamble() {
+    #expect(ResponseCleaner.clean("Вот перевод:").text == "Вот перевод:")
+    #expect(ResponseCleaner.clean("Вот перевод:").strippedPreamble == nil)
+}

@@ -699,3 +699,55 @@ model at 900-character chunks. Recorded, not gated.
 **Not measured here:** `qwen/qwen3.8-27b` and `openai/gpt-oss-20b`, the two models on this
 install that would actually be candidates for use. Each is large enough that a three-run corpus
 pass is a long job, and neither has an entry yet. That is the next thing this file wants.
+
+---
+
+## 2026-08-26 — one line discipline: `LineScanner` in `ResponseCleaner` and `InlineCodeRestorer`
+
+- Machine: Apple M5 Pro, 48 GB, macOS 26.6.1
+- Ollama 0.32.14
+
+- What changed: `ResponseCleaner.clean` and `InlineCodeRestorer` stopped splitting text
+  themselves — `firstIndex(of: "\n")` in one and `components(separatedBy: .newlines)` in the
+  other — and went through `LineScanner`, the type built so the layers could not disagree.
+  `Translator.streamChunkReply`'s fence check and its first-line decision followed.
+- Why: issues #46, #50 and #55. A lone CR inside a chunk paired backticks across the break into
+  a span no other layer saw, and a matching count let those bytes be spliced over real code; a
+  CRLF reply's preamble was never stripped, and the fence unwrap fabricated a paragraph break.
+
+### Run F — `--model translategemma:12b --chunk 4000`, verdict **ACCEPTED**
+
+```
+acceptance: engine ollama · model translategemma:12b · chunk 4000 chars · TTFT gate info only — not Ollama's interactive-policy model · known-limitation set not applied — measured on aya-expanse:8b
+article-en.md: adherence n/a (single model-bound chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 1511 ms (info only — TTFT not gated for this model)
+email-en.md: adherence n/a (single model-bound chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 711 ms (info only — TTFT not gated for this model)
+snippet-en.md: adherence n/a (single model-bound chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 920 ms (info only — TTFT not gated for this model)
+techdoc-en.md: run1 92.5% (37/40) · run2 92.5% (37/40) · run3 95.0% (38/40) · average 93.3% · 5 chunks (3 model-bound) · 20 terms · TTFT 7660/7474/7292 ms (info only — multi-chunk, not asserted)
+techdoc-ru.md: run1 92.9% (26/28) · run2 92.9% (26/28) · run3 92.9% (26/28) · average 92.9% · 3 chunks (2 model-bound) · 20 terms · TTFT 7169/7132/7113 ms (info only — multi-chunk, not asserted)
+ACCEPTED — engine meets the recalibrated baseline
+```
+
+Against **Run C** (2026-08-18), the directly comparable entry — same model, same budget, same
+machine:
+
+| | Run C | Run F |
+|---|---|---|
+| `techdoc-en.md` | 92.5 / 92.5 / 92.5 → **92.5 %** | 92.5 / 92.5 / 95.0 → **93.3 %** |
+| `techdoc-ru.md` | 92.9 / 92.9 / 92.9 → **92.9 %** | 92.9 / 92.9 / 92.9 → **92.9 %** |
+| chunks (model-bound) | 5 (3) and 3 (2) | 5 (3) and 3 (2) |
+| document terms | 20 and 20 | 20 and 20 |
+| `markup` lines | none on any file | none on any file |
+
+Chunking, term counts and markup are **identical**. The single 95.0 % run is the model's own
+sampling and is not claimed as an improvement — the other five runs reproduce Run C exactly.
+
+**This run cannot confirm the fix, and says so rather than being read as if it did.** Every file
+in `corpus/` is pure LF — checked, zero CR bytes across all five — so none of the paths this
+change repairs is reachable from here: no CRLF reply to strip a preamble from, no lone-CR chunk
+to mis-pair backticks across. What it establishes is the other half, and the half a refactor of
+this shape actually needs: routing four call sites through `LineScanner` changed **nothing** on
+the documents the engine already handled. The repaired behaviour is pinned by the offline suite,
+where the inputs can be written down.
+
+A CRLF corpus file would close that gap and is worth adding; it is not added here, because a
+sixth file changes every future run's comparability and that is a decision of its own.

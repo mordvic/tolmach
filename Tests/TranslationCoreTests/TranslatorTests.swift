@@ -1366,3 +1366,56 @@ final class EmissionClock: @unchecked Sendable {
         options: ChatOptions(model: "fake"), maxChunkCharacters: 900)
     #expect(outcome.isEmptyReply == false)
 }
+
+// MARK: - The streaming twin reads lines the way `clean()` does
+
+/// The fence check ran on `trimmingCharacters(in: .whitespaces)`, and that set excludes line
+/// terminators — so a reply arriving as `"\n```"` did not look like a fence, the whole-answer
+/// unwrap was skipped, and literal fence markers shipped into the translation along with a
+/// phantom `codeBlock` diff. The buffered `clean()` path trims first and got this right.
+///
+/// The reply is cut into two events on purpose. Per character, the leading `"\n"` completes a
+/// first line before the backticks arrive, and the decision is taken elsewhere — that is the
+/// *other* half of the same finding (the streaming decision runs on the untrimmed buffer) and
+/// it is not fixed here. Multi-character events are what the `LLMClient` contract actually
+/// allows, so this is the shape the fence check has to survive.
+@Test func aReplyOpeningWithANewlineAndAFenceIsStillUnwrapped() async throws {
+    let fake = FakeLLMClient(responses: ["\n```\nПривет, мир.\n```"],
+                             tokenizer: { _ in ["\n```", "\nПривет, мир.\n```"] })
+    let collector = TokenCollector()
+    let outcome = try await Translator(client: fake).translate(
+        text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "fake"), maxChunkCharacters: 900,
+        onToken: collector.onToken)
+
+    #expect(outcome.final == "Привет, мир.")
+    #expect(!outcome.final.contains("```"), "fence markers reached the translation")
+    #expect(outcome.markupDiffs.isEmpty, "a phantom codeBlock diff was reported")
+    #expect(collector.text == outcome.final)
+}
+
+/// The same reply without the leading newline, so the test above is about the newline and not
+/// about the unwrap.
+@Test func aReplyOpeningWithAFenceIsUnwrapped() async throws {
+    let fake = FakeLLMClient(responses: ["```\nПривет, мир.\n```"])
+    let outcome = try await Translator(client: fake).translate(
+        text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "fake"), maxChunkCharacters: 900)
+    #expect(outcome.final == "Привет, мир.")
+}
+
+/// A CRLF reply's preamble, through the streaming path rather than through `clean()` directly.
+/// `firstIndex(of: "\n")` never matched the single `Character` `"\r\n"`, so the decision was
+/// never taken and the preamble streamed as content — into `final`, and into the pane.
+@Test func aCRLFPreambleIsStrippedOnTheStreamingPathToo() async throws {
+    let fake = FakeLLMClient(responses: ["Here is the translation:\r\nПривет, мир."])
+    let collector = TokenCollector()
+    let outcome = try await Translator(client: fake).translate(
+        text: "Hello, world.", target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "fake"), maxChunkCharacters: 900,
+        onToken: collector.onToken)
+
+    #expect(outcome.final == "Привет, мир.")
+    #expect(!outcome.final.contains("Here is"), "the preamble reached the translation")
+    #expect(collector.text == outcome.final)
+}
