@@ -1529,16 +1529,27 @@ final class EmissionClock: @unchecked Sendable {
 /// not of the mechanism it names.
 ///
 /// The cancel is triggered from the fake's own per-token hook rather than from a sleep, so
-/// «after the first token» is a fact and not a guess. The remaining tokens carry 200 ms each,
-/// which is what makes the run unable to finish out from under the assertion.
+/// «after the first token» is a fact and not a guess — and the hook then **holds the stream
+/// open** until it is cancelled, so the run cannot finish out from under the assertion.
+///
+/// The hold is not belt-and-braces. An earlier version signalled and returned, leaving the
+/// remaining 200 ms-per-token pieces to race the test's own resumption; it was green locally and
+/// **red on CI**, where the run completed first and the cancellation landed on nothing.
+/// `QueueClient.holdCallAtIndex` records the same lesson from the other model.
 @MainActor @Test func cancellingAfterTheFirstTokenDeliversNoChunkAtAll() async throws {
     let firstToken = AsyncStream<Int>.makeStream()
     let fake = FakeLLMClient(
         // Single-line and short, so the chunk stays on the buffered path all the way to the
         // post-loop emit — the code this guard protects.
         responses: ["Привет, мир"],
-        delayPerToken: .milliseconds(200),
-        onTokenYielded: { index in if index == 0 { firstToken.continuation.yield(index) } })
+        delayPerToken: .milliseconds(1),
+        onTokenYielded: { index in
+            guard index == 0 else { return }
+            firstToken.continuation.yield(index)
+            // Held until the cancellation aborts it. A minute cannot be lost — the consumer
+            // stops the moment the run is cancelled — and cannot be raced either.
+            try? await Task.sleep(for: .seconds(60))
+        })
 
     let received = TokenCollector()
     let run = Task {

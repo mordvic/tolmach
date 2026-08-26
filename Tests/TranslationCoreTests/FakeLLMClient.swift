@@ -41,13 +41,19 @@ final class FakeLLMClient: LLMClient, @unchecked Sendable {
     /// `Translator.streamChunkReply` only exists between the first token and the end of the
     /// stream — the post-loop emit on a buffered path — and «after the first token» is the only
     /// way to reach it.
-    private let onTokenYielded: (@Sendable (Int) -> Void)?
+    ///
+    /// **`async`, so the hook can hold the stream open.** Signalling and returning is not enough:
+    /// the remaining tokens then race the test's own resumption, and on a loaded runner the run
+    /// finishes first and the cancellation lands on nothing. `QueueClient.holdCallAtIndex`
+    /// carries the same measurement for the same reason — «60 ms of pacing … is not enough for a
+    /// test that means to cancel».
+    private let onTokenYielded: (@Sendable (Int) async -> Void)?
     private var callCount = 0
 
     init(responses: [String], delayPerToken: Duration? = nil, errors: [Error?] = [],
          onCallStart: (@Sendable (Int) -> Void)? = nil,
          tokenizer: @escaping @Sendable (String) -> [String] = { $0.map(String.init) },
-         onTokenYielded: (@Sendable (Int) -> Void)? = nil) {
+         onTokenYielded: (@Sendable (Int) async -> Void)? = nil) {
         self.responses = responses
         self.delayPerToken = delayPerToken
         self.errors = errors
@@ -75,7 +81,7 @@ final class FakeLLMClient: LLMClient, @unchecked Sendable {
                 for (index, piece) in pieces.enumerated() {
                     if let delayPerToken { try? await Task.sleep(for: delayPerToken) }
                     continuation.yield(.token(piece))
-                    onTokenYielded?(index)
+                    await onTokenYielded?(index)
                 }
                 continuation.yield(.done(ChatStats(loadDurationMS: 10, promptEvalCount: 5,
                     promptEvalDurationMS: 5, evalCount: reply.count, evalDurationMS: 20)))
