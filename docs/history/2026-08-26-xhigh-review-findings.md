@@ -405,7 +405,71 @@ in `docs/reference/OPEN-ITEMS.md` §3.
 
 ---
 
+*Disposition appended the same day — see §5 before trusting any «fix shape» above.*
+
 *Produced 2026-08-26 by `/code-review xhigh` (five finder angles, twelve adversarial
 verifiers). Probes were compiled from the repo's own sources into the session scratchpad
 and touched nothing in the tree; live measurements ran against the local Ollama 0.32.14
 (a pull of a nonexistent model). The tree at review time was clean at `3af1f37`.*
+
+---
+
+## 5. Disposition (2026-08-26, same day)
+
+Every §1 finding was re-verified against the code independently of this document before being
+fixed. All 31 were confirmed. Four fix shapes stated above are **wrong** and were corrected in
+the work; they are listed here because this file is what the next reader will find.
+
+| Where | What this document said | What is true |
+|---|---|---|
+| §1.6 | `guard outcome.modelChunkCount > 0, outcome.timeToFirstTokenMS == nil else …` | `guard A, B else` fires on `!(A && B)` and would fail a *normal* run. The window's spelling is right; the rule now lives once, on `TranslationOutcome.isEmptyReply`. |
+| §1.8 | «the incremental path returns `collected` untrimmed» — implying a trim at the end | Bytes handed to `onToken` cannot be recalled; trimming `collected` breaks `theStreamReconstructsExactlyWhatFinalContains`. Only **held-back** edge whitespace works. |
+| §1.3 | «degrades to counts-only» | An empty `[MarkupDiff]` means «structure preserved», and `MarkupDiff(expected: nil, actual: nil)` renders as «неизвестное расхождение» — a defect in the translation. The refusal needed its own signal, `markupNotCompared`. |
+| §1.13 | reads as though the misattribution could be fixed | It cannot: `NSPasteboard` has no owner. Two halves were fixable — not destroying a newer clipboard, and refusing `com.apple.is-remote-clipboard` — and the residual is recorded in ADR 0005. |
+
+### Two claims made while fixing, and then measured instead
+
+- **«Prefix/suffix trimming is output-preserving.»** Written as a comment, then checked against
+  the untrimmed algorithm over 4000 generated pairs: **427 differ**. Same count and same
+  multiset every time, different order. The comment and a test now say that.
+- **§3.5, `Language.from`'s `default: nil`.** Carried by name only, as this document says. It is
+  the **design**, not a gap: the app names nine languages and «undetected» is a state the whole
+  pipeline handles deliberately. Recorded at the site so the next review does not re-raise it.
+  No issue filed.
+
+### Three fixtures that passed under the defect they named
+
+Each looked correct, and each is `docs/reference/TESTING.md`'s first rule failing out loud:
+
+1. The `DroppedDocument` symlink test asserted only «refused», which the post-read `data.count`
+   check satisfied one step later. Fixed by splitting `plausible(_:)` out, as `QueueDrop` had.
+2. The `EngineStatusModel` staleness test gave both refreshes the same answer; rewritten, it
+   keyed the answer on a counter both had advanced. Only «the stale call fails» distinguishes
+   them — and the success-path guard needed a second, mirrored test.
+3. The cancel-during-detection test used a short source, so the window closed in microseconds.
+   At 150 KB it is 8/8 green and 5/5 red under the mutation.
+
+A fourth test was **deleted** rather than kept: `DroppedDocument`'s post-read re-check is
+refused by `plausible` one step earlier in every case a test can construct, so nothing could
+pin it. The code says so where the line is.
+
+### What was fixed where
+
+| Finding | PR |
+|---|---|
+| §1.4, §1.6, §1.7, §1.12, §2.5, §3.3 | #59 |
+| §1.2, §1.11, §1.15, §2.1 | #60 |
+| §1.5, §1.14, §1.9 (fence half), §3.2 | #62 |
+| §1.8, §1.9 (trim half), §1.10, §2.10 | #63 |
+| §1.3, §2.6, §2.7, §2.8 | #64 |
+| §1.1, §1.13, §2.2, §2.3, §2.4 | #65 |
+| §3 (all six) | #66 |
+
+§2.9 (`ClientPool` never evicts) is a documented trade and was left alone, as this document
+recommends.
+
+### One finding this review did not have
+
+`RussianCopy.lmStudioRefusal` is never called from `Sources/` — LM Studio's refusals reach the
+user in English while the Russian copy written for them is dead. Filed as its own issue; §4's
+«verified clean» list does not cover it either way.

@@ -23,6 +23,15 @@ public enum Language: String, CaseIterable, Sendable {
         }
     }
 
+    /// **`default: nil` is the design, not a gap**, and is recorded here because the 2026-08-26
+    /// review flagged it as a possible one.
+    ///
+    /// This app names nine languages. An `NLLanguage` outside that set is «undetected», which is
+    /// a state the whole pipeline already handles deliberately: `targetLanguage(forDetected:)`
+    /// sends it to the primary language, `RussianCopy.direction` says so out loud rather than
+    /// hiding it, and `Translator.translate(source:)` documents that such a document is scanned
+    /// twice because the caller passes nil. Mapping a tenth tag here without adding it to
+    /// `Language` would produce a language the prompt, the tagger and the settings cannot name.
     static func from(_ nlCode: String) -> Language? {
         switch nlCode {
         case "ru": .ru; case "en": .en; case "de": .de; case "fr": .fr
