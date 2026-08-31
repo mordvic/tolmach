@@ -100,6 +100,10 @@ private func makeCoordinator(reader: ScriptedReader,
                              settings: AppSettings? = nil,
                              pasteboard: NSPasteboard? = nil,
                              selectionWriter: SelectionWriter? = nil,
+                             /// The clipboard tier, for the tests about rich flavours. Nil by
+                             /// default — the Accessibility tier answers in almost every test
+                             /// here, and it never carries a flavour.
+                             clipboard: (@Sendable () -> CapturedSelection?)? = nil,
                              frontmostBundleIdentifier: (@Sendable () -> String?)? = nil)
     -> (HotkeyCoordinator, ScriptedClient) {
     let glossary = GlossaryStore(url: FileManager.default.temporaryDirectory
@@ -111,7 +115,7 @@ private func makeCoordinator(reader: ScriptedReader,
         glossary: glossary,
         translator: Translator(client: client),
         selectionReader: SelectionReader(accessibility: { reader.next() },
-                                         clipboard: { nil },
+                                         clipboard: clipboard ?? { nil },
                                          isTrusted: { isTrusted }),
         pasteboard: pasteboard ?? scratchPasteboard(),
         // Never the real trigger by default: a test process that ever posted a real ⌘V would
@@ -1069,4 +1073,158 @@ private func makePressedCoordinator(responses: [String]) async -> PressHarness {
 
     #expect(trigger.callCount == 0)
     #expect(board.string(forType: .string) == "буфер пользователя")
+}
+
+// MARK: - Rich capture, and the provenance it hands to «Заменить»
+
+/// The HTML flavour Safari or Word would write for a heading and a bulleted list, whose plain
+/// flavour is prose with newlines in it — the shape the whole feature is about.
+private let richHTML = Data("<h1>Отчёт</h1><ul><li>раз</li><li>два</li></ul>".utf8)
+private let richPlain = "Отчёт\nраз\nдва"
+
+@MainActor
+@Test func aCaptureCarryingHtmlTranslatesTheMarkdownSynthesisedFromIt() async {
+    // The Accessibility tier answers nil so the clipboard tier runs, which is the only tier that
+    // ever carries a flavour — see `CapturedSelection`, and the design's §11.1 for why tier 1 is
+    // not built.
+    let reader = ScriptedReader([nil])
+    let (coordinator, client) = makeCoordinator(
+        reader: reader, replies: ["перевод"],
+        clipboard: { CapturedSelection(plain: richPlain, html: richHTML) })
+    await coordinator.handlePress()
+
+    #expect(coordinator.panelModel.sourceText == "# Отчёт\n\n- раз\n- два")
+    #expect(coordinator.sourceIsSynthesisedMarkdown)
+    // What actually reached the model, not merely what the panel holds: the source is what the
+    // prompt is built from, and a test that only read `sourceText` would pass with the conversion
+    // wired to the panel and not to the run.
+    #expect(client.receivedMessages.last?.last?.content.contains("# Отчёт") == true)
+}
+
+@MainActor
+@Test func aCaptureWhoseFlavoursAddNothingTranslatesThePlainTextUnchanged() async {
+    // The gate's no-op half, from the app's side: two paragraphs of prose have no block form to
+    // recover, so the user's own bytes are what gets translated and provenance says so.
+    let reader = ScriptedReader([nil])
+    let plain = "Первый абзац.\n\nВторой абзац."
+    let html = Data("<p>Первый абзац.</p><p>Второй абзац.</p>".utf8)
+    let (coordinator, _) = makeCoordinator(
+        reader: reader, replies: ["перевод"],
+        clipboard: { CapturedSelection(plain: plain, html: html) })
+    await coordinator.handlePress()
+
+    #expect(coordinator.panelModel.sourceText == plain)
+    #expect(!coordinator.sourceIsSynthesisedMarkdown)
+}
+
+@MainActor
+@Test func aPlainCaptureIsUnchangedByAnyOfThis() async {
+    // The overwhelmingly common press: the Accessibility tier answered, there is no flavour, and
+    // nothing about the path differs from before rich capture existed.
+    let reader = ScriptedReader(["Hello."])
+    let (coordinator, _) = makeCoordinator(reader: reader, replies: ["Привет."])
+    await coordinator.handlePress()
+    #expect(coordinator.panelModel.sourceText == "Hello.")
+    #expect(!coordinator.sourceIsSynthesisedMarkdown)
+}
+
+@MainActor
+@Test func provenanceNeverDescribesAnEarlierPress() async {
+    // Two presses, the rich one first: without an assignment on every press the flag outlives the
+    // capture it was about, and the next «Заменить» strips markers out of a translation of the
+    // user's own Markdown.
+    let reader = ScriptedReader([nil, "Обычный текст."])
+    let (coordinator, _) = makeCoordinator(
+        reader: reader, replies: ["перевод", "перевод"],
+        clipboard: { CapturedSelection(plain: richPlain, html: richHTML) })
+    await coordinator.handlePress()
+    #expect(coordinator.sourceIsSynthesisedMarkdown)
+
+    await coordinator.handlePress()
+    #expect(coordinator.panelModel.sourceText == "Обычный текст.")
+    #expect(!coordinator.sourceIsSynthesisedMarkdown)
+}
+
+@MainActor
+@Test func replaceStripsTheMarkersThisAppItselfPutIntoTheSource() async {
+    // The regression this exists to prevent: with a synthesised source the reply carries `#`,
+    // `**` and `|`, and «Заменить» wrote plain text into the user's document before rich capture
+    // existed. Writing markers there instead would be worse than what the button used to do.
+    let board = scratchPasteboard()
+    defer { board.releaseGlobally() }
+    board.clearContents()
+    board.setString("буфер пользователя", forType: .string)
+
+    let trigger = RecordingTrigger(board: board)
+    let reader = ScriptedReader([nil])
+    let (coordinator, _) = makeCoordinator(
+        reader: reader, replies: ["# Отчёт\n\n- **раз**\n- два"], pasteboard: board,
+        selectionWriter: SelectionWriter(triggerPaste: { trigger.fire() }, restoreDelay: 0),
+        clipboard: { CapturedSelection(plain: richPlain, html: richHTML) })
+    await coordinator.handlePress()
+    #expect(coordinator.sourceIsSynthesisedMarkdown)
+    #expect(coordinator.panelModel.state == .finished)
+
+    await coordinator.replaceInSource()
+
+    // What a real target application's own ⌘V would have read.
+    #expect(trigger.textSeenAtTrigger == "Отчёт\n\n• раз\n• два")
+    // The panel still holds the Markdown: only what is *written back* is stripped, because that
+    // is the one place the markers would land in someone else's document.
+    #expect(coordinator.panelModel.translatedText == "# Отчёт\n\n- **раз**\n- два")
+    #expect(board.string(forType: .string) == "буфер пользователя")
+}
+
+@MainActor
+@Test func replaceLeavesTheUsersOwnMarkdownExactlyAsItCameBack() async {
+    // The other direction, and the reason the strip is conditional at all: a user who selected a
+    // chunk of a README gets a translation carrying their own markers, and taking those off would
+    // corrupt their document. Byte-plain, exactly as before rich capture.
+    let board = scratchPasteboard()
+    defer { board.releaseGlobally() }
+    board.clearContents()
+    board.setString("буфер пользователя", forType: .string)
+
+    let trigger = RecordingTrigger(board: board)
+    let reader = ScriptedReader(["# Report\n\n- **one**\n- two"])
+    let (coordinator, _) = makeCoordinator(
+        reader: reader, replies: ["# Отчёт\n\n- **раз**\n- два"], pasteboard: board,
+        selectionWriter: SelectionWriter(triggerPaste: { trigger.fire() }, restoreDelay: 0))
+    await coordinator.handlePress()
+    #expect(!coordinator.sourceIsSynthesisedMarkdown)
+    #expect(coordinator.panelModel.state == .finished)
+
+    await coordinator.replaceInSource()
+
+    #expect(trigger.textSeenAtTrigger == "# Отчёт\n\n- **раз**\n- два")
+    #expect(board.string(forType: .string) == "буфер пользователя")
+}
+
+@MainActor
+@Test func aPressThatCapturesNothingLeavesTheReplyOnScreenWithItsOwnProvenance() async {
+    // Provenance describes the reply on screen, not the last press — the same rule
+    // `translatedText` follows. A press that finds nothing keeps the previous reply, with
+    // «Заменить» still live, so clearing the flag here would write a synthesised translation's
+    // markers into the user's document. **One coordinator, two presses**: two coordinators would
+    // have made this pass whatever the code did.
+    // Both tiers are scripted to answer once and then find nothing, so the second press is a real
+    // «выделите текст» on the same coordinator.
+    let accessibility = ScriptedReader([nil, nil])
+    let clipboard = ScriptedReader([richPlain])
+    let (coordinator, client) = makeCoordinator(
+        reader: accessibility, replies: ["# Отчёт\n\n- раз"],
+        clipboard: { clipboard.next().map { CapturedSelection(plain: $0, html: richHTML) } })
+    await coordinator.handlePress()
+    #expect(coordinator.sourceIsSynthesisedMarkdown)
+    #expect(coordinator.panelModel.state == .finished)
+    let callsAfterFirstPress = client.callCount
+    #expect(callsAfterFirstPress > 0)
+
+    await coordinator.handlePress()
+
+    #expect(coordinator.selection == .empty)
+    // The reply and its provenance are both still there, and nothing was asked of the model.
+    #expect(coordinator.panelModel.translatedText == "# Отчёт\n\n- раз")
+    #expect(coordinator.sourceIsSynthesisedMarkdown)
+    #expect(client.callCount == callsAfterFirstPress)
 }

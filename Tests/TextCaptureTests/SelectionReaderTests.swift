@@ -3,7 +3,7 @@ import Foundation
 import AppKit
 @testable import TextCapture
 
-// `accessibilityText()` and `clipboardText()` are deliberately absent from this file. Neither
+// `accessibilityText()` and `clipboardSelection()` are deliberately absent from this file. Neither
 // can run meaningfully here: `AXUIElementCreateSystemWide()` answers
 // `kAXFocusedUIElementAttribute` with `kAXErrorCannotComplete` in a process that has never
 // touched `NSApplication` — measured, and measured to start succeeding the instant it does —
@@ -101,12 +101,112 @@ import AppKit
     // Nothing constructs a `SelectionReader` with its defaults yet — the coordinator that
     // will is a later task — so without this the three default arguments are never
     // instantiated from outside the module and a signature drift in `accessibilityText`,
-    // `clipboardText` or `PermissionsGate.isTrusted` would go unnoticed until then. Only
+    // `clipboardSelection` or `PermissionsGate.isTrusted` would go unnoticed until then. Only
     // constructed, never read: calling `read()` here would post a real ⌘C.
     // The value of this test is entirely that the line below compiles; there is no assertion
     // to make about the result that could fail, and one written anyway would read as coverage
     // it does not provide.
     _ = SelectionReader()
+}
+
+// MARK: - The rich flavours
+
+/// The Accessibility tier is plain **by construction, not by omission**:
+/// `kAXSelectedTextAttribute` is a string attribute. The tier that would carry more —
+/// `kAXAttributedStringForRangeParameterizedAttribute` — is deliberately absent, gated on a
+/// measurement of what real applications answer it with (design §11.1), so this test is what
+/// «plain only» looks like from here, and the flavours on the fallback's answer are what it is
+/// *not* allowed to reach for.
+@Test func theAccessibilityPathCarriesNoFlavoursAtAll() {
+    let reader = SelectionReader(accessibility: { "из Accessibility" },
+                                 clipboard: { CapturedSelection(plain: "не понадобится",
+                                                                html: Data("<h1>Х</h1>".utf8)) },
+                                 isTrusted: { true })
+    guard case let .text(captured) = reader.read() else {
+        Issue.record("the Accessibility path did not answer")
+        return
+    }
+    #expect(captured.plain == "из Accessibility")
+    #expect(captured.html == nil)
+    #expect(captured.rtf == nil)
+    #expect(!captured.hasRichFlavours)
+}
+
+@Test func theClipboardPathCarriesWhicheverFlavoursLanded() {
+    let html = Data("<h1>Заголовок</h1>".utf8)
+    let rtf = Data(#"{\rtf1}"#.utf8)
+    let reader = SelectionReader(
+        accessibility: { nil },
+        clipboard: { CapturedSelection(plain: "Заголовок", html: html, rtf: rtf) },
+        isTrusted: { true })
+    guard case let .text(captured) = reader.read() else {
+        Issue.record("the clipboard path did not answer")
+        return
+    }
+    #expect(captured.plain == "Заголовок")
+    #expect(captured.html == html)
+    #expect(captured.rtf == rtf)
+    #expect(captured.hasRichFlavours)
+}
+
+@Test func aRichCaptureWithNothingWorthTranslatingIsStillEmpty() {
+    // The emptiness rule is about the characters and the flavours do not change it: a board
+    // carrying `public.html` beside a whitespace-only string has no selection on it, and the
+    // panel must still say «выделите текст» rather than translate an empty document with markup.
+    let reader = SelectionReader(
+        accessibility: { nil },
+        clipboard: { CapturedSelection(plain: "  \n ", html: Data("<h1>Х</h1>".utf8)) },
+        isTrusted: { true })
+    #expect(reader.read() == .empty)
+}
+
+/// The flavours are read off the board in the same pass as the `.string` that satisfied the poll,
+/// inside the same held `GeneralPasteboard` lock. **That placement cannot be observed from a test
+/// process** — the function it lives in posts a synthetic ⌘C, which per
+/// `docs/reference/TESTING.md` goes nowhere here and lands in the developer's frontmost
+/// application when it goes anywhere. So what is pinned is the read itself, on a board of this
+/// test's own; the single pass stays structural, by `CapturedSelection.capture(from:plain:)`
+/// having exactly one caller.
+@Test func everyFlavourThisAppCarriesIsTakenFromOneBoardInOneRead() {
+    let board = NSPasteboard(name: NSPasteboard.Name("ru.tolmach.test.rich.\(UUID().uuidString)"))
+    let html = Data("<h1>Заголовок</h1>".utf8)
+    let rtf = Data(#"{\rtf1\ansi Заголовок}"#.utf8)
+    board.clearContents()
+    board.setData(html, forType: .html)
+    board.setData(rtf, forType: .rtf)
+    board.setString("Заголовок", forType: .string)
+
+    let captured = CapturedSelection.capture(from: board, plain: "Заголовок")
+    #expect(captured.plain == "Заголовок")
+    #expect(captured.html == html)
+    #expect(captured.rtf == rtf)
+
+    // A board with only a string on it: two nils. The plain text comes from the poll rather than
+    // from a second read of the board, which is the other half of «one pass».
+    board.clearContents()
+    board.setString("только текст", forType: .string)
+    let plainOnly = CapturedSelection.capture(from: board, plain: "только текст")
+    #expect(plainOnly.plain == "только текст")
+    #expect(!plainOnly.hasRichFlavours)
+}
+
+@Test func aFlavourDeclaredWithNoBytesIsNoFlavour() {
+    // An application may declare a type and hand back nothing; `data(forType:)` then answers an
+    // empty `Data`. Carrying that as «there is HTML here» spends a conversion and a gate check
+    // to arrive at the empty string.
+    let board = NSPasteboard(name: NSPasteboard.Name("ru.tolmach.test.rich.\(UUID().uuidString)"))
+    board.clearContents()
+    board.setData(Data(), forType: .html)
+    board.setString("текст", forType: .string)
+    #expect(!CapturedSelection.capture(from: board, plain: "текст").hasRichFlavours)
+}
+
+@Test func aBareStringIsAPlainOnlyCapture() {
+    // What `ExpressibleByStringLiteral` on `CapturedSelection` claims, asserted rather than
+    // assumed: every call site that hands over a literal means «just these characters».
+    let literal: CapturedSelection = "текст"
+    #expect(literal == CapturedSelection(plain: "текст"))
+    #expect(!literal.hasRichFlavours)
 }
 
 // MARK: - Universal Clipboard is not this app's selection

@@ -4,7 +4,13 @@ import ApplicationServices
 import Carbon.HIToolbox
 
 public enum SelectionResult: Equatable, Sendable {
-    case text(String)
+    /// The selection, and whatever flavours came with it — see `CapturedSelection`, whose doc
+    /// comment carries why the Accessibility path never has any and why that is deliberate.
+    ///
+    /// This case used to carry a bare `String`. It carries a value with a `plain` field now, and
+    /// the two are the same thing wherever only the characters matter: every `case .text` that
+    /// binds nothing is unchanged.
+    case text(CapturedSelection)
     /// Both paths ran and found nothing. The panel says «выделите текст».
     case empty
     /// Neither path can work. The panel shows the onboarding prompt instead.
@@ -12,14 +18,21 @@ public enum SelectionResult: Equatable, Sendable {
 }
 
 public struct SelectionReader: Sendable {
-    public typealias Reader = @Sendable () -> String?
+    /// The Accessibility tier's answer: characters or nothing. **Plain by construction**, not by
+    /// omission — `kAXSelectedTextAttribute` is a string attribute, and the parameterized
+    /// attributed-string attribute that would carry more is tier 1, which this build
+    /// deliberately does not have (`CapturedSelection`).
+    public typealias PlainReader = @Sendable () -> String?
+    /// The clipboard tier's answer: the characters the poll accepted, plus the flavours that
+    /// were on the board in the same pass.
+    public typealias RichReader = @Sendable () -> CapturedSelection?
 
-    private let accessibility: Reader
-    private let clipboard: Reader
+    private let accessibility: PlainReader
+    private let clipboard: RichReader
     private let isTrusted: @Sendable () -> Bool
 
-    public init(accessibility: @escaping Reader = SelectionReader.accessibilityText,
-                clipboard: @escaping Reader = SelectionReader.clipboardText,
+    public init(accessibility: @escaping PlainReader = SelectionReader.accessibilityText,
+                clipboard: @escaping RichReader = SelectionReader.clipboardSelection,
                 isTrusted: @escaping @Sendable () -> Bool = PermissionsGate.isTrusted) {
         self.accessibility = accessibility
         self.clipboard = clipboard
@@ -28,13 +41,26 @@ public struct SelectionReader: Sendable {
 
     /// Spec 6's order: Accessibility, then the clipboard, then a hint.
     ///
+    /// **The order does not change, and richer capture is not a reason to change it.** The
+    /// Accessibility read «touches nothing»; the fallback posts a synthetic ⌘C, puts the user's
+    /// selection on the general pasteboard for the length of the poll and rebuilds their
+    /// clipboard afterwards (`docs/adr/0005`). Reading two more flavours off a board this app
+    /// has already copied to costs nothing further; reordering the tiers to get them would cost
+    /// all of that on every press. The consequence — rich capture helps only where the
+    /// Accessibility read fails — is stated in `CapturedSelection` and is what tier 1 exists to
+    /// remove, once §11.1's measurement says whether tier 1 is worth building.
+    ///
     /// Each of the three is called at most once. That is not tidiness: a second call to
     /// `clipboard` is a second synthetic ⌘C into the user's application, a second
     /// whole-pasteboard destroy-and-rebuild, and another half-second of polling.
     public func read() -> SelectionResult {
         guard isTrusted() else { return .notPermitted }
-        if let text = accessibility().flatMap(Self.meaningful) { return .text(text) }
-        if let text = clipboard().flatMap(Self.meaningful) { return .text(text) }
+        if let text = accessibility().flatMap(Self.meaningful) {
+            return .text(CapturedSelection(plain: text))
+        }
+        if let captured = clipboard(), Self.meaningful(captured.plain) != nil {
+            return .text(captured)
+        }
         return .empty
     }
 
@@ -140,11 +166,18 @@ public struct SelectionReader: Sendable {
     /// application's ⌘C then lands on top of it. The user loses their clipboard and is told
     /// «выделите текст» anyway. Waiting longer trades that against a stall on every press.
     ///
+    /// **The flavours are read here and nowhere else**, at the instant the poll accepts a value:
+    /// once `.string` has landed, `public.html` and `public.rtf` are read in the same pass off
+    /// the same board under the same held lock (`CapturedSelection.capture(from:plain:)`). The
+    /// `.string` flavour is the one whose arrival this project has measured — hence polling for
+    /// it and not for a rich one; a flavour that is on the board at that moment is on it, and one
+    /// that is not was never going to be waited for.
+    ///
     /// `@Sendable` for the same reason as `accessibilityText`, and with the same
     /// justification: `GeneralPasteboard.withExclusiveAccess` is what makes calling it from
     /// any thread safe. See that type for why the serialisation cannot live here.
-    @Sendable public static func clipboardText() -> String? {
-        GeneralPasteboard.withExclusiveAccess { clipboardTextLocked() }
+    @Sendable public static func clipboardSelection() -> CapturedSelection? {
+        GeneralPasteboard.withExclusiveAccess { clipboardSelectionLocked() }
     }
 
     /// Whether this board was written by Universal Clipboard rather than by the ⌘C just posted.
@@ -158,8 +191,8 @@ public struct SelectionReader: Sendable {
         pasteboard.types?.contains(remoteClipboardType) ?? false
     }
 
-    /// The body of `clipboardText()`, split out so the lock is taken in exactly one place.
-    private static func clipboardTextLocked() -> String? {
+    /// The body of `clipboardSelection()`, split out so the lock is taken in exactly one place.
+    private static func clipboardSelectionLocked() -> CapturedSelection? {
 
         // Built before the snapshot is taken, so that failing to build them costs nothing.
         // `PasteboardSnapshot.restore` is not free even when it puts back exactly what it
@@ -225,7 +258,13 @@ public struct SelectionReader: Sendable {
                 // in ADR 0005 rather than papered over here.
                 guard !isRemoteClipboard(pasteboard) else { return nil }
                 acceptedChangeCount = pasteboard.changeCount
-                return copied
+                // The rich flavours, in this same pass. Two more reads off a board already
+                // held, at the one moment its contents are known to be the selection: after
+                // `acceptedChangeCount` (so the restore is still conditional on this exact
+                // board) and before the `defer` above puts the user's clipboard back. Nothing
+                // about the fallback's cost or invasiveness changes — see
+                // `CapturedSelection.capture(from:plain:)`.
+                return CapturedSelection.capture(from: pasteboard, plain: copied)
             }
             usleep(10_000)
         }

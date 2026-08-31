@@ -583,7 +583,13 @@ public enum MarkupSkeleton {
     // A link target counts as a URL when the detector recognises the whole of it.
     // This accepts "https://x.org" and "www.example.com" while rejecting
     // "./file.md" and "#section", which are links but not URLs.
-    static func targetIsURL(_ target: String) -> Bool {
+    //
+    // `public` since 2026-08-31 and for one caller: `MarkupKit`'s capture converters have to
+    // decide whether an `href` out of an application's HTML or an `.link` attribute out of its
+    // RTF is worth spelling as a Markdown link, and that is the same question this asks. A
+    // second copy of it in `MarkupKit` is how the diff and the converter come to disagree about
+    // what a URL is — the failure `LineScanner` exists to prevent one layer down.
+    public static func targetIsURL(_ target: String) -> Bool {
         guard let detector = Self.linkDetector
         else { return target.contains("://") }
         let ns = target as NSString
