@@ -83,7 +83,7 @@ struct RenderedReplyView: NSViewRepresentable {
     /// where the panel's *ideal width* comes from, so a constant would make every rendered
     /// reply ask for `PanelSizer.minWidth` and a wide document could only ever reach 560 pt if
     /// the plain streamed text had already taken it there. Measured on the §11.4 document:
-    /// 1171 pt natural, which `PanelSizer` clamps to `maxWidth` — the same shape a `Text` gives
+    /// 1155 pt natural, which `PanelSizer` clamps to `maxWidth` — the same shape a `Text` gives
     /// (274 for a word, 6929 for a paragraph).
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: PanelReplyTextView,
                       context: Context) -> CGSize? {
@@ -99,8 +99,8 @@ struct RenderedReplyView: NSViewRepresentable {
     /// Internal rather than private so a test can pin the three widths §11.4 named against the
     /// probe's numbers. It builds its own text-layout stack every call, which is what makes it
     /// answerable without a view and side-effect free — and what makes it *agree* with the view:
-    /// measured, the throwaway answers 467 / 371 / 355 pt at 300 / 430 / 560 for the §11.4
-    /// document and a live `NSTextView` lays the same document out at 467 / 371 / 355.
+    /// measured, the throwaway answers 419 / 355 / 339 pt at 300 / 430 / 560 for the §11.4
+    /// document and a live `NSTextView` lays the same document out at 419 / 355 / 339.
     static func measuredSize(of attributed: NSAttributedString, width: CGFloat?) -> CGSize {
         let storage = NSTextStorage(attributedString: attributed)
         let layout = NSLayoutManager()
@@ -158,10 +158,18 @@ struct RenderedReplyView: NSViewRepresentable {
 /// **The panel's two keys are handled on the window, and a first responder inside it intercepts
 /// them.** `TranslationPanel.keyDown` is what makes ⏎ «скопировать и закрыть» and
 /// `cancelOperation(_:)` is what makes Esc «закрыть и отменить» — both reached because, until
-/// this view existed, the panel's content had no view that takes first responder at all
-/// («the panel is a readout, not a form», at that override). A selectable `NSTextView` does take
-/// it, on the first click, and a non-editable text view answers ⏎ with `insertNewline(_:)` —
-/// which does nothing and, worse, does not pass the key on. So the two are forwarded explicitly.
+/// this view existed, the panel's content had no view that takes first responder at all («the
+/// panel is a readout, not a form», at that override). A selectable `NSTextView` does take it, on
+/// the reader's first click, and from then on the keys are its own to interpret.
+///
+/// **The two keys need two different routes, which is measured rather than symmetrical.** ⏎ never
+/// gets as far as a command: `NSTextView.keyDown` runs `interpretKeyEvents`, which turns it into
+/// `insertNewline(_:)` — a no-op on a non-editable view that also does not pass the key on — so it
+/// is forwarded from `keyDown` before that happens. Esc *does* become a command,
+/// `cancelOperation(_:)`, and AppKit sends that to the **first responder**, i.e. to this view and
+/// not to the panel; forwarding it from `keyDown` instead was tried and does not work, because the
+/// panel's own `keyDown` then hands it to `super` and AppKit dispatches the resulting command back
+/// down to this view again. So Esc is handed on from the command, where AppKit puts it.
 ///
 /// Everything else is deliberately *not* forwarded, and that is the win of hosting a text view
 /// here: ⌘C copies the selection, ⌘A selects the document, the arrow keys move through it. ⌘⇧↩
@@ -171,18 +179,28 @@ struct RenderedReplyView: NSViewRepresentable {
 /// case, and the panel swallows it exactly as it does today.
 final class PanelReplyTextView: CodeBlockTextView {
     override func keyDown(with event: NSEvent) {
-        // Return (36) and the numeric pad's Enter (76), bare or ⌘⇧, and Escape (53) — the three
-        // the panel itself decides about. The keycodes and the modifier mask are spelled the
-        // same way `TranslationPanel.keyDown` spells them, because a forward that disagreed
-        // with the handler about which events matter would be a second, wrong copy of the rule.
+        // Return (36) and the numeric pad's Enter (76), bare or ⌘⇧ — spelled the way
+        // `TranslationPanel.keyDown` spells them, because a forward that disagreed with the
+        // handler about which events matter would be a second, wrong copy of the rule. Esc is
+        // **not** here; see `cancelOperation(_:)` below and the note above.
         let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
         let isReturn = event.keyCode == 36 || event.keyCode == 76
-        let panelsOwn = (isReturn && (modifiers.isEmpty || modifiers == [.command, .shift]))
-            || event.keyCode == 53
-        guard panelsOwn, let window else {
+        guard isReturn, modifiers.isEmpty || modifiers == [.command, .shift],
+              let window else {
             super.keyDown(with: event)
             return
         }
         window.keyDown(with: event)
+    }
+
+    /// Esc, handed to the panel that owns it.
+    ///
+    /// `TranslationPanel.cancelOperation(_:)` is «закрыть и отменить», and it used to be reached
+    /// because the window itself was the first responder. It no longer is whenever the reader has
+    /// clicked into their translation, and AppKit sends this command to the first responder — so
+    /// without this line Esc stops closing the panel the moment the text is touched, which is the
+    /// one dismissal a user reaches for without thinking.
+    override func cancelOperation(_ sender: Any?) {
+        window?.cancelOperation(sender)
     }
 }

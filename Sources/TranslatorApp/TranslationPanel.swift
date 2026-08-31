@@ -387,11 +387,19 @@ final class PanelController: NSObject, NSWindowDelegate {
         // caller might — must still start from automatic sizing.
         frozenWidth = nil
         userSized = false
-        // Before `setScrolling`, which is what rebuilds the installed host: a presentation
-        // begins on plain characters — there is no run yet to have settled — and rebuilding
-        // once for both is cheaper than rebuilding twice.
+        // A presentation begins on plain characters: there is no run yet to have settled.
         rendersFinalReply = false
-        setScrolling(false)
+        // **Rebuilt unconditionally, where this used to call `setScrolling(false)`.** That
+        // method returns early when `scrolls` is already false — which it usually is — so it
+        // could not be relied on to carry a *second* piece of per-presentation view state out
+        // of the builder. With the flag reset and no rebuild, the installed host went on
+        // drawing the previous presentation's rendered document while `measure`, which
+        // reassigns the detached host's `rootView` on every pass, sized the panel for plain
+        // characters; and `setRendersFinalReply(false)` when the next run started returned
+        // early from its own guard, because the controller's flag already said false. The
+        // panel would have stayed wrong for the whole of that presentation.
+        scrolls = false
+        hosting.rootView = build(.installed(scrolls: false))
 
         // The screen the pointer is on, not `NSScreen.main` — which is the screen with the
         // key window, i.e. usually the wrong one when the user is working in another app on

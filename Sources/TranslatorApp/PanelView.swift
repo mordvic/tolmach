@@ -956,6 +956,28 @@ struct PanelView: View {
         return MarkdownPresence.hasMarkup(text)
     }
 
+    /// The rich flavour the panel's «Скопировать» and its ⏎ write beside the Markdown, or nil
+    /// for a plain copy.
+    ///
+    /// The «is there markup, and is the user looking at it» half is `PaneRendering`'s — the
+    /// window's own rule, delegated rather than restated, because the panel and the pane copying
+    /// different things out of one translation is exactly the failure that type was introduced
+    /// to prevent. What is added here is the panel's own half: the reply is only *rendered* after
+    /// the run settles, so a copy taken mid-stream — which «Скопировать» deliberately allows,
+    /// from the first token — is plain. Nothing half-arrived leaves this app wearing a font it
+    /// chose.
+    ///
+    /// A function called at the instant a button is pressed, never from a body:
+    /// `MainWindowView.richFlavour()`'s reason, which is that this serialises the whole document
+    /// to RTF.
+    nonisolated static func richFlavour(text: String, rendersFinalReply: Bool,
+                                        showsRenderedMarkup: Bool,
+                                        font: ContentFont) -> Data? {
+        guard rendersFinalReply else { return nil }
+        return PaneRendering.of(text, showsRenderedMarkup: showsRenderedMarkup)
+            .rtf(of: text, font: font)
+    }
+
     /// Exhaustive with no `default:` on purpose: a sixth `TranslationState` case should
     /// fail to compile here instead of leaving the panel silent about a state it has no
     /// words for.

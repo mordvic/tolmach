@@ -652,12 +652,10 @@ struct TranslatorApp: App {
     /// The rich flavour the panel's «Скопировать» and its ⏎ should write beside the Markdown, or
     /// nil for a plain copy.
     ///
-    /// The window's rule, reached through the window's type: `PaneRendering` is the one place
-    /// «is there markup, and is the user looking at it» is written, and reading it here is what
-    /// stops the panel and the pane copying different things from the same translation. The extra
-    /// condition is the panel's own — the reply is only rendered *after* the run settles, so
-    /// «Скопировать» during a stream is plain, which is right for the same reason the design
-    /// gives for «Заменить»: nothing half-arrived should leave this app wearing a font it chose.
+    /// The rule is `PanelView.richFlavour(...)` — a value with a test, delegating the «is there
+    /// markup, and is the user looking at it» half to the window's own `PaneRendering` so the two
+    /// surfaces cannot copy different things out of one translation. This is the wiring: which
+    /// text, which controller, which settings.
     ///
     /// A function, not a stored value, for `MainWindowView.richFlavour()`'s reason: it
     /// serialises the whole document to RTF, and that belongs at the instant a button is pressed
@@ -670,10 +668,10 @@ struct TranslatorApp: App {
     /// wearing a font this app chose» is protecting.
     @MainActor
     private func panelRichFlavour() -> Data? {
-        guard panel.rendersFinalReply else { return nil }
-        let text = coordinator.panelModel.translatedText
-        return PaneRendering.of(text, showsRenderedMarkup: settings.showsRenderedMarkup)
-            .rtf(of: text, font: settings.contentFont)
+        PanelView.richFlavour(text: coordinator.panelModel.translatedText,
+                              rendersFinalReply: panel.rendersFinalReply,
+                              showsRenderedMarkup: settings.showsRenderedMarkup,
+                              font: settings.contentFont)
     }
 
     /// Spec 7.2's «Открыть в окне»: the panel's texts move to the window, and the window

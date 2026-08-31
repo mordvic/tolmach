@@ -62,18 +62,23 @@
 //
 // **2. With `sizeThatFits`, the numbers are sane and monotone in width.** The §11.4 document —
 // H2, two paragraphs, a 4-row GFM table with alignments, a fenced Swift block, a three-item
-// list; 539 source characters, 459 attributed runs, 13 pt system:
+// list; 539 source characters, 459 attributed runs, 13 pt system, at the geometry
+// `RenderedReplyView` ships with (zero inset, zero `lineFragmentPadding`):
 //
-//     reply alone       @300  467.0    @430  371.0    @560  355.0    fittingSize 1171.0 × 547.0
-//     panel-shaped      @300  548.0    @430  484.0    @560  452.0    fittingSize 1199.0 × 628.0
+//     reply alone       @300  419.0    @430  355.0    @560  339.0    fittingSize 1155.0 × 531.0
+//     panel-shaped      @300  532.0    @430  452.0    @560  436.0    fittingSize 1183.0 × 612.0
 //
-// Narrower is taller, by whole line heights. The stack's cost over the reply reads 81 / 113 / 97
+// Narrower is taller, by whole line heights. The stack's cost over the reply reads 113 / 97 / 97
 // at the same widths, which is **not** a chrome that varies: the stack's 14 pt padding takes 28
 // pt off the width the reply is proposed, and against the reply measured at `width − 28` the
 // difference is exactly 81.0 at all three widths. The stack adds the reply's height rather than
 // swallowing or re-deciding it, which is the property the panel needs.
 //
-// `fittingSize` answers **1171** wide, which is the document's longest unwrapped line (the code
+// The geometry is worth 16 pt on each axis and a whole line at 300 pt, which is why this probe
+// measures the panel's and not the pane's: at `RenderedTextView`'s `{3, 8}` inset plus the
+// container's default 5 pt padding the same document answers 467 / 371 / 355 and 1171 wide.
+//
+// `fittingSize` answers **1155** wide, which is the document's longest unwrapped line (the code
 // block's first line) and not a wrap width. That is the same shape a `Text` gives — 274 for a
 // word, 6929 for a paragraph — and `PanelSizer` clamps it to `maxWidth` 560. Reporting the
 // natural width for an unspecified proposal is therefore load-bearing rather than tidy: an
@@ -84,26 +89,29 @@
 // **3. The throwaway triple agrees with the live view exactly.** Same document, same widths,
 // against a real `NSTextView`'s own layout manager after its frame and container width were set:
 //
-//     @300  throwaway 467.0 / live 467.0    @430  371.0 / 371.0    @560  355.0 / 355.0
+//     @300  throwaway 419.0 / live 419.0    @430  355.0 / 355.0    @560  339.0 / 339.0
 //
 // Two details are load-bearing for that and are measured here rather than assumed: a
-// programmatically built `NSTextContainer` comes up with `lineFragmentPadding` **5.0** — the same
-// as the one a text view builds for itself, so the two agree by default and a copy of the live
-// container's value is belt-and-braces rather than a fix — and the laid-out width must be
-// `proposal − 2 × textContainerInset.width` (3 a side here, per `RenderedTextView`'s measured
-// inset). Getting either wrong moves the answer by a line at the narrow widths.
+// programmatically built `NSTextContainer` comes up with `lineFragmentPadding` **5.0** — so the
+// panel's 0 is a deliberate override and not a default it happens to inherit, and reading the
+// live container's value rather than assuming one is what keeps the measurement matching the
+// layout — and the laid-out width must be `proposal − 2 × textContainerInset.width`. Getting
+// either wrong moves the answer by a line at the narrow widths, as the paragraph above measures.
 //
-// **4. Stable to the bit.** Ten consecutive reads on one reused host: spread **0.0000** at all
-// three widths, and a fresh host answers the identical CGFloat. So a pinning test could assert
-// equality; the one written asserts a tolerance anyway, for the reason its own comment gives —
+// **4. Stable to the bit.** Ten consecutive reads on one reused host: 532 / 452 / 436, spread
+// **0.0000** at all three widths, and a fresh host answers the identical CGFloat. So a pinning
+// test could assert equality; the one written asserts a tolerance anyway, for the reason its own
+// comment gives —
 // these are sums of font metrics, and a system font revision may move them by a fraction without
 // anything in this repo changing.
 //
 // **What the implementation took from this:** `RenderedReplyView` implements
 // `sizeThatFits(_:nsView:context:)` through a throwaway triple — the natural size for an
 // unspecified, infinite or zero proposal, the height at `proposal.width − 2 × inset.width`
-// otherwise — and hosts a **bare** `NSTextView` with no `NSScrollView`, because the panel's
-// `scrollingMiddle` owns scrolling and a scroll view here would answer the proposal back and put
+// otherwise — inset and `lineFragmentPadding` both zero, so the document lands on the pixel
+// column the streamed characters were on, and hosts a **bare** `NSTextView` with no
+// `NSScrollView`, because the panel's `scrollingMiddle` owns scrolling and a scroll view here
+// would answer the proposal back and put
 // the panel at the ceiling by the other route. → `Sources/TranslatorApp/RenderedReplyView.swift`,
 // `docs/reference/PLATFORM-TRAPS.md`.
 import AppKit
@@ -144,7 +152,13 @@ let config = MarkdownFontConfig(baseSize: 13, typeface: .system)
 let rendering = MarkdownToAttributed.rendering(of: document, config: config)
 
 let widths: [CGFloat] = [300, 430, 560]
-let inset = NSSize(width: 3, height: 8)
+// The geometry `RenderedReplyView` ships with, and it is **not** the pane's `{3, 8}` + the
+// container's default 5: the panel's reply has no padding of its own, so the rendered document
+// has to start on the same pixel the streamed characters did. Measuring the pane's geometry here
+// instead would answer a question about a different view — it costs 16 pt of width and 16 pt of
+// height on this document, which is a line at the narrow widths.
+let inset = NSSize(width: 0, height: 0)
+let lineFragmentPadding: CGFloat = 0
 
 // ── the two representables ───────────────────────────────────────────────────────────────────
 // Both build the same bare text view. The only difference is whether `sizeThatFits` is
@@ -157,6 +171,7 @@ func makeTextView(_ attributed: NSAttributedString) -> NSTextView {
     let container = NSTextContainer(
         size: CGSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
     container.widthTracksTextView = true
+    container.lineFragmentPadding = lineFragmentPadding
     layout.addTextContainer(container)
     let view = NSTextView(frame: .zero, textContainer: container)
     view.isEditable = false
@@ -203,7 +218,7 @@ struct Reply: NSViewRepresentable {
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSTextView,
                       context: Context) -> CGSize? {
         guard sizes else { return nil }
-        let padding = nsView.textContainer?.lineFragmentPadding ?? 5
+        let padding = nsView.textContainer?.lineFragmentPadding ?? lineFragmentPadding
         // Unspecified, infinite and zero all mean «what is your natural size» here, and none of
         // them is a wrap width to lay out at.
         guard let width = proposal.width, width.isFinite, width > 0 else {
@@ -276,7 +291,8 @@ print("stack − reply, same width      \(chrome.map { String(format: "%.1f", $0
 // padding takes 28 pt off the width the reply is proposed. Compared against the reply measured
 // at the *inner* width, the difference should be the chrome alone and the same at every width.
 let innerChrome = zip(widths, sizedStack.heights).map { width, stack in
-    stack - throwawaySize(rendering.attributed, width: width - 28, padding: 5).height
+    stack - throwawaySize(rendering.attributed, width: width - 28,
+                          padding: lineFragmentPadding).height
 }
 print("stack − reply at width − 28    \(innerChrome.map { String(format: "%.1f", $0) }.joined(separator: "   "))")
 
@@ -288,7 +304,8 @@ print("its text view's own container's padding          "
       + "\(live.textContainer?.lineFragmentPadding ?? -1)")
 for width in widths {
     let throwaway = throwawaySize(rendering.attributed, width: width,
-                                    padding: live.textContainer?.lineFragmentPadding ?? 5).height
+                                    padding: live.textContainer?.lineFragmentPadding
+                                        ?? lineFragmentPadding).height
     live.frame = NSRect(x: 0, y: 0, width: width, height: 10)
     live.textContainer?.size = CGSize(width: width - inset.width * 2,
                                       height: CGFloat.greatestFiniteMagnitude)
