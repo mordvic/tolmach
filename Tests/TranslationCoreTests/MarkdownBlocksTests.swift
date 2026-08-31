@@ -326,3 +326,17 @@ private func prefixes(of text: String) -> [String] {
     // …and two paragraphs of prose are not.
     #expect(!MarkdownPresence.hasMarkup("Первый абзац.\n\nВторой абзац.\n"))
 }
+
+@Test func presenceLooksAtABoundedPrefixOfTheDocument() {
+    // Asked once per streamed token on documents up to 2 MB, so the scan is bounded. The
+    // limitation is real: markup that begins past the bound is not seen, and the pane then
+    // offers no toggle for it.
+    let prose = String(repeating: "Обычная строка прозы без разметки.\n\n", count: 200)
+    #expect(!MarkdownPresence.hasMarkup(prose))
+    #expect(MarkdownPresence.hasMarkup(prose + "# Заголовок\n"))
+    // …and with the bound cut short, the very same document reads as plain prose.
+    #expect(!MarkdownPresence.hasMarkup(prose + "# Заголовок\n", inspecting: prose.count))
+    // The bound errs safely: truncation can only remove markers, never pair two that were not
+    // paired, so nothing inside the window becomes markup that was not.
+    #expect(!MarkdownPresence.hasMarkup("Абзац с **жирным**.", inspecting: 12))
+}

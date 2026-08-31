@@ -435,7 +435,33 @@ public enum MarkdownBlockScanner {
 ///   signal — `a_b_c.txt` pairs under a naive reading, and the flanking rules that would
 ///   exclude it are a parser this project is not writing.
 public enum MarkdownPresence {
+    /// How much of the document this looks at, and why there is a limit at all.
+    ///
+    /// The answer is asked for on **every** redraw of the pane, which during a run means once
+    /// per streamed token, and the queue accepts 2 MB files: an unbounded scan is quadratic in
+    /// exactly the case that hurts — a long document of plain prose, where there is no markup
+    /// to exit early on. For scale, this repo has measured a 2.06 MB language-detection scan of
+    /// the same shape at ~48 ms, which per token is not a cost the pane can pay.
+    ///
+    /// 128 000 characters is far past where a Markdown document announces itself: a heading, a
+    /// list or a fence in the *first* 128 KB is what every real one has. The limitation is
+    /// real and stated plainly — a translation whose only markup begins after that shows no
+    /// toggle — and it errs in the safe direction, because truncating a document can only
+    /// remove markers, never pair two that were not paired.
+    public static let inspectionLimit = 128_000
+
     public static func hasMarkup(_ text: String) -> Bool {
+        hasMarkup(text, inspecting: inspectionLimit)
+    }
+
+    /// The same question over a bounded prefix. The limit is a parameter so a test can pin the
+    /// bound rather than restate the number.
+    public static func hasMarkup(_ text: String, inspecting limit: Int) -> Bool {
+        // `utf8.count` and not `count`: the character count of a 2 MB string is itself a full
+        // pass, which is the cost this bound exists to avoid. UTF-8 length is O(1) on a native
+        // string and never smaller than the character count, so a document that passes this
+        // test needs no truncating.
+        let text = text.utf8.count > limit ? String(text.prefix(limit)) : text
         var paragraphs: [Range<String.Index>] = []
         for block in MarkdownBlockScanner.blocks(of: text) {
             guard case let .paragraph(range) = block else { return true }
