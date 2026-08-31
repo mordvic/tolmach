@@ -284,7 +284,7 @@ struct PanelView: View {
     /// That is the same judgement, accepted again rather than re-opened.
     private var selectionAwaitingReply: String? {
         guard awaitingRun, case let .text(source) = selection else { return nil }
-        return source
+        return source.plain
     }
 
     /// Whether the panel should report progress rather than whatever the model's state says.

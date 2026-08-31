@@ -486,7 +486,7 @@ final class HotkeyCoordinator {
         // promising «a handful of milliseconds» is now true of the code as well.
         isStartingRun = false
         guard case .text(let text) = captured else { return }
-        panelModel.sourceText = text
+        panelModel.sourceText = text.plain
         await runTranslation()
     }
 

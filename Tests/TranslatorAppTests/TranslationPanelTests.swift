@@ -790,7 +790,7 @@ private func panelSize(source: String, translated: String,
     model.state = state
     model.translatedText = translated
     let controller = PanelController { variant in
-        AnyView(PanelView(model: model, selection: .text(source),
+        AnyView(PanelView(model: model, selection: .text(CapturedSelection(plain: source)),
                           awaitingRun: awaitingRun,
                           font: font,
                           scrolls: variant == .installed(scrolls: true),
@@ -910,7 +910,7 @@ private let sentence = "Каждый профиль обязан ссылать�
         model.translatedText = "перевод прошлого нажатия"
 
         let controller = PanelController { variant in
-            AnyView(PanelView(model: model, selection: .text(source),
+            AnyView(PanelView(model: model, selection: .text(CapturedSelection(plain: source)),
                               awaitingRun: true,
                               scrolls: variant == .installed(scrolls: true),
                               fillsPanel: variant != .measured))
@@ -924,7 +924,7 @@ private let sentence = "Каждый профиль обязан ссылать�
         model.state = .running
         model.translatedText = ""
         let host = NSHostingController(
-            rootView: PanelView(model: model, selection: .text(source),
+            rootView: PanelView(model: model, selection: .text(CapturedSelection(plain: source)),
                                 scrolls: false, fillsPanel: false))
         host.view.layoutSubtreeIfNeeded()
         let needed = host.sizeThatFits(in: CGSize(width: opened.width,
@@ -947,7 +947,7 @@ private func resizablePanel(text: String)
     let box = Box()
     let controller = PanelController { variant in
         if case .installed(let scrolls) = variant { box.variant = scrolls ? "scrolling" : "flat" }
-        return AnyView(PanelView(model: model, selection: .text(text),
+        return AnyView(PanelView(model: model, selection: .text(CapturedSelection(plain: text)),
                                  scrolls: variant == .installed(scrolls: true),
                                  fillsPanel: variant != .measured))
     }
@@ -1039,7 +1039,7 @@ private func resizablePanel(text: String)
         modelChunkCount: 1)
 
     let controller = PanelController { variant in
-        AnyView(PanelView(model: model, selection: .text(text),
+        AnyView(PanelView(model: model, selection: .text(CapturedSelection(plain: text)),
                           scrolls: variant == .installed(scrolls: true),
                           fillsPanel: variant != .measured))
     }
@@ -1156,7 +1156,7 @@ private func resizablePanel(text: String)
         }
 
         let controller = PanelController { variant in
-            AnyView(PanelView(model: model, selection: .text(text),
+            AnyView(PanelView(model: model, selection: .text(CapturedSelection(plain: text)),
                               awaitingRun: true,
                               scrolls: variant == .installed(scrolls: true),
                               fillsPanel: variant != .measured))
@@ -1188,7 +1188,7 @@ private func resizablePanel(text: String)
 
     func idealHeight(awaitingRun: Bool = false) -> CGFloat {
         let host = NSHostingController(
-            rootView: PanelView(model: model, selection: .text(source),
+            rootView: PanelView(model: model, selection: .text(CapturedSelection(plain: source)),
                                 awaitingRun: awaitingRun,
                                 scrolls: false, fillsPanel: false))
         host.view.layoutSubtreeIfNeeded()
