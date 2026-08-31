@@ -426,12 +426,12 @@ public enum MarkupSkeleton {
     /// - Without the space rule, a bullet written `* item` offers a stray asterisk that
     ///   parity-pairs with the *opening* marker of a real italic further along the same
     ///   line: the real span is then mis-located and its closer left dangling.
-    static func emphasisSpans(in line: String) -> [(location: Int, strong: Bool)] {
-        emphasisSpans(in: line, excluding: inlineCodeSpans(in: line))
-    }
-
-    /// See `emphasisSpans(in:)`. `codeSpans` are that function's own content ranges —
-    /// the backticks around each are excluded here, not just what they hold.
+    ///
+    /// `codeSpans` are `inlineCodeSpans`' own *content* ranges, taken from the caller
+    /// rather than re-scanned here; the backticks around each are excluded too, not only
+    /// what they hold. There is no convenience overload that scans them itself, because
+    /// the one caller has them already and a second entry point is how two readings of
+    /// one line come to disagree.
     static func emphasisSpans(in line: String,
                               excluding codeSpans: [(range: NSRange, content: String)])
     -> [(location: Int, strong: Bool)] {
@@ -499,7 +499,7 @@ public enum MarkupSkeleton {
     }
 
     /// One `*`, `**`, `_` or `__` on a line, with the two flanking answers already taken —
-    /// see `emphasisSpans(in:)` for what they mean and why they exist.
+    /// see `emphasisSpans(in:excluding:)` for what they mean and why they exist.
     private struct EmphasisMarker {
         let location: Int
         let length: Int
