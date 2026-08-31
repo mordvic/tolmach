@@ -862,15 +862,19 @@ private struct PanelHost: View {
             // inside a SwiftUI update re-enters layout on a view AppKit is already laying
             // out. The controller's own throttle then coalesces the burst.
             .onChange(of: coordinator.panelModel.translatedText) { _, _ in
-                Task { @MainActor in onContentChange(false) }
-            }
-            // Whether the reply renders depends on the text as well as on the state, and the
-            // two are written in some order — so it is re-answered from here too rather than
-            // from the state hook alone. Cheap while a run streams: the rule returns false on
-            // `.running` before it ever scans for markup, and the controller's own setter
-            // returns early when the answer has not moved.
-            .onChange(of: coordinator.panelModel.translatedText) { _, _ in
-                Task { @MainActor in updateReplyRendering() }
+                // Both in one hook rather than two on the same value, for the reason
+                // `onRunFinished` is folded into the state hook below: two observers of one
+                // `@Observable` property race on ordering for no benefit.
+                //
+                // The rendering is re-answered here as well as from the state hook because it
+                // depends on the text too, and the two are written in some order. Cheap while a
+                // run streams: the rule returns false on `.running` before it ever scans for
+                // markup, and the controller's setter returns early when the answer has not
+                // moved.
+                Task { @MainActor in
+                    onContentChange(false)
+                    updateReplyRendering()
+                }
             }
             // The «Разметка | Исходник» choice lives in the window's pane and there is no copy
             // of it on the panel — but it is one setting, so a panel already on screen follows
