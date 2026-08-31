@@ -98,3 +98,28 @@ Two halves of this are fixed and one is not:
   for the selection. There is no API that would distinguish it, and inventing a heuristic —
   «text that does not look like a selection» — would fail in the direction that loses the user's
   actual selection. Accepted, and recorded here rather than left to be rediscovered.
+
+---
+
+## What else the fallback reads, and what that does not change (2026-08-31)
+
+Rich capture (the formatting design's §10) made the fallback read **two more flavours off the
+same board**: once the poll's `string(forType: .string)` lands, `public.html` and `public.rtf`
+are read in the same pass, under the same held `GeneralPasteboard` lock, and travel as raw
+`Data` on `CapturedSelection`. `MarkupKit` converts them; `TextCapture` converts nothing.
+
+Every cost this ADR records is unchanged by that, and deliberately:
+
+- **The same one ⌘C.** No second keystroke, no second poll, no second snapshot. The copy has
+  already happened; these are two reads off a board this app is already holding, between the
+  poll accepting a value and the `defer` that puts the user's clipboard back.
+- **The same exposure.** The selection is on the general pasteboard for the length of the poll
+  either way — that is the price recorded above, not a new one.
+- **The same restore.** `restoreIfUnchanged` still puts back every flavour of every item in
+  declared order, which is what this whole ADR is about; reading a flavour does not consume it.
+- **The capture order is unchanged.** Accessibility first, and it stays plain: the attribute it
+  asks for is a string. So rich capture improves only the applications where that read *fails*
+  and this fallback runs — Safari, Xcode and Telegram among them, per `SelectionReader`'s own
+  measurements. Lifting it onto the Accessibility path is the design's tier 1
+  (`kAXAttributedStringForRangeParameterizedAttribute`), and it is **not built**: it is gated on
+  a measurement of what real applications answer it with (design §11.1, `OPEN-ITEMS` §1).
