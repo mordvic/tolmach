@@ -305,11 +305,11 @@ public enum HTMLToMarkdown {
     /// marker, a line break inside it, the marker's own character — can be applied to the real
     /// content rather than guessed at when the span opens.
     struct Writer {
-        /// Which blocks join their predecessor with a single newline rather than a blank line.
-        /// List items and table rows are one block each and must stay adjacent, or the scanner
-        /// reads a list of one item three times over.
-        private enum Run { case listItem, tableRow, other }
-        private struct Block { let text: String; let run: Run }
+        /// The separator rule between two finished blocks is `MarkdownOutputBlock`'s, shared
+        /// with the other converters here rather than restated: it was restated once and the
+        /// restatement was wrong.
+        private typealias Run = MarkdownOutputBlock.Run
+        private typealias Block = MarkdownOutputBlock
         private struct Span { let marker: String; let href: String?; let offset: Int }
         private struct TableContext {
             var row: [String] = []
@@ -356,16 +356,7 @@ public enum HTMLToMarkdown {
             }
             endRow()
             flush()
-            var result = ""
-            var previous: Run?
-            for block in blocks {
-                if let previous {
-                    result += (previous == block.run && block.run != .other) ? "\n" : "\n\n"
-                }
-                result += block.text
-                previous = block.run
-            }
-            return result
+            return blocks.joinedAsMarkdown()
         }
 
         // MARK: Tags
