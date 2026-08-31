@@ -50,6 +50,11 @@ public enum MarkdownToAttributed {
         public let attributed: NSAttributedString
         public let codeRegions: [CodeRegion]
 
+        public init(attributed: NSAttributedString, codeRegions: [CodeRegion]) {
+            self.attributed = attributed
+            self.codeRegions = codeRegions
+        }
+
         /// `public.rtf`, the flavour the pane's «Скопировать» writes beside the Markdown.
         public var rtf: Data? {
             attributed.rtf(from: NSRange(location: 0, length: attributed.length),

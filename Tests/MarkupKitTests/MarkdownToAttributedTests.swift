@@ -18,8 +18,16 @@ private func runs(_ attributed: NSAttributedString) -> [(text: String, font: NSF
     return result
 }
 
+/// The font in force where `needle` starts.
+///
+/// Located by character offset rather than by «the first run whose text contains this»: whether
+/// two runs carrying equal-looking fonts are coalesced into one is AppKit's business, and a
+/// lookup that assumed they were failed once under load with the needle split across two runs.
+/// An offset cannot be split.
 private func fontOf(_ attributed: NSAttributedString, containing needle: String) -> NSFont? {
-    runs(attributed).first { $0.text.contains(needle) }?.font
+    let range = (attributed.string as NSString).range(of: needle)
+    guard range.location != NSNotFound else { return nil }
+    return attributed.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont
 }
 
 private func traits(_ font: NSFont?) -> NSFontDescriptor.SymbolicTraits {
