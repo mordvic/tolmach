@@ -47,3 +47,21 @@ platform to see them.
 
 `Package.swift` — the absence is the artefact. `CLAUDE.md` states the rule for anyone about to
 add one.
+
+## Amendment, 2026-08-31: where AppKit may be imported
+
+The list above already held AppKit; what changed is that `MarkupKit` — the Markdown →
+`NSAttributedString` converter behind the rendered перевод pane — imports it, and it is the
+first target below `TranslatorApp` to do so.
+
+It is an edit to this decision rather than an exception to it, for the reason the «Markup
+handling» bullet gives in reverse. That bullet is still true: `MarkupSkeleton` does not parse
+Markdown and no parser was added for the *pipeline*. The rendered pane does need one, and it
+still is not a dependency — `MarkdownBlockScanner` is ours, the inline half is Foundation's own
+`AttributedString(markdown:)`, and the attributed string it all produces is an AppKit type by
+nature. Putting the converter in the app instead would have cost a second serialiser for the
+rich «Скопировать» flavour, which is the shape this repo already names as how two surfaces come
+to disagree.
+
+The supply-chain reasoning underneath is untouched: no package, nothing that can reach the
+network, and `swift build` from a clone still simply works.

@@ -78,7 +78,7 @@ ad-hoc signing macOS re-asks after every build. The script's header says how to 
 
 ## Architecture
 
-7 SwiftPM targets, one hard rule: **translation logic knows nothing about Ollama or SwiftUI.**
+8 SwiftPM targets, one hard rule: **translation logic knows nothing about Ollama or SwiftUI.**
 
 <!-- The count and the names below are checked against Package.swift by
      DocumentationTests/ArchitectureDriftTests.swift. This block said "Five" and named a
@@ -86,9 +86,9 @@ ad-hoc signing macOS re-asks after every build. The script's header says how to 
 
 ```
 TranslationCore  (pure domain; depends on nothing but Foundation/NaturalLanguage)
-      ↑            ↑              ↑
-   OllamaKit  LMStudioKit    TextCapture (independent; no TranslationCore)
-      ↑            ↑              ↑
+      ↑            ↑            ↑              ↑
+   OllamaKit  LMStudioKit   MarkupKit    TextCapture (independent; no TranslationCore)
+      ↑            ↑            ↑              ↑
         TranslatorApp (SwiftUI) · translate-cli · acceptance
 ```
 
@@ -105,6 +105,12 @@ TranslationCore  (pure domain; depends on nothing but Foundation/NaturalLanguage
   `capabilities.reasoning.allowed_options` lacks it, so what to send is resolved from those
   options rather than posted blind. See
   `docs/design/specs/2026-08-21-model-engine-switch-design.md`.
+- `MarkupKit` — `MarkdownToAttributed`, the **one** Markdown → `NSAttributedString` converter,
+  used by the перевод pane's rendered mode and by its rich «Скопировать» flavour. Blocks come
+  from `TranslationCore.MarkdownBlockScanner` — so the renderer draws the document the chunker
+  read — and inline spans from Foundation's own parser. It knows `TranslationCore` and AppKit
+  and nothing about the app: `MarkdownFontConfig` mirrors `ContentFont` rather than importing
+  it. See `docs/design/specs/2026-08-31-formatting-design.md`.
 - `TextCapture` — every fragile macOS API, isolated on purpose: Carbon hotkey registration,
   the Accessibility read, the synthetic ⌘C fallback, the whole-pasteboard snapshot, the permission gate.
 - `TranslatorApp` — `MenuBarExtra` + panel + window + settings, `LSUIElement`.
@@ -513,6 +519,12 @@ not cosmetic — **the safe direction is inverted**. See
   `TranslationCore` does **not** get it — the engine reports through
   `TranslationOutcome.documentGlossaryFailure` instead, so the domain layer keeps its
   «Foundation and NaturalLanguage only» rule.
+  **`MarkupKit` is the first non-app target allowed to import AppKit**, since 2026-08-31, and
+  that is a deliberate whitelist edit rather than a leak: an `NSAttributedString` *is* AppKit,
+  and the alternative was a second Markdown serialiser inside the app so the rendered pane and
+  the rich «Скопировать» flavour could come to disagree. The framework was already on the list;
+  what moved is where it may be imported. The arrow still points one way — `MarkupKit` knows
+  `TranslationCore`, and nothing below `TranslatorApp` knows `MarkupKit`.
 - **Nothing derived from the user's text may be logged.** Not the selection, not the source, not
   the translation, not a glossary term. `Log`'s doc comment carries the reasoning; the short
   version is that a unified-log entry is readable by any admin on the machine and is collected by
