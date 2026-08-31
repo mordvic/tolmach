@@ -1201,20 +1201,30 @@ private let richPlain = "Отчёт\nраз\nдва"
 }
 
 @MainActor
-@Test func aPressThatCapturesNothingClearsProvenanceAndAsksTheModelNothing() async {
-    // The `.empty` path assigns the flag too: it is assigned on every press, including the ones
-    // that capture nothing, or it goes on describing the press before.
-    let rich = ScriptedReader([nil])
+@Test func aPressThatCapturesNothingLeavesTheReplyOnScreenWithItsOwnProvenance() async {
+    // Provenance describes the reply on screen, not the last press — the same rule
+    // `translatedText` follows. A press that finds nothing keeps the previous reply, with
+    // «Заменить» still live, so clearing the flag here would write a synthesised translation's
+    // markers into the user's document. **One coordinator, two presses**: two coordinators would
+    // have made this pass whatever the code did.
+    // Both tiers are scripted to answer once and then find nothing, so the second press is a real
+    // «выделите текст» on the same coordinator.
+    let accessibility = ScriptedReader([nil, nil])
+    let clipboard = ScriptedReader([richPlain])
     let (coordinator, client) = makeCoordinator(
-        reader: rich, clipboard: { CapturedSelection(plain: richPlain, html: richHTML) })
+        reader: accessibility, replies: ["# Отчёт\n\n- раз"],
+        clipboard: { clipboard.next().map { CapturedSelection(plain: $0, html: richHTML) } })
     await coordinator.handlePress()
     #expect(coordinator.sourceIsSynthesisedMarkdown)
-    #expect(client.callCount > 0)
+    #expect(coordinator.panelModel.state == .finished)
+    let callsAfterFirstPress = client.callCount
+    #expect(callsAfterFirstPress > 0)
 
-    let nothing = ScriptedReader([nil])
-    let (second, secondClient) = makeCoordinator(reader: nothing)
-    await second.handlePress()
-    #expect(second.selection == .empty)
-    #expect(!second.sourceIsSynthesisedMarkdown)
-    #expect(secondClient.callCount == 0)
+    await coordinator.handlePress()
+
+    #expect(coordinator.selection == .empty)
+    // The reply and its provenance are both still there, and nothing was asked of the model.
+    #expect(coordinator.panelModel.translatedText == "# Отчёт\n\n- раз")
+    #expect(coordinator.sourceIsSynthesisedMarkdown)
+    #expect(client.callCount == callsAfterFirstPress)
 }

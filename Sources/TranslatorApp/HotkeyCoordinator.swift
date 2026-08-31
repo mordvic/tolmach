@@ -523,10 +523,16 @@ final class HotkeyCoordinator {
     /// stripping *their* markers would corrupt their text. So the two cases must be told apart,
     /// and only the capture knows which is which.
     ///
-    /// Assigned on every press, including the ones that capture nothing, so it can never describe
-    /// an earlier press's selection. `retry()`, `switchOperation(to:)` and the two picker methods
-    /// deliberately leave it alone: they re-run the selection already captured, so its provenance
-    /// is still the truth about it.
+    /// **It describes the reply currently on screen, not the last press** — the same rule
+    /// `panelModel.translatedText` follows, and for the same reason. So it is assigned by every
+    /// press that reaches a capture, and left alone by every press that does not: a press that
+    /// finds no selection, or is refused for want of a model, keeps the previous reply on screen
+    /// with «Скопировать» and «Заменить» still live, and that reply's provenance is still the
+    /// truth about it. Clearing it there would leave the markers in a synthesised translation the
+    /// user can still see and still replace with.
+    ///
+    /// `retry()`, `switchOperation(to:)` and the two picker methods leave it alone for the
+    /// narrower version of the same reason: they re-run the selection already captured.
     private(set) var sourceIsSynthesisedMarkdown = false
 
     /// What to translate, and whether this app wrote it.
