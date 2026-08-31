@@ -11,6 +11,10 @@ public enum MarkupToken: Sendable, Equatable, Hashable {
     case paragraphBreak
     case hardLineBreak
     case tableRow
+    /// `**strong**` / `*italic*` and their underscore spellings — see `emphasisSpans`.
+    case emphasis(strong: Bool)
+    /// How many cells the `.tableRow` beside it carried — see `tableCellCount`.
+    case tableCells(count: Int)
 }
 
 public struct MarkupDiff: Sendable, Equatable {
@@ -126,7 +130,11 @@ public enum MarkupSkeleton {
             // for the next one — see below. Inline tokens do not count: a paragraph
             // carrying a URL is still paragraph text.
             var emittedBlockToken = false
-            if trimmed.hasPrefix("|") { tokens.append(.tableRow); emittedBlockToken = true }
+            if trimmed.hasPrefix("|") {
+                tokens.append(.tableRow)
+                tokens.append(.tableCells(count: tableCellCount(trimmed)))
+                emittedBlockToken = true
+            }
             if let level = headingLevel(trimmed) {
                 tokens.append(.heading(level: level)); emittedBlockToken = true
             }
@@ -294,7 +302,8 @@ public enum MarkupSkeleton {
         // straight into the result while URLs accumulated separately and were only
         // sorted among themselves — document order between the two kinds was lost
         // whenever both appeared on the same line (routinely true after the model
-        // merges two source lines into one).
+        // merges two source lines into one). Emphasis joined the same array rather than
+        // getting a list of its own for that reason and no other.
         var found: [(location: Int, token: MarkupToken)] = []
         let ns = line as NSString
         let whole = NSRange(location: 0, length: ns.length)
@@ -325,8 +334,17 @@ public enum MarkupSkeleton {
         // sort correct on a line containing an emoji or any other non-BMP character.
         // The token's sort position is the OPENING backtick, one before the
         // content range `inlineCodeSpans` returns — hence `range.location - 1`.
-        for span in inlineCodeSpans(in: line) {
+        let codeSpans = inlineCodeSpans(in: line)
+        for span in codeSpans {
             found.append((span.range.location - 1, .inlineCode(span.content)))
+        }
+
+        // Emphasis, in the same UTF-16 coordinates and sorted into the same array. The
+        // code spans found above are handed over rather than re-scanned, both to keep this
+        // at one scan per kind per line and because a marker inside backticks is code: the
+        // model never sees a protected span, so it cannot lose the emphasis inside one.
+        for span in emphasisSpans(in: line, excluding: codeSpans) {
+            found.append((span.location, .emphasis(strong: span.strong)))
         }
 
         return found.sorted { $0.location < $1.location }.map(\.token)
@@ -358,6 +376,175 @@ public enum MarkupSkeleton {
             }
         }
         return spans.map { (range: $0.0, content: $0.1) }
+    }
+
+    /// Emphasis spans, per line: `**strong**`, `*italic*`, `__strong__`, `_italic_`.
+    ///
+    /// Found the way `inlineCodeSpans` finds code — markers parity-paired left to right in
+    /// UTF-16 coordinates — and merged into `inlineTokens`' one `found` array, so document
+    /// order between emphasis, inline code and URLs holds on a line carrying more than one
+    /// kind. The discipline is that function's, exactly: an unterminated marker emits
+    /// nothing, and an empty pair (`****`) consumes both markers and emits nothing.
+    ///
+    /// **Why the verifier learns emphasis at all**, since the alternative looks easier from
+    /// here: `MarkupToken` had no case for it, so a model that dropped a `**` was reported
+    /// by nothing — `WarningsView` said the structure survived and `acceptance`'s markup
+    /// gate passed. The loss to be seen is ~1 inline span per document, systematically the
+    /// *same* span per model, and the obvious cure — a prompt rule asking for the markers
+    /// back — was measured harmful on this install's own models: bold degraded to italic
+    /// 5/5 on `translategemma:12b`, emphasis fabricated 2/3 on `aya-expanse:32b`
+    /// (§2 series B of `docs/design/specs/2026-08-31-formatting-design.md`). Detection is
+    /// the whole intervention here; nothing in this file may grow into an instruction.
+    ///
+    /// **The subset of CommonMark implemented, and the licence for stopping there.** The
+    /// same function reads the source and the translation, and `compare` reports only where
+    /// the two readings differ — so a simplification that reads both sides the same way
+    /// cancels out and costs nothing, while an *asymmetric* one invents a diff. That is the
+    /// licence, and it is why this stays a single linear pass per line (`tokens(of:)` runs
+    /// on both sides of the queue's 2 MB files) instead of becoming a parser. What it gives
+    /// up:
+    ///
+    /// - No delimiter-run arithmetic. `**` is a strong marker, a lone `*` an italic one,
+    ///   and each kind pairs only with its own spelling, so `***x***` reads as
+    ///   [strong, italic] — which is the same pair of tokens CommonMark's em-inside-strong
+    ///   would yield, arrived at by accident rather than by rule.
+    /// - No nesting or ordering rules between the two kinds: `*a **b** c*` reads as one
+    ///   italic and one strong at their openers, and a faithful translation keeps both.
+    /// - Nothing but backticks is protected. Inline code is the one form the pipeline keeps
+    ///   by construction, so it is the one exclusion that is about correctness rather than
+    ///   fidelity; brackets, pipes and HTML entities mean nothing here.
+    ///
+    /// **What it must not give up — the flanking gate.** A marker opens only when a
+    /// non-space follows it and closes only when a non-space precedes it; `_` additionally
+    /// may not touch a letter or digit on its outer side. Both halves are edge safety, not
+    /// fidelity, and both are pinned by tests:
+    ///
+    /// - Without the outer-alphanumeric rule for `_`, the filename `a_b_c.txt` written in
+    ///   prose parity-pairs into an italic. Intraword underscores are identifiers in this
+    ///   project's own documents, never emphasis — that is CommonMark's rule too, and it is
+    ///   the one part of flanking worth keeping in full.
+    /// - Without the space rule, a bullet written `* item` offers a stray asterisk that
+    ///   parity-pairs with the *opening* marker of a real italic further along the same
+    ///   line: the real span is then mis-located and its closer left dangling.
+    static func emphasisSpans(in line: String) -> [(location: Int, strong: Bool)] {
+        emphasisSpans(in: line, excluding: inlineCodeSpans(in: line))
+    }
+
+    /// See `emphasisSpans(in:)`. `codeSpans` are that function's own content ranges —
+    /// the backticks around each are excluded here, not just what they hold.
+    static func emphasisSpans(in line: String,
+                              excluding codeSpans: [(range: NSRange, content: String)])
+    -> [(location: Int, strong: Bool)] {
+        let ns = line as NSString
+        let length = ns.length
+        // One marker cannot make a span, so nothing shorter than two units can carry one.
+        guard length >= 2 else { return [] }
+
+        var markers: [EmphasisMarker] = []
+        // `codeSpans` are ascending and disjoint, so one cursor walking alongside `index`
+        // keeps the exclusion linear rather than a membership test per character.
+        var codeCursor = 0
+        var index = 0
+        while index < length {
+            while codeCursor < codeSpans.count,
+                  NSMaxRange(codeSpans[codeCursor].range) + 1 <= index { codeCursor += 1 }
+            if codeCursor < codeSpans.count, index >= codeSpans[codeCursor].range.location - 1 {
+                index = NSMaxRange(codeSpans[codeCursor].range) + 1
+                continue
+            }
+            let unit = ns.character(at: index)
+            guard unit == 0x2A || unit == 0x5F else { index += 1; continue }   // "*" or "_"
+            let markerLength = index + 1 < length && ns.character(at: index + 1) == unit ? 2 : 1
+            let before: unichar? = index > 0 ? ns.character(at: index - 1) : nil
+            let after: unichar? = index + markerLength < length
+                ? ns.character(at: index + markerLength) : nil
+            let underscore = unit == 0x5F
+            markers.append(EmphasisMarker(
+                location: index,
+                length: markerLength,
+                strong: markerLength == 2,
+                unit: unit,
+                canOpen: (after.map { !isSpaceUnit($0) } ?? false)
+                    && (!underscore || (before.map { !isWordUnit($0) } ?? true)),
+                canClose: (before.map { !isSpaceUnit($0) } ?? false)
+                    && (!underscore || (after.map { !isWordUnit($0) } ?? true))))
+            index += markerLength
+        }
+
+        // Four independent parity walks — one per (spelling, strength) — because a `**`
+        // may not be closed by a `*` and an asterisk may not be closed by an underscore.
+        // Four passes over a per-line marker list, so still linear in the line.
+        var spans: [(location: Int, strong: Bool)] = []
+        for unit in [unichar(0x2A), unichar(0x5F)] {
+            for strong in [true, false] {
+                var openAt: Int? = nil
+                for marker in markers where marker.unit == unit && marker.strong == strong {
+                    guard let start = openAt else {
+                        if marker.canOpen { openAt = marker.location }
+                        continue
+                    }
+                    guard marker.canClose else { continue }
+                    // An empty pair consumes both markers and emits nothing — the same
+                    // answer `inlineCodeSpans` gives to ``.
+                    if marker.location > start + marker.length {
+                        spans.append((location: start, strong: strong))
+                    }
+                    openAt = nil
+                }
+                // An unterminated opener emits nothing, and its markers are not
+                // reconsidered as anything else.
+            }
+        }
+        return spans.sorted { $0.location < $1.location }
+    }
+
+    /// One `*`, `**`, `_` or `__` on a line, with the two flanking answers already taken —
+    /// see `emphasisSpans(in:)` for what they mean and why they exist.
+    private struct EmphasisMarker {
+        let location: Int
+        let length: Int
+        let strong: Bool
+        let unit: unichar
+        let canOpen: Bool
+        let canClose: Bool
+    }
+
+    /// A letter or a digit, for the underscore rule. Half of a surrogate pair answers true:
+    /// it is part of some character, and «part of a word» is the question being asked.
+    private static func isWordUnit(_ unit: unichar) -> Bool {
+        guard let scalar = Unicode.Scalar(unit) else { return true }
+        return Character(scalar).isLetter || Character(scalar).isNumber
+    }
+
+    /// Whitespace, for the flanking gate. Half of a surrogate pair answers false, for the
+    /// same reason it answers true above.
+    private static func isSpaceUnit(_ unit: unichar) -> Bool {
+        guard let scalar = Unicode.Scalar(unit) else { return false }
+        return Character(scalar).isWhitespace
+    }
+
+    /// How many cells a `|`-prefixed row carries. Emitted as `.tableCells` *alongside* the
+    /// `.tableRow` that line already produces, not instead of it.
+    ///
+    /// `.tableRow` alone could not see the loss a reader is most likely to ask about — a row
+    /// that came back with two of its four cells — because a row is a row however many pipes
+    /// are left in it. **The cost is that a wholly dropped row now reports two diffs rather
+    /// than one**, and that is accepted: no consumer treats the number of diffs as a
+    /// threshold (`acceptance` aggregates by the `(expected, actual)` pair and counts runs;
+    /// `WarningsView` and `JobResult` show a count and a list), so one extra line about a row
+    /// that is genuinely gone is a cosmetic price for a whole class of loss that was
+    /// previously invisible.
+    ///
+    /// Counted by splitting on `|`: the leading pipe's empty field is always dropped, and a
+    /// whitespace-only last field is dropped as the closing pipe's. A pipe inside an inline
+    /// code span counts as a separator — covered by `emphasisSpans`' licence, since both
+    /// sides are read the same way — and the delimiter row (`|---|---|`) is a row like any
+    /// other and gets its own count.
+    static func tableCellCount(_ trimmed: String) -> Int {
+        var fields = trimmed.split(separator: "|", omittingEmptySubsequences: false)
+        if fields.first?.isEmpty == true { fields.removeFirst() }
+        if let last = fields.last, last.allSatisfy(\.isWhitespace) { fields.removeLast() }
+        return fields.count
     }
 
     /// Built once for the process, not once per line.
