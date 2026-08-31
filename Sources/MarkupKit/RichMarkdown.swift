@@ -84,7 +84,11 @@ public enum RichMarkdown {
             case .blockquote: counts[.blockquote, default: 0] += 1
             case .codeBlock: counts[.codeBlock, default: 0] += 1
             case .tableRow: counts[.tableRow, default: 0] += 1
-            case .inlineCode, .url, .paragraphBreak, .hardLineBreak: break
+            // `.emphasis` is inline — exactly what this gate exists to refuse as a gain.
+            // `.tableCells` always travels beside the `.tableRow` counted above; counting
+            // the pair would double one signal without changing any decision.
+            case .inlineCode, .url, .paragraphBreak, .hardLineBreak, .emphasis, .tableCells:
+                break
             }
         }
         return counts
