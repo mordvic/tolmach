@@ -692,6 +692,11 @@ final class PanelController: NSObject, NSWindowDelegate {
     /// Whether that reads as one movement is `docs/reference/OPEN-ITEMS.md`'s to answer; nothing
     /// in this environment can see it.
     func setRendersFinalReply(_ wanted: Bool) {
+        // The guard is also what makes the doubling harmless: `PanelHost`'s hooks live on the
+        // view, and *both* hosts are live, so this is called twice per settle — the same
+        // tolerated doubling `onContentChange` has, and for the same reason. Unlike
+        // `onRunFinished`, there is nothing here to restrict to the installed variant: the
+        // second call is a comparison and a return.
         guard wanted != rendersFinalReply else { return }
         rendersFinalReply = wanted
         hosting.rootView = build(.installed(scrolls: scrolls))
