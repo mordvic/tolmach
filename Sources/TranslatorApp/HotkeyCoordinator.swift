@@ -564,8 +564,16 @@ final class HotkeyCoordinator {
     /// offers «Скопировать» is hidden for the duration of a capture; but that is a fact
     /// about the current UI rather than about this code, which is exactly why the actual
     /// serialisation lives in `GeneralPasteboard` and not here.
-    func copyResult() async {
-        await GeneralPasteboard.write(panelModel.translatedText, to: pasteboard)
+    /// - Parameter rtf: the rich flavour to write beside the Markdown, or nil for a plain copy —
+    ///   the same parameter, decided by the same rule, as
+    ///   `TranslationViewModel.copyToPasteboard(rtf:)`. Decided at the call site
+    ///   (`TranslatorApp.panelRichFlavour()`) rather than here, because whether the panel is
+    ///   showing the rendered document is the *controller's* answer and this type deliberately
+    ///   knows nothing about the panel's presentation. `autoCopy` below therefore copies plain,
+    ///   which is the behaviour it had before Phase 4 and the behaviour it should keep: it is
+    ///   the one write this app makes to the clipboard unasked.
+    func copyResult(rtf: Data? = nil) async {
+        await GeneralPasteboard.write(panelModel.translatedText, rtf: rtf, to: pasteboard)
     }
 
     /// Whether the application in front of the panel right now is a known terminal emulator —

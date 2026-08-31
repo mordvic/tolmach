@@ -280,6 +280,16 @@ final class PanelController: NSObject, NSWindowDelegate {
     private var frozenWidth: CGFloat?
     private var userSized = false
     private var scrolls = false
+    /// Whether the reply is being drawn as a rendered document rather than as characters — the
+    /// panel's half of Phase 4.
+    ///
+    /// **Held here rather than as `@State` inside `PanelHost`, for the reason `scrolls` is.**
+    /// The controller builds *two* live hosts from one builder — the installed one and the
+    /// detached one the size comes from — and a `@State` would give each of them its own copy,
+    /// which is how the panel comes to be sized for plain text while showing a document, or the
+    /// reverse. `private(set)` because the builder reads it and only `setRendersFinalReply(_:)`
+    /// may move it.
+    private(set) var rendersFinalReply = false
     private var lastFit: CFAbsoluteTime = 0
     private var pendingFit = false
 
@@ -377,6 +387,10 @@ final class PanelController: NSObject, NSWindowDelegate {
         // caller might — must still start from automatic sizing.
         frozenWidth = nil
         userSized = false
+        // Before `setScrolling`, which is what rebuilds the installed host: a presentation
+        // begins on plain characters — there is no run yet to have settled — and rebuilding
+        // once for both is cheaper than rebuilding twice.
+        rendersFinalReply = false
         setScrolling(false)
 
         // The screen the pointer is on, not `NSScreen.main` — which is the screen with the
@@ -641,6 +655,39 @@ final class PanelController: NSObject, NSWindowDelegate {
         guard wanted != scrolls else { return }
         scrolls = wanted
         hosting.rootView = build(.installed(scrolls: wanted))
+    }
+
+    /// The reply becomes — or stops being — a rendered document, and the panel takes whatever
+    /// size that costs.
+    ///
+    /// **Called after the settle, never instead of it, and the fit it asks for is deliberately
+    /// not a settling one.** The two moments do different work and must not be merged:
+    ///
+    /// - The settle (`contentDidChange(settling: true)`, from `PanelHost`'s state hook) is the
+    ///   one fit allowed to make the panel *smaller*, and what it gives back is furniture — the
+    ///   «Перевожу…» row and whatever height the reservation won over the reply's real length.
+    ///   That is measured against the plain characters, exactly as it was before Phase 4,
+    ///   because this flag has not moved yet when it runs.
+    /// - This is the swap, and it may only *grow*. A rendered document is usually taller than
+    ///   its own source — headings scale, tables gain borders and cell padding, code blocks gain
+    ///   spacing — but not always: markers disappear and a table row that wrapped as raw
+    ///   `| a | b |` text can come back as one line. `PanelSizer`'s height is monotonic outside
+    ///   the settle, so a rendered document that measures shorter leaves the panel where it is
+    ///   rather than pulling the frame in under a reader who has already started reading. The
+    ///   width does not move either: the settle above has just frozen it.
+    ///
+    /// `applyFit()` directly rather than `contentDidChange()`, and that is the one thing here
+    /// that is about timing: `contentDidChange` is throttled to ten fits a second and the settle
+    /// has just consumed the current window, so going through it would put the swap up to 100 ms
+    /// behind — long enough to read as a second, separate jump. Called in the same turn of the
+    /// main actor as the settle, the frame AppKit ends up displaying is the rendered one.
+    /// Whether that reads as one movement is `docs/reference/OPEN-ITEMS.md`'s to answer; nothing
+    /// in this environment can see it.
+    func setRendersFinalReply(_ wanted: Bool) {
+        guard wanted != rendersFinalReply else { return }
+        rendersFinalReply = wanted
+        hosting.rootView = build(.installed(scrolls: scrolls))
+        applyFit()
     }
 
     /// The user is dragging an edge right now.
