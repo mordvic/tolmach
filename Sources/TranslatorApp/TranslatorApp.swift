@@ -538,9 +538,19 @@ struct TranslatorApp: App {
                 windowModel: translation,
                 scrolls: variant.scrolls,
                 fillsPanel: variant.fillsPanel,
+                // Read off the controller at build time, which is what makes both hosts agree:
+                // `setRendersFinalReply` rebuilds the installed one and `measure` rebuilds the
+                // detached one on every pass, so neither can be left holding the other's answer.
+                rendersFinalReply: panel.rendersFinalReply,
+                onReplyRenderingChange: { panel.setRendersFinalReply($0) },
                 // Copying does not close. Enter is the shortcut that means «скопировать и
                 // закрыть» (spec 7.2); the button is for a user who wants to keep reading.
-                onCopy: { Task { await coordinator.copyResult() } },
+                onCopy: {
+                    // Read before the suspension, like ⏎ below: what the panel is showing is a
+                    // main-actor fact and the write is not.
+                    let rtf = panelRichFlavour()
+                    Task { await coordinator.copyResult(rtf: rtf) }
+                },
                 // Hidden first, then replaced — the same ordering `panel.onEnter` uses for
                 // «copy and close», and for the same reason: `replaceInSource()` suspends
                 // while the write goes through `GeneralPasteboard`'s serialisation, and
@@ -626,13 +636,42 @@ struct TranslatorApp: App {
             // the finished translation into a hidden panel, where `autoCopy` is off by
             // default and nothing else would ever show it.
             coordinator.panelModel.cancel()
+            // The flavour is decided *before* the panel is hidden, and that is not merely
+            // tidiness: `panelRichFlavour()` asks the controller what the reply is showing, and
+            // ⏎ is the one path that takes it off the screen first.
+            let rtf = panelRichFlavour()
             // Hidden first, then copied. `copyResult()` suspends while the write goes through
             // `GeneralPasteboard`'s serialisation, and Enter means «copy and close» — leaving
             // the panel up for the length of that suspension would make the close look laggy
             // for a keystroke whose whole point is to be instant.
             panel.hide()
-            Task { await coordinator.copyResult() }
+            Task { await coordinator.copyResult(rtf: rtf) }
         }
+    }
+
+    /// The rich flavour the panel's «Скопировать» and its ⏎ should write beside the Markdown, or
+    /// nil for a plain copy.
+    ///
+    /// The rule is `PanelView.richFlavour(...)` — a value with a test, delegating the «is there
+    /// markup, and is the user looking at it» half to the window's own `PaneRendering` so the two
+    /// surfaces cannot copy different things out of one translation. This is the wiring: which
+    /// text, which controller, which settings.
+    ///
+    /// A function, not a stored value, for `MainWindowView.richFlavour()`'s reason: it
+    /// serialises the whole document to RTF, and that belongs at the instant a button is pressed
+    /// and nowhere else.
+    ///
+    /// **`autoCopy` deliberately stays plain.** It is the one path that writes the user's
+    /// clipboard unasked, it lives inside `HotkeyCoordinator` where nothing knows what the panel
+    /// is showing, and an automatic write imposing this app's fonts on whatever the user pastes
+    /// into next is exactly what design §6's «a plain-prose translation never arrives in Word
+    /// wearing a font this app chose» is protecting.
+    @MainActor
+    private func panelRichFlavour() -> Data? {
+        PanelView.richFlavour(text: coordinator.panelModel.translatedText,
+                              rendersFinalReply: panel.rendersFinalReply,
+                              showsRenderedMarkup: settings.showsRenderedMarkup,
+                              font: settings.contentFont)
     }
 
     /// Spec 7.2's «Открыть в окне»: the panel's texts move to the window, and the window
@@ -749,6 +788,15 @@ private struct PanelHost: View {
     /// `PanelContentVariant` at the call site, so they cannot be set to a combination that
     /// does not exist.
     let fillsPanel: Bool
+    /// Whether the reply is drawn as a rendered document. Read off `PanelController`, which is
+    /// the one place it lives, for the reason that property's own comment gives: two hosts, one
+    /// answer.
+    let rendersFinalReply: Bool
+    /// Tells the controller that the answer to the above has changed. The *rule* is
+    /// `PanelView.rendersFinalReply(state:awaitingRun:text:showsRenderedMarkup:)`; this view
+    /// evaluates it, because it is the one that observes all four of its inputs, and hands the
+    /// result over.
+    let onReplyRenderingChange: (Bool) -> Void
     let onCopy: () -> Void
     /// «Заменить» — issue #27, threaded like every other callback here.
     let onReplace: () -> Void
@@ -805,6 +853,7 @@ private struct PanelHost: View {
                   // is what the panel's size comes from. A font resolved where the builder is
                   // constructed would freeze at launch on both of them.
                   font: settings.contentFont,
+                  rendersFinalReply: rendersFinalReply,
                   scrolls: scrolls,
                   onClose: onClose,
                   fillsPanel: fillsPanel)
@@ -813,7 +862,25 @@ private struct PanelHost: View {
             // inside a SwiftUI update re-enters layout on a view AppKit is already laying
             // out. The controller's own throttle then coalesces the burst.
             .onChange(of: coordinator.panelModel.translatedText) { _, _ in
-                Task { @MainActor in onContentChange(false) }
+                // Both in one hook rather than two on the same value, for the reason
+                // `onRunFinished` is folded into the state hook below: two observers of one
+                // `@Observable` property race on ordering for no benefit.
+                //
+                // The rendering is re-answered here as well as from the state hook because it
+                // depends on the text too, and the two are written in some order. Cheap while a
+                // run streams: the rule returns false on `.running` before it ever scans for
+                // markup, and the controller's setter returns early when the answer has not
+                // moved.
+                Task { @MainActor in
+                    onContentChange(false)
+                    updateReplyRendering()
+                }
+            }
+            // The «Разметка | Исходник» choice lives in the window's pane and there is no copy
+            // of it on the panel — but it is one setting, so a panel already on screen follows
+            // it. Same deferral as every other hook here.
+            .onChange(of: settings.showsRenderedMarkup) { _, _ in
+                Task { @MainActor in updateReplyRendering() }
             }
             // A panel already on screen when the size changes. Same deferral and the same
             // throttle as a streamed token, and the same tolerated doubling: both hosts carry
@@ -833,10 +900,33 @@ private struct PanelHost: View {
                 // presentation will be asked for, and the only one animated — and also the
                 // point a hotkey run has something new to say about whether Ollama answered.
                 Task { @MainActor in
+                    // **The settle first, the rendered swap second, and the order is the
+                    // whole design of it.** The settle is measured against the plain
+                    // characters — this closure has not told the controller anything yet — so
+                    // it gives back the «Перевожу…» row and whatever height the reservation
+                    // won, exactly as it did before Phase 4. Only then does the reply become a
+                    // document, through a fit that may grow the panel and not shrink it. See
+                    // `PanelController.setRendersFinalReply(_:)`.
                     onContentChange(new != .running)
+                    updateReplyRendering(state: new)
                     if new != .running { await onRunFinished() }
                 }
             }
+    }
+
+    /// Re-answers `PanelView.rendersFinalReply(...)` and hands the result to the controller.
+    ///
+    /// - Parameter state: the state to judge by, or nil to read the model's current one. The
+    ///   state hook passes the same `new` it decided `settling` from, so the settle and the swap
+    ///   that follows it in the same turn cannot end up describing two different states; the
+    ///   other two hooks have no state of their own to pass and read the model.
+    @MainActor
+    private func updateReplyRendering(state: TranslationState? = nil) {
+        onReplyRenderingChange(PanelView.rendersFinalReply(
+            state: state ?? coordinator.panelModel.state,
+            awaitingRun: coordinator.isStartingRun,
+            text: coordinator.panelModel.translatedText,
+            showsRenderedMarkup: settings.showsRenderedMarkup))
     }
 }
 

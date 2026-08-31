@@ -142,6 +142,19 @@ struct PanelView: View {
     /// the panel from the detached one. A font applied only to the installed copy would leave
     /// every panel measured at the previous size.
     var font: ContentFont = .default
+    /// Whether the reply is drawn as a *document* rather than as characters — the panel's whole
+    /// of Phase 4, and true only after a run has settled.
+    ///
+    /// A value and not a rule evaluated here, for the reason `scrolls` is one: the panel's size
+    /// comes from a second, detached host, and the *controller* is what holds the one answer
+    /// both hosts are built with (`PanelController.setRendersFinalReply(_:)`). Two copies of the
+    /// view deciding for themselves is how the panel comes to be sized for one thing and to draw
+    /// another. The rule itself is `PanelView.rendersFinalReply(state:awaitingRun:text:
+    /// showsRenderedMarkup:)`, which is a value with a test.
+    ///
+    /// Defaults to false, so every call site that predates this — and every test that pins the
+    /// streaming panel — measures and draws exactly what it did before.
+    var rendersFinalReply = false
     /// Whether the content must scroll — `PanelSizer` decided the content is taller than the
     /// panel it can be given. It wraps only the rows whose height the content decides; the
     /// header and the button row are pinned outside it. See `scrollingMiddle`.
@@ -564,22 +577,38 @@ struct PanelView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
-                        Text(model.translatedText)
-                            .font(font.font)
-                            .textSelection(.enabled)
-                            // Without this the text is a live region VoiceOver has no warning
-                            // about: it is rewritten on every streamed token, up to ten times a
-                            // second, and an assistive technology that re-reads a changed label
-                            // would talk over itself for the whole of a run. The trait is the
-                            // documented way to say «this changes often, do not follow it» — the
-                            // settle is announced once instead, by `announcement(for:)`.
-                            .accessibilityAddTraits(.updatesFrequently)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            // A `Text` given less width than it wants truncates rather than
-                            // wrapping, and the panel's width is now measured from this view — so
-                            // without this the measurement and the rendering disagree about how
-                            // many lines there are.
-                            .fixedSize(horizontal: false, vertical: true)
+                        if rendersFinalReply {
+                            // The settled document, in a hosted text view. Reached only after
+                            // the run has ended — never during the stream, where this panel
+                            // stays plain characters on purpose (`RenderedReplyView`'s own
+                            // comment carries the reason and the measurement). The reservation
+                            // above is nil by then, so the two never occupy the `ZStack`
+                            // together.
+                            //
+                            // No `.textSelection` and no `.updatesFrequently`: the text view
+                            // selects across the whole document by construction, which is why
+                            // it is a text view, and a settled reply is not a live region.
+                            RenderedReplyView(text: model.translatedText, font: font)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            Text(model.translatedText)
+                                .font(font.font)
+                                .textSelection(.enabled)
+                                // Without this the text is a live region VoiceOver has no
+                                // warning about: it is rewritten on every streamed token, up to
+                                // ten times a second, and an assistive technology that re-reads
+                                // a changed label would talk over itself for the whole of a
+                                // run. The trait is the documented way to say «this changes
+                                // often, do not follow it» — the settle is announced once
+                                // instead, by `announcement(for:)`.
+                                .accessibilityAddTraits(.updatesFrequently)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                // A `Text` given less width than it wants truncates rather than
+                                // wrapping, and the panel's width is now measured from this
+                                // view — so without this the measurement and the rendering
+                                // disagree about how many lines there are.
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
 
                     // Gated on `outcome`, not on `state == .finished`, and the header above is
@@ -891,6 +920,62 @@ struct PanelView: View {
                                                       selection: SelectionResult) -> Bool {
         guard case .text = selection else { return false }
         return operation == .proofread
+    }
+
+    /// Whether the reply should be drawn as a rendered document — the panel's one Phase 4
+    /// decision, in one place.
+    ///
+    /// Four conditions, and each of them is load-bearing in a different direction:
+    ///
+    /// - **The run has ended.** `state != .running` is what keeps the panel byte-identical to
+    ///   what it was during a stream, which the design asks for on its own terms
+    ///   (§7: the panel answers in under a second at 300–560 pt, and a reflowing layout there is
+    ///   worse than raw `**`) and which is also what leaves `PanelSizer`'s monotonic height and
+    ///   the reservation's square-law prediction measuring the thing they were tuned against.
+    ///   `.interrupted` and `.failed` count as ended: an interrupted run's partial output is
+    ///   kept on purpose, and there is nothing more coming to reflow it.
+    /// - **No press is being started.** `awaitingRun` is the window inside which the panel is
+    ///   measured against the *reservation* while still showing the previous run's text
+    ///   (`selectionAwaitingReply`, `PanelController.show(at:)`). Rendering there would put a
+    ///   document and an invisible copy of the new source in one `ZStack` and measure the panel
+    ///   against both.
+    /// - **There is markup.** `MarkdownPresence.hasMarkup` — the same gate the window's pane
+    ///   uses, so «Цена 5 * 3 = 15» is prose in both places. Prose with no markup renders
+    ///   identically either way, and drawing it through a text view anyway would change the
+    ///   panel's measured height for nothing.
+    /// - **The user has not asked for «Исходник».** The panel has no toggle of its own — the
+    ///   design puts it in the pane's header — so this reads the same
+    ///   `AppSettings.showsRenderedMarkup` the pane writes.
+    ///
+    /// `nonisolated` for the reason `direction(outcome:target:operation:)` is.
+    nonisolated static func rendersFinalReply(state: TranslationState,
+                                              awaitingRun: Bool,
+                                              text: String,
+                                              showsRenderedMarkup: Bool) -> Bool {
+        guard !awaitingRun, state != .running, showsRenderedMarkup else { return false }
+        return MarkdownPresence.hasMarkup(text)
+    }
+
+    /// The rich flavour the panel's «Скопировать» and its ⏎ write beside the Markdown, or nil
+    /// for a plain copy.
+    ///
+    /// The «is there markup, and is the user looking at it» half is `PaneRendering`'s — the
+    /// window's own rule, delegated rather than restated, because the panel and the pane copying
+    /// different things out of one translation is exactly the failure that type was introduced
+    /// to prevent. What is added here is the panel's own half: the reply is only *rendered* after
+    /// the run settles, so a copy taken mid-stream — which «Скопировать» deliberately allows,
+    /// from the first token — is plain. Nothing half-arrived leaves this app wearing a font it
+    /// chose.
+    ///
+    /// A function called at the instant a button is pressed, never from a body:
+    /// `MainWindowView.richFlavour()`'s reason, which is that this serialises the whole document
+    /// to RTF.
+    nonisolated static func richFlavour(text: String, rendersFinalReply: Bool,
+                                        showsRenderedMarkup: Bool,
+                                        font: ContentFont) -> Data? {
+        guard rendersFinalReply else { return nil }
+        return PaneRendering.of(text, showsRenderedMarkup: showsRenderedMarkup)
+            .rtf(of: text, font: font)
     }
 
     /// Exhaustive with no `default:` on purpose: a sixth `TranslationState` case should
