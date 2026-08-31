@@ -34,6 +34,16 @@ private func traits(_ font: NSFont?) -> NSFontDescriptor.SymbolicTraits {
     font?.fontDescriptor.symbolicTraits ?? []
 }
 
+/// What actually got rendered, for the one flaky assertion above — see its comment.
+private func runDump(_ attributed: NSAttributedString) -> String {
+    var lines = ["string=\(attributed.string.debugDescription)"]
+    attributed.enumerateAttributes(in: NSRange(location: 0, length: attributed.length)) { attrs, range, _ in
+        let text = (attributed.string as NSString).substring(with: range)
+        lines.append("\(text.debugDescription) font=\(String(describing: attrs[.font]))")
+    }
+    return lines.joined(separator: " · ")
+}
+
 @Test func headingsScaleBySizeAndAreSemibold() {
     let text = "# Первый\n\n## Второй\n\n### Третий\n\n#### Четвёртый\n\nАбзац.\n"
     let rendered = MarkdownToAttributed.rendering(of: text, config: config).attributed
@@ -61,7 +71,15 @@ private func traits(_ font: NSFont?) -> NSFontDescriptor.SymbolicTraits {
         of: "Абзац с **жирным**, *курсивом* и `кодом` внутри.\n", config: config).attributed
     #expect(traits(fontOf(rendered, containing: "жирным")).contains(.bold))
     #expect(traits(fontOf(rendered, containing: "курсивом")).contains(.italic))
-    #expect(fontOf(rendered, containing: "кодом")?.isFixedPitch == true)
+    // Flaky, and deliberately made loud rather than quiet: ~1 in 50 full-suite runs on this
+    // machine (2026-08-31; 4/20 under heavy concurrent load on the same commit, 0 in 200 000
+    // standalone concurrent runs of the distilled `inline` path, 0 in 30 instrumented suite
+    // runs), always as `fontOf(…, "кодом")` answering nil. MarkupKit holds no mutable statics,
+    // so the race — if it is one — sits inside Foundation's Markdown parser or AppKit's font
+    // machinery under load, and was never isolated. The dump in the comment below is what
+    // turns the NEXT firing from «nil» into the actual runs; do not delete it as tidying.
+    #expect(fontOf(rendered, containing: "кодом")?.isFixedPitch == true,
+            Comment(rawValue: runDump(rendered)))
     // Not bold and not italic where the source said neither — otherwise the assertions above
     // would pass under a converter that made everything bold.
     #expect(!traits(fontOf(rendered, containing: "Абзац с ")).contains(.bold))
