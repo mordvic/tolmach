@@ -275,3 +275,89 @@ private func scratchTextView() -> CodeBlockTextView {
     #expect(view.codeRegions.count == 1)
     #expect(view.codeRegions.first?.source == "код")
 }
+
+// MARK: - Geometry
+//
+// Nothing here can see a screen, and none of these assertions claims to. What they do is rule
+// out the degenerate outcomes that would be invisible to every test above: a document that
+// lays out to nothing, a table that collapses, a code-block button placed at the origin
+// because the glyph rect came back empty.
+
+@MainActor
+@Test func theRenderedDocumentLaysOutWithRealHeightAndKeepsItsOrder() {
+    let document = """
+    # Заголовок
+
+    Абзац с **жирным**.
+
+    | Колонка | Значение |
+    |:---|---:|
+    | a | 1 |
+
+    ```swift
+    let x = 1
+    ```
+
+    Последний абзац.
+
+    """
+    let view = scratchTextView()
+    let coordinator = RenderedTextView.Coordinator()
+    coordinator.apply(text: document, font: .default, rendersMarkup: true, isStreaming: false,
+                      to: view)
+    guard let layout = view.layoutManager, let container = view.textContainer else {
+        Issue.record("the view is not in TextKit 1 — there would be no NSTextTable either")
+        return
+    }
+    layout.ensureLayout(for: container)
+    let used = layout.usedRect(for: container)
+    // A whole document of five blocks at 13 pt cannot be a few points tall, and this is the
+    // assertion that would catch a paragraph style or a table block that made the layout
+    // collapse.
+    #expect(used.height > 100, "the whole document laid out to \(used.height) pt")
+    #expect(used.width > 0)
+
+    // The table's cells really are table blocks *after* layout, not merely in the storage.
+    var tableRects: [NSRect] = []
+    let whole = NSRange(location: 0, length: view.textStorage?.length ?? 0)
+    view.textStorage?.enumerateAttribute(.paragraphStyle, in: whole, options: []) { value, range, _ in
+        guard let style = value as? NSParagraphStyle,
+              style.textBlocks.first is NSTextTableBlock else { return }
+        let glyphs = layout.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+        tableRects.append(layout.boundingRect(forGlyphRange: glyphs, in: container))
+    }
+    #expect(tableRects.count == 4)
+    // Two columns: the second cell of a row starts to the right of the first, which is what a
+    // table laying out *as a table* means rather than four stacked paragraphs.
+    #expect(tableRects[1].minX > tableRects[0].minX)
+    #expect(tableRects[2].minY > tableRects[0].minY)
+}
+
+@MainActor
+@Test func eachCodeBlockGetsAButtonOverItsOwnGlyphs() {
+    let document = "# Заголовок\n\n```swift\nlet x = 1\n```\n\n```\nдругой блок\n```\n\n"
+    let view = scratchTextView()
+    let coordinator = RenderedTextView.Coordinator()
+    coordinator.apply(text: document, font: .default, rendersMarkup: true, isStreaming: false,
+                      to: view)
+    view.layout()
+    let buttons = view.subviews.compactMap { $0 as? CodeCopyButton }
+    #expect(buttons.count == 2)
+    #expect(buttons.map(\.source) == ["let x = 1", "другой блок"])
+    for button in buttons {
+        guard let frame = button.blockFrame else {
+            Issue.record("no rect for \(button.source.debugDescription)"); continue
+        }
+        // Not the origin, not empty: `boundingRect(forGlyphRange:in:)` answering `.zero` is the
+        // failure mode that would leave every button stacked in the corner.
+        #expect(frame.height > 0)
+        #expect(frame.width > 0)
+        #expect(button.frame.minY >= frame.minY)
+        #expect(button.frame.maxX <= frame.maxX + 1)
+    }
+    // The second block sits below the first, so the two buttons cannot be on top of each other.
+    #expect((buttons[1].blockFrame?.minY ?? 0) > (buttons[0].blockFrame?.minY ?? 0))
+    // Hidden until the pointer is over the block — the hover affordance the design asks for.
+    // How it *feels* is §11.2's human check; that it starts hidden is not.
+    #expect(buttons.filter { !$0.isHidden }.isEmpty)
+}

@@ -61,6 +61,15 @@ struct RenderedTextView: NSViewRepresentable {
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
+        // **`isVerticallyResizable` alone does not let it grow.** A text view built with
+        // `init(frame:textContainer:)` takes its `minSize` and `maxSize` from that frame, so a
+        // document taller than the frame is laid out and then clipped, with nothing for the
+        // scroll view to scroll. The pair below is the programmatic equivalent of what
+        // `scrollableTextView()` sets up — which this does not use, because that factory hands
+        // back a TextKit 2 view and `NSTextTable` does not exist there.
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude,
+                                  height: CGFloat.greatestFiniteMagnitude)
         textView.textContainerInset = NSSize(width: 3, height: 8)
         let linkAttributes: [NSAttributedString.Key: Any] = [
             .foregroundColor: NSColor.linkColor,
@@ -72,6 +81,7 @@ struct RenderedTextView: NSViewRepresentable {
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
         scroll.hasHorizontalScroller = false
+        scroll.autohidesScrollers = true
         scroll.drawsBackground = false
         scroll.borderType = .noBorder
         scroll.documentView = textView
@@ -288,6 +298,13 @@ final class CodeBlockTextView: NSTextView {
             var rect = layoutManager.boundingRect(forGlyphRange: glyphs, in: textContainer)
             rect.origin.x += textContainerOrigin.x
             rect.origin.y += textContainerOrigin.y
+            // **Widened to the container, and that is the placement decision.** The glyph rect
+            // is only as wide as the code — measured, `"let x = 1"` at 13 pt comes back 84 pt
+            // wide — while what the reader sees as «the code block» is the tinted paragraph
+            // running the width of the pane. A button pinned to the glyph rect's right edge
+            // therefore lands in the middle of the pane, over nothing, and the hover band
+            // would miss every point past the end of the shortest line.
+            rect.size.width = max(rect.width, textContainer.size.width - rect.minX)
             button.blockFrame = rect
             button.sizeToFit()
             let size = button.frame.size
