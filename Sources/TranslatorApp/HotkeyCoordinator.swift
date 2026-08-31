@@ -4,6 +4,7 @@ import Observation
 import AppKit
 import TranslationCore
 import TextCapture
+import MarkupKit
 
 /// Why a registration was refused, and how loudly to say so.
 ///
@@ -484,10 +485,78 @@ final class HotkeyCoordinator {
         // flag still true, froze the panel at the *source's* size, and `PanelSizer` is
         // monotonic outside the settle, so nothing ever gave the space back. The doc comment
         // promising «a handful of milliseconds» is now true of the code as well.
+        guard case .text(let captured) = captured else {
+            isStartingRun = false
+            return
+        }
+        // The rich flavours are converted **here**: after `afterCapture()` has put the panel on
+        // screen, before the model is asked anything.
+        //
+        // That placement is the panel's budget rather than tidiness. `AttributedToMarkdown` goes
+        // through AppKit's text system, which the design measured at 216–262 ms cold / ~60 ms
+        // warm for the sibling HTML import — a quarter of a second in front of a panel that
+        // exists to answer in under a second, on the press where it would be most visible.
+        // Behind it, the panel is already drawn and the cost lands on a run that is about to
+        // spend a model call anyway.
+        //
+        // `isStartingRun` is cleared *after* the conversion and not before it, which is a change
+        // to the paragraph above: there is a suspension point in here now, so the main actor does
+        // render during it. That is exactly the window the flag is for — «a press has captured
+        // its text and nothing about the model says what is about to happen» — and the panel was
+        // already measured with it true inside `afterCapture()`. What must not happen is the
+        // *settle* being measured with it true, and the settle is at the end of the run, well
+        // past this line.
+        let source = await richSource(for: captured)
         isStartingRun = false
-        guard case .text(let text) = captured else { return }
-        panelModel.sourceText = text.plain
+        panelModel.sourceText = source.text
+        sourceIsSynthesisedMarkdown = source.synthesised
         await runTranslation()
+    }
+
+    /// Whether the text handed to the model was **synthesised by this app** out of a capture's
+    /// rich flavours, rather than being the characters the user selected.
+    ///
+    /// Read by `replaceInSource()`, and the reason it exists: with a synthesised source the
+    /// translation comes back carrying `**`, `#` and `|`, and pasting those literally into the
+    /// user's document is a regression on what «Заменить» did before rich capture. A user whose
+    /// own selection genuinely contained Markdown gets the byte-plain replace it always had —
+    /// stripping *their* markers would corrupt their text. So the two cases must be told apart,
+    /// and only the capture knows which is which.
+    ///
+    /// Assigned on every press, including the ones that capture nothing, so it can never describe
+    /// an earlier press's selection. `retry()`, `switchOperation(to:)` and the two picker methods
+    /// deliberately leave it alone: they re-run the selection already captured, so its provenance
+    /// is still the truth about it.
+    private(set) var sourceIsSynthesisedMarkdown = false
+
+    /// What to translate, and whether this app wrote it.
+    private struct TranslationSource {
+        let text: String
+        let synthesised: Bool
+    }
+
+    /// The capture's rich flavours converted, gated and chosen — or its plain text.
+    ///
+    /// **Off the main actor**, because the conversion parses a document and the RTF half brings
+    /// AppKit's text system up (see the call site for the measurement). `Task.detached` and not a
+    /// bare `Task {}`: a `Task {}` here would inherit this actor and do the parsing on it, which
+    /// is the whole thing this avoids.
+    ///
+    /// **No suspension at all when there is nothing to convert**, which is the overwhelmingly
+    /// common case — the Accessibility tier never carries a flavour, so an ordinary press does not
+    /// pay a hop for a feature it is not using.
+    private func richSource(for captured: CapturedSelection) async -> TranslationSource {
+        guard captured.hasRichFlavours else {
+            return TranslationSource(text: captured.plain, synthesised: false)
+        }
+        let synthesised = await Task.detached(priority: .userInitiated) {
+            RichMarkdown.markdown(html: captured.html, rtf: captured.rtf,
+                                  improvingOn: captured.plain)
+        }.value
+        guard let synthesised else {
+            return TranslationSource(text: captured.plain, synthesised: false)
+        }
+        return TranslationSource(text: synthesised, synthesised: true)
     }
 
     /// The «Повторить» the panel offers on a failure. Translates the selection already
@@ -588,10 +657,29 @@ final class HotkeyCoordinator {
     /// any other path — a future shortcut, a test — cannot bypass it either. `frontmostIsTerminal`
     /// (issue #29) is re-checked for the same reason: the view's own `.disabled` is not the
     /// only thing standing between a press and a terminal.
+    /// **Markers this app put there are taken back off; the user's own are not.**
+    ///
+    /// `SelectionWriter` writes plain text and keeps writing plain text — the design's §6 records
+    /// why (AppKit's HTML import shows what RTF carries: an `<h2>` arrives as 18 pt bold Times,
+    /// so pasting rich back would replace the user's selection with this app's idea of Times 12,
+    /// and revisiting that needs §11.3's measurement of how real applications merge an incoming
+    /// run). What changed with rich capture is that the *translation* can now carry `**`, `#` and
+    /// `|` that the user never typed, and writing those literally into their document is a
+    /// regression on what this button did before.
+    ///
+    /// So the strip is conditional on provenance and on nothing else. Where this app synthesised
+    /// the Markdown, `MarkdownPlainText` takes the markers off. Where the user's own selection
+    /// contained Markdown — a README, a chunk of a spec — the replace is byte-plain exactly as it
+    /// always was, because stripping their markers would corrupt their text. The decision lives
+    /// here, where every other decision of a press lives, rather than inside `SelectionWriter`,
+    /// which cannot know where the text came from.
     func replaceInSource() async {
         guard !isReplacing, panelModel.state == .finished, !frontmostIsTerminal else { return }
         isReplacing = true
         defer { isReplacing = false }
-        await selectionWriter.replace(panelModel.translatedText, on: pasteboard)
+        let text = sourceIsSynthesisedMarkdown
+            ? MarkdownPlainText.render(panelModel.translatedText)
+            : panelModel.translatedText
+        await selectionWriter.replace(text, on: pasteboard)
     }
 }

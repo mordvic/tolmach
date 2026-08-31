@@ -12,21 +12,27 @@ import Foundation
 
 // MARK: - Building attributed strings by hand
 
-private func body(_ size: CGFloat = 12) -> NSFont { NSFont.systemFont(ofSize: size) }
-
-private func bold(_ size: CGFloat = 12) -> NSFont {
-    NSFont.boldSystemFont(ofSize: size)
+// **Named fonts, not the system font's synthesized family**, and that is a measured choice rather
+// than a stylistic one. Two things pushed it: what an RTF flavour actually carries is a named face
+// (`\fswiss Helvetica`, `\fmodern Courier` — the fixture at the bottom of this file goes through
+// the importer and comes back with exactly those), and three tests written against
+// `NSFont.boldSystemFont` failed twice in about fifteen suite runs with every inline marker
+// missing, as though the runs had carried no font at all. That was never isolated: 9 600
+// concurrent trait reads in a standalone probe and 400 conversions in a tight in-process loop
+// never reproduced it, and the fixture built on Helvetica-Bold never once flaked. So the fixtures
+// use the faces a document uses, and the flake — reproducible or not — has no purchase here. If it
+// ever returns, it is `docs/reference/PLATFORM-TRAPS.md` material and not a test to weaken.
+private func named(_ name: String, _ size: CGFloat) -> NSFont {
+    NSFont(name: name, size: size) ?? NSFont.systemFont(ofSize: size)
 }
 
-private func italic(_ size: CGFloat = 12) -> NSFont {
-    let descriptor = NSFont.systemFont(ofSize: size).fontDescriptor
-        .withSymbolicTraits(.italic)
-    return NSFont(descriptor: descriptor, size: size) ?? body(size)
-}
+private func body(_ size: CGFloat = 12) -> NSFont { named("Helvetica", size) }
 
-private func mono(_ size: CGFloat = 12) -> NSFont {
-    NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
-}
+private func bold(_ size: CGFloat = 12) -> NSFont { named("Helvetica-Bold", size) }
+
+private func italic(_ size: CGFloat = 12) -> NSFont { named("Helvetica-Oblique", size) }
+
+private func mono(_ size: CGFloat = 12) -> NSFont { named("Courier", size) }
 
 /// One paragraph, its runs given as `(text, attributes)`, with the terminator AppKit's own
 /// paragraph ranges need.
@@ -236,11 +242,17 @@ private func cellStyle(_ table: NSTextTable, row: Int, column: Int) -> NSParagra
 
 @Test func aHeadingsLevelComesFromItsSizeRelativeToTheBody() {
     // The ladder, at a 12 pt body: ×1.8 → h1, ×1.4 → h2, ×1.15 → h3.
+    //
+    // The last *line* is compared, not a suffix: `hasSuffix("# Отчёт")` is true of «## Отчёт»
+    // too, so the suffix spelling passed with the h1 rung wired to return 2 — measured, by
+    // making exactly that change and watching it stay green.
     for (size, level) in [(24.0, 1), (18.0, 2), (14.0, 3)] {
         let text = document([bodyParagraph(),
                              paragraph([("Отчёт", [.font: bold(size)])])])
-        #expect(AttributedToMarkdown.markdown(from: text)
-                    .hasSuffix(String(repeating: "#", count: level) + " Отчёт"))
+        let markdown = AttributedToMarkdown.markdown(from: text)
+        #expect(markdown.split(separator: "\n").last.map(String.init)
+                    == String(repeating: "#", count: level) + " Отчёт")
+        #expect(MarkupSkeleton.tokens(of: markdown).contains(.heading(level: level)))
     }
 }
 
@@ -258,9 +270,16 @@ private func cellStyle(_ table: NSTextTable, row: Int, column: Int) -> NSParagra
 @Test func aLongParagraphIsNeverAHeadingHoweverLargeItIsSet() {
     // A pull quote set at 1.5× body is a paragraph; `# ` in front of four lines of prose is a
     // worse error than a lost heading.
+    //
+    // **Six body paragraphs, and that is what makes the test about the limit.** With one, the long
+    // paragraph's own 264 characters *are* the most-covered point size, so `bodySize` came back 18,
+    // the ratio came back 1.0 and the paragraph was no heading for a reason that has nothing to do
+    // with its length — measured, by deleting the limit and watching the test stay green.
     let long = String(repeating: "Очень длинная строка. ", count: 12)
     #expect(long.count > AttributedToMarkdown.headingCharacterLimit)
-    let text = document([bodyParagraph(), paragraph([(long, [.font: bold(18)])])])
+    let text = document(Array(repeating: bodyParagraph(), count: 6)
+                            + [paragraph([(long, [.font: bold(18)])])])
+    #expect(AttributedToMarkdown.bodySize(of: text) == 12)
     #expect(!AttributedToMarkdown.markdown(from: text).contains("#"))
 }
 
