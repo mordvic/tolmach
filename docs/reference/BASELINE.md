@@ -702,6 +702,55 @@ pass is a long job, and neither has an entry yet. That is the next thing this fi
 
 ---
 
+## 2026-08-31 — the skeleton sees emphasis, and the markup-loss document joins the corpus
+
+- Machine: Apple M5 Pro, 48 GB, macOS 26.6.1
+- Ollama live, `translategemma:12b`
+
+- What changed: `MarkupToken` gained `.emphasis(strong:)` and `.tableCells(count:)`
+  (`feat/markup-emphasis-tokens`), and `corpus/markup-en.md` — the document the
+  2026-08-31 live loss series was measured on (`Scripts/markup-loss.sh`,
+  design spec §2) — became the sixth corpus file. Run F's note that a sixth file
+  «changes every future run's comparability and that is a decision of its own» is the
+  decision being taken here, deliberately: before these tokens, a dropped `**` was
+  invisible to every surface, which is how the loss stayed unmeasured for the
+  project's whole life.
+- Why: design spec `2026-08-31-formatting-design.md` §9 (Phase 2). The loss series
+  measured translategemma:12b dropping `*read-only*` in 5/5 runs and aya-expanse:32b
+  dropping `*first*` in 3/3 — systematic, invisible, and unfixable by prompt (series B:
+  the obvious rule degraded bold→italic 5/5 on 12b and fabricated emphasis 2/3 on
+  aya-expanse:32b, so no prompt change accompanies these tokens).
+
+### Run H — `--model translategemma:12b --chunk 4000`, verdict **FAILED**, and the failure is the feature working
+
+```
+acceptance: engine ollama · model translategemma:12b · chunk 4000 chars · TTFT gate info only — not Ollama's interactive-policy model · known-limitation set not applied — measured on aya-expanse:8b
+article-en.md: adherence n/a (single model-bound chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 1507 ms (info only — TTFT not gated for this model)
+email-en.md: adherence n/a (single model-bound chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 822 ms (info only — TTFT not gated for this model)
+markup-en.md: adherence n/a (single model-bound chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 9861 ms (info only — TTFT not gated for this model)
+    markup: expected Optional(TranslationCore.MarkupToken.emphasis(strong: false)) actual nil
+snippet-en.md: adherence n/a (single model-bound chunk, document glossary not applicable) · 1 chunk · 0 terms · TTFT 889 ms (info only — TTFT not gated for this model)
+techdoc-en.md: run1 95.0% (38/40) · run2 92.5% (37/40) · run3 92.5% (37/40) · average 93.3% · 5 chunks (3 model-bound) · 20 terms · TTFT 8013/7864/7951 ms (info only — multi-chunk, not asserted)
+techdoc-ru.md: run1 92.9% (26/28) · run2 92.9% (26/28) · run3 92.9% (26/28) · average 92.9% · 3 chunks (2 model-bound) · 20 terms · TTFT 8129/8400/22439 ms (info only — multi-chunk, not asserted)
+
+FAILED
+  - markup-en.md: unaccepted markup diff — expected Optional(TranslationCore.MarkupToken.emphasis(strong: false)) actual nil (1/1 runs)
+```
+
+The one reported diff is **exactly the loss the series measured**: 12b's systematic drop of
+`*read-only*`, now visible to the harness for the first time. Under any model that is not
+`aya-expanse:8b` every markup diff is unaccepted by design — «measured, not certified» — so
+FAILED is this run's honest verdict, not a regression: the two old documents are unchanged
+against Runs F/G (93.3 % / 92.9 %, same chunking, same 20+20 terms, `markup` lines still
+absent on all five pre-existing files). The 22439 ms third-run TTFT on `techdoc-ru.md` is a
+cold-cache outlier of the info-only kind Run C also carried.
+
+**Owed**: a run on `aya-expanse:8b` (defaults) to learn what the gate model does with
+`markup-en.md` and whether any of its diffs belong in the known-limitation set — that model is
+not installed on this machine, so the entry could not be taken today.
+
+---
+
 ## 2026-08-26 — one line discipline: `LineScanner` in `ResponseCleaner` and `InlineCodeRestorer`
 
 - Machine: Apple M5 Pro, 48 GB, macOS 26.6.1
