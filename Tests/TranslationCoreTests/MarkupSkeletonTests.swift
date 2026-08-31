@@ -290,3 +290,167 @@ import Testing
     #expect(tokens.contains(.inlineCode("cmd")))
     #expect(Chunker.blocks(in: text).filter { $0.kind == .fencedCode }.count == 1)
 }
+
+// MARK: - Emphasis is structure, and the losses it exists to make visible.
+
+/// The measured defect, in the shape it was measured in: a model that drops one emphasis
+/// span per document, systematically the same one. Before `.emphasis` existed the diff
+/// reported nothing at all about it and every surface said the structure survived.
+@Test func aDroppedStrongPairIsReportedByTheDiff() {
+    let diffs = MarkupSkeleton.diff(source: "Deploy to the **staging** environment first.",
+                                    translation: "Сначала разверните в среде staging.")
+    #expect(diffs.contains { $0.expected == .emphasis(strong: true) && $0.actual == nil })
+}
+
+/// The other direction, and the reason no prompt rule ships with this: asked to preserve
+/// emphasis, `aya-expanse:32b` invented it in 2 of 3 runs (`*пятницам*` for an unmarked «on
+/// Fridays») — §2 series B. A fabrication must be as visible as a loss.
+@Test func emphasisTheTranslationInventedIsReported() {
+    let diffs = MarkupSkeleton.diff(source: "The script refuses to run on Fridays.",
+                                    translation: "Скрипт отказывается работать по *пятницам*.")
+    #expect(diffs.contains { $0.expected == nil && $0.actual == .emphasis(strong: false) })
+}
+
+/// The series-B degradation itself: `**staging**` came back as `*staging*` 5/5 on
+/// translategemma:12b. Strong and italic must be different tokens or this is invisible.
+@Test func boldDegradedToItalicIsReportedAsAChange() {
+    let diffs = MarkupSkeleton.diff(source: "Deploy to **staging** now.",
+                                    translation: "Разверните в *staging* сейчас.")
+    #expect(diffs.contains { $0.expected == .emphasis(strong: true) && $0.actual == nil })
+    #expect(diffs.contains { $0.expected == nil && $0.actual == .emphasis(strong: false) })
+}
+
+@Test func bothSpellingsOfBothStrengthsTokenise() {
+    #expect(MarkupSkeleton.tokens(of: "A **bold** word.") == [.emphasis(strong: true)])
+    #expect(MarkupSkeleton.tokens(of: "An *italic* word.") == [.emphasis(strong: false)])
+    #expect(MarkupSkeleton.tokens(of: "A __bold__ word.") == [.emphasis(strong: true)])
+    #expect(MarkupSkeleton.tokens(of: "An _italic_ word.") == [.emphasis(strong: false)])
+}
+
+/// The two claims `emphasisSpans`' doc comment makes about nesting, pinned so they cannot
+/// rot into folklore: a triple marker reads as [strong, italic] and a strong inside an
+/// italic reads as both, each token at its own opener. Neither comes from a nesting rule —
+/// there is none, only two independent parity walks — and both are what a faithful
+/// translation of the same span reproduces.
+@Test func aTripleMarkerAndAStrongInsideAnItalicEachReadAsTwoTokens() {
+    #expect(MarkupSkeleton.tokens(of: "A ***loud*** word.")
+        == [.emphasis(strong: true), .emphasis(strong: false)])
+    #expect(MarkupSkeleton.tokens(of: "*a **b** c*")
+        == [.emphasis(strong: false), .emphasis(strong: true)])
+}
+
+/// The failure mode is a filename. Underscores inside a word are identifiers in this
+/// project's own documents — `a_b_c.txt`, `keep_alive`, `snake_case` — and parity-pairing
+/// them turns the second one into the close of an italic that was never written. The
+/// outer-alphanumeric half of the flanking gate is what refuses them.
+@Test func intrawordUnderscoresInAFilenameAreNotEmphasis() {
+    let tokens = MarkupSkeleton.tokens(of: "Open the file a_b_c.txt in the editor.")
+    #expect(!tokens.contains { if case .emphasis = $0 { true } else { false } })
+    // And the shape this project actually writes, twice on one line.
+    #expect(!MarkupSkeleton.tokens(of: "Set keep_alive and read max_chunk_characters.")
+        .contains { if case .emphasis = $0 { true } else { false } })
+}
+
+/// §8's measured-safe prose, which contains an asterisk, an underscore-bearing filename
+/// and a hash and is nothing but a paragraph. An asterisk with spaces on both sides can
+/// neither open nor close, so arithmetic stays arithmetic.
+@Test func arithmeticAsterisksAndAFilenameInProseCarryNoEmphasis() {
+    let tokens = MarkupSkeleton.tokens(of: "Цена 5 * 3 = 15, файл a_b_c.txt и #хэштег")
+    #expect(!tokens.contains { if case .emphasis = $0 { true } else { false } })
+}
+
+/// A bullet written with an asterisk offers a stray marker on a line that may well also
+/// carry a real italic. Without the space half of the flanking gate that marker opens a
+/// span at the bullet, the real opener is swallowed as its close, and the real closer is
+/// left dangling — one token, in the wrong place, instead of one token in the right one.
+@Test func aBulletWrittenWithAnAsteriskDoesNotStealTheItalicOnItsLine() {
+    let tokens = MarkupSkeleton.tokens(of: "* the *read-only* replica is healthy")
+    #expect(tokens == [.listItem(depth: 0), .emphasis(strong: false)])
+}
+
+/// A marker inside a protected span is code, not markup: the model never sees a fenced or
+/// inline code span, so it cannot lose the emphasis inside one, and counting it would make
+/// `InlineCodeRestorer`'s positional restore look like an emphasis change.
+@Test func emphasisMarkersInsideAnInlineCodeSpanAreNotEmphasis() {
+    let tokens = MarkupSkeleton.tokens(of: "Escape it as `*b*` in the pattern.")
+    #expect(tokens == [.inlineCode("*b*")])
+}
+
+/// The `found` array's whole purpose, extended to a third kind. Emphasis sits *between* the
+/// URL and the inline code here on purpose: a token kind appended after the sort — the
+/// defect this array was created to fix for URLs and inline code — lands at the end.
+@Test func emphasisInlineCodeAndAURLOnOneLineKeepDocumentOrder() {
+    let tokens = MarkupSkeleton.tokens(of: "See https://x.org then **do** run `cmd` now.")
+    #expect(tokens == [.url(bare: true), .emphasis(strong: true), .inlineCode("cmd")])
+}
+
+/// `inlineCodeSpans`' discipline, inherited verbatim: an unterminated opener emits nothing,
+/// and an empty pair consumes both markers and emits nothing. Emitting on either would put
+/// a token into the skeleton that no rendered emphasis corresponds to, on the source side
+/// as readily as on the translation's.
+@Test func anUnterminatedMarkerAndAnEmptyPairBothEmitNothing() {
+    #expect(!MarkupSkeleton.tokens(of: "A lone **marker with no close")
+        .contains { if case .emphasis = $0 { true } else { false } })
+    #expect(!MarkupSkeleton.tokens(of: "Nothing between these: **** at all")
+        .contains { if case .emphasis = $0 { true } else { false } })
+}
+
+/// A marker may not reach across a line break to find its pair — the 2026-08-26 family of
+/// defects, where a lone CR let backticks pair across a line and spliced the wrong source
+/// bytes over real code. Emphasis is scanned per line, through `LineScanner`, so a CR-only
+/// source and its LF translation read the same; a scan over the whole string would pair the
+/// CR document's two stray markers and leave the LF one's alone, reporting a phantom
+/// italic on a faithful translation.
+@Test func anEmphasisMarkerMayNotPairAcrossALineBreak() {
+    let source = "Value *a\rb* value"
+    let translation = "Значение *а\nб* значение"
+    #expect(!MarkupSkeleton.tokens(of: source)
+        .contains { if case .emphasis = $0 { true } else { false } })
+    #expect(MarkupSkeleton.diff(source: source, translation: translation).isEmpty)
+}
+
+/// Line-ending parity for the new tokens, the property the file's older CRLF test pins for
+/// the old ones: a CRLF source carrying emphasis and a table, diffed against a faithful LF
+/// translation of it, must report nothing. A scan that split on "\n" alone, or on
+/// `.newlines`, moves the emphasis and the rows relative to the paragraph breaks and the
+/// perfect translation reads as a damaged one.
+@Test func aCRLFSourceWithEmphasisAndATableDiffsCleanlyAgainstItsLFTranslation() {
+    let source = "The **staging** copy.\r\n\r\n| Env | Auto |\r\n|---|---|\r\n| staging | *no* |\r\n"
+    let translation = "Копия **staging**.\n\n| Среда | Авто |\n|---|---|\n| staging | *нет* |"
+    #expect(MarkupSkeleton.diff(source: source, translation: translation).isEmpty)
+}
+
+// MARK: - A table row is not only a row.
+
+/// What `.tableRow` alone could not see: every row survived as a row, and one of them came
+/// back with two of its three cells. Without `.tableCells` this pair of documents produces
+/// no diff at all.
+@Test func aTableRowThatLostACellIsReported() {
+    let source = "| Env | Replicas | Auto |\n|---|---|---|\n| staging | 2 | yes |"
+    let translation = "| Среда | Реплики | Авто |\n|---|---|---|\n| staging | 2 |"
+    let diffs = MarkupSkeleton.diff(source: source, translation: translation)
+    #expect(diffs.contains { $0.expected == .tableCells(count: 3) && $0.actual == nil })
+    #expect(diffs.contains { $0.actual == .tableCells(count: 2) && $0.expected == nil })
+    // The rows themselves are all present, which is exactly why the loss was invisible.
+    #expect(!diffs.contains { $0.expected == .tableRow || $0.actual == .tableRow })
+}
+
+@Test func cellsAreCountedBetweenThePipesAndNotAsPipes() {
+    #expect(MarkupSkeleton.tableCellCount("| a | b |") == 2)
+    // No closing pipe, and an empty middle cell: both are ordinary GFM.
+    #expect(MarkupSkeleton.tableCellCount("| a | b") == 2)
+    #expect(MarkupSkeleton.tableCellCount("| a |  | c |") == 3)
+    // The delimiter row is a row like any other and gets its own count.
+    #expect(MarkupSkeleton.tableCellCount("|---|---|") == 2)
+}
+
+/// The accepted cost, stated as a test so it cannot be discovered as a surprise: a row that
+/// is gone entirely now reports two diffs. No consumer treats the number of diffs as a
+/// threshold, and the alternative was not seeing a half-surviving row at all.
+@Test func aWhollyDroppedRowReportsBothItsRowAndItsCells() {
+    let diffs = MarkupSkeleton.diff(source: "| Name | Value |\n|---|---|\n| a | 1 |",
+                                    translation: "| Имя | Значение |\n|---|---|")
+    #expect(diffs.count == 2)
+    #expect(diffs.contains { $0.expected == .tableRow && $0.actual == nil })
+    #expect(diffs.contains { $0.expected == .tableCells(count: 2) && $0.actual == nil })
+}
