@@ -41,23 +41,11 @@ struct RenderedTextView: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let storage = NSTextStorage()
-        let layout = NSLayoutManager()
-        storage.addLayoutManager(layout)
-        let container = NSTextContainer(
-            size: CGSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
-        container.widthTracksTextView = true
-        layout.addTextContainer(container)
-
-        let textView = CodeBlockTextView(frame: .zero, textContainer: container)
-        textView.isEditable = false
-        // Selectable, which is the whole reason this is a text view: the selection runs across
-        // the entire document, headings, tables and code included.
-        textView.isSelectable = true
-        textView.isRichText = true
-        textView.drawsBackground = false
-        textView.usesFontPanel = false
-        textView.isAutomaticQuoteSubstitutionEnabled = false
+        // `{3, 8}` because this view's text has to land where the pane's `Text` used to, and
+        // that one carried `.padding(8)`: 8 vertically, and 3 horizontally because the
+        // container's own `lineFragmentPadding` already contributes 5. The panel's reply has no
+        // padding of its own and therefore takes a different inset — see `RenderedReplyView`.
+        let textView = CodeBlockTextView(textKit1Inset: NSSize(width: 3, height: 8))
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
@@ -70,13 +58,6 @@ struct RenderedTextView: NSViewRepresentable {
         textView.minSize = NSSize(width: 0, height: 0)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude,
                                   height: CGFloat.greatestFiniteMagnitude)
-        textView.textContainerInset = NSSize(width: 3, height: 8)
-        let linkAttributes: [NSAttributedString.Key: Any] = [
-            .foregroundColor: NSColor.linkColor,
-            .underlineStyle: NSUnderlineStyle.single.rawValue,
-            .cursor: NSCursor.pointingHand,
-        ]
-        textView.linkTextAttributes = linkAttributes
 
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
@@ -199,11 +180,58 @@ struct RenderedTextView: NSViewRepresentable {
 /// cannot be verified in this environment and a right-click can: `docs/reference/OPEN-ITEMS.md`
 /// §11.2 of the design is the eyes this needs, and until then there is a route that does not
 /// depend on the button being where the measurement says.
-final class CodeBlockTextView: NSTextView {
+/// Not `final`: the panel's reply is a subclass with one behaviour of its own — see
+/// `PanelReplyTextView`, which forwards ⏎ and Esc to the panel that owns them.
+class CodeBlockTextView: NSTextView {
     /// Set by `RenderedTextView.Coordinator` whenever the storage changes. Ranges are into the
     /// current storage; `source` is the block's own bytes.
     var codeRegions: [MarkdownToAttributed.CodeRegion] = [] {
         didSet { rebuildButtons() }
+    }
+
+    /// The TextKit 1 triple, built by hand, plus the settings both surfaces share.
+    ///
+    /// **This construction is the trap, which is why there is one of it.** A text view that
+    /// comes up in TextKit 2 has no `NSTextTable` — it exists only in the compatibility layer —
+    /// and every table `MarkdownToAttributed` draws is one; building the
+    /// `NSTextStorage`/`NSLayoutManager`/`NSTextContainer` triple is what opts in, and says so,
+    /// where merely touching `layoutManager` would opt in by side effect. `layoutManager` is
+    /// also what answers `boundingRect(forGlyphRange:in:)`, which the per-code-block button is
+    /// positioned from. `docs/reference/PLATFORM-TRAPS.md` carries both.
+    ///
+    /// What the two callers do *not* share is the geometry: the pane wraps this in an
+    /// `NSScrollView` and insets it to match a `Text` that had `.padding(8)`, the panel hosts it
+    /// bare and inset to nothing. Those differences stay at the call sites.
+    ///
+    /// - Parameter lineFragmentPadding: nil keeps the container's own default, measured at 5.0
+    ///   (`Scripts/panel-rendered-measure.swift` §3). The panel passes 0, because 5 pt of
+    ///   indent it cannot see in its plain streamed text would shift every line sideways at the
+    ///   swap.
+    convenience init(textKit1Inset inset: NSSize, lineFragmentPadding: CGFloat? = nil) {
+        let storage = NSTextStorage()
+        let layout = NSLayoutManager()
+        storage.addLayoutManager(layout)
+        let container = NSTextContainer(
+            size: CGSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
+        container.widthTracksTextView = true
+        if let lineFragmentPadding { container.lineFragmentPadding = lineFragmentPadding }
+        layout.addTextContainer(container)
+
+        self.init(frame: .zero, textContainer: container)
+        isEditable = false
+        // Selectable, which is the whole reason this is a text view: the selection runs across
+        // the entire document, headings, tables and code included.
+        isSelectable = true
+        isRichText = true
+        drawsBackground = false
+        usesFontPanel = false
+        isAutomaticQuoteSubstitutionEnabled = false
+        textContainerInset = inset
+        linkTextAttributes = [
+            .foregroundColor: NSColor.linkColor,
+            .underlineStyle: NSUnderlineStyle.single.rawValue,
+            .cursor: NSCursor.pointingHand,
+        ]
     }
 
     private var buttons: [CodeCopyButton] = []

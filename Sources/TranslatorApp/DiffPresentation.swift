@@ -16,7 +16,20 @@ enum DiffPresentation {
         case .paragraphBreak: "граница абзаца"
         case .hardLineBreak: "жёсткий перенос строки"
         case .tableRow: "строка таблицы"
+        case .emphasis(let strong): strong ? "жирное выделение" : "курсив"
+        // The count is the whole point of this token — a row that came back with two of
+        // its four cells reads here as «строка таблицы из 4 ячеек → строка таблицы из 2
+        // ячеек», which is the sentence `.tableRow` alone could never say.
+        case .tableCells(let count): "строка таблицы из \(count) \(cellsGenitive(count))"
         }
+    }
+
+    /// «из N ячеек» — «из» governs the genitive, and the numeral inside it governs the
+    /// noun: one is «одной ячейки», everything else is «ячеек» («из двух ячеек», «из пяти
+    /// ячеек»). Only the 1-shaped numerals take the singular, and 11 is not one of them.
+    static func cellsGenitive(_ count: Int) -> String {
+        let last = abs(count) % 10, lastTwo = abs(count) % 100
+        return last == 1 && lastTwo != 11 ? "ячейки" : "ячеек"
     }
 
     static func describe(_ diff: MarkupDiff) -> String {

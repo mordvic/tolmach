@@ -319,6 +319,49 @@ is in the code that made it. `layoutManager` is also what answers
 from — measured to answer exact rects with no window on screen.
 → `Sources/TranslatorApp/RenderedTextView.swift`
 
+**An `NSViewRepresentable` with no `sizeThatFits` measures 0 wide and *unbounded* tall — both
+failures at once.** Measured with `Scripts/panel-rendered-measure.swift` on a hosted, non-scrolling
+`NSTextView` inside a detached `NSHostingController`, the pair of calls `PanelController.measure`
+makes: `fittingSize` answers **0 × 0** and `sizeThatFits(in:)` answers **`greatestFiniteMagnitude`**
+at 300, 430 and 560 pt alike. The second is the dangerous one and it is the third route to the same
+shape as the two entries above — `PanelSizer.measured` tests `isFinite && > 0` and
+`greatestFiniteMagnitude` passes both, so every rendered panel opens at 0.6 × the screen and
+scrolling, for a one-line reply as much as for a page, and nothing about it looks wrong from the
+code. Implement `sizeThatFits(_:nsView:context:)` from a **throwaway**
+`NSTextStorage`/`NSLayoutManager`/`NSTextContainer` triple laid out at the proposed width —
+`ensureLayout(for:)` then `usedRect(for:)` — never the installed view's own layout manager, which
+would re-lay-out text a reader is looking at in order to ask a question about it. Three facts from
+the same probe:
+
+- The throwaway triple agrees with a live text view **to the point**: 419 / 355 / 339 pt at
+  300 / 430 / 560 for the probe's document, both ways. Two things make it agree — the
+  container's `lineFragmentPadding` (a programmatically built one comes up with **5.0**, so a
+  view that sets 0 must be copied rather than assumed) and laying out at
+  `proposal − 2 × textContainerInset.width`. Get either wrong and the answer moves by a line at
+  the narrow widths: the same document measures 467 / 371 / 355 at the pane's `{3, 8}` + 5 pt
+  geometry.
+- **An unspecified proposal must be answered with the document's own unwrapped width**, not a
+  constant: `fittingSize` is where the ideal width comes from, so a constant makes every reply ask
+  for `minWidth`. Measured 1155 pt for that document, which the sizer clamps to `maxWidth`.
+- The answers are **stable to 0.0000** over ten reads on one reused host and against a fresh one,
+  so a pinning test may assert equality.
+
+→ `Sources/TranslatorApp/RenderedReplyView.swift`, `Scripts/panel-rendered-measure.swift`
+
+**A selectable `NSTextView` inside the panel takes first responder, and the panel's ⏎ and Esc
+then need two different routes.** `TranslationPanel` handles both on the *window* — which worked
+only because its content had no view that takes first responder at all. Measured on the real
+panel with the reply view made first responder: ⏎ never becomes a command, because
+`NSTextView.keyDown` runs `interpretKeyEvents` and turns it into `insertNewline(_:)`, a no-op on a
+non-editable view that also does not pass the key on — so forward it from `keyDown`. Esc *does*
+become a command, and AppKit sends `cancelOperation(_:)` to the **first responder**, i.e. to the
+text view; forwarding the Esc *event* from `keyDown` to the window was tried and does not work,
+because the window's own `keyDown` hands it to `super` and AppKit dispatches the resulting command
+straight back down. So hand Esc on from `cancelOperation(_:)`, and note that calling `super` there
+on an `NSTextView` raises an `NSException` rather than doing nothing. A test that omits
+`makeFirstResponder` passes with both overrides deleted — measured, while writing them.
+→ `PanelReplyTextView` in `Sources/TranslatorApp/RenderedReplyView.swift`
+
 **`TextEditor` has no top inset, and 5 pt of leading that is not padding.** Asked of the
 `NSTextView` on the running bundle: `textContainerInset` is `{0, 0}` and `textContainerOrigin`
 is `{0, 0}`, so text begins hard against the top edge — while the horizontal 5 pt comes from
