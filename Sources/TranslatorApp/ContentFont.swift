@@ -1,4 +1,5 @@
 // Sources/TranslatorApp/ContentFont.swift
+import MarkupKit
 import SwiftUI
 
 /// Which face the user's own text is drawn in.
@@ -108,6 +109,25 @@ struct ContentFont: Equatable, Sendable {
     }
 
     var font: Font { .system(size: size, design: typeface.design) }
+
+    /// The same pair, in the shape `MarkupKit` takes.
+    ///
+    /// The mapping lives here — in the layer that knows both types — because `MarkupKit` must
+    /// not import the app: it is AppKit and `NSFontDescriptor.SystemDesign` and knows nothing
+    /// about SwiftUI's `Font.Design` or about `AppSettings`. Exhaustive with no `default:`, so
+    /// a fourth typeface cannot reach the renderer unmapped.
+    ///
+    /// This is what makes `docs/adr/0008` hold in the rendered pane: every run the converter
+    /// draws — headings and code included, as multiples of `baseSize` — comes from this one
+    /// value, and nothing else in the pane scales.
+    var markdownConfig: MarkdownFontConfig {
+        let face: MarkdownTypeface = switch typeface {
+        case .system: .system
+        case .monospaced: .monospaced
+        case .serif: .serif
+        }
+        return MarkdownFontConfig(baseSize: size, typeface: face)
+    }
 
     var canGrow: Bool { size < Self.sizes.upperBound }
     var canShrink: Bool { size > Self.sizes.lowerBound }

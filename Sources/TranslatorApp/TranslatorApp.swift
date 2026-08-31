@@ -307,7 +307,17 @@ struct TranslatorApp: App {
                 // Both read the same `PrimaryAction` the toolbar does. Before this ⇧⌘C was
                 // disabled by the *text* model's emptiness while a file's translation sat on
                 // screen, and «Очистить исходник» acted on a pane that was not visible.
-                Button("Скопировать перевод") { Task { await action.copy() } }
+                // Through the same `PaneRendering` the pane's own button uses, so ⇧⌘C and
+                // «Скопировать» put the same two flavours on the board. Computed inside the
+                // closure: it serialises the document to RTF, and this body runs whenever the
+                // window's state moves.
+                Button("Скопировать перевод") {
+                    let shown = mode == .text ? translation.translatedText : queue.selectedText
+                    let rtf = PaneRendering.of(shown,
+                                               showsRenderedMarkup: settings.showsRenderedMarkup)
+                        .rtf(of: shown, font: settings.contentFont)
+                    Task { await action.copy(rtf) }
+                }
                     .keyboardShortcut("c", modifiers: [.command, .shift])
                     .disabled(!action.canCopy)
                 Button("Очистить исходник", action: action.clear)

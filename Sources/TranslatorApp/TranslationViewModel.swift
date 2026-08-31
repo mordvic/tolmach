@@ -130,8 +130,13 @@ final class TranslationViewModel {
     /// `NSPasteboard.general`. Kept here rather than in `TranslatorApp` so it is testable
     /// against a scratch board the way the panel's copy already is, without constructing
     /// the whole app.
-    func copyToPasteboard() async {
-        await GeneralPasteboard.write(translatedText, to: pasteboard)
+    /// - Parameter rtf: the rich flavour to write beside the Markdown, or nil for a plain
+    ///   copy. Decided by `PaneRendering.rtf(of:font:)` at the call site, because whether
+    ///   there is a rich form to offer is a property of what the *pane* is showing and this
+    ///   model does not know that. Nil is the honest default: a plain-prose translation must
+    ///   not arrive in Word wearing a font this app chose.
+    func copyToPasteboard(rtf: Data? = nil) async {
+        await GeneralPasteboard.write(translatedText, rtf: rtf, to: pasteboard)
     }
 
     /// Why `adopt(from:)` would refuse right now, or `nil` if it would not.

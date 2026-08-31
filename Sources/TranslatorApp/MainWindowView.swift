@@ -30,7 +30,12 @@ struct PrimaryAction {
     let start: () async -> Void
     let cancel: () -> Void
     let canCopy: Bool
-    let copy: () async -> Void
+    /// Takes the rich flavour to write beside the Markdown, or nil. The *caller* decides,
+    /// through `PaneRendering`, because «is there markup on screen and is the pane showing it»
+    /// is a question about the pane and not about either model — and both callers, the pane's
+    /// own button and the «Перевод» menu's ⇧⌘C, must answer it the same way or the two copies
+    /// differ.
+    let copy: (Data?) async -> Void
     /// «Очистить исходник» names the *text* pane, and in «Файлы» that pane is not on
     /// screen. Repurposing the item to empty the queue would throw away translations that
     /// may not be saved yet, from a menu item with no visible counterpart — so it is simply
@@ -65,7 +70,7 @@ struct PrimaryAction {
                 start: { await text.run() },
                 cancel: { text.cancel() },
                 canCopy: !text.translatedText.isEmpty,
-                copy: { await text.copyToPasteboard() },
+                copy: { await text.copyToPasteboard(rtf: $0) },
                 canClear: !text.sourceText.isEmpty && text.state != .running,
                 clear: { text.sourceText = "" },
                 // There is nothing to exchange in правка: it has no target language.
@@ -92,7 +97,7 @@ struct PrimaryAction {
                 start: { await queue.run() },
                 cancel: { queue.cancel() },
                 canCopy: !queue.selectedText.isEmpty,
-                copy: { await queue.copySelection() },
+                copy: { await queue.copySelection(rtf: $0) },
                 canClear: false,
                 clear: {},
                 // The pickers are all there is to exchange here, and exchanging them must
@@ -139,7 +144,11 @@ struct MainWindowView: View {
     /// `PanelHost`'s reason: `AppSettings` is `@Observable`, so a font resolved at the call site
     /// would be frozen at whatever it was when the scene body last ran. Read here, both panes
     /// redraw when the setting changes.
-    let settings: AppSettings
+    ///
+    /// `@Bindable` since the перевод pane's «Разметка | Исходник» toggle: that control writes
+    /// the setting directly rather than a per-run override, so it needs a binding into this
+    /// object. Nothing else here binds to it.
+    @Bindable var settings: AppSettings
 
     /// Which half the left pane is showing.
     ///
@@ -154,6 +163,25 @@ struct MainWindowView: View {
     /// Every mode-sensitive control in this window reads this one value.
     private var action: PrimaryAction {
         .forMode(mode, text: model, queue: queue, hasModel: !settings.hasNoTranslationModel)
+    }
+
+    /// What is on screen in the перевод pane right now, whichever mode owns it.
+    ///
+    /// Dispatches on `mode` exactly as `PrimaryAction` and the pane itself do. Reading the text
+    /// model here in «Файлы» is the defect `PrimaryAction`'s doc comment lists three times over.
+    private var displayedTranslation: String {
+        mode == .text ? model.translatedText : queue.selectedText
+    }
+
+    /// The rich flavour «Скопировать» and ⇧⌘C should write beside the Markdown, or nil.
+    ///
+    /// A function and not a computed property read in `body`: it serialises the whole document
+    /// to RTF, and `body` runs on every streamed token. Called at the instant a button or a
+    /// menu item is pressed, which is the only instant the answer is needed.
+    private func richFlavour() -> Data? {
+        PaneRendering.of(displayedTranslation,
+                         showsRenderedMarkup: settings.showsRenderedMarkup)
+            .rtf(of: displayedTranslation, font: settings.contentFont)
     }
 
     /// Looking is always allowed. **Starting** is what must not happen twice.
@@ -227,7 +255,7 @@ struct MainWindowView: View {
                                     : queue.selectedTitle,
                                 text: mode == .text ? model.translatedText : queue.selectedText,
                                 isRunning: mode == .text ? action.isRunning : queue.selectedIsRunning,
-                                onCopy: { Task { await action.copy() } },
+                                onCopy: { Task { await action.copy(richFlavour()) } },
                                 // Not while the queue is running, the same guard `canStart`
                                 // already applies: one model lives in Ollama's memory, and
                                 // «Ещё вариант» is a second run just as much as the toolbar
@@ -237,7 +265,12 @@ struct MainWindowView: View {
                                     ? { Task { await model.run() } } : nil,
                                 // Both modes, one font: the queue's translations are read in
                                 // this same pane.
-                                font: settings.contentFont)
+                                font: settings.contentFont,
+                                // The toggle *is* the setting, so the pane writes it straight
+                                // through — the same treatment the panel's степень/стиль
+                                // pickers get, and the reason a choice made here survives the
+                                // window closing. One key for both modes, like the font.
+                                showsRenderedMarkup: $settings.showsRenderedMarkup)
             }
             Divider()
             RunStatusBar(model: model, status: status, engineName: engineName,

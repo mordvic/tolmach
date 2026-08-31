@@ -144,8 +144,10 @@ final class FileQueueModel {
     /// Copies what the pane is *showing* — the selected задание — and delegates to
     /// `GeneralPasteboard.write` like the window's and the panel's copies do, so there is
     /// one write to test rather than three to keep in step.
-    func copySelection() async {
-        await GeneralPasteboard.write(selectedText, to: pasteboard)
+    /// - Parameter rtf: as `TranslationViewModel.copyToPasteboard(rtf:)` — the queue's
+    ///   translations are read in that same pane, so they get the same two flavours.
+    func copySelection(rtf: Data? = nil) async {
+        await GeneralPasteboard.write(selectedText, rtf: rtf, to: pasteboard)
     }
 
     /// Whether this задание still has a translation that is not on disk anywhere.

@@ -78,7 +78,7 @@ ad-hoc signing macOS re-asks after every build. The script's header says how to 
 
 ## Architecture
 
-7 SwiftPM targets, one hard rule: **translation logic knows nothing about Ollama or SwiftUI.**
+8 SwiftPM targets, one hard rule: **translation logic knows nothing about Ollama or SwiftUI.**
 
 <!-- The count and the names below are checked against Package.swift by
      DocumentationTests/ArchitectureDriftTests.swift. This block said "Five" and named a
@@ -86,9 +86,9 @@ ad-hoc signing macOS re-asks after every build. The script's header says how to 
 
 ```
 TranslationCore  (pure domain; depends on nothing but Foundation/NaturalLanguage)
-      ↑            ↑              ↑
-   OllamaKit  LMStudioKit    TextCapture (independent; no TranslationCore)
-      ↑            ↑              ↑
+      ↑            ↑            ↑              ↑
+   OllamaKit  LMStudioKit   MarkupKit    TextCapture (independent; no TranslationCore)
+      ↑            ↑            ↑              ↑
         TranslatorApp (SwiftUI) · translate-cli · acceptance
 ```
 
@@ -105,6 +105,12 @@ TranslationCore  (pure domain; depends on nothing but Foundation/NaturalLanguage
   `capabilities.reasoning.allowed_options` lacks it, so what to send is resolved from those
   options rather than posted blind. See
   `docs/design/specs/2026-08-21-model-engine-switch-design.md`.
+- `MarkupKit` — `MarkdownToAttributed`, the **one** Markdown → `NSAttributedString` converter,
+  used by the перевод pane's rendered mode and by its rich «Скопировать» flavour. Blocks come
+  from `TranslationCore.MarkdownBlockScanner` — so the renderer draws the document the chunker
+  read — and inline spans from Foundation's own parser. It knows `TranslationCore` and AppKit
+  and nothing about the app: `MarkdownFontConfig` mirrors `ContentFont` rather than importing
+  it. See `docs/design/specs/2026-08-31-formatting-design.md`.
 - `TextCapture` — every fragile macOS API, isolated on purpose: Carbon hotkey registration,
   the Accessibility read, the synthetic ⌘C fallback, the whole-pasteboard snapshot, the permission gate.
 - `TranslatorApp` — `MenuBarExtra` + panel + window + settings, `LSUIElement`.
@@ -410,7 +416,12 @@ not cosmetic — **the safe direction is inverted**. See
   reply, and the panel's hidden reservation `Text` — that last one being the load-bearing pairing
   and the one an earlier count of «three `Text`s» left out.
   `ContentFont` (гарнитура + размер, 11–32 pt, default 13) reaches those four and nothing
-  else — never a label, a button, a status row or a table, because
+  else — and, since the перевод pane renders Markdown, **every run the renderer draws inside
+  that same перевод surface**: headings and code are multiples of `ContentFont.size`
+  (×1.6/1.4/1.25/1.1/1.0/1.0 semibold for h1…h6), never sizes of their own, and
+  `ContentFont.markdownConfig` is the single bridge that carries the pair into `MarkupKit`. The
+  count is still four surfaces; what grew is what «the перевод» means inside one of them.
+  Never a label, a button, a status row or a table, because
   `PanelSizer.minHeight` 132 and `dragMinHeight` 164 are measurements of the *pinned* block at
   the system size and would otherwise become functions of a preference. `docs/adr/0008` is the
   decision. Three things about it are load-bearing: the panel's **hidden reservation `Text`
@@ -450,11 +461,30 @@ not cosmetic — **the safe direction is inverted**. See
   why both consumers are order-independent by construction and a test keeps the old algorithm
   beside the new one.
 - The main window is a toolbar plus `SourceEditor`/`FileQueuePane` | `TranslationPane` over a
-  collapsible `RunStatusBar`; the translation side is a read-only `Text`, deliberately, because
-  the `TextEditor` it replaced took a caret and discarded typing. The settings are **four**
+  collapsible `RunStatusBar`. **The translation side draws Markdown when the translation has
+  any**, and is a read-only `Text` when it has none — never a `TextEditor`, deliberately,
+  because the one it replaced took a caret and discarded typing. The settings are **four**
   tabs — «Основные», «Модели», «Глоссарий», «Файлы» («Дополнительно» was folded into «Модели»
   and stays folded). All four take one 560 × 480 frame from `settingsPane()`, so adding a pane
   means checking it fits rather than sizing it itself.
+- **The перевод pane has two modes, and the toggle only exists when there is something to
+  choose between.** `MarkdownPresence.hasMarkup` decides; with no markup the pane is a
+  selectable `Text` in a `ScrollView` exactly as before, and with markup it is
+  `RenderedTextView` — a hosted read-only `NSTextView`, **TextKit 1**, because `NSTextTable`
+  lives only there and every table `MarkdownToAttributed` draws is one. «Исходник» is the same
+  string in the same view with no conversion, so raw Markdown is still selectable as one
+  document; `AppSettings.showsRenderedMarkup` (default true) is where the choice is kept, and
+  the pane writes it directly rather than holding a per-run override. One view serves «Текст»
+  and «Файлы» both, which is why the queue's pane gained all of this for free.
+  During a run only *settled* blocks are drawn and the unsettled tail stays plain characters
+  (`MarkdownBlockScanner.settledPrefix`), so a block is never redrawn as something else; the
+  update replaces the tail region of the storage and nothing more.
+  **«Скопировать» writes two flavours in one write** — `.string` the Markdown bytes as always,
+  `.rtf` the attributed document the pane is showing — and plain only while «Исходник» is up or
+  there is no markup, because a plain-prose translation must not arrive in Word wearing a font
+  this app chose. `PaneRendering` is the one place that rule is written: the pane's button and
+  the «Перевод» menu's ⇧⌘C both read it, and a restated condition is how the two come to copy
+  different things. See `docs/design/specs/2026-08-31-formatting-design.md`.
 - Capture order is Accessibility first, synthetic ⌘C fallback second, and the fallback must restore
   the *whole* pasteboard. The only path allowed to write the user's clipboard unasked is `autoCopy`,
   off by default — and it is read only by `HotkeyCoordinator`, so it governs the panel and not
@@ -513,6 +543,12 @@ not cosmetic — **the safe direction is inverted**. See
   `TranslationCore` does **not** get it — the engine reports through
   `TranslationOutcome.documentGlossaryFailure` instead, so the domain layer keeps its
   «Foundation and NaturalLanguage only» rule.
+  **`MarkupKit` is the first non-app target allowed to import AppKit**, since 2026-08-31, and
+  that is a deliberate whitelist edit rather than a leak: an `NSAttributedString` *is* AppKit,
+  and the alternative was a second Markdown serialiser inside the app so the rendered pane and
+  the rich «Скопировать» flavour could come to disagree. The framework was already on the list;
+  what moved is where it may be imported. The arrow still points one way — `MarkupKit` knows
+  `TranslationCore`, and nothing below `TranslatorApp` knows `MarkupKit`.
 - **Nothing derived from the user's text may be logged.** Not the selection, not the source, not
   the translation, not a glossary term. `Log`'s doc comment carries the reasoning; the short
   version is that a unified-log entry is readable by any admin on the machine and is collected by
@@ -588,6 +624,8 @@ to the code. `docs/reference/PLATFORM-TRAPS.md` has the same list with the facts
 - Accessibility reads, synthetic key events → `TextCapture/SelectionReader.swift`
 - Carbon hotkeys, key codes, modifier masks → `TextCapture/HotkeyManager.swift`, `HotkeyCombo.swift`
 - `NSPanel` framing, sizing, key status → `TranslatorApp/TranslationPanel.swift`, `PanelSizer.swift`
+- Hosting an `NSTextView`, TextKit 1 vs 2, `NSTextTable`, glyph rects →
+  `TranslatorApp/RenderedTextView.swift`
 - Measuring SwiftUI content, `NSHostingView`/`NSHostingController` → `PanelController.measure` in
   `TranslatorApp/TranslationPanel.swift`
 - App activation, scene order → `TranslatorApp/TranslatorApp.swift`

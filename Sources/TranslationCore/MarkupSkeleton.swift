@@ -114,11 +114,10 @@ public enum MarkupSkeleton {
             // used to tokenise the second as a heading — confirmed by probe — because
             // the first, despite being read correctly as a thematic break, still set
             // `previousLineHadText = true` on the ordinary-line path below.
-            let isUnderlineShape = !trimmed.isEmpty
-                && (trimmed.allSatisfy { $0 == "=" }
-                    || (trimmed.count >= 2 && trimmed.allSatisfy { $0 == "-" }))
-            if previousLineHadText && isUnderlineShape {
-                tokens.append(.heading(level: trimmed.first == "=" ? 1 : 2))
+            let underlineLevel = isSetextUnderline(trimmed)
+            let isUnderlineShape = underlineLevel != nil
+            if previousLineHadText, let underlineLevel {
+                tokens.append(.heading(level: underlineLevel))
                 previousLineHadText = false
                 continue
             }
@@ -263,6 +262,20 @@ public enum MarkupSkeleton {
 
     static let droppedNote = "dropped in translation"
     static let addedNote = "added in translation"
+
+    /// The heading level a setext underline confers, or nil for a line that is not one.
+    ///
+    /// A line of `=` of any length is an H1 underline; a line of `-` **two or more** long is an
+    /// H2 one, because a lone `-` is closer to a stray bullet than to an underline. Extracted
+    /// from the loop above with no change of behaviour so `MarkdownBlockScanner` can call the
+    /// same predicate: the renderer must read a setext heading exactly where the diff reads
+    /// one, and the shape was previously spelled inside a loop nothing else could reach.
+    static func isSetextUnderline(_ trimmed: String) -> Int? {
+        guard !trimmed.isEmpty else { return nil }
+        if trimmed.allSatisfy({ $0 == "=" }) { return 1 }
+        if trimmed.count >= 2, trimmed.allSatisfy({ $0 == "-" }) { return 2 }
+        return nil
+    }
 
     static func headingLevel(_ trimmed: String) -> Int? {
         guard trimmed.hasPrefix("#") else { return nil }

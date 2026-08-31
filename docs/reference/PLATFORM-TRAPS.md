@@ -308,6 +308,17 @@ reports «as much as you will give me», so every panel came back at 998 pt — 
 on the installed copy (`fillsPanel`), which is the same distinction that modifier already
 exists for one row further down. → `Sources/TranslatorApp/PanelView.swift`
 
+**A text view that comes up in TextKit 2 has no `NSTextTable` to fall back on.** `NSTextTable`
+and `NSTextTableBlock` exist only in the TextKit 1 compatibility layer, and every table the
+rendered перевод pane draws is one of them. Touching `layoutManager` is what opts a text view
+into that layer — which is how `Scripts/markup-render.swift` measures a 2 × 2 table at
+395 × 68 pt headless — but relying on the side effect makes the requirement invisible: build
+the `NSTextStorage`/`NSLayoutManager`/`NSTextContainer` triple by hand instead, so the choice
+is in the code that made it. `layoutManager` is also what answers
+`boundingRect(forGlyphRange:in:)`, which the per-code-block «Скопировать» button is positioned
+from — measured to answer exact rects with no window on screen.
+→ `Sources/TranslatorApp/RenderedTextView.swift`
+
 **`TextEditor` has no top inset, and 5 pt of leading that is not padding.** Asked of the
 `NSTextView` on the running bundle: `textContainerInset` is `{0, 0}` and `textContainerOrigin`
 is `{0, 0}`, so text begins hard against the top edge — while the horizontal 5 pt comes from

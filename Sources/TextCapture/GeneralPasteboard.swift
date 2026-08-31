@@ -94,6 +94,27 @@ public enum GeneralPasteboard {
     /// `SelectionReader.clipboardText()` must not be dragged onto the main actor.
     @MainActor
     public static func write(_ text: String, to board: NSPasteboard = .general) async {
+        await write(text, rtf: nil, to: board)
+    }
+
+    /// The same write, with a rich flavour beside the plain one.
+    ///
+    /// **One `clearContents()` and both flavours after it**, which is the whole reason this
+    /// takes two arguments instead of being called twice: `clearContents()` is what declares
+    /// the new contents, so a second call to put RTF on the board would throw away the plain
+    /// string the first one wrote. The order matters too — the richest flavour is written
+    /// first, because that is the order a paste target reads them in.
+    ///
+    /// `rtf` is nil for everything that has no rich form to offer, and that nil is a decision
+    /// rather than an omission: a plain-prose translation must not arrive in Word wearing a
+    /// font this app chose. `TranslationPane`'s «Скопировать» is the one caller that ever
+    /// passes data, and only while the pane is actually showing rendered markup.
+    ///
+    /// The empty-guard is on `text`, as it was: `text` is the flavour every target can read,
+    /// and there is no case where the app has RTF worth writing and no characters at all.
+    @MainActor
+    public static func write(_ text: String, rtf: Data?,
+                             to board: NSPasteboard = .general) async {
         guard !text.isEmpty else { return }
         // Boxed on this actor and unwrapped on the detached one. The box carries no
         // guarantee of its own — see `LockedBoard`; the lock below is the guarantee.
@@ -101,6 +122,7 @@ public enum GeneralPasteboard {
         await Task.detached(priority: .userInitiated) {
             withExclusiveAccess {
                 boxed.board.clearContents()
+                if let rtf { boxed.board.setData(rtf, forType: .rtf) }
                 boxed.board.setString(text, forType: .string)
             }
         }.value

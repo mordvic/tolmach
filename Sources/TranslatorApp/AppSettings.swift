@@ -362,6 +362,27 @@ final class AppSettings {
         set { withMutation(keyPath: \.reviewDocumentTerms) { defaults.set(newValue, forKey: "reviewDocumentTerms") } }
     }
 
+    /// Whether the перевод pane draws Markdown as Markdown or shows it as its own source.
+    ///
+    /// Default **true**, and that is a change to what the app does: the pane used to render
+    /// `# Заголовок` and `| a | b |` as the literal characters they are. «Исходник» is one
+    /// click away in the pane's own header and this is where that click is remembered, so a
+    /// user who wants the raw bytes keeps them across relaunches.
+    ///
+    /// Not per-surface: the file queue's right-hand pane *is* this pane, so one key covers
+    /// both, the same way «Шрифт текста» does.
+    var showsRenderedMarkup: Bool {
+        get {
+            access(keyPath: \.showsRenderedMarkup)
+            return bool("showsRenderedMarkup", true)
+        }
+        set {
+            withMutation(keyPath: \.showsRenderedMarkup) {
+                defaults.set(newValue, forKey: "showsRenderedMarkup")
+            }
+        }
+    }
+
     /// The face the user's own text is drawn in. See `ContentFont` and `docs/adr/0008`.
     ///
     /// An unreadable value falls back to the system face rather than to nothing, for the reason
