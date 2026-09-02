@@ -312,6 +312,20 @@ to give for free is not.
 | **A file dropped on the pane still reaching `DroppedDocument`** | The text view registers for strings only, so the file drop should fall through to the pane's `dropDestination`; whether AppKit's routing agrees is exactly the kind of thing this project does not assert from memory | `SourceTextView.updateDragTypeRegistration`, `SourceEditor` |
 | **The paste stall from Word** | The RTF path is reached only with no HTML on the board and costs 216–262 ms cold; the paste is synchronous on purpose (the reasoning is on the type). Whether a quarter-second before the text appears reads as a stall or as nothing is a judgement | `SourceTextView` |
 
+**Owed by the «Оформить» pass (2026-09-02, spec #72 step 3).** The route, the gate and the
+view model's orchestration are pinned offline through `FakeLLMClient` and `QueueClient`; what a
+real model does with the prompt is the measurement above in `MEASUREMENTS.md`, and what the
+surfaces look like while it runs is this table.
+
+| What to check | Why it needs eyes | Code |
+|---|---|---|
+| **The measurement itself** | The pass is off by default until `Scripts/format-loss.sh` reports ≥ 8/10 texts accepted in all three runs on translategemma:12b, with the tables' column counts read by eye. Needs a live Ollama and a corpus of ten flat texts from real work, outside the tree | `Scripts/format-loss.sh`, `docs/reference/MEASUREMENTS.md` |
+| **«Оформляю…» in the window's status bar and in the panel** | A `Label` with `text.alignleft` and no spinner, like «Жду ваших правок…». An SF Symbol name that does not resolve draws an empty image rather than failing, and this one has not been rendered | `RunStatusBar.textModeLine`, `PanelStatus.Kind.formatting` |
+| **The исходник pane changing under the user when the pass is accepted** | `sourceText` is replaced before the translation streams. Whether that reads as «the app understood my text» or as «my text was replaced» is a judgement; the rule is Q18 of the grilling, and the pane's rendered mode (step 4) is what should make it read right | `TranslationViewModel.reconstructIfWanted` |
+| **«Оформить не удалось» under the warnings, in the window and in the panel** | Five sentences in `RussianCopy.formattingNotice`, each reachable only by a model misbehaving in a particular way; the `.failed` one carries a transport message. None rendered | `WarningsView`, `RussianCopy.formattingNotice` |
+| **The two toggles in «Модели» → «Качество перевода»** | The section was already the pane's tallest; two toggles and two captions joined it. `.formStyle(.grouped)` scrolls, so the question is legibility, plus the second toggle greying out rather than vanishing when the first is off | `SettingsModelsView` |
+| **⌘. during «Оформляю…»** | `cancel()` cancels the pass's own task and the run ends `.interrupted`; pinned through a held fake call, never through a key press on the real window | `TranslationViewModel.cancel` |
+
 **Owed by the UI redesign, Task 13 — the menu bar glyph and status row.** The whole visible
 result of this task is unobserved: it is a menu-bar icon and a new first row of menu text, and
 nothing in this environment can see either.

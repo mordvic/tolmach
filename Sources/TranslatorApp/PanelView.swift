@@ -14,7 +14,7 @@ struct PanelStatus: Equatable {
     /// not — `.awaitingUser` was added to this enum and never to that list, so the one case
     /// whose glyph rule is least obvious was the one nothing checked.
     enum Kind: Equatable, CaseIterable {
-        case progress, awaitingUser, interrupted, failure
+        case progress, awaitingUser, formatting, interrupted, failure
 
         /// Whether this row's state means *the machine* is working.
         ///
@@ -50,6 +50,10 @@ struct PanelStatus: Equatable {
             // else in it carrying the meaning — and «жду вас» told by wording alone is the
             // same colour-only failure the two symbols below were added to fix.
             case .awaitingUser: "square.and.pencil"
+            // Same rule: no spinner in this state (the machine is working, but on a text
+            // that is about to be replaced, and «Перевожу…» with a spinner over it read as a
+            // stall), so the glyph is what carries the meaning.
+            case .formatting: "text.alignleft"
             case .interrupted: "exclamationmark.triangle.fill"
             case .failure: "xmark.octagon.fill"
             }
@@ -634,7 +638,8 @@ struct PanelView: View {
                         // nothing is asking for. The 120pt slot this used to fill is gone — `scrolls`
                         // and `PanelSizer` own the ceiling now — and this gate exists only so an empty
                         // stack does not pad a measured height.
-                        let warnings = WarningsView(outcome: outcome, target: model.resolvedTarget)
+                        let warnings = WarningsView(outcome: outcome, target: model.resolvedTarget,
+                                                    formattingNotice: model.formattingNotice)
                         if warnings.hasContent {
                             // **Unbounded, and inside the scrolling region with the
                             // translation.** Both halves of that were tried the other way round
@@ -801,9 +806,9 @@ struct PanelView: View {
         // «выделите текст» and «нет доступа» panels also draw a status row, and leaves a
         // branch that cannot be false for a later reader to keep in step with the enum.
         awaitingReply ? Self.status(for: .running, awaitingTerms: model.isAwaitingTerms,
-                                    operation: model.operation)
+                                    operation: model.operation, formatting: model.isFormatting)
                       : Self.status(for: model.state, awaitingTerms: model.isAwaitingTerms,
-                                    operation: model.operation)
+                                    operation: model.operation, formatting: model.isFormatting)
     }
 
     @ViewBuilder private var statusLine: some View {
@@ -836,7 +841,7 @@ struct PanelView: View {
 
     private func colour(of kind: PanelStatus.Kind) -> Color {
         switch kind {
-        case .progress, .awaitingUser: .secondary
+        case .progress, .awaitingUser, .formatting: .secondary
         case .interrupted: StatusColour.warning
         case .failure: StatusColour.failure
         }
@@ -990,13 +995,20 @@ struct PanelView: View {
     ///   question it has no business answering.
     nonisolated static func status(for state: TranslationState,
                                    awaitingTerms: Bool = false,
-                                   operation: TextOperation = .translate) -> PanelStatus? {
+                                   operation: TextOperation = .translate,
+                                   formatting: Bool = false) -> PanelStatus? {
         switch state {
         case .idle, .finished:
             // Nothing to add. The panel opens on a translation and closes on Esc; a caption
             // saying so would be a line of chrome over a result the user is trying to read.
             return nil
         case .running:
+            // The «Оформить» pass: the model is working, on the source, and the reply has not
+            // begun. Before the terms check, because the pass runs before anything that
+            // could raise the sheet.
+            if formatting {
+                return PanelStatus(kind: .formatting, message: "Оформляю…", offersRetry: false)
+            }
             // The escalated sheet is on the main window, in front; this panel is behind it
             // and the model is idle. Saying «Перевожу…» here contradicts the table asking
             // for the user's attention two windows up.

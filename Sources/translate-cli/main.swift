@@ -17,6 +17,9 @@ struct Options {
     /// would quietly do nothing, the `--from` defect's exact shape.
     var tone: String?
     var proofread = false
+    /// The «Оформить» pass on its own: print the reconstructed text and `FormattingGate`'s
+    /// verdict, translate nothing. The measurement tool for spec #72's threshold.
+    var formatOnly = false
     var level: ProofreadingLevel?
     var style: RewriteStyle?
     var model: String?
@@ -74,6 +77,8 @@ func parse(_ args: [String]) -> Result<Options, ParseFailure> {
             }
         case "--proofread":
             options.proofread = true
+        case "--format-only":
+            options.formatOnly = true
         case "--level":
             guard let value = takeValue() else { return .failure(ParseFailure(message: "--level needs a value")) }
             // Read through `init(rawValue:)` with the choices listed from `allCases`, the
@@ -110,6 +115,7 @@ func parse(_ args: [String]) -> Result<Options, ParseFailure> {
 
 let usage = "usage: translate-cli --to <ru|en|de|fr|es|pt|it|zh|ja> [--from L] [--tone neutral|formal|casual|technical|literal] [--engine ollama|lmstudio] [--model NAME] [--chunk N] [--think off|low|medium|high] [text]\n"
     + "       translate-cli --proofread [--level errorsOnly|errorsAndStyle|rewrite] [--style original|friendly|business|professional|plain] [--from L] [--engine ollama|lmstudio] [--model NAME] [--chunk N] [--think off|low|medium|high] [text]\n"
+    + "       translate-cli --format-only [--from L] [--engine ollama|lmstudio] [--model NAME] [--chunk N] [--think off|low|medium|high] [text]   # prints the «Оформить» pass's result and verdict; exit 1 on rejection\n"
 
 func fail(_ message: String) -> Never {
     FileHandle.standardError.write(Data((message + "\n").utf8))
@@ -129,7 +135,17 @@ case .failure(let failure): fail(failure.message)
 // mistyped measurement look like a result — and this tool exists to take measurements
 // (the правка calibration gate, issue #40, runs through it).
 var target: Language?
-if parsed.proofread {
+if parsed.formatOnly {
+    // The pass has no target, no tone and no правка parameters; each is refused rather than
+    // ignored, for the reason the split below gives.
+    if parsed.proofread { fail("--format-only and --proofread are different operations") }
+    if parsed.to != nil || parsed.tone != nil {
+        fail("--to and --tone apply to translation only; --format-only reconstructs structure in the text's own language")
+    }
+    if parsed.level != nil || parsed.style != nil {
+        fail("--level and --style apply to --proofread only")
+    }
+} else if parsed.proofread {
     if parsed.to != nil {
         fail("--to applies to translation only; a proofread stays in the text's own language")
     }
@@ -204,6 +220,25 @@ let translator = Translator(client: parsed.engine == "lmstudio"
 let chatOptions = ChatOptions(model: model, temperature: 0.2, keepAlive: "30m", think: parsed.think)
 
 do {
+    // The measurement path, and nothing else: the reconstructed text on stdout exactly as the
+    // app would put it in the исходник pane, the verdict on stderr, exit 1 when the gate
+    // refused — so `Scripts/format-loss.sh` can count without parsing prose.
+    if parsed.formatOnly {
+        if Chunker.plan(text, maxCharacters: chunk).chunks.count > 1 {
+            FileHandle.standardError.write(Data("note: the app would skip this text — it does not fit one request at --chunk \(chunk)\n".utf8))
+        }
+        let formatting = try await translator.format(text: text, source: source, options: chatOptions)
+        switch formatting.verdict {
+        case let .accepted(formatted):
+            FileHandle.standardOutput.write(Data((formatted + "\n").utf8))
+            FileHandle.standardError.write(Data("— accepted · \(Int(formatting.totalMS))ms total\n".utf8))
+            exit(0)
+        case let .rejected(reason):
+            FileHandle.standardOutput.write(Data((text + "\n").utf8))
+            FileHandle.standardError.write(Data("— rejected: \(reason) · \(Int(formatting.totalMS))ms total\n".utf8))
+            exit(1)
+        }
+    }
     let outcome: TranslationOutcome
     if parsed.proofread {
         outcome = try await translator.proofread(

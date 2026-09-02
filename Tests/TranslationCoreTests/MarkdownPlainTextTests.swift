@@ -1,6 +1,5 @@
 import Testing
 import Foundation
-@testable import MarkupKit
 @testable import TranslationCore
 
 // «Заменить» writes into the user's own document, so what this renderer decides per block is what

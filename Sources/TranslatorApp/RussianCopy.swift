@@ -397,6 +397,23 @@ enum RussianCopy {
     /// draw, so the line names the operation and the language it worked in. The language
     /// is omitted rather than replaced by «язык не определён» — правка ran fine without
     /// it, unlike translation, where the detector picked the target (spec §5).
+    /// What «Оформить не удалось» says under the warnings. «Обработан», not «переведён»:
+    /// the same pass runs before правка.
+    static func formattingNotice(_ notice: FormattingNotice) -> String {
+        switch notice {
+        case .tooLong:
+            "Текст длиннее одного запроса к модели, поэтому оформлен не был — обработан как есть."
+        case .rejected(.empty):
+            "Модель ничего не вернула на запрос об оформлении — текст обработан как есть."
+        case .rejected(.wordsChanged):
+            "Модель изменила слова, а не только разметку — результат отброшен, текст обработан как есть."
+        case .rejected(.unevenTable):
+            "В собранной таблице строки разной длины — результат отброшен, текст обработан как есть."
+        case let .failed(message):
+            "Запрос об оформлении не удался (\(message)) — текст обработан как есть."
+        }
+    }
+
     static func proofreadHeader(language: Language?) -> String {
         language.map { "правка · \($0.russianName)" } ?? "правка"
     }

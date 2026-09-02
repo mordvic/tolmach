@@ -28,27 +28,34 @@ struct WarningsView: View {
     /// the status bar say «N+1 предупреждение» beside a file row saying «N».
     /// `RunStatusBar` draws it as an always-visible row of its own instead.
     var onMute: (String) -> Void = { _ in }
+    /// Why the «Оформить» pass the user asked for did not shape this run. Not part of the
+    /// outcome — the engine's route never knows whether anyone asked — so it travels beside
+    /// it, from `TranslationViewModel`. The queue never formats, so its callers pass nothing.
+    var formattingNotice: FormattingNotice?
 
     init(checks: [GlossaryCheck], markupDiffs: [MarkupDiff], markupNotCompared: Bool = false,
          documentGlossary: [GlossaryEntry],
          target: Language? = nil,
+         formattingNotice: FormattingNotice? = nil,
          onMute: @escaping (String) -> Void = { _ in }) {
         self.checks = checks
         self.markupDiffs = markupDiffs
         self.markupNotCompared = markupNotCompared
         self.documentGlossary = documentGlossary
         self.target = target
+        self.formattingNotice = formattingNotice
         self.onMute = onMute
     }
 
     /// The window's and the panel's entry point, forwarding to the one above so that the
     /// two callers cannot end up rendering warnings differently.
     init(outcome: TranslationOutcome, target: Language? = nil,
+         formattingNotice: FormattingNotice? = nil,
          onMute: @escaping (String) -> Void = { _ in }) {
         self.init(checks: outcome.checks, markupDiffs: outcome.markupDiffs,
                   markupNotCompared: outcome.markupNotCompared,
                   documentGlossary: outcome.documentGlossary,
-                  target: target, onMute: onMute)
+                  target: target, formattingNotice: formattingNotice, onMute: onMute)
     }
 
     private var glossaryWarnings: [(check: GlossaryCheck, text: String)] {
@@ -77,6 +84,7 @@ struct WarningsView: View {
             + (markupNotCompared ? 1 : 0)
             + glossaryWarnings.count
             + (documentGlossary.isEmpty ? 0 : 1)
+            + (formattingNotice == nil ? 0 : 1)
     }
 
     /// Whether this view would draw anything at all.
@@ -106,6 +114,14 @@ struct WarningsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if let formattingNotice {
+                // First, because it is about the *source* the rest of these describe: a run
+                // that went without its pass was translated from the flat text, and the rows
+                // below are about that text.
+                section("Оформить не удалось") {
+                    Text("• " + RussianCopy.formattingNotice(formattingNotice)).font(.caption)
+                }
+            }
             if markupNotCompared {
                 // Deliberately not phrased as a fault in the translation: nothing was found
                 // wrong with it, and nothing was found right either.

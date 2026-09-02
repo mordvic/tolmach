@@ -1,4 +1,4 @@
-// Sources/MarkupKit/MarkdownOutputBlock.swift
+// Sources/TranslationCore/MarkdownOutputBlock.swift
 import Foundation
 
 /// One finished block on its way into a Markdown document, and whether it belongs to a run of
@@ -13,16 +13,25 @@ import Foundation
 /// The rule: two blocks of the same run kind are adjacent lines; everything else is separated by a
 /// blank line. That is what keeps a list a list — `MarkdownBlockScanner` reads three items
 /// separated by blank lines as three lists of one — while keeping a paragraph a paragraph.
-struct MarkdownOutputBlock {
-    enum Run { case listItem, tableRow, other }
+///
+/// In `TranslationCore` since 2026-09-02, because `MarkdownPlainText` moved here to serve the
+/// «Оформить» gate and this is the joiner it writes with; `MarkupKit`'s two capture converters
+/// keep using it from here. Foundation only, like everything else in this module.
+public struct MarkdownOutputBlock: Sendable, Equatable {
+    public enum Run: Sendable, Equatable { case listItem, tableRow, other }
 
-    let text: String
-    let run: Run
+    public let text: String
+    public let run: Run
+
+    public init(text: String, run: Run) {
+        self.text = text
+        self.run = run
+    }
 }
 
 extension Array where Element == MarkdownOutputBlock {
     /// The document. Empty blocks contribute nothing at all, not a blank line.
-    func joinedAsMarkdown() -> String {
+    public func joinedAsMarkdown() -> String {
         var result = ""
         var previous: MarkdownOutputBlock.Run?
         for block in self where !block.text.isEmpty {

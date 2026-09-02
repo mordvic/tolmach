@@ -1,6 +1,5 @@
-// Sources/MarkupKit/MarkdownPlainText.swift
+// Sources/TranslationCore/MarkdownPlainText.swift
 import Foundation
-import TranslationCore
 
 /// Markdown with its markers taken back off, for the one path that must not carry them:
 /// «Заменить», writing a translation back into the application the selection came from.

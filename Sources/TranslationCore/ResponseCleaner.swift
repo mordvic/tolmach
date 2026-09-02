@@ -13,6 +13,11 @@ public enum ResponseCleaner {
         "translation", "translated text",
         "вот перевод", "перевод", "übersetzung",
         "voici la traduction", "traduction", "aquí está la traducción", "traducción",
+        // The «Оформить» route's own chatter, since 2026-09-02. Shared with the other two
+        // routes on purpose — a first line saying «Formatted text:» is a preamble whichever
+        // prompt produced it, and one list is how the routes stay one cleaner.
+        "here is the formatted text", "here's the formatted text", "formatted text",
+        "here is the marked-up text", "marked-up text", "markdown",
     ]
 
     /// `allowFenceUnwrap` defaults to true and every caller in the tree now passes nothing.

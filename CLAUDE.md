@@ -216,6 +216,22 @@ Facts that will bite you if you "tidy" them:
   wrong**: the queue checked the nil alone and failed every all-code document, which «Текст»
   translated happily. Whitespace does not stamp it either; invisible content is not an answer.
 - `stats` covers the per-chunk translation calls only, never the term-list call.
+- **«Оформить» is a third route, and it runs *before* the other two — on the source, in a call
+  of its own, under a gate.** `Translator.format` asks the model to add headings, tables, lists
+  and code markers to a flat text; `FormattingGate` accepts the reply only if, with its markers
+  taken back off (`MarkdownPlainText`, now in `TranslationCore` for exactly this) and whitespace
+  collapsed, it is the same text word for word, and every table's rows have equal cell counts.
+  Emphasis and links are forbidden in the prompt and stripped if they arrive, never failed on.
+  `TranslationViewModel.reconstructIfWanted` decides whether a call is made at all — the
+  setting for this surface (`reconstructsStructure`, plus `reconstructsStructureInPanel` for
+  the panel, both **off** by default), no markup already present (`MarkdownPresence`), and the
+  text fitting one chunk — and a refused, skipped or failed pass runs the operation on the text
+  as it was with a `FormattingNotice` under «Оформить не удалось». An accepted result replaces
+  the исходник pane's text and marks the reply's Markdown as synthesised, so «Заменить» strips
+  it. **Why a separate call and not a clause in the translation prompt** is the 2026-08-31
+  design's series B (bold→italic 5/5, invented emphasis 2/3) — `docs/adr/0011`. The threshold
+  for turning it on by default and the tool that measures it (`translate-cli --format-only`,
+  `Scripts/format-loss.sh`) are in spec #72 and `docs/reference/MEASUREMENTS.md`.
 - **Правка is a second route through the same pipeline, not a second pipeline.**
   `Translator.proofread` shares the chunking, the per-chunk streaming
   (`streamChunkReply`), the cancellation discipline and `ChunkPlan.assembled(from:)`
@@ -297,6 +313,9 @@ not cosmetic — **the safe direction is inverted**. See
 - An `error` event mid-stream does **not** end LM Studio's stream — `chat.end` still follows — so
   the reader turns it into a thrown error. A client that merely read to the end would return a
   partial translation as a success, the same shape as the cancellation rule above.
+- **The main window's status row has a fourth running state, «Оформляю…»**, drawn without a
+  spinner like «Жду ваших правок…» and for the same reason; `PanelStatus.Kind.formatting` is
+  its panel twin. Both read `TranslationViewModel.isFormatting`.
 - `ModelPolicy` pins `aya-expanse:8b` for the interactive path (TTFT < 1 s is a hard requirement)
   and `gpt-oss:20b` for the background path, and carries a blacklist with measured reasons.
   Those reasons are English and reach `translate-cli`; the settings pane renders
