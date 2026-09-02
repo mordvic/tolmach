@@ -31,7 +31,7 @@ private func makeModel(replies: [String], surface: TranslationViewModel.Surface 
     model.sourceText = flat
     await model.run()
     #expect(client.callCount == 1)
-    #expect(!client.receivedMessages[0][0].content.contains("typesetter"))
+    #expect(!client.receivedMessages[0][0].content.hasPrefix(PromptBuilder.formatRole))
 }
 
 @MainActor @Test func anAcceptedReconstructionReplacesTheSourceAndIsWhatGetsTranslated() async {
@@ -40,7 +40,7 @@ private func makeModel(replies: [String], surface: TranslationViewModel.Surface 
     model.sourceText = flat
     await model.run()
     #expect(client.callCount == 2)
-    #expect(client.receivedMessages[0][0].content.contains("typesetter"))
+    #expect(client.receivedMessages[0][0].content.hasPrefix(PromptBuilder.formatRole))
     #expect(client.receivedMessages[1].last?.content.hasSuffix(table) == true)
     #expect(model.sourceText == table)
     #expect(model.sourceWasReconstructed)
@@ -66,7 +66,7 @@ private func makeModel(replies: [String], surface: TranslationViewModel.Surface 
     await model.run()
     // The translation itself is several calls for a text this long; what must be absent is
     // the pass — no call carried its prompt.
-    #expect(!client.receivedMessages.contains { $0[0].content.contains("typesetter") })
+    #expect(!client.receivedMessages.contains { $0[0].content.hasPrefix(PromptBuilder.formatRole) })
     #expect(model.formattingNotice == .tooLong)
     #expect(model.state == .finished)
 }

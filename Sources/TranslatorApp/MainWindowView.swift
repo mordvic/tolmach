@@ -199,6 +199,10 @@ struct MainWindowView: View {
     /// question and `FileQueueModel.canChangeMode` is the one that answers it.
 
     var body: some View {
+        // One scan of the source per body evaluation, read by both panes: the left one to
+        // choose its view, the right one to decide whether to draw the shared toggle.
+        let sourceRendering = PaneRendering.of(model.sourceText,
+                                               showsRenderedMarkup: settings.showsRenderedMarkup)
         VStack(spacing: 0) {
             HSplitView {
                 VStack(alignment: .leading, spacing: 0) {
@@ -243,7 +247,7 @@ struct MainWindowView: View {
                     }
                     if mode == .text {
                         SourceEditor(model: model, font: settings.contentFont,
-                                     showsRenderedMarkup: settings.showsRenderedMarkup)
+                                     paneMode: SourcePaneMode.of(sourceRendering))
                     } else {
                         FileQueuePane(queue: queue, canStart: status.isHealthy && action.canStart)
                     }
@@ -275,8 +279,7 @@ struct MainWindowView: View {
                                 // The same bounded scan the pane runs on its own text, on
                                 // the source, so the toggle appears for a Markdown source
                                 // before any translation exists. «Файлы» has no source pane.
-                                sourceHasMarkup: mode == .text
-                                    && MarkdownPresence.hasMarkup(model.sourceText))
+                                sourceHasMarkup: mode == .text && sourceRendering.hasMarkup)
             }
             Divider()
             RunStatusBar(model: model, status: status, engineName: engineName,

@@ -432,7 +432,41 @@ public enum MarkdownBlockScanner {
 /// Every line must carry a marker for the paragraph to be a list. A paragraph with one unmarked
 /// line is prose that happens to mention a bullet, and drawing half of it as a list would be a
 /// guess about the other half.
+/// A list marker at the start of a line — the one place the spellings are listed, read by
+/// `PlainBulletList` (a narrow set, for display) and by `FormattingGate` (the whole set, so a
+/// marker is not a word). Two lists of the same characters were one review away from drifting.
+enum LeadingListMarker {
+    /// The plain-text bullets a flat document arrives with, plus the three Markdown spellings.
+    static let bullets: Set<Character> = ["-", "*", "+", "•", "–", "—"]
+
+    /// The line's content after its marker and the whitespace following it, or nil when the
+    /// line carries no marker from `bullets` and — if `numbered` — no «12.»/«12)» either.
+    static func content(of line: Substring, bullets: Set<Character> = bullets,
+                        numbered: Bool = true) -> Substring? {
+        let trimmed = line.drop(while: { $0 == " " || $0 == "\t" })
+        guard let first = trimmed.first else { return nil }
+        if bullets.contains(first) {
+            return afterMarker(trimmed.dropFirst())
+        }
+        guard numbered else { return nil }
+        let digits = trimmed.prefix(while: \.isNumber)
+        guard !digits.isEmpty, digits.count <= 3 else { return nil }
+        var rest = trimmed.dropFirst(digits.count)
+        guard let mark = rest.first, mark == "." || mark == ")" else { return nil }
+        rest = rest.dropFirst()
+        return afterMarker(rest)
+    }
+
+    /// A marker is a marker only with whitespace after it: «•раз» and «-5» are characters.
+    private static func afterMarker(_ rest: Substring) -> Substring? {
+        guard let next = rest.first, next == " " || next == "\t" else { return nil }
+        return rest.drop(while: { $0 == " " || $0 == "\t" })
+    }
+}
+
 public enum PlainBulletList {
+    /// «•» and «–» only — the two a flat document arrives with. The Markdown spellings are
+    /// already list blocks to the scanner, and «—» opens dialogue lines as often as items.
     static let markers: Set<Character> = ["•", "–"]
 
     /// The items' content ranges (the text after the marker and its space), or nil unless
@@ -442,11 +476,8 @@ public enum PlainBulletList {
         var lineStart = paragraph.startIndex
         var index = paragraph.startIndex
         func take(_ line: Substring) -> Bool {
-            let content = line.drop(while: { $0 == " " || $0 == "\t" })
-            guard let first = content.first, markers.contains(first) else { return false }
-            let afterMarker = content.dropFirst()
-            guard let space = afterMarker.first, space == " " || space == "\t" else { return false }
-            let body = afterMarker.drop(while: { $0 == " " || $0 == "\t" })
+            guard let body = LeadingListMarker.content(of: line, bullets: markers,
+                                                       numbered: false) else { return false }
             items.append(body.startIndex..<body.endIndex)
             return true
         }

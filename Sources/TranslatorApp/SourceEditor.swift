@@ -12,13 +12,13 @@ import TranslationCore
 /// A value rather than a condition inside the `ViewBuilder`, for `PrimaryAction`'s reason: the
 /// rule is «this pane's own text has markup and the shared toggle says „Разметка"», and a
 /// restated condition is how the two panes would come to disagree about what the toggle does.
-/// `PaneRendering.of` is the one scan; this only names its answer for the left side.
+/// Takes the `PaneRendering` the window already computed rather than scanning again: the same
+/// scan feeds the toggle in the other pane's header, and one bounded scan per redraw is enough.
 enum SourcePaneMode: Equatable {
     case editor, rendered
 
-    static func of(sourceText: String, showsRenderedMarkup: Bool) -> SourcePaneMode {
-        PaneRendering.of(sourceText, showsRenderedMarkup: showsRenderedMarkup).showsRendered
-            ? .rendered : .editor
+    static func of(_ rendering: PaneRendering) -> SourcePaneMode {
+        rendering.showsRendered ? .rendered : .editor
     }
 }
 
@@ -39,11 +39,11 @@ struct SourceEditor: View {
     /// 22.0` for the three faces at 22 pt (`Scripts/content-font.swift`, section 5). `TextEditor`
     /// exposes no font of its own, so had it not, there would have been no route to one.
     var font: ContentFont = .default
-    /// «Разметка | Исходник», the перевод pane's toggle, read here too since 2026-09-02: a
-    /// Markdown source is drawn as a document in «Разметка» and edited in «Исходник». One
-    /// setting for both panes, so there is one state to keep in mind. Defaulted off so a call
-    /// site that knows nothing about it gets the editor it always had.
-    var showsRenderedMarkup = false
+    /// Which view this pane hosts — decided by the window from one scan of the source, because
+    /// the window needs the same answer for the toggle in the other pane's header, and two
+    /// bounded scans of up to 128 KB per redraw is one too many. Defaulted to the editor so a
+    /// call site that knows nothing about rendering gets the pane it always had.
+    var paneMode: SourcePaneMode = .editor
     /// So a click in the pane's top margin can still put the caret in the editor. Counted
     /// rather than a flag: see `SourceEditorView.focusRequest`.
     @State private var focusRequest = 0
@@ -55,8 +55,7 @@ struct SourceEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if SourcePaneMode.of(sourceText: model.sourceText,
-                                 showsRenderedMarkup: showsRenderedMarkup) == .rendered {
+            if paneMode == .rendered {
                 // The перевод pane's own view, read-only, over the source: what the user
                 // pasted, or what the «Оформить» pass made of it, drawn as the document it
                 // is. Editing is one click away in «Исходник». Never streaming — the source

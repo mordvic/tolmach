@@ -235,7 +235,8 @@ do {
             exit(0)
         case let .rejected(reason):
             FileHandle.standardOutput.write(Data((text + "\n").utf8))
-            FileHandle.standardError.write(Data("— rejected: \(reason) · \(Int(formatting.totalMS))ms total\n".utf8))
+            // The raw value, a contract with `Scripts/format-loss.sh`'s grep.
+            FileHandle.standardError.write(Data("— rejected: \(reason.rawValue) · \(Int(formatting.totalMS))ms total\n".utf8))
             exit(1)
         }
     }

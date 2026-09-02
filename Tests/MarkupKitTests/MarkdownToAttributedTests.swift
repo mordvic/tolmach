@@ -288,7 +288,7 @@ private func runDump(_ attributed: NSAttributedString) -> String {
 @Test func aCodeBlockIsABorderedCardAndItsLanguageRidesOnTheRegionNotInTheText() {
     let text = "Текст\n\n```swift\nlet a = 1\n```\n\n```\nплоский\n```\n"
     let rendered = MarkdownToAttributed.rendering(of: text, config: config)
-    #expect(rendered.codeRegions.map(\.language) == ["swift", ""])
+    #expect(rendered.codeRegions.map(\.language) == ["swift", nil])
     // The language is an overlay's business. In the text — and therefore in the RTF and in a
     // drag-selection copy — it must not appear.
     #expect(!rendered.attributed.string.contains("swift"))
