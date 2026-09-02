@@ -173,3 +173,19 @@ private func sourceFiles() throws -> [(path: String, text: String)] {
     #expect(carriers.contains { $0.hasPrefix("Sources/OllamaKit/OllamaClient.swift:") })
     #expect(carriers.contains { $0.hasPrefix("Sources/LMStudioKit/LMStudioClient.swift:") })
 }
+
+/// `MarkdownPlainText` moved from `MarkupKit` into `TranslationCore` on 2026-09-02 so that
+/// `FormattingGate` — domain code that may not import AppKit — can take markers back off. The
+/// module rule («Foundation and NaturalLanguage only») is what makes the move legal, and this
+/// pins both halves: the file lives in the domain module, and it imports nothing AppKit.
+@Test func thePlainTextRendererLivesInTheDomainModuleAndImportsNoAppKit() throws {
+    let root = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let home = root.appendingPathComponent("Sources/TranslationCore/MarkdownPlainText.swift")
+    let old = root.appendingPathComponent("Sources/MarkupKit/MarkdownPlainText.swift")
+    #expect(FileManager.default.fileExists(atPath: home.path))
+    #expect(!FileManager.default.fileExists(atPath: old.path))
+    let source = try String(contentsOf: home, encoding: .utf8)
+    #expect(!source.contains("import AppKit"))
+    #expect(!source.contains("import SwiftUI"))
+}

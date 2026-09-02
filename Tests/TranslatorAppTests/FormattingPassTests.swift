@@ -31,7 +31,7 @@ private func makeModel(replies: [String], surface: TranslationViewModel.Surface 
     model.sourceText = flat
     await model.run()
     #expect(client.callCount == 1)
-    #expect(!client.receivedMessages[0][0].content.contains("typesetter"))
+    #expect(!client.receivedMessages[0][0].content.hasPrefix(PromptBuilder.formatRole))
 }
 
 @MainActor @Test func anAcceptedReconstructionReplacesTheSourceAndIsWhatGetsTranslated() async {
@@ -40,7 +40,7 @@ private func makeModel(replies: [String], surface: TranslationViewModel.Surface 
     model.sourceText = flat
     await model.run()
     #expect(client.callCount == 2)
-    #expect(client.receivedMessages[0][0].content.contains("typesetter"))
+    #expect(client.receivedMessages[0][0].content.hasPrefix(PromptBuilder.formatRole))
     #expect(client.receivedMessages[1].last?.content.hasSuffix(table) == true)
     #expect(model.sourceText == table)
     #expect(model.sourceWasReconstructed)
@@ -66,7 +66,7 @@ private func makeModel(replies: [String], surface: TranslationViewModel.Surface 
     await model.run()
     // The translation itself is several calls for a text this long; what must be absent is
     // the pass — no call carried its prompt.
-    #expect(!client.receivedMessages.contains { $0[0].content.contains("typesetter") })
+    #expect(!client.receivedMessages.contains { $0[0].content.hasPrefix(PromptBuilder.formatRole) })
     #expect(model.formattingNotice == .tooLong)
     #expect(model.state == .finished)
 }
@@ -157,4 +157,17 @@ private func makeModel(replies: [String], surface: TranslationViewModel.Surface 
     model.sourceText = flat
     await model.run()
     #expect(model.formattingNotice == nil)
+}
+
+/// «•» bullets are drawn as a list by the pane, but they are not structure the pass is barred
+/// from adding to — the text beside them may still hold a collapsed table.
+@MainActor @Test func plainBulletsDoNotStopThePass() async {
+    let source = "• first\n• second\nFolder\nTrunk\n/nova\nmain"
+    let formatted = "- first\n- second\n\n| Folder | Trunk |\n| --- | --- |\n| /nova | main |"
+    let (model, client, settings) = makeModel(replies: [formatted, "перевод"])
+    settings.reconstructsStructure = true
+    model.sourceText = source
+    await model.run()
+    #expect(client.callCount == 2)
+    #expect(model.sourceText == formatted)
 }

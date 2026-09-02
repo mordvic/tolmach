@@ -32,6 +32,11 @@ import Foundation
 /// - **A link** keeps its text and loses its URL. A plain write has nowhere to put a target, and
 ///   appending it in parentheses would edit the user's sentence. Stated as a loss, not hidden.
 public enum MarkdownPlainText {
+    /// The plain spelling of a thematic break. A named constant because `FormattingGate` has
+    /// to recognise it on the way back, and a literal spelled twice is the shape this repo has
+    /// already paid for.
+    public static let thematicBreak = "———"
+
     public static func render(_ markdown: String) -> String {
         var blocks: [MarkdownOutputBlock] = []
         // Exhaustive with no `default:`, so a new `MarkdownBlock` case has to be given a plain
@@ -60,7 +65,7 @@ public enum MarkdownPlainText {
                         .joined(separator: "\t"), run: .tableRow))
                 }
             case .thematicBreak:
-                blocks.append(.init(text: "———", run: .other))
+                blocks.append(.init(text: thematicBreak, run: .other))
             }
         }
         return blocks.joinedAsMarkdown()

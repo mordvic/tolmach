@@ -510,6 +510,12 @@ not cosmetic — **the safe direction is inverted**. See
   as overlays — views, not characters, so the RTF flavour and a drag-selection copy carry the
   code alone. The frame lives in the paragraph style rather than in the view for the reason
   the converter exists at all: one rendering for the pane and for the copy path.
+  **«•» and «–» lines are drawn as a list and are not a block**, since 2026-09-02:
+  `PlainBulletList` is read by the renderer and by `MarkdownPresence` (so the toggle appears)
+  and by nothing else — the scanner hands the paragraph over as a paragraph, so the chunker,
+  the skeleton, the model and «Заменить» see the user's own bytes. The «Оформить» pass asks
+  `MarkdownPresence` with `countingPlainBullets: false`, because a flat mail with bullets and a
+  collapsed table still wants its table back.
   **Since 2026-09-02 the исходник pane reads the same toggle**: `SourcePaneMode.of` hosts the
   same `RenderedTextView` over the source in «Разметка» and the editor in «Исходник», the
   toggle is drawn when *either* pane has markup (`TranslationPane.offersToggle`), and the

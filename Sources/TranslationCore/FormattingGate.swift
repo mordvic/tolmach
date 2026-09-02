@@ -1,8 +1,10 @@
 // Sources/TranslationCore/FormattingGate.swift
 import Foundation
 
-/// Why a reconstructed text was refused. Each case is a sentence the app can say.
-public enum FormattingRejection: Sendable, Equatable {
+/// Why a reconstructed text was refused. Each case is a sentence the app can say, and its
+/// raw value is the token `translate-cli --format-only` prints and `Scripts/format-loss.sh`
+/// counts — renaming a case renames what the script greps for, so the spelling is a contract.
+public enum FormattingRejection: String, Sendable, Equatable {
     /// The model returned nothing, or only whitespace.
     case empty
     /// With the markup taken back off, the text is not the text it was given — a word
@@ -48,7 +50,11 @@ public enum FormattingGate {
             if !alignments.isEmpty { widths.insert(alignments.count) }
             if widths.count > 1 { return .unevenTable }
         }
-        let expected = words(of: source)
+        // Both sides through the same renderer and the same word rule. In the app the source
+        // has no markup (the pass is skipped otherwise), so rendering it is close to identity;
+        // `translate-cli --format-only` skips that precondition, and a marked-up input judged
+        // against its own unstripped bytes was refused as `wordsChanged` for its own markers.
+        let expected = words(of: MarkdownPlainText.render(source))
         let actual = words(of: MarkdownPlainText.render(formatted))
         return expected == actual ? nil : .wordsChanged
     }
@@ -89,7 +95,7 @@ public enum FormattingGate {
         for line in LineScanner.pieces(text) {
             var content = line.content.trimmingCharacters(in: .whitespaces)
             content = droppingListMarker(content)
-            if content == "———" { content = "" }
+            if content == MarkdownPlainText.thematicBreak { content = "" }
             pieces.append(content)
         }
         return pieces.joined(separator: " ")
@@ -97,23 +103,10 @@ public enum FormattingGate {
             .joined(separator: " ")
     }
 
-    /// `- `, `* `, `+ `, `• `, `– `, `— `, `12. `, `12) ` — and nothing else — at the start of
-    /// a trimmed line. The bullet set is the plain-text bullets a flat document arrives with,
-    /// plus the three Markdown spellings; the numbered forms are the two a person types.
+    /// The line without its leading list marker, in every spelling `LeadingListMarker` knows —
+    /// the whole set here, because to the gate a marker of any spelling is not a word.
     static func droppingListMarker(_ line: String) -> String {
-        guard let first = line.first else { return line }
-        if "-*+•–—".contains(first) {
-            let rest = line.dropFirst()
-            guard let next = rest.first, next == " " || next == "\t" else { return line }
-            return String(rest.drop(while: { $0 == " " || $0 == "\t" }))
-        }
-        let digits = line.prefix(while: \.isNumber)
-        guard !digits.isEmpty, digits.count <= 3 else { return line }
-        var rest = line.dropFirst(digits.count)
-        guard let mark = rest.first, mark == "." || mark == ")" else { return line }
-        rest = rest.dropFirst()
-        guard let next = rest.first, next == " " || next == "\t" else { return line }
-        return String(rest.drop(while: { $0 == " " || $0 == "\t" }))
+        LeadingListMarker.content(of: Substring(line)).map(String.init) ?? line
     }
 
     // MARK: - Inline

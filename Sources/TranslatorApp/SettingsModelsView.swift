@@ -320,7 +320,7 @@ struct SettingsModelsView: View {
                 // Disabled rather than hidden, for the same reason as «Длина рассуждения»
                 // below: a control that vanished when an unrelated switch moved would read
                 // as a bug rather than as a dependency.
-                Toggle("Также в панели по горячей клавише",
+                Toggle("Также в панели",
                        isOn: $settings.reconstructsStructureInPanel)
                     .disabled(!settings.reconstructsStructure)
                 Text("Панель отвечает меньше чем за секунду; с оформлением первое слово "

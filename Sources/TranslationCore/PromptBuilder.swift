@@ -199,10 +199,14 @@ public enum PromptBuilder {
     /// they are the forms the gate cannot verify structurally and the models are measurably
     /// worst with; a marker the model adds anyway is stripped, not failed on. The text is handed
     /// over under one closing line with no markers, for `userPrompt(for:)`'s measured reason.
+    /// The pass's opening sentence, public so a test can tell a formatting call from a
+    /// translation by the one line that names the role rather than by a word of prose.
+    public static let formatRole = "You are a typesetter."
+
     public static func formatMessages(text: String, language: Language?) -> [ChatMessage] {
         let languageClause = language.map { "The text is in \($0.englishName). " } ?? ""
         let system = [
-            "You are a typesetter. Mark up the user's plain text as Markdown so that its structure "
+            "\(formatRole) Mark up the user's plain text as Markdown so that its structure "
                 + "is visible. \(languageClause)Never translate it and never rewrite it.",
             "",
             "Rules:",
@@ -224,6 +228,6 @@ public enum PromptBuilder {
         ].joined(separator: "\n")
         return [ChatMessage(role: "system", content: system),
                 ChatMessage(role: "user",
-                            content: "Please mark up the following \(languageClause.isEmpty ? "" : language!.englishName + " ")text:\n\n\n\(text)")]
+                            content: "Please mark up the following \(language.map { "\($0.englishName) " } ?? "")text:\n\n\n\(text)")]
     }
 }

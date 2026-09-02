@@ -237,8 +237,15 @@ class CodeBlockTextView: NSTextView {
         ]
     }
 
-    private var buttons: [CodeCopyButton] = []
-    private var labels: [CodeLanguageLabel] = []
+    /// One code block's header: its button, its label if the fence named a language, and the
+    /// rect both are placed from. One value rather than two arrays looked up by range.
+    private struct CodeCard {
+        let range: NSRange
+        let button: CodeCopyButton
+        let label: CodeLanguageLabel?
+        var frame: NSRect?
+    }
+    private var cards: [CodeCard] = []
 
     /// Nothing. A read-only view has no use for a drop, and since this view hosts the исходник
     /// pane's rendered mode too (2026-09-02), a file dropped on it must reach the pane's own
@@ -257,12 +264,12 @@ class CodeBlockTextView: NSTextView {
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = super.menu(for: event) ?? NSMenu()
         let point = convert(event.locationInWindow, from: nil)
-        guard let button = buttons.first(where: { $0.blockFrame?.contains(point) ?? false })
+        guard let card = cards.first(where: { $0.frame?.contains(point) ?? false })
         else { return menu }
         let item = NSMenuItem(title: "Скопировать код",
                               action: #selector(copyCodeBlock(_:)), keyEquivalent: "")
         item.target = self
-        item.representedObject = button.source
+        item.representedObject = card.button.source
         menu.insertItem(item, at: 0)
         menu.insertItem(.separator(), at: 1)
         return menu
@@ -283,9 +290,11 @@ class CodeBlockTextView: NSTextView {
     }
 
     private func rebuildButtons() {
-        for button in buttons { button.removeFromSuperview() }
-        for label in labels { label.removeFromSuperview() }
-        buttons = codeRegions.map { region in
+        for card in cards {
+            card.button.removeFromSuperview()
+            card.label?.removeFromSuperview()
+        }
+        cards = codeRegions.map { region in
             let button = CodeCopyButton(title: "Скопировать", target: self,
                                         action: #selector(copyCodeBlock(_:)))
             button.source = region.source
@@ -294,19 +303,17 @@ class CodeBlockTextView: NSTextView {
             button.controlSize = .small
             button.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
             addSubview(button)
-            return button
-        }
-        // One label per block that named a language; an unnamed fence gets a header with the
-        // button alone rather than a label saying nothing.
-        labels = codeRegions.compactMap { region in
-            guard !region.language.isEmpty else { return nil }
-            let label = CodeLanguageLabel(labelWithString: region.language)
-            label.range = region.range
-            label.font = NSFont.monospacedSystemFont(ofSize: NSFont.smallSystemFontSize,
-                                                     weight: .regular)
-            label.textColor = .secondaryLabelColor
-            addSubview(label)
-            return label
+            // A label only for a fence that named a language; a bare fence gets a header with
+            // the button alone rather than a label saying nothing.
+            let label = region.language.map { language in
+                let label = CodeLanguageLabel(labelWithString: language)
+                label.font = NSFont.monospacedSystemFont(ofSize: NSFont.smallSystemFontSize,
+                                                         weight: .regular)
+                label.textColor = .secondaryLabelColor
+                addSubview(label)
+                return label
+            }
+            return CodeCard(range: region.range, button: button, label: label, frame: nil)
         }
         positionButtons()
     }
@@ -317,9 +324,10 @@ class CodeBlockTextView: NSTextView {
     /// pinned to the code rather than to a font metric.
     private func positionButtons() {
         guard let layoutManager, let textContainer else { return }
-        for button in buttons {
-            guard let range = button.range else { button.blockFrame = nil; continue }
-            let glyphs = layoutManager.glyphRange(forCharacterRange: range,
+        let header = MarkdownToAttributed.codeCardHeaderHeight
+        for index in cards.indices {
+            let button = cards[index].button
+            let glyphs = layoutManager.glyphRange(forCharacterRange: cards[index].range,
                                                   actualCharacterRange: nil)
             var rect = layoutManager.boundingRect(forGlyphRange: glyphs, in: textContainer)
             rect.origin.x += textContainerOrigin.x
@@ -331,6 +339,7 @@ class CodeBlockTextView: NSTextView {
             // therefore lands in the middle of the pane, over nothing, and the hover band
             // would miss every point past the end of the shortest line.
             rect.size.width = max(rect.width, textContainer.size.width - rect.minX)
+            cards[index].frame = rect
             button.blockFrame = rect
             button.sizeToFit()
             let size = button.frame.size
@@ -338,28 +347,21 @@ class CodeBlockTextView: NSTextView {
             // code — at the right edge but inside it, because a button hanging past the edge
             // would be clipped by the scroll view at narrow pane widths. The header is
             // `codeCardHeaderHeight` tall; the button sits vertically centred in it.
-            let header = MarkdownToAttributed.codeCardHeaderHeight
             button.setFrameOrigin(NSPoint(x: max(rect.maxX - size.width - 6, rect.minX),
                                           y: rect.minY - header + (header - size.height) / 2))
-        }
-        for label in labels {
-            guard let range = label.range,
-                  let button = buttons.first(where: { $0.range == range }),
-                  let rect = button.blockFrame else { continue }
-            label.sizeToFit()
-            let header = MarkdownToAttributed.codeCardHeaderHeight
-            // Same header, left edge, a little in from the border.
-            label.setFrameOrigin(NSPoint(x: rect.minX + 2,
-                                         y: rect.minY - header + (header - label.frame.height) / 2))
+            if let label = cards[index].label {
+                label.sizeToFit()
+                // Same header, left edge, a little in from the border.
+                label.setFrameOrigin(NSPoint(x: rect.minX + 2,
+                                             y: rect.minY - header + (header - label.frame.height) / 2))
+            }
         }
     }
 }
 
-/// The language a fence named, over the block that named it. Remembers its block the way the
-/// button does, so the two are positioned from one rect.
-final class CodeLanguageLabel: NSTextField {
-    var range: NSRange?
-}
+/// The language a fence named, over the block that named it. A type of its own so a test can
+/// find the labels among the subviews the way it finds the buttons.
+final class CodeLanguageLabel: NSTextField {}
 
 /// An `NSButton` that remembers which code block it belongs to.
 ///

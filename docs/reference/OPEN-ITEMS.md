@@ -312,6 +312,14 @@ to give for free is not.
 | **A file dropped on the pane still reaching `DroppedDocument`** | The text view registers for strings only, so the file drop should fall through to the pane's `dropDestination`; whether AppKit's routing agrees is exactly the kind of thing this project does not assert from memory | `SourceTextView.updateDragTypeRegistration`, `SourceEditor` |
 | **The paste stall from Word** | The RTF path is reached only with no HTML on the board and costs 216–262 ms cold; the paste is synchronous on purpose (the reasoning is on the type). Whether a quarter-second before the text appears reads as a stall or as nothing is a judgement | `SourceTextView` |
 
+**Owed by the plain-bullet list (2026-09-02, spec #72 step 6).** «•»- and «–»-lines are drawn as
+a list; the rule is pinned, the drawing is not.
+
+| What to check | Why it needs eyes | Code |
+|---|---|---|
+| **A «•» list from a mail, in «Разметка» and in «Исходник»** | Drawn through the same `listItem` path a Markdown list takes, so the bullet is AppKit's `•` with a hanging indent rather than the user's character and a space. Whether the two read as the same list, and whether the toggle appearing for a text with no other markup surprises, is the judgement | `PlainBulletList`, `MarkdownToAttributed.rendering(blocks:)` |
+| **A paragraph where one line starts with «–» as a dash, not a bullet** | The rule requires *every* line marked, so a dialogue («– Да. – Нет.») written one line per speaker is drawn as a list. Recorded as the heuristic's known false positive; «Исходник» is the way out | `PlainBulletList.items` |
+
 **Owed by the code card (2026-09-02, spec #72 step 5).** The border, the header room and the
 region's language are pinned in `MarkdownToAttributedTests`; the overlays' placement in
 `RenderedMarkupTests`. How it looks is the judgement.
@@ -500,6 +508,35 @@ nothing in this environment can see either.
 ---
 
 ## 2. Known and accepted
+
+- **`FormattingGate` is looser than spec #72's literal sentence, in one deliberate way.** The
+  spec says «with the markers taken off and whitespace collapsed, byte-identical». The gate also
+  drops a list marker at the start of a line — `- `, `• `, `1) `, `1. ` and the like — on
+  **both** sides, and the thematic break's plain spelling. Without that, the pass could never
+  turn unmarked lines into a list (`- item` renders as «• item», which the source never had),
+  which is one of the four forms it exists to add. The consequence, accepted: a model that
+  *deletes* the source's own «1) » prefixes, or adds a horizontal rule or a `>`, passes the gate
+  — those are structure, not words, and the prompt forbids the latter two. What the gate
+  promises is exactly what its doc comment says: the words, in order, with their punctuation.
+  Recorded here because the review (2026-09-02) read the spec's sentence literally and was
+  right to. `FormattingGate.words(of:)`.
+- **The «Оформить» pass ignores `PlainBulletList` when deciding whether to run**, although the
+  same signal makes the pane's toggle appear. Read literally, spec #72 skips the pass for any
+  text `MarkdownPresence.hasMarkup` accepts; a flat mail with «•» bullets *and* a collapsed
+  table would then never get its table back, so the precondition asks with
+  `countingPlainBullets: false`. `TranslationViewModel.reconstructIfWanted`,
+  `plainBulletsDoNotStopThePass`.
+- **The code card's header is 24 pt whatever «Шрифт текста» says.** Spec #72's story 41 asks
+  for the header to scale; `docs/adr/0008` is that only the user's text scales, and the header
+  holds a system-sized control. The ADR wins; the padding and margins around the code do scale.
+- **The rich paste converts synchronously on the main actor**, where spec #72 said «off the main
+  actor, as the hotkey's does». A paste has no spinner to show during a hop, and text appearing
+  a quarter-second after ⌘V with the caret possibly moved is worse than a stall of the same
+  length; the RTF path that costs that much is reached only with no HTML on the board.
+  `SourceTextView`'s doc comment carries the numbers.
+- **`PlainBulletList` lives in `TranslationCore`, not in `MarkupKit`** as spec #72 placed it,
+  because `MarkdownPresence` — which decides whether the toggle appears — is domain code and
+  must read the same rule. The chunker, the skeleton and the prompts still never consult it.
 
 - **Making the text smaller while the панель is open leaves a gap under it.** The panel
   re-measures on a font change, but `PanelSizer`'s height is monotonic within a presentation —

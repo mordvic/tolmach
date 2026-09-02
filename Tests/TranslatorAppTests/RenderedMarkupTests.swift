@@ -382,10 +382,13 @@ private func scratchTextView() -> CodeBlockTextView {
 /// decides whether it has anything to render: a plain source beside a Markdown translation
 /// stays an editor.
 @MainActor @Test func theSourcePaneRendersOnlyWhenItsOwnTextHasMarkupAndTheSettingSaysSo() {
-    #expect(SourcePaneMode.of(sourceText: "# Заголовок\n\nАбзац.", showsRenderedMarkup: true) == .rendered)
-    #expect(SourcePaneMode.of(sourceText: "# Заголовок\n\nАбзац.", showsRenderedMarkup: false) == .editor)
-    #expect(SourcePaneMode.of(sourceText: "Просто абзац.", showsRenderedMarkup: true) == .editor)
-    #expect(SourcePaneMode.of(sourceText: "", showsRenderedMarkup: true) == .editor)
+    func mode(_ text: String, _ setting: Bool) -> SourcePaneMode {
+        SourcePaneMode.of(PaneRendering.of(text, showsRenderedMarkup: setting))
+    }
+    #expect(mode("# Заголовок\n\nАбзац.", true) == .rendered)
+    #expect(mode("# Заголовок\n\nАбзац.", false) == .editor)
+    #expect(mode("Просто абзац.", true) == .editor)
+    #expect(mode("", true) == .editor)
 }
 
 /// One toggle for both panes, offered when either has something to show — a Markdown source

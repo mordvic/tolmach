@@ -59,13 +59,38 @@ func axProbe() {
     var role: CFTypeRef?
     AXUIElementCopyAttributeValue(target, kAXRoleAttribute as CFString, &role)
     print("  focused role: \(role as? String ?? "—")")
+    print("  frontmost app: \(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "—")")
+    // The ancestry, for one question added 2026-09-02: does the selection live in **web
+    // content**? Chromium and WebKit both expose it as an `AXWebArea` ancestor, and a
+    // selection there is where a flat, block-separator-free `kAXSelectedText` was reported
+    // (spec #72, Q3). If that role shows up here whenever the text arrives glued, the browser
+    // rule can be «the focused element sits under an AXWebArea» rather than a bundle list.
+    var roles: [String] = []
+    var cursor: AXUIElement? = target
+    for _ in 0..<12 {
+        guard let current = cursor else { break }
+        var parent: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(current, kAXParentAttribute as CFString, &parent) == .success,
+              let next = parent, CFGetTypeID(next) == AXUIElementGetTypeID() else { break }
+        let element = next as! AXUIElement
+        var parentRole: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &parentRole)
+        roles.append(parentRole as? String ?? "?")
+        cursor = element
+    }
+    print("  ancestry: \(roles.joined(separator: " → "))")
+    print("  under AXWebArea: \(roles.contains("AXWebArea"))")
 
     // 1. The plain attribute, the one `SelectionReader` reads today.
     var selected: CFTypeRef?
     let plainStatus = AXUIElementCopyAttributeValue(target, kAXSelectedTextAttribute as CFString, &selected)
     if plainStatus == .success {
         if let string = selected as? String {
-            print("  kAXSelectedText: plain string, \(string.count) chars")
+            // Newline count beside the length: a multi-block selection that answers with none
+            // is the glued shape — headings, paragraphs and table cells run together.
+            let breaks = string.filter(\.isNewline).count
+            print("  kAXSelectedText: plain string, \(string.count) chars, \(breaks) line breaks")
+            print("  first 200: \(String(string.prefix(200)).debugDescription)")
         } else {
             print("  kAXSelectedText: answered with a non-string (\(CFCopyTypeIDDescription(CFGetTypeID(selected!)) as String? ?? "?")) "
                 + "— today's code drops this to nil and falls through to the clipboard")
@@ -127,6 +152,12 @@ func pasteboardProbe() {
     for type in board.types ?? [] {
         let bytes = board.data(forType: type)?.count ?? 0
         print("    \(type.rawValue.padding(toLength: 34, withPad: " ", startingAt: 0)) \(bytes) bytes")
+    }
+    if let plain = board.string(forType: .string) {
+        // The same two numbers as the AX half, so the two tiers can be compared for one
+        // selection: does the application's own ⌘C keep the line breaks the AX answer lost?
+        print("  public.utf8-plain-text: \(plain.count) chars, \(plain.filter(\.isNewline).count) line breaks")
+        print("  first 200: \(String(plain.prefix(200)).debugDescription)")
     }
     for type in [NSPasteboard.PasteboardType.html, .rtf] {
         guard let data = board.data(forType: type) else { continue }

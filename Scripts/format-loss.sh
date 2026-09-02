@@ -44,6 +44,7 @@ for name in $MODELS; do
             if $CLI --format-only --model "$name" --chunk 4000 < "$src" > "$out" 2> "$out.err"; then
                 verdict=accepted; accepted=$((accepted + 1)); ok_here=$((ok_here + 1))
             else
+                # The token after «rejected:» is a `FormattingRejection` raw value.
                 verdict=$(grep -o 'rejected: [a-zA-Z]*' "$out.err" || echo failed)
             fi
             total=$((total + 1))

@@ -340,3 +340,37 @@ private func prefixes(of text: String) -> [String] {
     // paired, so nothing inside the window becomes markup that was not.
     #expect(!MarkdownPresence.hasMarkup("Абзац с **жирным**.", inspecting: 12))
 }
+
+// MARK: - Plain bullets, for display only (spec #72, step 6)
+
+/// «•» and «–» at line starts are the commonest flat list there is, and they are drawn as one —
+/// on screen and nowhere else. The scanner still reads the paragraph as a paragraph, so the
+/// chunker, the skeleton and the model see exactly the bytes the user gave.
+@Test func plainBulletsStayAParagraphToTheScannerAndBecomeItemsOnlyForDisplay() {
+    let text = "• раз\n• два\n– три"
+    let blocks = MarkdownBlockScanner.blocks(of: text)
+    guard case let .paragraph(range)? = blocks.first, blocks.count == 1 else {
+        Issue.record("the bullets were not one paragraph: \(blocks)"); return
+    }
+    let items = PlainBulletList.items(of: text[range])
+    #expect(items?.map { String(text[$0]) } == ["раз", "два", "три"])
+}
+
+@Test func aParagraphWithOneUnmarkedLineIsNotAPlainBulletList() {
+    let text = "• раз\nпросто строка"
+    guard case let .paragraph(range)? = MarkdownBlockScanner.blocks(of: text).first else {
+        Issue.record("not a paragraph"); return
+    }
+    #expect(PlainBulletList.items(of: text[range]) == nil)
+    // A bullet in the middle of a line is a character, not a marker; a marker with no space
+    // after it is not a marker either.
+    #expect(PlainBulletList.items(of: Substring("Цена • 5")) == nil)
+    #expect(PlainBulletList.items(of: Substring("•раз")) == nil)
+}
+
+/// The toggle has to appear for such a text, or the raw form would be unreachable when the
+/// guess is wrong — «Исходник» is the way out the display heuristic owes.
+@Test func plainBulletsCountAsMarkupSoTheToggleAppears() {
+    #expect(MarkdownPresence.hasMarkup("• раз\n• два"))
+    #expect(!MarkdownPresence.hasMarkup("Цена • 5 и всё."))
+}

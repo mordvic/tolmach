@@ -16,8 +16,10 @@ public enum ResponseCleaner {
         // The «Оформить» route's own chatter, since 2026-09-02. Shared with the other two
         // routes on purpose — a first line saying «Formatted text:» is a preamble whichever
         // prompt produced it, and one list is how the routes stay one cleaner.
+        // Multi-word phrases only, no bare «markdown»: a document whose first line is the
+        // heading «# Markdown:» would otherwise lose it on every route.
         "here is the formatted text", "here's the formatted text", "formatted text",
-        "here is the marked-up text", "marked-up text", "markdown",
+        "here is the marked-up text", "marked-up text",
     ]
 
     /// `allowFenceUnwrap` defaults to true and every caller in the tree now passes nothing.

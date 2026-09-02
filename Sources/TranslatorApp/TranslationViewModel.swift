@@ -723,7 +723,11 @@ final class TranslationViewModel {
                                      translator: Translator) async -> String? {
         let wanted = settings.reconstructsStructure
             && (surface == .window || settings.reconstructsStructureInPanel)
-        guard wanted, !MarkdownPresence.hasMarkup(text) else { return text }
+        // Plain «•» bullets are a display heuristic, not structure the model could not add to:
+        // a mail with bullets *and* a collapsed table still wants the table back.
+        guard wanted, !MarkdownPresence.hasMarkup(text, countingPlainBullets: false) else {
+            return text
+        }
         guard Chunker.plan(text, maxCharacters: settings.chunkSize).chunks.count <= 1 else {
             formattingNotice = .tooLong
             return text

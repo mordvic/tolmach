@@ -32,12 +32,12 @@ public enum MarkdownToAttributed {
     public struct CodeRegion: Sendable, Equatable {
         public let range: NSRange
         public let source: String
-        /// What the fence named after its backticks, or empty. For the card's header label —
-        /// an overlay, never characters in the storage, so the RTF flavour and a drag-selection
-        /// copy carry the code and nothing else.
-        public let language: String
+        /// What the fence named after its backticks, or nil for a bare fence. For the card's
+        /// header label — an overlay, never characters in the storage, so the RTF flavour and a
+        /// drag-selection copy carry the code and nothing else.
+        public let language: String?
 
-        public init(range: NSRange, source: String, language: String = "") {
+        public init(range: NSRange, source: String, language: String? = nil) {
             self.range = range
             self.source = source
             self.language = language
@@ -94,7 +94,16 @@ public enum MarkdownToAttributed {
             case let .heading(level, range):
                 result.append(heading(level: level, range, in: text, config: config))
             case let .paragraph(range):
-                result.append(paragraph(range, in: text, config: config))
+                // «•»/«–» lines, drawn as the list they are — a display decision alone, which is
+                // why the scanner handed this over as a paragraph. `PlainBulletList` says why.
+                if let items = PlainBulletList.items(of: text[range]) {
+                    for item in items {
+                        result.append(listItem(depth: 0, marker: .bullet, item, in: text,
+                                               config: config))
+                    }
+                } else {
+                    result.append(paragraph(range, in: text, config: config))
+                }
             case let .listItem(depth, marker, range):
                 result.append(listItem(depth: depth, marker: marker, range, in: text,
                                        config: config))
@@ -104,7 +113,8 @@ public enum MarkdownToAttributed {
                 let source = String(text[range])
                 regions.append(CodeRegion(range: NSRange(location: result.length,
                                                          length: (source as NSString).length),
-                                          source: source, language: language))
+                                          source: source,
+                                          language: language.isEmpty ? nil : language))
                 result.append(codeBlock(source, config: config))
             case let .table(header, rows, alignments):
                 result.append(table(header: header, rows: rows, alignments: alignments,
