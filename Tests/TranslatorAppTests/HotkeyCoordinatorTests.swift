@@ -116,7 +116,7 @@ private func makeCoordinator(reader: ScriptedReader,
         translator: Translator(client: client),
         selectionReader: SelectionReader(accessibility: { reader.next() },
                                          clipboard: clipboard ?? { nil },
-                                         isTrusted: { isTrusted }),
+                                         isTrusted: { isTrusted }, context: { nil }),
         pasteboard: pasteboard ?? scratchPasteboard(),
         // Never the real trigger by default: a test process that ever posted a real ⌘V would
         // synthesize a keystroke wherever the machine running the suite happens to have

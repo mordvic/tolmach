@@ -85,7 +85,7 @@ final class HotkeyCoordinator {
     init(settings: AppSettings,
          glossary: GlossaryStore,
          translator: Translator,
-         selectionReader: SelectionReader = SelectionReader(),
+         selectionReader: SelectionReader = SelectionReader(onDiagnostics: HotkeyCoordinator.logCapture),
          managers: [TextOperation: HotkeyManager]? = nil,
          pasteboard: NSPasteboard = .general,
          selectionWriter: SelectionWriter = SelectionWriter(),
@@ -698,5 +698,28 @@ final class HotkeyCoordinator {
             ? MarkdownPlainText.render(panelModel.translatedText)
             : panelModel.translatedText
         await selectionWriter.replace(text, on: pasteboard)
+    }
+
+    /// One `.info` line per press about *how* the selection was read — which application,
+    /// which roles, which tier answered, and the shape of the Accessibility answer as two
+    /// counts. **Never the text**: `Log`'s rule, and every value here is a role name, a bundle
+    /// identifier or a number. It exists because the web-content rule in `SelectionReader.read`
+    /// rests on a measurement taken through exactly this line (spec #72 Q3), and because the
+    /// next application that hands back a flat selection should be diagnosable from a user's
+    /// machine without a probe binary and a second Accessibility grant.
+    nonisolated static func logCapture(_ diagnostics: SelectionReader.Diagnostics) {
+        let roles = diagnostics.context?.roles.joined(separator: ">") ?? "—"
+        // `.notice`, not `.info`: info entries live in memory only and `log show` no longer
+        // finds them minutes later, which is exactly when a person gets round to reading
+        // them (measured 2026-09-02 — a press logged at info left nothing to show).
+        Log.hotkey.notice("""
+            capture: app=\(diagnostics.context?.bundleIdentifier ?? "—", privacy: .public) \
+            web=\(diagnostics.context?.isWebContent ?? false, privacy: .public) \
+            roles=\(roles, privacy: .public) \
+            ax=\(diagnostics.accessibilityCharacters ?? -1, privacy: .public) chars \
+            /\(diagnostics.accessibilityLineBreaks ?? -1, privacy: .public) breaks \
+            tier=\(diagnostics.tier.rawValue, privacy: .public) \
+            contextMS=\(Int(diagnostics.contextMilliseconds), privacy: .public)
+            """)
     }
 }

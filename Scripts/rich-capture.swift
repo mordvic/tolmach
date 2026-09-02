@@ -25,7 +25,7 @@
 // Fill the table in `docs/reference/OPEN-ITEMS.md` from what this prints, for at least:
 // Safari, Chrome, Word, Pages, Notes, Mail, Slack, Telegram, VS Code.
 import AppKit
-import ApplicationServices
+@preconcurrency import ApplicationServices
 
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
@@ -45,7 +45,13 @@ func countdown(_ seconds: Int, _ message: String) {
 func axProbe() {
     print("=== Accessibility ===")
     guard AXIsProcessTrusted() else {
-        print("  not trusted — grant this binary Accessibility and re-run for this half")
+        // Ask with the system prompt rather than only reporting: the dialog lists this very
+        // binary, and a person granting it there is the whole of what is needed. `@preconcurrency`
+        // is `PermissionsGate.swift`'s answer to the same imported C global under Swift 6.
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
+        print("  not trusted — the system dialog just asked; grant this binary Accessibility "
+              + "(System Settings → Privacy & Security → Accessibility) and re-run for this half")
         return
     }
     let system = AXUIElementCreateSystemWide()

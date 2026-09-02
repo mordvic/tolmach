@@ -19,7 +19,7 @@ import AppKit
     nonisolated(unsafe) var clipboardCalls = 0
     let reader = SelectionReader(accessibility: { "из Accessibility" },
                                  clipboard: { clipboardCalls += 1; return "из буфера" },
-                                 isTrusted: { true })
+                                 isTrusted: { true }, context: { nil })
     #expect(reader.read() == .text("из Accessibility"))
     #expect(clipboardCalls == 0)
 }
@@ -30,40 +30,40 @@ import AppKit
     // the wild: Activity Monitor's focused search field answers `kAXSelectedTextAttribute`
     // with `.success` and a zero-length `CFString`, while Safari's focused `AXGroup` answers
     // `kAXErrorNoValue`. Both must reach the fallback.
-    let reader = SelectionReader(accessibility: { "" }, clipboard: { "из буфера" }, isTrusted: { true })
+    let reader = SelectionReader(accessibility: { "" }, clipboard: { "из буфера" }, isTrusted: { true }, context: { nil })
     #expect(reader.read() == .text("из буфера"))
 
-    let nilReader = SelectionReader(accessibility: { nil }, clipboard: { "из буфера" }, isTrusted: { true })
+    let nilReader = SelectionReader(accessibility: { nil }, clipboard: { "из буфера" }, isTrusted: { true }, context: { nil })
     #expect(nilReader.read() == .text("из буфера"))
 
     // The whitespace-only case has to fall through as well, not just resolve to `.empty`.
     // Without this the filter could be applied to the clipboard branch alone and every test
     // above would still pass.
     let blankReader = SelectionReader(accessibility: { " \n " }, clipboard: { "из буфера" },
-                                      isTrusted: { true })
+                                      isTrusted: { true }, context: { nil })
     #expect(blankReader.read() == .text("из буфера"))
 }
 
 @Test func whitespaceOnlySelectionsCountAsEmpty() {
     // Translating a run of spaces wastes a model call and shows the user an empty panel.
-    let reader = SelectionReader(accessibility: { "   \n\t " }, clipboard: { "  " }, isTrusted: { true })
+    let reader = SelectionReader(accessibility: { "   \n\t " }, clipboard: { "  " }, isTrusted: { true }, context: { nil })
     #expect(reader.read() == .empty)
 
     // Whitespace decides *whether* there is a selection; it does not get stripped from one
     // that exists. A double-click in most applications includes the trailing space, and
     // trimming here would silently change the text handed to the model — and, on a round
     // trip, what the user gets back. Pinned so nobody folds the trim into the return value.
-    let padded = SelectionReader(accessibility: { "  привет  " }, clipboard: { nil }, isTrusted: { true })
+    let padded = SelectionReader(accessibility: { "  привет  " }, clipboard: { nil }, isTrusted: { true }, context: { nil })
     #expect(padded.read() == .text("  привет  "))
 }
 
 @Test func bothPathsComingBackEmptyIsDistinctFromHavingNoPermission() {
     // These need different words in the panel: «выделите текст» versus the onboarding
     // prompt. Collapsing them sends a user with no selection to System Settings.
-    let empty = SelectionReader(accessibility: { nil }, clipboard: { nil }, isTrusted: { true })
+    let empty = SelectionReader(accessibility: { nil }, clipboard: { nil }, isTrusted: { true }, context: { nil })
     #expect(empty.read() == .empty)
 
-    let untrusted = SelectionReader(accessibility: { "неважно" }, clipboard: { "неважно" }, isTrusted: { false })
+    let untrusted = SelectionReader(accessibility: { "неважно" }, clipboard: { "неважно" }, isTrusted: { false }, context: { nil })
     #expect(untrusted.read() == .notPermitted)
 }
 
@@ -74,7 +74,7 @@ import AppKit
     nonisolated(unsafe) var attempts = 0
     let reader = SelectionReader(accessibility: { attempts += 1; return nil },
                                  clipboard: { attempts += 1; return nil },
-                                 isTrusted: { false })
+                                 isTrusted: { false }, context: { nil })
     #expect(reader.read() == .notPermitted)
     #expect(attempts == 0)
 }
@@ -90,7 +90,7 @@ import AppKit
     nonisolated(unsafe) var clipboardCalls = 0
     let reader = SelectionReader(accessibility: { accessibilityCalls += 1; return nil },
                                  clipboard: { clipboardCalls += 1; return "из буфера" },
-                                 isTrusted: { trustChecks += 1; return true })
+                                 isTrusted: { trustChecks += 1; return true }, context: { nil })
     #expect(reader.read() == .text("из буфера"))
     #expect(trustChecks == 1)
     #expect(accessibilityCalls == 1)
@@ -121,7 +121,7 @@ import AppKit
     let reader = SelectionReader(accessibility: { "из Accessibility" },
                                  clipboard: { CapturedSelection(plain: "не понадобится",
                                                                 html: Data("<h1>Х</h1>".utf8)) },
-                                 isTrusted: { true })
+                                 isTrusted: { true }, context: { nil })
     guard case let .text(captured) = reader.read() else {
         Issue.record("the Accessibility path did not answer")
         return
@@ -138,7 +138,7 @@ import AppKit
     let reader = SelectionReader(
         accessibility: { nil },
         clipboard: { CapturedSelection(plain: "Заголовок", html: html, rtf: rtf) },
-        isTrusted: { true })
+        isTrusted: { true }, context: { nil })
     guard case let .text(captured) = reader.read() else {
         Issue.record("the clipboard path did not answer")
         return
@@ -156,7 +156,7 @@ import AppKit
     let reader = SelectionReader(
         accessibility: { nil },
         clipboard: { CapturedSelection(plain: "  \n ", html: Data("<h1>Х</h1>".utf8)) },
-        isTrusted: { true })
+        isTrusted: { true }, context: { nil })
     #expect(reader.read() == .empty)
 }
 
@@ -229,4 +229,75 @@ import AppKit
     board.setString("с айфона", forType: .string)
     board.setData(Data(), forType: SelectionReader.remoteClipboardType)
     #expect(SelectionReader.isRemoteClipboard(board))
+}
+
+// MARK: - Web content goes to the clipboard tier (spec #72, step 2)
+
+private func webContext() -> SelectionReader.FocusContext {
+    .init(bundleIdentifier: "ai.elementlabs.lmstudio",
+          roles: ["AXStaticText", "AXGroup", "AXWebArea"])
+}
+private func nativeContext() -> SelectionReader.FocusContext {
+    .init(bundleIdentifier: "com.apple.TextEdit", roles: ["AXTextArea", "AXScrollArea", "AXWindow"])
+}
+
+/// Under an `AXWebArea` the Accessibility answer is flat — measured on LM Studio, a heading and
+/// 27 table cells with no line break between them — and carries no flavours, while the same
+/// application's ⌘C carries the HTML. So the first tier is not consulted at all there.
+@Test func aSelectionInWebContentSkipsTheAccessibilityTierAndReadsTheClipboard() {
+    nonisolated(unsafe) var accessibilityCalls = 0
+    let reader = SelectionReader(
+        accessibility: { accessibilityCalls += 1; return "ЗаголовокАбзацЯчейкаЯчейка" },
+        clipboard: { CapturedSelection(plain: "Заголовок\nАбзац", html: Data("<h1>Заголовок</h1>".utf8), rtf: nil) },
+        isTrusted: { true }, context: { webContext() })
+    let result = reader.read()
+    #expect(accessibilityCalls == 0)
+    guard case let .text(captured) = result else { Issue.record("no text"); return }
+    #expect(captured.plain == "Заголовок\nАбзац")
+    #expect(captured.html != nil)
+}
+
+/// Everywhere else the order is what it always was, and a nil context — nothing focused, or
+/// an application that answers no ancestry — changes nothing either.
+@Test func outsideWebContentTheAccessibilityTierStillComesFirst() {
+    nonisolated(unsafe) var clipboardCalls = 0
+    for context in [nativeContext(), nil] {
+        let reader = SelectionReader(accessibility: { "из Accessibility" },
+                                     clipboard: { clipboardCalls += 1; return "из буфера" },
+                                     isTrusted: { true }, context: { context })
+        #expect(reader.read() == .text("из Accessibility"))
+    }
+    #expect(clipboardCalls == 0)
+}
+
+/// The rule keys on the role, not on the application: a Chromium app whose focused element is
+/// a native control (its own search field, say) is read the ordinary way.
+@Test func aNativeControlInsideAChromiumAppIsNotWebContent() {
+    let context = SelectionReader.FocusContext(bundleIdentifier: "ai.elementlabs.lmstudio",
+                                               roles: ["AXTextField", "AXWindow"])
+    #expect(!context.isWebContent)
+    #expect(webContext().isWebContent)
+}
+
+/// The diagnostics say which tier answered and the shape of the Accessibility answer — counts,
+/// never characters — so the next flat-selection application can be diagnosed from a log.
+@Test func theDiagnosticsReportTheTierAndTheShapeOfTheAccessibilityAnswer() {
+    nonisolated(unsafe) var reports: [SelectionReader.Diagnostics] = []
+    let reader = SelectionReader(accessibility: { "раз\nдва" }, clipboard: { nil },
+                                 isTrusted: { true }, context: { nativeContext() },
+                                 onDiagnostics: { reports.append($0) })
+    _ = reader.read()
+    #expect(reports.count == 1)
+    #expect(reports.first?.tier == .accessibility)
+    #expect(reports.first?.accessibilityCharacters == 7)
+    #expect(reports.first?.accessibilityLineBreaks == 1)
+    #expect(reports.first?.context?.bundleIdentifier == "com.apple.TextEdit")
+
+    reports = []
+    let web = SelectionReader(accessibility: { "не должно читаться" }, clipboard: { nil },
+                              isTrusted: { true }, context: { webContext() },
+                              onDiagnostics: { reports.append($0) })
+    #expect(web.read() == .empty)
+    #expect(reports.first?.tier == .neither)
+    #expect(reports.first?.accessibilityCharacters == nil)
 }
