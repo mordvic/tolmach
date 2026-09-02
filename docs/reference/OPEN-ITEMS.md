@@ -298,6 +298,20 @@ publisher-qualified (`openai/gpt-oss-20b`), so a blacklisted model carries no wa
 measured, which is worse; the reasoning tables are not needed there at all, because the server
 states what it accepts. See `docs/design/specs/2026-08-21-model-engine-switch-design.md` §4.
 
+**Owed by the rich paste (2026-09-02, spec #72 step 1).** The исходник pane's `TextEditor` was
+replaced by a hosted `NSTextView` so that ⌘V can read the pasteboard's HTML. The paste itself
+is pinned by tests on a private pasteboard; everything about the swap that a `TextEditor` used
+to give for free is not.
+
+| What to check | Why it needs eyes | Code |
+|---|---|---|
+| **⌘V of a table copied from Confluence or a browser into the окно** | The whole point of the step. Expect a Markdown table in the pane, and the same paste from a text editor (plain only) to arrive unchanged. `RichMarkdownTests` pin the gate; what no test can reach is what a *real* browser's ⌘C puts on the board — the same unknown Q3 of the spec is about | `SourceTextView.pasteRich`, `RichMarkdown` |
+| **The caret and the placeholder sharing a baseline** | The 8 pt margin moved from SwiftUI padding to `textContainerInset`; the placeholder still uses the same constant and a 5 pt leading inset for the container's default `lineFragmentPadding`. Reasoned, not rendered | `SourceEditorView`, `SourceEditor` |
+| **A click in the top strip and on the placeholder placing the caret** | The strip is inside the text view's own hit region now, so the overlay that used to catch it is gone; the placeholder asks for focus through `focusRequest` and `makeFirstResponder`. Neither has been clicked | `SourceEditor`, `SourceEditorView.updateNSView` |
+| **⌘Z after a paste, and ⌘X/⌘C/⌘V/⌘A from the «Правка» menu** | `allowsUndo` is set and the view is the first responder for the menu's actions, which is how AppKit gives both — but the undo manager comes from the SwiftUI-hosted window, and nothing here has pressed a key | `SourceTextView.make` |
+| **A file dropped on the pane still reaching `DroppedDocument`** | The text view registers for strings only, so the file drop should fall through to the pane's `dropDestination`; whether AppKit's routing agrees is exactly the kind of thing this project does not assert from memory | `SourceTextView.updateDragTypeRegistration`, `SourceEditor` |
+| **The paste stall from Word** | The RTF path is reached only with no HTML on the board and costs 216–262 ms cold; the paste is synchronous on purpose (the reasoning is on the type). Whether a quarter-second before the text appears reads as a stall or as nothing is a judgement | `SourceTextView` |
+
 **Owed by the UI redesign, Task 13 — the menu bar glyph and status row.** The whole visible
 result of this task is unobserved: it is a menu-bar icon and a new first row of menu text, and
 nothing in this environment can see either.

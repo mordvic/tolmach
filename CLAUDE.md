@@ -450,6 +450,14 @@ not cosmetic — **the safe direction is inverted**. See
   which makes the system spring the item back. That is the entire error channel and is
   deliberate: there is no error surface in that window, and inventing one to say «this is not
   text» would be worse than the feedback the platform already draws.
+  **Its editor is a hosted `SourceTextView`, not a `TextEditor`, since 2026-09-02, for one
+  reason: ⌘V reads the pasteboard's HTML and RTF.** A table copied out of a browser is flat in
+  `.string` and whole in `.html`, and `TextEditor` pastes the plain flavour with no hook to do
+  otherwise. The paste goes through `RichMarkdown.markdown` — the hotkey's converter *and* the
+  hotkey's improvement-or-no-op gate — so the two entry points cannot disagree about what a
+  selection is; a paste that would gain only bold, or nothing, pastes the plain bytes. The
+  text view registers for strings only (`updateDragTypeRegistration` is overridden), because a
+  text view registered for file URLs takes a dropped file first and inserts its *path*.
 - **An empty `markupDiffs` means «the structure survived», and nothing else may be read into
   it.** `MarkupSkeleton.compare` refuses two skeletons still more than
   `maximumComparisonCells` apart *after* the common prefix and suffix are trimmed — the dense
