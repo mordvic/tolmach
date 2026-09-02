@@ -170,16 +170,19 @@ struct RenderedTextView: NSViewRepresentable {
     }
 }
 
-/// The text view, plus the one affordance the design asks of it: «Скопировать» over a code
-/// block.
+/// The text view, plus the code card's header: the language the fence named and an
+/// always-visible «Скопировать», drawn over each code block.
 ///
-/// The button is an overlay positioned from `layoutManager.boundingRect(forGlyphRange:in:)`
-/// and shown on hover, per the design. It is a **subview of the text view** rather than of the
-/// scroll view, so it scrolls with the code it belongs to and needs no scroll observation.
-/// A context-menu item is wired to the same action beside it, because a hover affordance
-/// cannot be verified in this environment and a right-click can: `docs/reference/OPEN-ITEMS.md`
-/// §11.2 of the design is the eyes this needs, and until then there is a route that does not
-/// depend on the button being where the measurement says.
+/// Both are overlays positioned from `layoutManager.boundingRect(forGlyphRange:in:)`, in the
+/// room `MarkdownToAttributed.codeCardHeaderHeight` leaves above the code inside the card's
+/// border. They are **subviews of the text view** rather than of the scroll view, so they
+/// scroll with the code they belong to and need no scroll observation — and they are views,
+/// not characters, so the RTF flavour and a drag-selection copy carry the code alone.
+///
+/// Always visible, since 2026-09-02 (spec #72, step 5): the first version showed the button on
+/// hover, per the design, and the grilling that followed decided against it — a button that
+/// appears only under the pointer is a button nobody finds. The context-menu item stays beside
+/// it as the route a test can reach and a keyboard user can too.
 /// Not `final`: the panel's reply is a subclass with one behaviour of its own — see
 /// `PanelReplyTextView`, which forwards ⏎ and Esc to the panel that owns them.
 class CodeBlockTextView: NSTextView {
@@ -235,7 +238,7 @@ class CodeBlockTextView: NSTextView {
     }
 
     private var buttons: [CodeCopyButton] = []
-    private var hoverTracking: NSTrackingArea?
+    private var labels: [CodeLanguageLabel] = []
 
     /// Nothing. A read-only view has no use for a drop, and since this view hosts the исходник
     /// pane's rendered mode too (2026-09-02), a file dropped on it must reach the pane's own
@@ -248,31 +251,6 @@ class CodeBlockTextView: NSTextView {
     override func layout() {
         super.layout()
         positionButtons()
-    }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let hoverTracking { removeTrackingArea(hoverTracking) }
-        let area = NSTrackingArea(rect: bounds,
-                                  options: [.mouseMoved, .mouseEnteredAndExited,
-                                            .activeInKeyWindow, .inVisibleRect],
-                                  owner: self, userInfo: nil)
-        addTrackingArea(area)
-        hoverTracking = area
-    }
-
-    override func mouseMoved(with event: NSEvent) {
-        super.mouseMoved(with: event)
-        let point = convert(event.locationInWindow, from: nil)
-        for button in buttons {
-            button.isHidden = !(button.blockFrame?.insetBy(dx: -4, dy: -4).contains(point)
-                ?? false)
-        }
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        super.mouseExited(with: event)
-        for button in buttons { button.isHidden = true }
     }
 
     /// «Скопировать код» in the context menu, for the same block the pointer is over.
@@ -306,6 +284,7 @@ class CodeBlockTextView: NSTextView {
 
     private func rebuildButtons() {
         for button in buttons { button.removeFromSuperview() }
+        for label in labels { label.removeFromSuperview() }
         buttons = codeRegions.map { region in
             let button = CodeCopyButton(title: "Скопировать", target: self,
                                         action: #selector(copyCodeBlock(_:)))
@@ -314,9 +293,20 @@ class CodeBlockTextView: NSTextView {
             button.bezelStyle = .roundRect
             button.controlSize = .small
             button.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
-            button.isHidden = true
             addSubview(button)
             return button
+        }
+        // One label per block that named a language; an unnamed fence gets a header with the
+        // button alone rather than a label saying nothing.
+        labels = codeRegions.compactMap { region in
+            guard !region.language.isEmpty else { return nil }
+            let label = CodeLanguageLabel(labelWithString: region.language)
+            label.range = region.range
+            label.font = NSFont.monospacedSystemFont(ofSize: NSFont.smallSystemFontSize,
+                                                     weight: .regular)
+            label.textColor = .secondaryLabelColor
+            addSubview(label)
+            return label
         }
         positionButtons()
     }
@@ -344,12 +334,31 @@ class CodeBlockTextView: NSTextView {
             button.blockFrame = rect
             button.sizeToFit()
             let size = button.frame.size
-            // Top-right of the block, inside it: a button hanging past the right edge would be
-            // clipped by the scroll view at narrow pane widths.
-            button.setFrameOrigin(NSPoint(x: max(rect.maxX - size.width - 4, rect.minX),
-                                          y: rect.minY + 2))
+            // In the card's header — the room the text block leaves above the first line of
+            // code — at the right edge but inside it, because a button hanging past the edge
+            // would be clipped by the scroll view at narrow pane widths. The header is
+            // `codeCardHeaderHeight` tall; the button sits vertically centred in it.
+            let header = MarkdownToAttributed.codeCardHeaderHeight
+            button.setFrameOrigin(NSPoint(x: max(rect.maxX - size.width - 6, rect.minX),
+                                          y: rect.minY - header + (header - size.height) / 2))
+        }
+        for label in labels {
+            guard let range = label.range,
+                  let button = buttons.first(where: { $0.range == range }),
+                  let rect = button.blockFrame else { continue }
+            label.sizeToFit()
+            let header = MarkdownToAttributed.codeCardHeaderHeight
+            // Same header, left edge, a little in from the border.
+            label.setFrameOrigin(NSPoint(x: rect.minX + 2,
+                                         y: rect.minY - header + (header - label.frame.height) / 2))
         }
     }
+}
+
+/// The language a fence named, over the block that named it. Remembers its block the way the
+/// button does, so the two are positioned from one rect.
+final class CodeLanguageLabel: NSTextField {
+    var range: NSRange?
 }
 
 /// An `NSButton` that remembers which code block it belongs to.

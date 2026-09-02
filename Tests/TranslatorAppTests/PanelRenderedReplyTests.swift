@@ -114,7 +114,12 @@ private let probeDocument = """
                                                    config: MarkdownFontConfig(baseSize: 13))
     // 300 is `PanelSizer.minWidth`, 560 is `maxWidth`, 430 is between them — the three widths
     // §11.4 asked for.
-    let expected: [(width: CGFloat, height: CGFloat)] = [(300, 419), (430, 355), (560, 339)]
+    // 419 / 355 / 339 when the probe ran (2026-08-31); **+27 at every width since 2026-09-02**,
+    // re-measured through this same function when the code block became a card (spec #72,
+    // step 5): the card's 24 pt header room plus its margins, less the paragraph spacing the
+    // tinted paragraph used to carry. The same shift at all three widths is what says the
+    // card, and not a wrap, is what moved — the probe script's own figures predate the card.
+    let expected: [(width: CGFloat, height: CGFloat)] = [(300, 446), (430, 382), (560, 366)]
     for (width, height) in expected {
         let measured = RenderedReplyView.measuredSize(of: rendering.attributed, width: width)
         #expect(abs(measured.height - height) <= 2,

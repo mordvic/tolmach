@@ -279,3 +279,45 @@ private func runDump(_ attributed: NSAttributedString) -> String {
         #expect(rendered.attributed.length > 0, "\(fragment.debugDescription) rendered nothing")
     }
 }
+
+// MARK: - The code card (spec #72, step 5)
+
+/// A code block is a card: a bordered text block, the way every table cell already is, so the
+/// frame is part of the attributed string and rides into the RTF flavour — and the language the
+/// fence named travels on the region, for the overlay label, never as characters.
+@Test func aCodeBlockIsABorderedCardAndItsLanguageRidesOnTheRegionNotInTheText() {
+    let text = "Текст\n\n```swift\nlet a = 1\n```\n\n```\nплоский\n```\n"
+    let rendered = MarkdownToAttributed.rendering(of: text, config: config)
+    #expect(rendered.codeRegions.map(\.language) == ["swift", ""])
+    // The language is an overlay's business. In the text — and therefore in the RTF and in a
+    // drag-selection copy — it must not appear.
+    #expect(!rendered.attributed.string.contains("swift"))
+    let style = rendered.attributed.attribute(.paragraphStyle, at: rendered.codeRegions[0].range.location,
+                                              effectiveRange: nil) as? NSParagraphStyle
+    guard let block = style?.textBlocks.first as? NSTextTableBlock else {
+        Issue.record("the code paragraph carries no text block"); return
+    }
+    #expect(block.width(for: .border, edge: .minX) > 0)
+    #expect(block.width(for: .border, edge: .maxY) > 0)
+    // Room above the code for the header the overlays sit in — a constant, not a multiple of
+    // the font, because the header holds a system-sized control (`docs/adr/0008`).
+    #expect(block.width(for: .padding, edge: .minY) >= MarkdownToAttributed.codeCardHeaderHeight)
+}
+
+@Test func theCodeCardSurvivesTheRTFRoundTrip() {
+    let rendered = MarkdownToAttributed.rendering(of: "```sh\nswift build\n```\n", config: config)
+    guard let rtf = rendered.rtf,
+          let reread = NSAttributedString(rtf: rtf, documentAttributes: nil) else {
+        Issue.record("no rtf, or it did not read back"); return
+    }
+    #expect(reread.string.contains("swift build"))
+    #expect(!reread.string.contains("sh\n"))
+    var bordered = 0
+    reread.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: reread.length),
+                              options: []) { value, _, _ in
+        if let style = value as? NSParagraphStyle,
+           let block = style.textBlocks.first as? NSTextTableBlock,
+           block.width(for: .border, edge: .minX) > 0 { bordered += 1 }
+    }
+    #expect(bordered >= 1)
+}
