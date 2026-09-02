@@ -191,24 +191,78 @@ private func runDump(_ attributed: NSAttributedString) -> String {
     #expect(rendered.string.contains("4.\tчетвёртый"))
 }
 
-@Test func aBlockquoteIsIndentedAndSecondary() {
-    let rendered = MarkdownToAttributed.rendering(of: "> цитата\n\nАбзац.\n",
+@Test func aBlockquoteWearsALeftBarAndIsSecondary() {
+    let rendered = MarkdownToAttributed.rendering(of: "> цитата\n\n> > глубже\n\nАбзац.\n",
                                                   config: config).attributed
     var quoteColour: NSColor?
-    var quoteIndent: CGFloat = 0
+    var bars: [(left: CGFloat, indent: CGFloat)] = []
     rendered.enumerateAttributes(in: NSRange(location: 0, length: rendered.length),
                                  options: []) { attrs, range, _ in
-        guard (rendered.string as NSString).substring(with: range).contains("цитата") else {
-            return
-        }
+        let text = (rendered.string as NSString).substring(with: range)
+        guard text.contains("цитата") || text.contains("глубже") else { return }
         quoteColour = attrs[.foregroundColor] as? NSColor
-        quoteIndent = (attrs[.paragraphStyle] as? NSParagraphStyle)?.headIndent ?? 0
+        guard let block = (attrs[.paragraphStyle] as? NSParagraphStyle)?.textBlocks.first
+                as? NSTextTableBlock else { return }
+        bars.append((block.width(for: .border, edge: .minX), block.width(for: .margin, edge: .minX)))
     }
     // Semantic, so both appearances hold with no second palette.
     #expect(quoteColour == NSColor.secondaryLabelColor)
-    #expect(quoteIndent > 0)
+    // The bar every reader knows a quote by — a border on the leading edge only, in the
+    // paragraph style so the RTF flavour carries it — and depth as an indent of the whole block.
+    #expect(bars.count == 2)
+    #expect(bars.allSatisfy { $0.left > 0 })
+    #expect(bars[1].indent > bars[0].indent)
     // The marker is not drawn.
     #expect(!rendered.string.contains(">"))
+}
+
+/// Rules between rows and a filled header, not a grid: how GitHub, ChatGPT and Claude draw a
+/// table, and the reason a full grid was replaced — it read as a spreadsheet.
+@Test func aTableHasAFilledHeaderRowAndHorizontalRulesOnly() {
+    let rendered = MarkdownToAttributed.rendering(of: "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\nПосле.",
+                                                  config: config).attributed
+    var header: [NSTextTableBlock] = []
+    var body: [NSTextTableBlock] = []
+    rendered.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: rendered.length),
+                                options: []) { value, _, _ in
+        guard let block = (value as? NSParagraphStyle)?.textBlocks.first as? NSTextTableBlock,
+              block.table.numberOfColumns == 2 else { return }
+        (block.startingRow == 0 ? header : body).isEmpty ? () : ()
+        if block.startingRow == 0 { header.append(block) } else { body.append(block) }
+    }
+    #expect(header.count == 2)
+    #expect(body.count == 4)
+    #expect(header.allSatisfy { $0.backgroundColor != nil })
+    #expect(body.allSatisfy { $0.backgroundColor == nil })
+    for block in header + body {
+        #expect(block.width(for: .border, edge: .minX) == 0)
+        #expect(block.width(for: .border, edge: .maxX) == 0)
+        #expect(block.width(for: .border, edge: .maxY) > 0)
+    }
+    // The table's bottom margin sits on its last row alone, so rows stay tight and the
+    // paragraph after the table does not touch it.
+    let lastRow = body.filter { $0.startingRow == 2 }
+    #expect(lastRow.allSatisfy { $0.width(for: .margin, edge: .maxY) > 0 })
+    #expect(body.filter { $0.startingRow == 1 }.allSatisfy { $0.width(for: .margin, edge: .maxY) == 0 })
+}
+
+/// The newline that ends a block carries no run decoration. It used to copy the last run's
+/// background, and a list item ending in inline code wore a grey bar to the right edge of the
+/// pane — AppKit paints a newline's background from the last glyph to the line's end.
+@Test func theBlockTerminatorCarriesNoBackgroundOrLinkFromTheLastRun() {
+    let rendered = MarkdownToAttributed.rendering(of: "- пункт с `кодом`\n\nсм. [сайт](https://x.org)\n",
+                                                  config: config).attributed
+    let string = rendered.string as NSString
+    var index = 0
+    while index < string.length {
+        if string.character(at: index) == 0x0A {
+            let attrs = rendered.attributes(at: index, effectiveRange: nil)
+            #expect(attrs[.backgroundColor] == nil, "newline at \(index) carries a background")
+            #expect(attrs[.link] == nil)
+            #expect(attrs[.underlineStyle] == nil)
+        }
+        index += 1
+    }
 }
 
 @Test func renderingSomeBlocksConcatenatesIntoTheSameDocumentAsRenderingAllOfThem() {

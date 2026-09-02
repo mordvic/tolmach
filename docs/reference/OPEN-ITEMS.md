@@ -312,6 +312,16 @@ to give for free is not.
 | **A file dropped on the pane still reaching `DroppedDocument`** | The text view registers for strings only, so the file drop should fall through to the pane's `dropDestination`; whether AppKit's routing agrees is exactly the kind of thing this project does not assert from memory | `SourceTextView.updateDragTypeRegistration`, `SourceEditor` |
 | **The paste stall from Word** | The RTF path is reached only with no HTML on the board and costs 216–262 ms cold; the paste is synchronous on purpose (the reasoning is on the type). Whether a quarter-second before the text appears reads as a stall or as nothing is a judgement | `SourceTextView` |
 
+**Owed by the typography pass (2026-09-02, spec #72 follow-up).** Judged from
+`renderPreview`'s PNGs at 620 pt, both appearances, on the LM Studio document — the first
+by-eye check of this pane that an agent could take itself. What the images cannot show:
+
+| What to check | Why it needs eyes | Code |
+|---|---|---|
+| **The table at the pane's narrow widths and at 32 pt** | Cell padding scales with the font and the header fill is `quaternaryLabelColor`; at 300 pt in the panel the columns wrap more than the images show | `MarkdownToAttributed.tableRow` |
+| **The quote's bar beside the code card's border** | Two `NSTextTableBlock`s of different border weights on one page; whether 3 pt reads as a quote and 1 pt as a frame is a judgement | `MarkdownToAttributed.blockquote`, `codeBlock` |
+| **Selection across a table and a quote** | The blocks are laid out by TextKit 1; whether a drag-selection highlights cells sensibly has not been tried | `RenderedTextView` |
+
 **Owed by the plain-bullet list (2026-09-02, spec #72 step 6).** «•»- and «–»-lines are drawn as
 a list; the rule is pinned, the drawing is not.
 

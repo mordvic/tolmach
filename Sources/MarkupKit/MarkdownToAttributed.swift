@@ -198,12 +198,26 @@ public enum MarkdownToAttributed {
         return terminated(line)
     }
 
+    /// A quote wears the bar every reader knows it by: a one-column text block with a border on
+    /// its leading edge only, the way the code card wears its frame — in the paragraph style,
+    /// so the RTF flavour carries it too. Depth indents the whole block, bar included.
     private static func blockquote(depth: Int, _ range: Range<String.Index>, in text: String,
                                    config: MarkdownFontConfig) -> NSAttributedString {
+        let table = NSTextTable()
+        table.numberOfColumns = 1
+        let block = NSTextTableBlock(table: table, startingRow: 0, rowSpan: 1,
+                                     startingColumn: 0, columnSpan: 1)
+        block.setWidth(0, type: .absoluteValueType, for: .border)
+        block.setWidth(3, type: .absoluteValueType, for: .border, edge: .minX)
+        block.setBorderColor(.tertiaryLabelColor)
+        block.setWidth(config.baseSize * 0.9, type: .absoluteValueType, for: .padding, edge: .minX)
+        block.setWidth(config.baseSize * 0.25, type: .absoluteValueType, for: .padding, edge: .minY)
+        block.setWidth(config.baseSize * 0.25, type: .absoluteValueType, for: .padding, edge: .maxY)
+        block.setWidth(config.baseSize * 1.4 * CGFloat(depth), type: .absoluteValueType,
+                       for: .margin, edge: .minX)
+        block.setWidth(config.baseSize * 0.5, type: .absoluteValueType, for: .margin, edge: .maxY)
         let style = NSMutableParagraphStyle()
-        style.paragraphSpacing = config.baseSize * 0.5
-        style.firstLineHeadIndent = config.baseSize * 1.4 * CGFloat(depth)
-        style.headIndent = style.firstLineHeadIndent
+        style.textBlocks = [block]
         return terminated(inline(String(text[range]),
                                  base: font(size: config.baseSize, weight: .regular,
                                             config: config),
@@ -262,32 +276,48 @@ public enum MarkdownToAttributed {
         table.numberOfColumns = columns
         let result = NSMutableAttributedString()
         var row = 0
+        let last = rows.count - 1 + (header.isEmpty ? 0 : 1)
         if !header.isEmpty {
             result.append(tableRow(header, table: table, row: 0, columns: columns,
                                    alignments: alignments, in: text, config: config,
-                                   weight: .semibold))
+                                   weight: .semibold, isHeader: true, isLast: last == 0))
             row = 1
         }
         for cells in rows {
             result.append(tableRow(cells, table: table, row: row, columns: columns,
                                    alignments: alignments, in: text, config: config,
-                                   weight: .regular))
+                                   weight: .regular, isHeader: false, isLast: row == last))
             row += 1
         }
         return result
     }
 
+    /// Rules between rows, not a grid: a 1 pt rule under every row and none between columns,
+    /// which is how every reading surface this app is compared with draws a table (GitHub,
+    /// ChatGPT, Claude) — a full grid reads as a spreadsheet. The header row is filled and
+    /// semibold, so the eye finds it without a heavier rule; the last row carries the table's
+    /// bottom margin, because a margin on every row would be a gap between rows.
     private static func tableRow(_ cells: [Range<String.Index>], table: NSTextTable, row: Int,
                                  columns: Int, alignments: [MarkdownBlock.Alignment],
                                  in text: String, config: MarkdownFontConfig,
-                                 weight: NSFont.Weight) -> NSAttributedString {
+                                 weight: NSFont.Weight, isHeader: Bool,
+                                 isLast: Bool) -> NSAttributedString {
         let result = NSMutableAttributedString()
         for column in 0..<columns {
             let block = NSTextTableBlock(table: table, startingRow: row, rowSpan: 1,
                                          startingColumn: column, columnSpan: 1)
             block.setBorderColor(.separatorColor)
-            block.setWidth(1, type: .absoluteValueType, for: .border)
-            block.setWidth(config.baseSize * 0.35, type: .absoluteValueType, for: .padding)
+            block.setWidth(0, type: .absoluteValueType, for: .border)
+            block.setWidth(1, type: .absoluteValueType, for: .border, edge: .maxY)
+            if row == 0 { block.setWidth(1, type: .absoluteValueType, for: .border, edge: .minY) }
+            if isHeader { block.backgroundColor = .quaternaryLabelColor }
+            if isLast {
+                block.setWidth(config.baseSize * 0.6, type: .absoluteValueType, for: .margin,
+                               edge: .maxY)
+            }
+            block.setWidth(config.baseSize * 0.4, type: .absoluteValueType, for: .padding)
+            block.setWidth(config.baseSize * 0.6, type: .absoluteValueType, for: .padding, edge: .minX)
+            block.setWidth(config.baseSize * 0.6, type: .absoluteValueType, for: .padding, edge: .maxX)
             let style = NSMutableParagraphStyle()
             style.textBlocks = [block]
             style.alignment = alignment(alignments.indices.contains(column)
@@ -319,8 +349,8 @@ public enum MarkdownToAttributed {
         block.setWidth(1, type: .absoluteValueType, for: .border, edge: .minY)
         let style = NSMutableParagraphStyle()
         style.textBlocks = [block]
-        style.paragraphSpacing = config.baseSize * 0.6
-        style.paragraphSpacingBefore = config.baseSize * 0.6
+        style.paragraphSpacing = config.baseSize * 0.3
+        style.paragraphSpacingBefore = config.baseSize * 0.3
         return NSAttributedString(string: "\u{200B}\n", attributes: [
             .paragraphStyle: style,
             .font: font(size: config.baseSize, weight: .regular, config: config),
@@ -389,11 +419,22 @@ public enum MarkdownToAttributed {
     /// style rather than blank lines of text. Two reasons: the renderings concatenate (the
     /// streaming path depends on it), and a rich paste carries the spacing rather than empty
     /// paragraphs the destination has to clean up.
+    ///
+    /// **The terminator takes the last run's paragraph style and font, not its decorations.**
+    /// It used to copy every attribute, and a block ending in an inline code span then ended in
+    /// a newline carrying `.backgroundColor` — which AppKit paints from the last glyph to the
+    /// end of the line, so «второй пункт с `кодом`» wore a grey bar to the right edge of the
+    /// pane (seen in the 2026-09-02 preview). A link's underline and a strike-through would do
+    /// the same.
     private static func terminated(_ attributed: NSAttributedString) -> NSAttributedString {
         let result = NSMutableAttributedString(attributedString: attributed)
         var attributes: [NSAttributedString.Key: Any] = [:]
         if result.length > 0 {
             attributes = result.attributes(at: result.length - 1, effectiveRange: nil)
+            for decoration in [NSAttributedString.Key.backgroundColor, .link, .underlineStyle,
+                               .strikethroughStyle, .foregroundColor] {
+                attributes.removeValue(forKey: decoration)
+            }
         }
         result.append(NSAttributedString(string: "\n", attributes: attributes))
         return result
