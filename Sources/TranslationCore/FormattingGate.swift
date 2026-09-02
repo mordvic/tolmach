@@ -48,7 +48,11 @@ public enum FormattingGate {
             if !alignments.isEmpty { widths.insert(alignments.count) }
             if widths.count > 1 { return .unevenTable }
         }
-        let expected = words(of: source)
+        // Both sides through the same renderer and the same word rule. In the app the source
+        // has no markup (the pass is skipped otherwise), so rendering it is close to identity;
+        // `translate-cli --format-only` skips that precondition, and a marked-up input judged
+        // against its own unstripped bytes was refused as `wordsChanged` for its own markers.
+        let expected = words(of: MarkdownPlainText.render(source))
         let actual = words(of: MarkdownPlainText.render(formatted))
         return expected == actual ? nil : .wordsChanged
     }
@@ -89,7 +93,7 @@ public enum FormattingGate {
         for line in LineScanner.pieces(text) {
             var content = line.content.trimmingCharacters(in: .whitespaces)
             content = droppingListMarker(content)
-            if content == "———" { content = "" }
+            if content == MarkdownPlainText.thematicBreak { content = "" }
             pieces.append(content)
         }
         return pieces.joined(separator: " ")

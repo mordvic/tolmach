@@ -41,13 +41,14 @@ private let table = """
 
 /// The four allowed forms are named and the three forbidden ones are forbidden by name —
 /// the design's series B is why bold and italic are on the wrong side of that line.
-@Test func thePromptAllowsBlocksAndCodeAndForbidsEmphasisAndLinks() async throws {
+@Test func thePromptNamesTheAllowedFormsForbidsTheOthersByNameAndForbidsRewriting() async throws {
     let fake = FakeLLMClient(responses: [table])
     _ = try await Translator(client: fake).format(
         text: flat, source: nil, options: ChatOptions(model: "test"))
     let system = fake.receivedMessages[0].first!.content
     for allowed in ["heading", "table", "list", "code"] { #expect(system.contains(allowed)) }
-    for forbidden in ["bold", "italic", "link"] { #expect(system.contains(forbidden)) }
+    // The sentence, not the words: a prompt saying «add bold» would contain «bold» too.
+    #expect(system.contains("Do not add bold, italic or links."))
     #expect(system.contains("Do not change, add, remove or reorder any word"))
 }
 

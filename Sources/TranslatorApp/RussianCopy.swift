@@ -393,10 +393,6 @@ enum RussianCopy {
             .locale(Locale(identifier: "ru_RU"))) + " ГБ"
     }
 
-    /// The panel's and the window's header line for правка: there is no direction to
-    /// draw, so the line names the operation and the language it worked in. The language
-    /// is omitted rather than replaced by «язык не определён» — правка ran fine without
-    /// it, unlike translation, where the detector picked the target (spec §5).
     /// What «Оформить не удалось» says under the warnings. «Обработан», not «переведён»:
     /// the same pass runs before правка.
     static func formattingNotice(_ notice: FormattingNotice) -> String {
@@ -414,6 +410,10 @@ enum RussianCopy {
         }
     }
 
+    /// The panel's and the window's header line for правка: there is no direction to
+    /// draw, so the line names the operation and the language it worked in. The language
+    /// is omitted rather than replaced by «язык не определён» — правка ran fine without
+    /// it, unlike translation, where the detector picked the target (spec §5).
     static func proofreadHeader(language: Language?) -> String {
         language.map { "правка · \($0.russianName)" } ?? "правка"
     }

@@ -224,6 +224,6 @@ public enum PromptBuilder {
         ].joined(separator: "\n")
         return [ChatMessage(role: "system", content: system),
                 ChatMessage(role: "user",
-                            content: "Please mark up the following \(languageClause.isEmpty ? "" : language!.englishName + " ")text:\n\n\n\(text)")]
+                            content: "Please mark up the following \(language.map { "\($0.englishName) " } ?? "")text:\n\n\n\(text)")]
     }
 }

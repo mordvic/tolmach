@@ -63,7 +63,6 @@ struct SourceEditor: View {
                 // does not arrive token by token — so the whole document is rendered at once.
                 RenderedTextView(text: model.sourceText, font: font, rendersMarkup: true,
                                  isStreaming: false)
-                    .overlay(alignment: .bottomTrailing) { SourceFooter(model: model).padding(6) }
             } else {
             ZStack(alignment: .topLeading) {
                 // A hosted text view and not `TextEditor`, since 2026-09-02, for one reason:
@@ -91,9 +90,10 @@ struct SourceEditor: View {
                         .onTapGesture { focusRequest += 1 }
                 }
             }
-            .overlay(alignment: .bottomTrailing) { SourceFooter(model: model).padding(6) }
             }
         }
+        // Over whichever view the mode chose: the count describes the text, not the editor.
+        .overlay(alignment: .bottomTrailing) { SourceFooter(model: model).padding(6) }
         .frame(minWidth: 280)
         // A translator window that cannot take a dropped file is a translator window that
         // makes the user open the file elsewhere, select all, copy, and paste. What may be
