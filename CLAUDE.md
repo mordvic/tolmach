@@ -511,6 +511,17 @@ not cosmetic — **the safe direction is inverted**. See
   paint its background to the pane's edge). All of it is in the paragraph style, so the RTF
   flavour carries it. `RENDER_PREVIEW=… swift test --filter renderPreview` draws the pane to
   PNGs; the images are how the pass was judged and are the tool for the next one.
+  **Code is syntax-coloured, since 2026-09-02, by a hand-written lexer** — `MarkupKit.
+  SyntaxHighlighter`, a profile per language (comments, strings, numbers, keywords, data-format
+  keys, capitalised types) over UTF-16 offsets, because the dependency list is closed
+  (`docs/adr/0007`) and no highlighting library is coming in. Two rules are load-bearing: **no
+  profile, no colours** (a bare fence or an unknown language stays in the label colour — a guess
+  about comment syntax is how a URL turns green), and a token is closed only by the syntax that
+  opened it. The colours are `SyntaxPalette`'s own per appearance, not the system accents:
+  measured, `systemPurple` is 3.34:1 and `systemTeal` 1.73:1 on the light card, and every
+  palette value is held to ≥ 4.5:1 on the card in both appearances by `SyntaxPaletteTests` — the
+  same discipline as `StatusColour`. Only `.foregroundColor` changes, so `CodeRegion.source`
+  and the RTF flavour carry the same bytes with their colours.
   **A code block is a card, since 2026-09-02**: a one-column `NSTextTable` block with a border
   and `MarkdownToAttributed.codeCardHeaderHeight` (24 pt, a constant — the header holds a
   system-sized control, `docs/adr/0008`) of room above the code, in which `CodeBlockTextView`

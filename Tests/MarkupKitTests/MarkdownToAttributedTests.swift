@@ -393,3 +393,25 @@ private func runDump(_ attributed: NSAttributedString) -> String {
     #expect(!rendered.string.contains("• раз"))
     #expect(MarkdownToAttributed.plain(text, config: config).string == text)
 }
+
+// MARK: - Syntax colours in the card
+
+/// A fence that names a language gets its keywords, strings and comments coloured; a bare fence
+/// stays in the label colour. The bytes are untouched either way — `CodeRegion.source` is the
+/// promise the per-block «Скопировать» rests on.
+@Test func aNamedFenceIsColouredAndABareOneIsNot() {
+    let named = MarkdownToAttributed.rendering(of: "```swift\nlet x = \"a\" // c\n```\n", config: config)
+    let bare = MarkdownToAttributed.rendering(of: "```\nlet x = \"a\" // c\n```\n", config: config)
+    #expect(named.codeRegions.first?.source == "let x = \"a\" // c")
+    #expect(bare.codeRegions.first?.source == named.codeRegions.first?.source)
+    func colour(_ rendering: MarkdownToAttributed.Rendering, of needle: String) -> NSColor? {
+        let range = (rendering.attributed.string as NSString).range(of: needle)
+        return rendering.attributed.attribute(.foregroundColor, at: range.location, effectiveRange: nil) as? NSColor
+    }
+    #expect(colour(named, of: "let") == SyntaxPalette.color(for: .keyword))
+    #expect(colour(named, of: "\"a\"") == SyntaxPalette.color(for: .string))
+    #expect(colour(named, of: "// c") == SyntaxPalette.color(for: .comment))
+    // `x` is an identifier — nothing the lexer colours.
+    #expect(colour(named, of: "x") == NSColor.labelColor)
+    #expect(colour(bare, of: "let") == NSColor.labelColor)
+}

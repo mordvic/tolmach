@@ -109,6 +109,13 @@ without the documentation going red.
 
 ---
 
+## Durable — the syntax palette (measured 2026-09-02)
+
+| Fact | Where |
+|---|---|
+| The system accent colours fail AA on the code card's light fill: `systemPurple` 3.34:1, `systemPink` 2.92:1, `systemRed` 2.86:1, `systemBlue` 2.82:1, `systemTeal` 1.73:1, `systemGreen` 1.78:1; on the dark fill `systemPurple` 2.95:1, `systemRed` 3.12:1. The card's fill is `quaternaryLabelColor` over white (luminance 0.791) and over a 0.12 grey (0.048) | `Sources/MarkupKit/SyntaxPalette.swift` (the table), `Tests/MarkupKitTests/SyntaxPaletteTests.swift` (the assertion) |
+| The six palette values clear 4.5:1 on both fills — light 4.71–8.63:1, dark 4.75–6.50:1 | same |
+
 ## Owed — the «Оформить» pass (spec #72, step 3)
 
 Not yet taken. The pass ships **off by default** until it is. Protocol, agreed 2026-09-02:
