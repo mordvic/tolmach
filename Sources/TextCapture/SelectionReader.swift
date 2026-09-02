@@ -76,6 +76,12 @@ public struct SelectionReader: Sendable {
     private let context: ContextReader
     private let onDiagnostics: (@Sendable (Diagnostics) -> Void)?
 
+    /// **A test that fakes the two readers must fake `context` too.** The real one asks the
+    /// live system for the focused element, and once another test has brought `NSApplication`
+    /// up it answers — with whatever the developer has in front. Measured 2026-09-02: with a
+    /// Chromium app frontmost, `read()` took the web-content branch and a test's fake
+    /// Accessibility reader was never called, so the test failed on the machine and would have
+    /// passed on CI. `{ nil }` is the value every test here passes.
     public init(accessibility: @escaping PlainReader = SelectionReader.accessibilityText,
                 clipboard: @escaping RichReader = SelectionReader.clipboardSelection,
                 isTrusted: @escaping @Sendable () -> Bool = PermissionsGate.isTrusted,
