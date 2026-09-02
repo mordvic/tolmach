@@ -531,7 +531,13 @@ not cosmetic — **the safe direction is inverted**. See
   the «Перевод» menu's ⇧⌘C both read it, and a restated condition is how the two come to copy
   different things. See `docs/design/specs/2026-08-31-formatting-design.md`.
 - Capture order is Accessibility first, synthetic ⌘C fallback second, and the fallback must restore
-  the *whole* pasteboard. The only path allowed to write the user's clipboard unasked is `autoCopy`,
+  the *whole* pasteboard. **One exception since 2026-09-02: a selection inside web content —
+  an `AXWebArea` in the focused element's ancestry — skips the Accessibility tier**, because
+  Chromium answers it with the blocks run together and no flavours (observed on LM Studio),
+  while its ⌘C carries the HTML. `SelectionReader.FocusContext` is the rule, keyed on the role
+  and never on a bundle list; `HotkeyCoordinator.logCapture` writes one `.notice` line per
+  press with the role chain and two counts, never the text, so the next such application is
+  diagnosable from a user's machine. The only path allowed to write the user's clipboard unasked is `autoCopy`,
   off by default — and it is read only by `HotkeyCoordinator`, so it governs the panel and not
   the main window. Its label says so; do not widen one without the other.
 - `AppSettings` reads and writes `UserDefaults` directly in every accessor (no stored properties),

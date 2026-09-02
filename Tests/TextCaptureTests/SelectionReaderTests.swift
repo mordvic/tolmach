@@ -230,3 +230,74 @@ import AppKit
     board.setData(Data(), forType: SelectionReader.remoteClipboardType)
     #expect(SelectionReader.isRemoteClipboard(board))
 }
+
+// MARK: - Web content goes to the clipboard tier (spec #72, step 2)
+
+private func webContext() -> SelectionReader.FocusContext {
+    .init(bundleIdentifier: "ai.elementlabs.lmstudio",
+          roles: ["AXStaticText", "AXGroup", "AXWebArea"])
+}
+private func nativeContext() -> SelectionReader.FocusContext {
+    .init(bundleIdentifier: "com.apple.TextEdit", roles: ["AXTextArea", "AXScrollArea", "AXWindow"])
+}
+
+/// Under an `AXWebArea` the Accessibility answer is flat — measured on LM Studio, a heading and
+/// 27 table cells with no line break between them — and carries no flavours, while the same
+/// application's ⌘C carries the HTML. So the first tier is not consulted at all there.
+@Test func aSelectionInWebContentSkipsTheAccessibilityTierAndReadsTheClipboard() {
+    nonisolated(unsafe) var accessibilityCalls = 0
+    let reader = SelectionReader(
+        accessibility: { accessibilityCalls += 1; return "ЗаголовокАбзацЯчейкаЯчейка" },
+        clipboard: { CapturedSelection(plain: "Заголовок\nАбзац", html: Data("<h1>Заголовок</h1>".utf8), rtf: nil) },
+        isTrusted: { true }, context: { webContext() })
+    let result = reader.read()
+    #expect(accessibilityCalls == 0)
+    guard case let .text(captured) = result else { Issue.record("no text"); return }
+    #expect(captured.plain == "Заголовок\nАбзац")
+    #expect(captured.html != nil)
+}
+
+/// Everywhere else the order is what it always was, and a nil context — nothing focused, or
+/// an application that answers no ancestry — changes nothing either.
+@Test func outsideWebContentTheAccessibilityTierStillComesFirst() {
+    nonisolated(unsafe) var clipboardCalls = 0
+    for context in [nativeContext(), nil] {
+        let reader = SelectionReader(accessibility: { "из Accessibility" },
+                                     clipboard: { clipboardCalls += 1; return "из буфера" },
+                                     isTrusted: { true }, context: { context })
+        #expect(reader.read() == .text("из Accessibility"))
+    }
+    #expect(clipboardCalls == 0)
+}
+
+/// The rule keys on the role, not on the application: a Chromium app whose focused element is
+/// a native control (its own search field, say) is read the ordinary way.
+@Test func aNativeControlInsideAChromiumAppIsNotWebContent() {
+    let context = SelectionReader.FocusContext(bundleIdentifier: "ai.elementlabs.lmstudio",
+                                               roles: ["AXTextField", "AXWindow"])
+    #expect(!context.isWebContent)
+    #expect(webContext().isWebContent)
+}
+
+/// The diagnostics say which tier answered and the shape of the Accessibility answer — counts,
+/// never characters — so the next flat-selection application can be diagnosed from a log.
+@Test func theDiagnosticsReportTheTierAndTheShapeOfTheAccessibilityAnswer() {
+    nonisolated(unsafe) var reports: [SelectionReader.Diagnostics] = []
+    let reader = SelectionReader(accessibility: { "раз\nдва" }, clipboard: { nil },
+                                 isTrusted: { true }, context: { nativeContext() },
+                                 onDiagnostics: { reports.append($0) })
+    _ = reader.read()
+    #expect(reports.count == 1)
+    #expect(reports.first?.tier == .accessibility)
+    #expect(reports.first?.accessibilityCharacters == 7)
+    #expect(reports.first?.accessibilityLineBreaks == 1)
+    #expect(reports.first?.context?.bundleIdentifier == "com.apple.TextEdit")
+
+    reports = []
+    let web = SelectionReader(accessibility: { "не должно читаться" }, clipboard: { nil },
+                              isTrusted: { true }, context: { webContext() },
+                              onDiagnostics: { reports.append($0) })
+    #expect(web.read() == .empty)
+    #expect(reports.first?.tier == .neither)
+    #expect(reports.first?.accessibilityCharacters == nil)
+}

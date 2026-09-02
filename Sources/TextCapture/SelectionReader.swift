@@ -26,17 +26,66 @@ public struct SelectionReader: Sendable {
     /// The clipboard tier's answer: the characters the poll accepted, plus the flavours that
     /// were on the board in the same pass.
     public typealias RichReader = @Sendable () -> CapturedSelection?
+    public typealias ContextReader = @Sendable () -> FocusContext?
+
+    /// Where the focused element sits, before any text is read: which application, and the
+    /// roles from the element up through its ancestors. **Metadata only — no text.**
+    ///
+    /// `isWebContent` is the one question `read()` asks of it. Chromium and WebKit both expose
+    /// a page's content under an `AXWebArea`, and a selection there is where the Accessibility
+    /// tier answers a **flat** string. Observed 2026-09-02 (spec #72, Q3) on LM Studio, a
+    /// Chromium app: a press through the first tier put a heading, its paragraphs and 27 table
+    /// cells into the panel run together with no line break between them, while the same
+    /// application's ⌘C, probed the same day, wrote `public.html` with the table whole and a
+    /// plain flavour with 13 line breaks; with this rule in place the next press brought the
+    /// table. The per-press diagnostic `HotkeyCoordinator.logCapture` writes is what turns that
+    /// observation into numbers (role chain, characters, line breaks) on any machine that meets
+    /// the next such application. So under an `AXWebArea` the first tier is not «touches
+    /// nothing», it is «loses the structure»; the second tier is where the document is.
+    public struct FocusContext: Sendable, Equatable {
+        public let bundleIdentifier: String?
+        /// The focused element's role first, then each ancestor's, root last. Bounded, because
+        /// an ancestry walk is one AX round trip per level and the timeout applies to each.
+        public let roles: [String]
+
+        public init(bundleIdentifier: String?, roles: [String]) {
+            self.bundleIdentifier = bundleIdentifier
+            self.roles = roles
+        }
+
+        public var isWebContent: Bool { roles.contains("AXWebArea") }
+    }
+
+    /// What one `read()` did, for a diagnostic log: never the text, only its shape. The
+    /// counts are what tell a flat Accessibility answer from a whole one after the fact.
+    public struct Diagnostics: Sendable, Equatable {
+        public enum Tier: String, Sendable { case accessibility, clipboard, neither }
+        public let context: FocusContext?
+        /// Characters and line breaks in the Accessibility answer, or nil when that tier was
+        /// skipped or answered nothing.
+        public let accessibilityCharacters: Int?
+        public let accessibilityLineBreaks: Int?
+        public let tier: Tier
+        /// What the ancestry walk cost, so its price on every press is a number.
+        public let contextMilliseconds: Double
+    }
 
     private let accessibility: PlainReader
     private let clipboard: RichReader
     private let isTrusted: @Sendable () -> Bool
+    private let context: ContextReader
+    private let onDiagnostics: (@Sendable (Diagnostics) -> Void)?
 
     public init(accessibility: @escaping PlainReader = SelectionReader.accessibilityText,
                 clipboard: @escaping RichReader = SelectionReader.clipboardSelection,
-                isTrusted: @escaping @Sendable () -> Bool = PermissionsGate.isTrusted) {
+                isTrusted: @escaping @Sendable () -> Bool = PermissionsGate.isTrusted,
+                context: @escaping ContextReader = SelectionReader.focusContext,
+                onDiagnostics: (@Sendable (Diagnostics) -> Void)? = nil) {
         self.accessibility = accessibility
         self.clipboard = clipboard
         self.isTrusted = isTrusted
+        self.context = context
+        self.onDiagnostics = onDiagnostics
     }
 
     /// Spec 6's order: Accessibility, then the clipboard, then a hint.
@@ -50,18 +99,75 @@ public struct SelectionReader: Sendable {
     /// Accessibility read fails — is stated in `CapturedSelection` and is what tier 1 exists to
     /// remove, once §11.1's measurement says whether tier 1 is worth building.
     ///
+    /// **One exception to the order, since 2026-09-02: web content goes straight to the
+    /// clipboard tier.** Under an `AXWebArea` the Accessibility answer is flat and carries no
+    /// flavours (`FocusContext` has the measurement), so reading it first would hand the model
+    /// a heading glued to its table and never reach the HTML one tier down. That is spec #72's
+    /// step 2, and it is a rule about *where the selection lives*, not a list of applications —
+    /// a bundle list would have needed a line per Chromium app and missed the next one.
+    ///
     /// Each of the three is called at most once. That is not tidiness: a second call to
     /// `clipboard` is a second synthetic ⌘C into the user's application, a second
     /// whole-pasteboard destroy-and-rebuild, and another half-second of polling.
     public func read() -> SelectionResult {
         guard isTrusted() else { return .notPermitted }
-        if let text = accessibility().flatMap(Self.meaningful) {
-            return .text(CapturedSelection(plain: text))
+        let started = Date()
+        let focus = context()
+        let contextMS = Date().timeIntervalSince(started) * 1000
+        var axCharacters: Int?
+        var axLineBreaks: Int?
+        func report(_ tier: Diagnostics.Tier) {
+            onDiagnostics?(Diagnostics(context: focus, accessibilityCharacters: axCharacters,
+                                       accessibilityLineBreaks: axLineBreaks, tier: tier,
+                                       contextMilliseconds: contextMS))
+        }
+        if !(focus?.isWebContent ?? false), let answer = accessibility() {
+            axCharacters = answer.count
+            axLineBreaks = answer.filter(\.isNewline).count
+            if let text = Self.meaningful(answer) {
+                report(.accessibility)
+                return .text(CapturedSelection(plain: text))
+            }
         }
         if let captured = clipboard(), Self.meaningful(captured.plain) != nil {
+            report(.clipboard)
             return .text(captured)
         }
+        report(.neither)
         return .empty
+    }
+
+    /// The focused element's application and role ancestry, or nil when nothing is focused.
+    ///
+    /// Same entry point and the same timeout as `accessibilityText()`, for the same reasons;
+    /// the walk stops at the first `AXWebArea`, because that is the one role `read()` asks
+    /// about, and at twelve levels, because a bound on IPC round trips per press is not
+    /// optional. Metadata only: no attribute read here can carry the user's text.
+    @Sendable public static func focusContext() -> FocusContext? {
+        let system = AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(system, 0.25)
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString,
+                                            &focused) == .success,
+              let element = focused, CFGetTypeID(element) == AXUIElementGetTypeID()
+        else { return nil }
+        var roles: [String] = []
+        var cursor = element as! AXUIElement
+        for _ in 0..<12 {
+            var role: CFTypeRef?
+            AXUIElementCopyAttributeValue(cursor, kAXRoleAttribute as CFString, &role)
+            let name = role as? String ?? "?"
+            roles.append(name)
+            if name == "AXWebArea" { break }
+            var parent: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(cursor, kAXParentAttribute as CFString,
+                                                &parent) == .success,
+                  let next = parent, CFGetTypeID(next) == AXUIElementGetTypeID()
+            else { break }
+            cursor = next as! AXUIElement
+        }
+        return FocusContext(bundleIdentifier: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+                            roles: roles)
     }
 
     /// Returns the text only if it contains something worth translating. Applications that
