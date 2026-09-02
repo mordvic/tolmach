@@ -32,19 +32,30 @@ public enum MarkdownToAttributed {
     public struct CodeRegion: Sendable, Equatable {
         public let range: NSRange
         public let source: String
+        /// What the fence named after its backticks, or empty. For the card's header label —
+        /// an overlay, never characters in the storage, so the RTF flavour and a drag-selection
+        /// copy carry the code and nothing else.
+        public let language: String
 
-        public init(range: NSRange, source: String) {
+        public init(range: NSRange, source: String, language: String = "") {
             self.range = range
             self.source = source
+            self.language = language
         }
 
         /// The same region, shifted — for a caller appending this rendering after something
         /// already in a text storage.
         public func offset(by delta: Int) -> CodeRegion {
             CodeRegion(range: NSRange(location: range.location + delta, length: range.length),
-                       source: source)
+                       source: source, language: language)
         }
     }
+
+    /// Room the card leaves above its first line of code for the header the text view draws
+    /// over it — the language label and the always-visible «Скопировать». A constant and not a
+    /// multiple of the base size: the header holds a system-sized control, and
+    /// `docs/adr/0008` is that only the user's text scales.
+    public static let codeCardHeaderHeight: CGFloat = 24
 
     public struct Rendering {
         public let attributed: NSAttributedString
@@ -89,11 +100,11 @@ public enum MarkdownToAttributed {
                                        config: config))
             case let .blockquote(depth, range):
                 result.append(blockquote(depth: depth, range, in: text, config: config))
-            case let .codeBlock(_, range, _):
+            case let .codeBlock(language, range, _):
                 let source = String(text[range])
                 regions.append(CodeRegion(range: NSRange(location: result.length,
                                                          length: (source as NSString).length),
-                                          source: source))
+                                          source: source, language: language))
                 result.append(codeBlock(source, config: config))
             case let .table(header, rows, alignments):
                 result.append(table(header: header, rows: rows, alignments: alignments,
@@ -191,7 +202,16 @@ public enum MarkdownToAttributed {
                                               .foregroundColor: NSColor.secondaryLabelColor]))
     }
 
-    /// The block's source bytes, verbatim, in the monospaced face on a tinted paragraph.
+    /// The block's source bytes, verbatim, in the monospaced face, inside a bordered card.
+    ///
+    /// **The card is a one-column `NSTextTable` block, since 2026-09-02.** The first version
+    /// was a run background alone, and its comment said a border «would need a table to hang
+    /// on» — which is exactly what the thematic break already does one function down, and what
+    /// every table cell does. Putting the frame in the paragraph style rather than in the view
+    /// is what lets the RTF flavour carry it: the copy path and the pane are one converter, and
+    /// a card drawn by the view would have been a second, invisible-to-copy rendering. The
+    /// header room above the code is `codeCardHeaderHeight`, for the overlays the text view
+    /// draws (`CodeBlockTextView`).
     ///
     /// **The range is never handed to the inline parser, and that is measured rather than
     /// stylistic**: `interpretedSyntax: .inlineOnlyPreservingWhitespace` reads a ``` fence line
@@ -202,17 +222,22 @@ public enum MarkdownToAttributed {
     /// function is the only one a `codeBlock` is routed to.
     private static func codeBlock(_ source: String,
                                  config: MarkdownFontConfig) -> NSAttributedString {
+        let table = NSTextTable()
+        table.numberOfColumns = 1
+        let block = NSTextTableBlock(table: table, startingRow: 0, rowSpan: 1,
+                                     startingColumn: 0, columnSpan: 1)
+        block.setBorderColor(.separatorColor)
+        block.setWidth(1, type: .absoluteValueType, for: .border)
+        block.setWidth(config.baseSize * 0.6, type: .absoluteValueType, for: .padding)
+        block.setWidth(codeCardHeaderHeight, type: .absoluteValueType, for: .padding, edge: .minY)
+        block.setWidth(config.baseSize * 0.6, type: .absoluteValueType, for: .margin, edge: .minY)
+        block.setWidth(config.baseSize * 0.6, type: .absoluteValueType, for: .margin, edge: .maxY)
+        block.backgroundColor = .quaternaryLabelColor
         let style = NSMutableParagraphStyle()
-        style.paragraphSpacing = config.baseSize * 0.6
-        style.paragraphSpacingBefore = config.baseSize * 0.3
-        style.firstLineHeadIndent = config.baseSize * 0.5
-        style.headIndent = config.baseSize * 0.5
-        // A tint rather than a border: `NSTextBlock`'s background would need a table to hang
-        // on, and a run background is what survives the RTF round trip the copy path uses.
+        style.textBlocks = [block]
         return terminated(NSAttributedString(string: source, attributes: [
             .font: NSFont.monospacedSystemFont(ofSize: config.baseSize, weight: .regular),
             .foregroundColor: NSColor.labelColor,
-            .backgroundColor: NSColor.quaternaryLabelColor,
             .paragraphStyle: style,
         ]))
     }

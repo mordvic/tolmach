@@ -318,11 +318,14 @@ private func scratchTextView() -> CodeBlockTextView {
     #expect(used.width > 0)
 
     // The table's cells really are table blocks *after* layout, not merely in the storage.
+    // Two-column blocks only: since 2026-09-02 the code block is a one-column table block too
+    // (its card), and this is about the table.
     var tableRects: [NSRect] = []
     let whole = NSRange(location: 0, length: view.textStorage?.length ?? 0)
     view.textStorage?.enumerateAttribute(.paragraphStyle, in: whole, options: []) { value, range, _ in
         guard let style = value as? NSParagraphStyle,
-              style.textBlocks.first is NSTextTableBlock else { return }
+              let block = style.textBlocks.first as? NSTextTableBlock,
+              block.table.numberOfColumns == 2 else { return }
         let glyphs = layout.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
         tableRects.append(layout.boundingRect(forGlyphRange: glyphs, in: container))
     }
@@ -352,14 +355,25 @@ private func scratchTextView() -> CodeBlockTextView {
         // failure mode that would leave every button stacked in the corner.
         #expect(frame.height > 0)
         #expect(frame.width > 0)
-        #expect(button.frame.minY >= frame.minY)
+        // In the card's header: above the first line of code (a flipped view, so smaller y),
+        // and no higher than the header room the text block leaves for it.
+        #expect(button.frame.maxY <= frame.minY + 1)
+        #expect(button.frame.minY >= frame.minY - MarkdownToAttributed.codeCardHeaderHeight - 1)
         #expect(button.frame.maxX <= frame.maxX + 1)
     }
     // The second block sits below the first, so the two buttons cannot be on top of each other.
     #expect((buttons[1].blockFrame?.minY ?? 0) > (buttons[0].blockFrame?.minY ?? 0))
-    // Hidden until the pointer is over the block — the hover affordance the design asks for.
-    // How it *feels* is §11.2's human check; that it starts hidden is not.
-    #expect(buttons.filter { !$0.isHidden }.isEmpty)
+    // Visible without hovering, since 2026-09-02 (spec #72, step 5): a button that appears only
+    // under the pointer is a button nobody finds. The context-menu route stays beside it.
+    #expect(buttons.filter(\.isHidden).isEmpty)
+    // The language the fence named, over the block that named it, and no label for the other.
+    let labels = view.subviews.compactMap { $0 as? CodeLanguageLabel }
+    #expect(labels.map(\.stringValue) == ["swift"])
+    if let label = labels.first, let frame = buttons[0].blockFrame {
+        // Above the code (a flipped view: smaller y is higher), inside the card's header.
+        #expect(label.frame.maxY <= frame.minY + 1)
+        #expect(label.frame.minX >= frame.minX - 1)
+    }
 }
 
 // MARK: - The исходник pane (spec #72, step 4)

@@ -312,6 +312,17 @@ to give for free is not.
 | **A file dropped on the pane still reaching `DroppedDocument`** | The text view registers for strings only, so the file drop should fall through to the pane's `dropDestination`; whether AppKit's routing agrees is exactly the kind of thing this project does not assert from memory | `SourceTextView.updateDragTypeRegistration`, `SourceEditor` |
 | **The paste stall from Word** | The RTF path is reached only with no HTML on the board and costs 216–262 ms cold; the paste is synchronous on purpose (the reasoning is on the type). Whether a quarter-second before the text appears reads as a stall or as nothing is a judgement | `SourceTextView` |
 
+**Owed by the code card (2026-09-02, spec #72 step 5).** The border, the header room and the
+region's language are pinned in `MarkdownToAttributedTests`; the overlays' placement in
+`RenderedMarkupTests`. How it looks is the judgement.
+
+| What to check | Why it needs eyes | Code |
+|---|---|---|
+| **The card itself, both appearances** | A 1 pt `separatorColor` border on a `quaternaryLabelColor` fill with 24 pt of header — the label at the left, «Скопировать» at the right. Whether that reads as one card rather than as a table cell with a button in it, and whether the header room reads as intentional over a one-line block, is unrendered | `MarkdownToAttributed.codeBlock`, `CodeBlockTextView.positionButtons` |
+| **The card at 32 pt and at 11 pt** | Padding and margins scale with «Шрифт текста», the header does not. At 32 pt the button sits in a strip proportionally a third of a line; at 11 pt the `.small` button is almost the header's whole height | `MarkdownToAttributed.codeCardHeaderHeight` |
+| **The card in the panel at 300 pt** | Every rendered panel is 27 pt taller per code block now; `PanelSizer`'s ceiling still holds, but a reply that is mostly code opens taller than it used to | `RenderedReplyView`, `PanelRenderedReplyTests` |
+| **The card pasted into Word or Pages through the rich flavour** | `NSTextTableBlock` borders survive AppKit's RTF round trip in a test; what Word draws from that RTF is not the test's to say | `MarkdownToAttributed.Rendering.rtf` |
+
 **Owed by the rendered исходник (2026-09-02, spec #72 step 4).** The left pane hosts the
 перевод pane's rendered view over its own text when the shared toggle says «Разметка». The
 rule is pinned as a value; the pane has not been looked at.

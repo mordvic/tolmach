@@ -503,6 +503,13 @@ not cosmetic — **the safe direction is inverted**. See
   document; `AppSettings.showsRenderedMarkup` (default true) is where the choice is kept, and
   the pane writes it directly rather than holding a per-run override. One view serves «Текст»
   and «Файлы» both, which is why the queue's pane gained all of this for free.
+  **A code block is a card, since 2026-09-02**: a one-column `NSTextTable` block with a border
+  and `MarkdownToAttributed.codeCardHeaderHeight` (24 pt, a constant — the header holds a
+  system-sized control, `docs/adr/0008`) of room above the code, in which `CodeBlockTextView`
+  draws the fence's language (`CodeRegion.language`) and an **always-visible** «Скопировать»
+  as overlays — views, not characters, so the RTF flavour and a drag-selection copy carry the
+  code alone. The frame lives in the paragraph style rather than in the view for the reason
+  the converter exists at all: one rendering for the pane and for the copy path.
   **Since 2026-09-02 the исходник pane reads the same toggle**: `SourcePaneMode.of` hosts the
   same `RenderedTextView` over the source in «Разметка» and the editor in «Исходник», the
   toggle is drawn when *either* pane has markup (`TranslationPane.offersToggle`), and the

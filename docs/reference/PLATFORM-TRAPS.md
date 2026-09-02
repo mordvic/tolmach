@@ -334,7 +334,9 @@ would re-lay-out text a reader is looking at in order to ask a question about it
 the same probe:
 
 - The throwaway triple agrees with a live text view **to the point**: 419 / 355 / 339 pt at
-  300 / 430 / 560 for the probe's document, both ways. Two things make it agree — the
+  300 / 430 / 560 for the probe's document, both ways (446 / 382 / 366 since 2026-09-02, when
+  the code block became a bordered card with a 24 pt header — the same +27 at every width,
+  re-taken through `RenderedReplyView.measuredSize` and pinned in `PanelRenderedReplyTests`). Two things make it agree — the
   container's `lineFragmentPadding` (a programmatically built one comes up with **5.0**, so a
   view that sets 0 must be copied rather than assumed) and laying out at
   `proposal − 2 × textContainerInset.width`. Get either wrong and the answer moves by a line at
