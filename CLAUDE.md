@@ -503,6 +503,11 @@ not cosmetic — **the safe direction is inverted**. See
   document; `AppSettings.showsRenderedMarkup` (default true) is where the choice is kept, and
   the pane writes it directly rather than holding a per-run override. One view serves «Текст»
   and «Файлы» both, which is why the queue's pane gained all of this for free.
+  **Since 2026-09-02 the исходник pane reads the same toggle**: `SourcePaneMode.of` hosts the
+  same `RenderedTextView` over the source in «Разметка» and the editor in «Исходник», the
+  toggle is drawn when *either* pane has markup (`TranslationPane.offersToggle`), and the
+  file-drop destination sits on the pane's container so a drop works in both modes — which is
+  also why `CodeBlockTextView` registers for no drag types at all.
   During a run only *settled* blocks are drawn and the unsettled tail stays plain characters
   (`MarkdownBlockScanner.settledPrefix`), so a block is never redrawn as something else; the
   update replaces the tail region of the storage and nothing more.

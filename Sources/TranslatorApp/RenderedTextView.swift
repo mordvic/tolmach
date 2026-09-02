@@ -237,6 +237,14 @@ class CodeBlockTextView: NSTextView {
     private var buttons: [CodeCopyButton] = []
     private var hoverTracking: NSTrackingArea?
 
+    /// Nothing. A read-only view has no use for a drop, and since this view hosts the исходник
+    /// pane's rendered mode too (2026-09-02), a file dropped on it must reach the pane's own
+    /// drop destination rather than a text view that would refuse it — the same reason
+    /// `SourceTextView` limits its own registration to strings.
+    override func updateDragTypeRegistration() {
+        unregisterDraggedTypes()
+    }
+
     override func layout() {
         super.layout()
         positionButtons()

@@ -312,6 +312,17 @@ to give for free is not.
 | **A file dropped on the pane still reaching `DroppedDocument`** | The text view registers for strings only, so the file drop should fall through to the pane's `dropDestination`; whether AppKit's routing agrees is exactly the kind of thing this project does not assert from memory | `SourceTextView.updateDragTypeRegistration`, `SourceEditor` |
 | **The paste stall from Word** | The RTF path is reached only with no HTML on the board and costs 216–262 ms cold; the paste is synchronous on purpose (the reasoning is on the type). Whether a quarter-second before the text appears reads as a stall or as nothing is a judgement | `SourceTextView` |
 
+**Owed by the rendered исходник (2026-09-02, spec #72 step 4).** The left pane hosts the
+перевод pane's rendered view over its own text when the shared toggle says «Разметка». The
+rule is pinned as a value; the pane has not been looked at.
+
+| What to check | Why it needs eyes | Code |
+|---|---|---|
+| **A Markdown source drawn on the left, and «Исходник» giving the editor back** | The toggle in the right header now governs both panes. Paste a README, flip it both ways, and check that the left pane changes with the right and that typing is possible only in «Исходник» | `SourcePaneMode`, `SourceEditor` |
+| **The toggle appearing for a Markdown source with an empty translation** | `offersToggle` says either pane's markup suffices; whether a segmented control in the right header reads right when the right pane is still the «Здесь появится перевод» placeholder is a judgement | `TranslationPane.offersToggle` |
+| **A file dropped on the rendered source** | The drop destination is the pane's container and `CodeBlockTextView` registers no drag types, so the file should land as before. AppKit's routing is the thing this project does not assert from memory | `CodeBlockTextView.updateDragTypeRegistration`, `SourceEditor` |
+| **The character-count footer over the rendered source** | The same overlay the editor carries, placed over a text view that scrolls; whether it sits clear of a scroller is unrendered | `SourceEditor` |
+
 **Owed by the «Оформить» pass (2026-09-02, spec #72 step 3).** The route, the gate and the
 view model's orchestration are pinned offline through `FakeLLMClient` and `QueueClient`; what a
 real model does with the prompt is the measurement above in `MEASUREMENTS.md`, and what the

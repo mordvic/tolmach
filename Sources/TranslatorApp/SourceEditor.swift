@@ -4,6 +4,23 @@
 // lives here rather than in a file of its own because both panes use it and it was already
 // shared before the split; `SourceFooter` is private to the editor.
 import SwiftUI
+import TranslationCore
+
+/// Which view the исходник pane hosts: the editor, or the same read-only rendered text view
+/// the перевод pane uses.
+///
+/// A value rather than a condition inside the `ViewBuilder`, for `PrimaryAction`'s reason: the
+/// rule is «this pane's own text has markup and the shared toggle says „Разметка"», and a
+/// restated condition is how the two panes would come to disagree about what the toggle does.
+/// `PaneRendering.of` is the one scan; this only names its answer for the left side.
+enum SourcePaneMode: Equatable {
+    case editor, rendered
+
+    static func of(sourceText: String, showsRenderedMarkup: Bool) -> SourcePaneMode {
+        PaneRendering.of(sourceText, showsRenderedMarkup: showsRenderedMarkup).showsRendered
+            ? .rendered : .editor
+    }
+}
 
 /// The window's left half in «Текст»: what the user typed.
 ///
@@ -22,6 +39,11 @@ struct SourceEditor: View {
     /// 22.0` for the three faces at 22 pt (`Scripts/content-font.swift`, section 5). `TextEditor`
     /// exposes no font of its own, so had it not, there would have been no route to one.
     var font: ContentFont = .default
+    /// «Разметка | Исходник», the перевод pane's toggle, read here too since 2026-09-02: a
+    /// Markdown source is drawn as a document in «Разметка» and edited in «Исходник». One
+    /// setting for both panes, so there is one state to keep in mind. Defaulted off so a call
+    /// site that knows nothing about it gets the editor it always had.
+    var showsRenderedMarkup = false
     /// So a click in the pane's top margin can still put the caret in the editor. Counted
     /// rather than a flag: see `SourceEditorView.focusRequest`.
     @State private var focusRequest = 0
@@ -33,6 +55,16 @@ struct SourceEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if SourcePaneMode.of(sourceText: model.sourceText,
+                                 showsRenderedMarkup: showsRenderedMarkup) == .rendered {
+                // The перевод pane's own view, read-only, over the source: what the user
+                // pasted, or what the «Оформить» pass made of it, drawn as the document it
+                // is. Editing is one click away in «Исходник». Never streaming — the source
+                // does not arrive token by token — so the whole document is rendered at once.
+                RenderedTextView(text: model.sourceText, font: font, rendersMarkup: true,
+                                 isStreaming: false)
+                    .overlay(alignment: .bottomTrailing) { SourceFooter(model: model).padding(6) }
+            } else {
             ZStack(alignment: .topLeading) {
                 // A hosted text view and not `TextEditor`, since 2026-09-02, for one reason:
                 // ⌘V has to read the pasteboard's HTML. `SourceTextView` says why nothing
@@ -60,6 +92,7 @@ struct SourceEditor: View {
                 }
             }
             .overlay(alignment: .bottomTrailing) { SourceFooter(model: model).padding(6) }
+            }
         }
         .frame(minWidth: 280)
         // A translator window that cannot take a dropped file is a translator window that

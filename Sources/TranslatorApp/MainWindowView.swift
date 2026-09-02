@@ -242,7 +242,8 @@ struct MainWindowView: View {
                         }
                     }
                     if mode == .text {
-                        SourceEditor(model: model, font: settings.contentFont)
+                        SourceEditor(model: model, font: settings.contentFont,
+                                     showsRenderedMarkup: settings.showsRenderedMarkup)
                     } else {
                         FileQueuePane(queue: queue, canStart: status.isHealthy && action.canStart)
                     }
@@ -270,7 +271,12 @@ struct MainWindowView: View {
                                 // through — the same treatment the panel's степень/стиль
                                 // pickers get, and the reason a choice made here survives the
                                 // window closing. One key for both modes, like the font.
-                                showsRenderedMarkup: $settings.showsRenderedMarkup)
+                                showsRenderedMarkup: $settings.showsRenderedMarkup,
+                                // The same bounded scan the pane runs on its own text, on
+                                // the source, so the toggle appears for a Markdown source
+                                // before any translation exists. «Файлы» has no source pane.
+                                sourceHasMarkup: mode == .text
+                                    && MarkdownPresence.hasMarkup(model.sourceText))
             }
             Divider()
             RunStatusBar(model: model, status: status, engineName: engineName,

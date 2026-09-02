@@ -77,6 +77,17 @@ struct TranslationPane: View {
     /// the text is read survives the window closing. Defaulted to a constant so a call site
     /// that has no settings object still compiles and still renders markup.
     var showsRenderedMarkup: Binding<Bool> = .constant(true)
+    /// Whether the исходник pane beside this one has markup of its own. The toggle in this
+    /// header governs both panes since 2026-09-02, so it has to appear when *either* has
+    /// something to show — a Markdown source with no translation yet still needs its way back
+    /// to the editor. The queue passes nothing: its left pane is a file list.
+    var sourceHasMarkup = false
+
+    /// The one rule for whether «Разметка | Исходник» is drawn. A function so a test can pin
+    /// it without rendering the header.
+    static func offersToggle(translationHasMarkup: Bool, sourceHasMarkup: Bool) -> Bool {
+        translationHasMarkup || sourceHasMarkup
+    }
 
     var body: some View {
         // One scan per body evaluation, and the value both halves of the pane read. `hasMarkup`
@@ -88,7 +99,8 @@ struct TranslationPane: View {
                 // Only when there is something to render. With no markup the header is exactly
                 // what it was, which is what keeps a plain translation from growing a control
                 // that would do nothing.
-                if rendering.hasMarkup {
+                if Self.offersToggle(translationHasMarkup: rendering.hasMarkup,
+                                     sourceHasMarkup: sourceHasMarkup) {
                     Picker("", selection: showsRenderedMarkup) {
                         Text("Разметка").tag(true)
                         Text("Исходник").tag(false)
