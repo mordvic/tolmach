@@ -31,6 +31,7 @@ swiftc -O -o /tmp/tf Scripts/toolbar-fit.swift && /tmp/tf   # narrowest width th
 swiftc -O -o /tmp/tbh Scripts/toolbar-height.swift && /tmp/tbh   # what the toolbar band costs, per style
 swiftc -O -o /tmp/cf Scripts/content-font.swift && /tmp/cf   # every measurement behind «Шрифт текста»
 swiftc -O -o /tmp/vm Scripts/view-menu.swift && /tmp/vm   # which menu the размер items land in, and how ⌘+ is stored
+RENDER_PREVIEW=/tmp/preview swift test --filter renderPreview   # draw the rendered pane to light/dark PNGs and look
 swift run translate-cli --to ru --tone technical "text"   # needs a live engine; reads stdin if no text
 swift run translate-cli --engine lmstudio --model qwen/qwen3.8-27b --to ru "text"   # the other engine
 swift run translate-cli --proofread --level rewrite --style business --from ru "text"   # правка route; --to/--tone are refused here, --level/--style only here
@@ -503,6 +504,13 @@ not cosmetic — **the safe direction is inverted**. See
   document; `AppSettings.showsRenderedMarkup` (default true) is where the choice is kept, and
   the pane writes it directly rather than holding a per-run override. One view serves «Текст»
   and «Файлы» both, which is why the queue's pane gained all of this for free.
+  **The typography follows the reading surfaces this app is compared with** (GitHub,
+  ChatGPT, Claude), since 2026-09-02: a table is rules between rows with a filled semibold header
+  and a bottom margin, never a grid; a quote wears a 3 pt bar on its leading edge; the newline
+  that ends a block carries no run decoration (a code span at the end of a list item used to
+  paint its background to the pane's edge). All of it is in the paragraph style, so the RTF
+  flavour carries it. `RENDER_PREVIEW=… swift test --filter renderPreview` draws the pane to
+  PNGs; the images are how the pass was judged and are the tool for the next one.
   **A code block is a card, since 2026-09-02**: a one-column `NSTextTable` block with a border
   and `MarkdownToAttributed.codeCardHeaderHeight` (24 pt, a constant — the header holds a
   system-sized control, `docs/adr/0008`) of room above the code, in which `CodeBlockTextView`

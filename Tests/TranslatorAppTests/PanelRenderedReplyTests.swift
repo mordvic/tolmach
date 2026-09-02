@@ -119,7 +119,10 @@ private let probeDocument = """
     // step 5): the card's 24 pt header room plus its margins, less the paragraph spacing the
     // tinted paragraph used to carry. The same shift at all three widths is what says the
     // card, and not a wrap, is what moved — the probe script's own figures predate the card.
-    let expected: [(width: CGFloat, height: CGFloat)] = [(300, 446), (430, 382), (560, 366)]
+    // And 491 / 395 / 379 since the typography pass the same day (spec #72 follow-up): the
+    // table gained a header fill, wider cell padding and a bottom margin, the quote a bar. The
+    // larger move at 300 pt is the padding — narrower columns wrap one more cell there.
+    let expected: [(width: CGFloat, height: CGFloat)] = [(300, 491), (430, 395), (560, 379)]
     for (width, height) in expected {
         let measured = RenderedReplyView.measuredSize(of: rendering.attributed, width: width)
         #expect(abs(measured.height - height) <= 2,
@@ -455,3 +458,4 @@ private func panelKey(_ keyCode: UInt16, _ characters: String,
     #expect(PanelView.richFlavour(text: prose, rendersFinalReply: true,
                                   showsRenderedMarkup: true, font: .default) == nil)
 }
+
