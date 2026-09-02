@@ -185,4 +185,45 @@ public enum PromptBuilder {
                 ChatMessage(role: "user",
                             content: "Please correct the following \(languageClause)text:\n\n\n\(text)")]
     }
+
+    /// The «Оформить» pass: add structure to a flat text, change nothing else.
+    ///
+    /// **A separate call, never a clause in the translation prompt.** The formatting design's
+    /// series B (2026-08-31) measured what these models do when a marker instruction rides along
+    /// with a translation: bold degraded to italic 5/5 on translategemma:12b, emphasis invented
+    /// 2/3 on aya-expanse:32b. So structure is asked for on its own, on the source, before any
+    /// other route sees the text — and the result is accepted only through `FormattingGate`,
+    /// which is why this prompt can afford to be plain-spoken rather than defensive.
+    ///
+    /// Four forms allowed, three forbidden by name. Bold, italic and links are forbidden because
+    /// they are the forms the gate cannot verify structurally and the models are measurably
+    /// worst with; a marker the model adds anyway is stripped, not failed on. The text is handed
+    /// over under one closing line with no markers, for `userPrompt(for:)`'s measured reason.
+    public static func formatMessages(text: String, language: Language?) -> [ChatMessage] {
+        let languageClause = language.map { "The text is in \($0.englishName). " } ?? ""
+        let system = [
+            "You are a typesetter. Mark up the user's plain text as Markdown so that its structure "
+                + "is visible. \(languageClause)Never translate it and never rewrite it.",
+            "",
+            "Rules:",
+            "- Output ONLY the marked-up text. No preamble, no notes, no explanation.",
+            antiAnsweringRule(verb: "mark up"),
+            "- Do not change, add, remove or reorder any word. Every word of the original must "
+                + "appear in the output exactly once, in the same order, spelled the same way, "
+                + "with the same punctuation.",
+            "- You may add: heading markers (#) for lines that are titles; a Markdown table "
+                + "(| cell | cell |, with a | --- | delimiter row) where cells arrived one per line "
+                + "and every row has the same number of cells; list markers (- or 1.) for lines "
+                + "that are items; fenced code blocks (```) around lines that are code or "
+                + "commands; inline code (`like this`) around identifiers, file names and "
+                + "commands.",
+            "- Do not add bold, italic or links. Do not add horizontal rules or blockquotes.",
+            "- Keep paragraphs as they are. Blank lines between blocks are fine; nothing else "
+                + "may be added.",
+            "- If the text has no structure to show, return it unchanged.",
+        ].joined(separator: "\n")
+        return [ChatMessage(role: "system", content: system),
+                ChatMessage(role: "user",
+                            content: "Please mark up the following \(languageClause.isEmpty ? "" : language!.englishName + " ")text:\n\n\n\(text)")]
+    }
 }

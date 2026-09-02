@@ -191,8 +191,10 @@ private func model() -> TranslationViewModel {
 /// the compiler's own list can.
 @MainActor @Test func everyStatusThatIsNotProgressCarriesAGlyphAsWellAsAColour() {
     let kinds = PanelStatus.Kind.allCases
-    #expect(kinds.count == 4, "a new kind needs a glyph decision, not a bigger count here")
-    #expect(kinds.filter { $0.symbol != nil }.count == 3)
+    // Five since 2026-09-02: `.formatting` joined with its own glyph, the «Оформляю…» row of
+    // the «Оформить» pass, which like `.awaitingUser` draws no spinner.
+    #expect(kinds.count == 5, "a new kind needs a glyph decision, not a bigger count here")
+    #expect(kinds.filter { $0.symbol != nil }.count == 4)
     // `.progress` is the deliberate exception: that row already draws a `ProgressView`, so a
     // glyph beside the spinner beside the word would be three ways of saying one thing.
     #expect(PanelStatus.Kind.progress.symbol == nil)

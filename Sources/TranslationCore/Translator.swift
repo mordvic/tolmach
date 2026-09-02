@@ -176,6 +176,22 @@ private final class ChunkRunAccumulators {
     var stats: [ChatStats] = []
 }
 
+/// What the «Оформить» pass returned: the text to use instead of the source, or why not.
+///
+/// Three routes share `Translator`; this one has no `final` of its own to stream, no chunks,
+/// no glossary, no markup diff — so it does not borrow `TranslationOutcome` and leave most of
+/// it honestly empty. A caller reads `verdict` and, on `.rejected`, carries on with the text it
+/// already had.
+public struct FormattingOutcome: Sendable, Equatable {
+    public enum Verdict: Sendable, Equatable {
+        case accepted(String)
+        case rejected(FormattingRejection)
+    }
+
+    public let verdict: Verdict
+    public let totalMS: Double
+}
+
 public struct Translator: Sendable {
     let client: LLMClient
     public init(client: LLMClient) { self.client = client }
@@ -570,6 +586,43 @@ public struct Translator: Sendable {
             documentGlossaryFailure: nil,
             documentGlossaryAttempted: false,
             modelChunkCount: chunks.lazy.filter { !$0.passthrough }.count)
+    }
+
+    /// The «Оформить» pass: one call that may add structure to `text` and may change nothing
+    /// else. `FormattingGate` is the whole of the trust placed in the reply.
+    ///
+    /// **Whole, then judged — never streamed.** The gate is decidable only on the complete
+    /// reply, and a caller that had already shown half of it would have shown a text that
+    /// may be about to be refused. So the reply is buffered, cleaned by `ResponseCleaner` the
+    /// way every other route's is (a preamble line off, a whole-answer fence unwrapped), has
+    /// the forbidden inline forms stripped, and is then verified against `text`.
+    ///
+    /// **One call for the whole text, by contract.** A table split between two requests is a
+    /// table no model can assemble, so this route does not chunk; the caller is the one who
+    /// knows the chunk budget and is expected to skip the pass for a text that would not fit
+    /// one request. Cancellation is checked before the call and after the stream ends, for
+    /// the reason every route in this type spells out: the stream *finishes* on cancellation
+    /// rather than throwing, and a truncated reply of a short text can pass the gate.
+    public func format(text: String, source: Language?, options: ChatOptions)
+    async throws -> FormattingOutcome {
+        let started = Date()
+        try Task.checkCancellation()
+        var buffer = ""
+        for try await event in client.chat(messages: PromptBuilder.formatMessages(text: text,
+                                                                                   language: source),
+                                           options: options) {
+            if case .token(let token) = event { buffer += token }
+        }
+        try Task.checkCancellation()
+        let cleaned = FormattingGate.stripForbidden(ResponseCleaner.clean(buffer).text)
+        let verdict: FormattingOutcome.Verdict
+        if let rejection = FormattingGate.verify(source: text, formatted: cleaned) {
+            verdict = .rejected(rejection)
+        } else {
+            verdict = .accepted(cleaned)
+        }
+        return FormattingOutcome(verdict: verdict,
+                                 totalMS: Date().timeIntervalSince(started) * 1000)
     }
 
     // Streams one chunk's translation call, delivering content to `onToken` as

@@ -22,6 +22,11 @@ private func freshDefaults() -> InMemoryDefaults { InMemoryDefaults(prefix: "tes
     #expect(settings.autoCopy == false)
     #expect(settings.warmUpOnLaunch == true)
     #expect(settings.interactiveModel == ModelPolicy.defaultModel(for: .interactive))
+    // Off, both of them, until the measurement spec #72 names has been taken: the pass is a
+    // second model call on every run, and the panel's own switch is off because that surface
+    // promises a first token in under a second.
+    #expect(settings.reconstructsStructure == false)
+    #expect(settings.reconstructsStructureInPanel == false)
 }
 
 @Test func valuesSurviveAReload() {

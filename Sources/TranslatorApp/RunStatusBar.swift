@@ -115,7 +115,7 @@ struct RunStatusBar: View {
         // on a different condition than the body produced «4 предупреждения» over a
         // disclosure containing one row. The label and the body answer from one condition.
         guard let outcome = model.outcome, model.state == .finished else { return nil }
-        return Self.summary(outcome: outcome)
+        return Self.summary(outcome: outcome, formattingNotice: model.formattingNotice)
     }
 
     /// Whether the disclosure is offered at all. In «Текст» that is a finished run; in
@@ -162,7 +162,8 @@ struct RunStatusBar: View {
                                 target: queue.selectedTarget, onMute: onMute)
         }
         guard let outcome = model.outcome, model.state == .finished else { return nil }
-        return WarningsView(outcome: outcome, target: model.resolvedTarget, onMute: onMute)
+        return WarningsView(outcome: outcome, target: model.resolvedTarget,
+                            formattingNotice: model.formattingNotice, onMute: onMute)
     }
 
     @ViewBuilder private var line: some View {
@@ -199,7 +200,13 @@ struct RunStatusBar: View {
         case .idle:
             Text(RussianCopy.idleLine(status, engineName: engineName, hasModel: hasModel)).font(.caption).foregroundStyle(.secondary)
         case .running:
-            if model.isAwaitingTerms {
+            if model.isFormatting {
+                // No spinner, like «Жду ваших правок…»: the text is about to change under the
+                // user and nothing is streaming, and a spinner beside «Перевожу…» there read as
+                // a stalled model. The glyph carries the state for those who do not see colour.
+                Label("Оформляю…", systemImage: "text.alignleft")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else if model.isAwaitingTerms {
                 Label("Жду ваших правок…", systemImage: "square.and.pencil")
                     .font(.caption).foregroundStyle(.secondary)
             } else {
@@ -254,12 +261,14 @@ struct RunStatusBar: View {
     /// `> 0` of. There is one count in the program that says how many warnings an outcome
     /// carries, and both the disclosure's visibility and its label are read from it, so they
     /// cannot drift apart the way two independently-written conditions could.
-    static func summary(outcome: TranslationOutcome?) -> String? {
+    static func summary(outcome: TranslationOutcome?,
+                        formattingNotice: FormattingNotice? = nil) -> String? {
         // No outcome, nothing to summarise. It used to answer «1 предупреждение» for a
         // glossary save failure with no run behind it; that sentence is drawn in full,
         // undisclosed, by the bar itself now.
         guard let outcome else { return nil }
-        let count = WarningsView(outcome: outcome, target: nil).warningCount
+        let count = WarningsView(outcome: outcome, target: nil,
+                                 formattingNotice: formattingNotice).warningCount
         guard count > 0 else { return nil }
         return "\(count) " + RussianCopy.plural(count, "предупреждение", "предупреждения",
                                                 "предупреждений")

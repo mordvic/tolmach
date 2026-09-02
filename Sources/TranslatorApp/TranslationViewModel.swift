@@ -30,6 +30,19 @@ enum TranslationState: Equatable {
     case failed(String)
 }
 
+/// Why a run went without the «Оформить» pass it was asked for — what `WarningsView` says
+/// under «Оформить не удалось». Nil when the pass was not asked for, was not needed (the
+/// text already had structure) or was accepted: none of those is a thing to warn about.
+enum FormattingNotice: Equatable {
+    /// The text does not fit one request under the current chunk budget. A table split
+    /// between two calls is a table no model can assemble, so the pass is skipped whole.
+    case tooLong
+    /// The model answered and `FormattingGate` refused it.
+    case rejected(FormattingRejection)
+    /// The call itself failed. The translation still ran on the text as it was.
+    case failed(String)
+}
+
 @Observable
 @MainActor
 final class TranslationViewModel {
@@ -116,10 +129,33 @@ final class TranslationViewModel {
     /// nothing on screen to say so.
     private(set) var documentTermsUnavailable = false
 
+    /// Which of the two surfaces owns this model. Read by the «Оформить» pass alone: the panel
+    /// runs it only under its own checkbox, because that surface promises a first token in
+    /// under a second and the pass is a whole call in front of it.
+    enum Surface { case window, panel }
+    private let surface: Surface
+
+    /// Whether the run in flight is inside the «Оформить» pass — `.running`, with nothing
+    /// streaming and the text about to change. The status rows say «Оформляю…» on it, for the
+    /// reason `isAwaitingTerms` exists: a spinner under «Перевожу…» while nothing is being
+    /// translated reads as a stalled model.
+    private(set) var isFormatting = false
+    /// Why the last run went without the pass it was asked for; see `FormattingNotice`.
+    private(set) var formattingNotice: FormattingNotice?
+    /// Whether the reply on screen was produced from a source this pass rewrote. Read by
+    /// `HotkeyCoordinator.replaceInSource()`, which strips markers this app synthesised
+    /// before writing back into the user's document — a reconstructed source is synthesised
+    /// Markdown by definition. Reset with the other per-run state, so it describes the run on
+    /// screen and not the last press.
+    private(set) var sourceWasReconstructed = false
+    /// The pass's own handle, so `cancel()` can reach a run that has no translation task yet.
+    private var formattingTask: Task<FormattingOutcome, Error>?
+
     init(translator: Translator, settings: AppSettings, glossary: GlossaryStore,
-         pasteboard: NSPasteboard = .general) {
+         pasteboard: NSPasteboard = .general, surface: Surface = .window) {
         self.translator = translator; self.settings = settings; self.glossary = glossary
         self.pasteboard = pasteboard
+        self.surface = surface
     }
 
     /// The window's «Скопировать».
@@ -360,6 +396,8 @@ final class TranslationViewModel {
         documentTermsUnavailable = false
         raisedTermsSheet = false
         cancelledBeforeStart = false
+        formattingNotice = nil
+        sourceWasReconstructed = false
 
         // **Off the main actor**, like every other expensive read in this app.
         // `NLLanguageRecognizer` has no prefix cap and this pane accepts a 256 KB paste, so a
@@ -405,10 +443,15 @@ final class TranslationViewModel {
         // underneath deliberately re-reads «Движок» on every call so a *new* run follows the
         // radio button. Both are wanted; this line is where the two meet.
         let translator = translator.forRun()
+        // The «Оформить» pass, before the translation and on the same pinned translator, so
+        // the two calls of one run cannot reach two servers. Nil means the pass was cancelled
+        // and the run is already `.interrupted`.
+        guard let runText = await reconstructIfWanted(text, language: detected, options: options,
+                                                      translator: translator) else { return }
         await execute(start: { onToken in
             Task { [translator, glossary, settings] in
                 try await translator.translate(
-                    text: text, target: target, tone: tone,
+                    text: runText, target: target, tone: tone,
                     userGlossary: glossary.glossary,
                     // The picker reaches the engine now. It used to pick the target and stop
                     // there, so a user correcting a misdetection changed where the text was
@@ -485,15 +528,21 @@ final class TranslationViewModel {
         documentTermsUnavailable = false
         raisedTermsSheet = false
         cancelledBeforeStart = false
+        formattingNotice = nil
+        sourceWasReconstructed = false
         // Frozen for the whole run, here at its start. See `LLMClient.pinnedForRun()`: a
         // translation is many calls and they must all reach one server, while the router
         // underneath deliberately re-reads «Движок» on every call so a *new* run follows the
         // radio button. Both are wanted; this line is where the two meet.
         let translator = translator.forRun()
+        // The same pass перевод runs, under the same checkbox — one setting for one behaviour.
+        // The language is nil for the reason the call below passes nil.
+        guard let runText = await reconstructIfWanted(text, language: nil, options: options,
+                                                      translator: translator) else { return }
         await execute(start: { onToken in
             Task { [translator, settings] in
                 try await translator.proofread(
-                    text: text, level: level, style: style, source: nil,
+                    text: runText, level: level, style: style, source: nil,
                     options: options, maxChunkCharacters: settings.chunkSize,
                     onToken: onToken)
             }
@@ -634,6 +683,9 @@ final class TranslationViewModel {
     /// `DocumentTermsRequest` exists.
     func cancel() {
         pendingTermsRequest?.cancel()
+        // The pass has its own handle: while it runs there is no translation task yet, and
+        // the flag below would only stop the translation that follows it.
+        formattingTask?.cancel()
         // **Remembered, not just forwarded.** Since detection moved off the main actor, a run
         // claims `.running` and then suspends *before* its task exists — so a ⌘. landing in that
         // window had nothing to reach, and the run went on to completion with the user watching
@@ -650,6 +702,65 @@ final class TranslationViewModel {
     /// comment, it captured a load-bearing explanation of cancellation ordering and left
     /// `cancel()` undocumented.
     func setDocumentTermsUnavailableForTesting(_ value: Bool) { documentTermsUnavailable = value }
+
+    /// The «Оформить» pass, or nothing. Returns the text the operation should run on — the
+    /// reconstruction when it was asked for, needed and accepted; the text as it was in every
+    /// other case — or **nil when the pass was cancelled**, with `state` already
+    /// `.interrupted`, so the caller returns.
+    ///
+    /// Three conditions decide whether a call is made at all, and none of them costs a model
+    /// call: the setting for this surface; `MarkdownPresence` finding no structure to add to
+    /// (a document that already has markup is not «improved» — that is the shape the design's
+    /// series B measured going wrong); and the text fitting one request under the chunk
+    /// budget, because a table split between two calls is a table no model can assemble. Only
+    /// the third is worth telling the user about, so only it leaves a notice.
+    ///
+    /// A refused or failed pass is an enhancement that did not happen, not a failed run: the
+    /// operation goes ahead on the text as it was, and `formattingNotice` says why — unlike the
+    /// document glossary's swallowed failure, this one was asked for, so it is reported rather
+    /// than logged.
+    private func reconstructIfWanted(_ text: String, language: Language?, options: ChatOptions,
+                                     translator: Translator) async -> String? {
+        let wanted = settings.reconstructsStructure
+            && (surface == .window || settings.reconstructsStructureInPanel)
+        guard wanted, !MarkdownPresence.hasMarkup(text) else { return text }
+        guard Chunker.plan(text, maxCharacters: settings.chunkSize).chunks.count <= 1 else {
+            formattingNotice = .tooLong
+            return text
+        }
+        // A ⌘. that landed during detection, before there was anything to cancel.
+        if cancelledBeforeStart { state = .interrupted; return nil }
+        isFormatting = true
+        defer { isFormatting = false }
+        let pass = Task { [translator] in
+            try await translator.format(text: text, source: language, options: options)
+        }
+        formattingTask = pass
+        defer { if formattingTask == pass { formattingTask = nil } }
+        do {
+            let outcome = try await pass.value
+            switch outcome.verdict {
+            case let .accepted(formatted):
+                // The окно shows what the model understood before the translation lands; the
+                // panel's copy of this is invisible and harmless.
+                sourceText = formatted
+                sourceWasReconstructed = true
+                return formatted
+            case let .rejected(reason):
+                formattingNotice = .rejected(reason)
+                return text
+            }
+        } catch is CancellationError {
+            state = .interrupted
+            return nil
+        } catch {
+            // Ask the task, not the error — `execute` documents why a cancellation can
+            // surface as a transport error.
+            if pass.isCancelled { state = .interrupted; return nil }
+            formattingNotice = .failed(Self.message(for: error))
+            return text
+        }
+    }
 
     /// Raise the sheet and wait for an answer.
     ///

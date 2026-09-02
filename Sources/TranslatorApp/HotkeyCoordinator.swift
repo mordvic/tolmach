@@ -105,7 +105,8 @@ final class HotkeyCoordinator {
             uniqueKeysWithValues: TextOperation.allCases.map { ($0, HotkeyManager()) })
         self.pasteboard = pasteboard
         self.panelModel = TranslationViewModel(translator: translator,
-                                               settings: settings, glossary: glossary)
+                                               settings: settings, glossary: glossary,
+                                               surface: .panel)
     }
 
     // MARK: - Registration
@@ -691,7 +692,9 @@ final class HotkeyCoordinator {
         guard !isReplacing, panelModel.state == .finished, !frontmostIsTerminal else { return }
         isReplacing = true
         defer { isReplacing = false }
-        let text = sourceIsSynthesisedMarkdown
+        // Two ways the Markdown can be this app's: converted out of a rich capture, or
+        // reconstructed by the «Оформить» pass. Either way the user never typed the markers.
+        let text = sourceIsSynthesisedMarkdown || panelModel.sourceWasReconstructed
             ? MarkdownPlainText.render(panelModel.translatedText)
             : panelModel.translatedText
         await selectionWriter.replace(text, on: pasteboard)

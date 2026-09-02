@@ -310,6 +310,23 @@ struct SettingsModelsView: View {
                      + "приложение отбрасывает такой текст, — но тратит время до первого слова.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Toggle("Оформлять текст перед переводом и правкой",
+                       isOn: $settings.reconstructsStructure)
+                Text("Отдельный запрос к модели: плоскому тексту возвращаются заголовки, таблицы, "
+                     + "списки и код. Слова при этом не меняются — иначе результат отбрасывается. "
+                     + "Ещё один запрос на каждый перевод.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                // Disabled rather than hidden, for the same reason as «Длина рассуждения»
+                // below: a control that vanished when an unrelated switch moved would read
+                // as a bug rather than as a dependency.
+                Toggle("Также в панели по горячей клавише",
+                       isOn: $settings.reconstructsStructureInPanel)
+                    .disabled(!settings.reconstructsStructure)
+                Text("Панель отвечает меньше чем за секунду; с оформлением первое слово "
+                     + "появится позже.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 // Not `settings.usesGptOss` any more: on LM Studio no publisher-qualified name
                 // matches `ModelPolicy`'s prefix table, so that rule would never draw the row
                 // there. `ModelsViewModel` asks the right question per engine — the table on

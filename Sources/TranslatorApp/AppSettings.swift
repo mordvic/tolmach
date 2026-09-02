@@ -274,6 +274,31 @@ final class AppSettings {
         set { withMutation(keyPath: \.quietThinking) { defaults.set(newValue, forKey: "quietThinking") } }
     }
 
+    /// The «Оформить» pass: a separate model call before перевод and правка that may add
+    /// headings, tables, lists and code markers to a flat text and may change nothing else
+    /// (`FormattingGate` is the «nothing else»). Off by default and staying off until the
+    /// measurement in `docs/reference/MEASUREMENTS.md` passes the threshold spec #72 names —
+    /// it is a second call on every run, and its worth on the models this install runs is not
+    /// yet a number.
+    var reconstructsStructure: Bool {
+        get {
+            access(keyPath: \.reconstructsStructure)
+            return bool("reconstructStructure", false)
+        }
+        set { withMutation(keyPath: \.reconstructsStructure) { defaults.set(newValue, forKey: "reconstructStructure") } }
+    }
+
+    /// Whether the pass also runs in the floating panel. A separate switch, off by default,
+    /// because the panel's contract is a first token in under a second and the pass is a whole
+    /// model call in front of it; the окно is where a user waits for a document.
+    var reconstructsStructureInPanel: Bool {
+        get {
+            access(keyPath: \.reconstructsStructureInPanel)
+            return bool("reconstructStructureInPanel", false)
+        }
+        set { withMutation(keyPath: \.reconstructsStructureInPanel) { defaults.set(newValue, forKey: "reconstructStructureInPanel") } }
+    }
+
     /// How much reasoning `gpt-oss` is allowed, for the one family that cannot be switched off.
     ///
     /// Defaults to `.low` rather than to the model's own default for the same reason

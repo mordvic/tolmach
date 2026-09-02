@@ -109,6 +109,20 @@ without the documentation going red.
 
 ---
 
+## Owed — the «Оформить» pass (spec #72, step 3)
+
+Not yet taken. The pass ships **off by default** until it is. Protocol, agreed 2026-09-02:
+
+- Corpus: the flat monorepo-proposal text the spec was written from plus nine more flat texts
+  from real work, free of personal and medical data, kept **outside** the repository.
+- Runs: three per text on `translategemma:12b` and on `translategemma:27b`, at `--chunk 4000`,
+  through `swift build -c release --product translate-cli` and `Scripts/format-loss.sh <dir>`.
+- Pass criterion: the table is reconstructed with the correct column count **and**
+  `FormattingGate` accepts, in all three runs, for at least 8 of the 10 texts on 12b. The
+  script counts the gate; the column count is read by eye from the kept outputs.
+- Record here: date, Ollama version, the two totals the script prints, and which texts failed
+  and how. Then, and only then, the default of `AppSettings.reconstructsStructure` may move.
+
 ## Adding a measurement
 
 Put it in a comment at the code it justifies, with the count, not just the conclusion —
