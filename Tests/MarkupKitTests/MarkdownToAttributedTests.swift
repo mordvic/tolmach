@@ -321,3 +321,21 @@ private func runDump(_ attributed: NSAttributedString) -> String {
     }
     #expect(bordered >= 1)
 }
+
+// MARK: - Plain bullets (spec #72, step 6)
+
+/// The renderer draws «•»-lines as the list they are, through the same `listItem` path a
+/// Markdown list takes; «Исходник» — `plain` — still shows the characters the user gave.
+@Test func plainBulletLinesAreDrawnAsAListAndLeftAloneInTheSourceMode() {
+    let text = "Список:\n\n• раз\n• два\n\nПосле."
+    let rendered = MarkdownToAttributed.rendering(of: text, config: config).attributed
+    var listed = 0
+    rendered.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: rendered.length),
+                                options: []) { value, _, _ in
+        if let style = value as? NSParagraphStyle, !style.textLists.isEmpty { listed += 1 }
+    }
+    #expect(listed >= 2)
+    #expect(rendered.string.contains("•\tраз"))
+    #expect(!rendered.string.contains("• раз"))
+    #expect(MarkdownToAttributed.plain(text, config: config).string == text)
+}

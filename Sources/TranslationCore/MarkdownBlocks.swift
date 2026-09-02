@@ -418,6 +418,54 @@ public enum MarkdownBlockScanner {
     }
 }
 
+/// Lines that begin with a plain-text bullet — «•» or «–» followed by a space — as a list
+/// **for display only**.
+///
+/// The commonest flat list a selection arrives with is exactly this shape, and drawing it as
+/// prose was the one heuristic the 2026-09-02 grilling kept (Q8, Q24). It is deliberately not
+/// a block kind: `MarkdownBlockScanner` goes on reading the paragraph as a paragraph, so the
+/// chunker, `MarkupSkeleton` and the model see the user's bytes, and «Заменить» never has a
+/// «- » to strip that would have replaced the user's own «•». Only the renderer and
+/// `MarkdownPresence` — so the toggle appears and «Исходник» is one click away when the guess
+/// is wrong — read this.
+///
+/// Every line must carry a marker for the paragraph to be a list. A paragraph with one unmarked
+/// line is prose that happens to mention a bullet, and drawing half of it as a list would be a
+/// guess about the other half.
+public enum PlainBulletList {
+    static let markers: Set<Character> = ["•", "–"]
+
+    /// The items' content ranges (the text after the marker and its space), or nil unless
+    /// every line of `paragraph` carries a marker. Ranges index the paragraph's base string.
+    public static func items(of paragraph: Substring) -> [Range<String.Index>]? {
+        var items: [Range<String.Index>] = []
+        var lineStart = paragraph.startIndex
+        var index = paragraph.startIndex
+        func take(_ line: Substring) -> Bool {
+            let content = line.drop(while: { $0 == " " || $0 == "\t" })
+            guard let first = content.first, markers.contains(first) else { return false }
+            let afterMarker = content.dropFirst()
+            guard let space = afterMarker.first, space == " " || space == "\t" else { return false }
+            let body = afterMarker.drop(while: { $0 == " " || $0 == "\t" })
+            items.append(body.startIndex..<body.endIndex)
+            return true
+        }
+        while index < paragraph.endIndex {
+            // `Character.isNewline` reads "\r\n" as the one character it is, and a lone CR as
+            // a break too — the discipline `LineScanner` keeps for the rest of the module.
+            if paragraph[index].isNewline {
+                guard take(paragraph[lineStart..<index]) else { return nil }
+                lineStart = paragraph.index(after: index)
+            }
+            index = paragraph.index(after: index)
+        }
+        if lineStart < paragraph.endIndex {
+            guard take(paragraph[lineStart..<paragraph.endIndex]) else { return nil }
+        }
+        return items.isEmpty ? nil : items
+    }
+}
+
 /// Whether a string carries anything a renderer could draw differently from plain prose.
 ///
 /// The pane's «Разметка | Исходник» toggle appears only when this answers true, and with no
@@ -450,13 +498,19 @@ public enum MarkdownPresence {
     /// remove markers, never pair two that were not paired.
     public static let inspectionLimit = 128_000
 
-    public static func hasMarkup(_ text: String) -> Bool {
-        hasMarkup(text, inspecting: inspectionLimit)
+    /// - Parameter countingPlainBullets: whether `PlainBulletList`'s display-only signal counts.
+    ///   True for the panes, which need the toggle. **False for the «Оформить» pass**, which
+    ///   asks «is there structure a model could still add» — a flat mail with «•» bullets and
+    ///   a collapsed table has a list to show and a table to recover, and the display heuristic
+    ///   must not stop the recovery.
+    public static func hasMarkup(_ text: String, countingPlainBullets: Bool = true) -> Bool {
+        hasMarkup(text, inspecting: inspectionLimit, countingPlainBullets: countingPlainBullets)
     }
 
     /// The same question over a bounded prefix. The limit is a parameter so a test can pin the
     /// bound rather than restate the number.
-    public static func hasMarkup(_ text: String, inspecting limit: Int) -> Bool {
+    public static func hasMarkup(_ text: String, inspecting limit: Int,
+                                 countingPlainBullets: Bool = true) -> Bool {
         // `utf8.count` and not `count`: the character count of a 2 MB string is itself a full
         // pass, which is the cost this bound exists to avoid. UTF-8 length is O(1) on a native
         // string and never smaller than the character count, so a document that passes this
@@ -468,6 +522,8 @@ public enum MarkdownPresence {
             paragraphs.append(range)
         }
         for paragraph in paragraphs {
+            // A display-only list still needs the toggle, or its raw form is unreachable.
+            if countingPlainBullets, PlainBulletList.items(of: text[paragraph]) != nil { return true }
             for piece in LineScanner.pieces(String(text[paragraph])) {
                 if !MarkupSkeleton.inlineCodeSpans(in: piece.content).isEmpty { return true }
                 if hasPairedEmphasis(piece.content) { return true }

@@ -94,7 +94,16 @@ public enum MarkdownToAttributed {
             case let .heading(level, range):
                 result.append(heading(level: level, range, in: text, config: config))
             case let .paragraph(range):
-                result.append(paragraph(range, in: text, config: config))
+                // «•»/«–» lines, drawn as the list they are — a display decision alone, which is
+                // why the scanner handed this over as a paragraph. `PlainBulletList` says why.
+                if let items = PlainBulletList.items(of: text[range]) {
+                    for item in items {
+                        result.append(listItem(depth: 0, marker: .bullet, item, in: text,
+                                               config: config))
+                    }
+                } else {
+                    result.append(paragraph(range, in: text, config: config))
+                }
             case let .listItem(depth, marker, range):
                 result.append(listItem(depth: depth, marker: marker, range, in: text,
                                        config: config))

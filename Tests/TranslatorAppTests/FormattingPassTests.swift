@@ -158,3 +158,16 @@ private func makeModel(replies: [String], surface: TranslationViewModel.Surface 
     await model.run()
     #expect(model.formattingNotice == nil)
 }
+
+/// «•» bullets are drawn as a list by the pane, but they are not structure the pass is barred
+/// from adding to — the text beside them may still hold a collapsed table.
+@MainActor @Test func plainBulletsDoNotStopThePass() async {
+    let source = "• first\n• second\nFolder\nTrunk\n/nova\nmain"
+    let formatted = "- first\n- second\n\n| Folder | Trunk |\n| --- | --- |\n| /nova | main |"
+    let (model, client, settings) = makeModel(replies: [formatted, "перевод"])
+    settings.reconstructsStructure = true
+    model.sourceText = source
+    await model.run()
+    #expect(client.callCount == 2)
+    #expect(model.sourceText == formatted)
+}

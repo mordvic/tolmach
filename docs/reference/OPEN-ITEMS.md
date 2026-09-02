@@ -312,6 +312,14 @@ to give for free is not.
 | **A file dropped on the pane still reaching `DroppedDocument`** | The text view registers for strings only, so the file drop should fall through to the pane's `dropDestination`; whether AppKit's routing agrees is exactly the kind of thing this project does not assert from memory | `SourceTextView.updateDragTypeRegistration`, `SourceEditor` |
 | **The paste stall from Word** | The RTF path is reached only with no HTML on the board and costs 216–262 ms cold; the paste is synchronous on purpose (the reasoning is on the type). Whether a quarter-second before the text appears reads as a stall or as nothing is a judgement | `SourceTextView` |
 
+**Owed by the plain-bullet list (2026-09-02, spec #72 step 6).** «•»- and «–»-lines are drawn as
+a list; the rule is pinned, the drawing is not.
+
+| What to check | Why it needs eyes | Code |
+|---|---|---|
+| **A «•» list from a mail, in «Разметка» and in «Исходник»** | Drawn through the same `listItem` path a Markdown list takes, so the bullet is AppKit's `•` with a hanging indent rather than the user's character and a space. Whether the two read as the same list, and whether the toggle appearing for a text with no other markup surprises, is the judgement | `PlainBulletList`, `MarkdownToAttributed.rendering(blocks:)` |
+| **A paragraph where one line starts with «–» as a dash, not a bullet** | The rule requires *every* line marked, so a dialogue («– Да. – Нет.») written one line per speaker is drawn as a list. Recorded as the heuristic's known false positive; «Исходник» is the way out | `PlainBulletList.items` |
+
 **Owed by the code card (2026-09-02, spec #72 step 5).** The border, the header room and the
 region's language are pinned in `MarkdownToAttributedTests`; the overlays' placement in
 `RenderedMarkupTests`. How it looks is the judgement.
