@@ -1,5 +1,6 @@
 // Sources/TranslatorApp/ContentFont.swift
 import MarkupKit
+import AppKit
 import SwiftUI
 
 /// Which face the user's own text is drawn in.
@@ -109,6 +110,24 @@ struct ContentFont: Equatable, Sendable {
     }
 
     var font: Font { .system(size: size, design: typeface.design) }
+
+    /// The same font for a hosted `NSTextView`, which takes no SwiftUI `Font`.
+    ///
+    /// Built the way `MarkupKit` builds its body font — the system face at `size` with the
+    /// design applied through the descriptor — so the исходник editor and the rendered panes
+    /// set the same characters at the same width. Falls back to the plain system font if the
+    /// descriptor refuses the design, which none of the three has been seen to do.
+    var nsFont: NSFont {
+        let system = NSFont.systemFont(ofSize: size)
+        let design: NSFontDescriptor.SystemDesign = switch typeface {
+        case .system: .default
+        case .monospaced: .monospaced
+        case .serif: .serif
+        }
+        guard let descriptor = system.fontDescriptor.withDesign(design),
+              let designed = NSFont(descriptor: descriptor, size: size) else { return system }
+        return designed
+    }
 
     /// The same pair, in the shape `MarkupKit` takes.
     ///

@@ -22,36 +22,25 @@ struct SourceEditor: View {
     /// 22.0` for the three faces at 22 pt (`Scripts/content-font.swift`, section 5). `TextEditor`
     /// exposes no font of its own, so had it not, there would have been no route to one.
     var font: ContentFont = .default
-    /// So a click in the pane's top margin can still put the caret in the editor. See the
-    /// `contentShape` on the stack below.
-    @FocusState private var editorFocused: Bool
+    /// So a click in the pane's top margin can still put the caret in the editor. Counted
+    /// rather than a flag: see `SourceEditorView.focusRequest`.
+    @State private var focusRequest = 0
 
     /// The drawing's 8 pt top margin for this pane, applied to the editor **and** to the
     /// placeholder from one place. Two copies of it is exactly how the caret and the grey
     /// text came to sit 8 pt apart.
-    private static let textTopInset: CGFloat = 8
+    private static let textTopInset: CGFloat = SourceEditorView.topInset
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ZStack(alignment: .topLeading) {
-                TextEditor(text: $model.sourceText)
-                    .font(font.font)
-                    .scrollContentBackground(.hidden)
-                    // **The editor's own top margin, and the reason the caret used to look
-                    // misplaced.** Asked of the text view on the running bundle:
-                    // `textContainerInset` is `{0, 0}` and `textContainerOrigin` is `{0, 0}`,
-                    // so text begins hard against the top edge of the pane; the caret's own
-                    // rect came back at exactly the text view's top, at x = 5. The 5 is
-                    // `lineFragmentPadding`, which `NSTextContainer` defaults to and which is
-                    // why the placeholder's leading inset below is 5 and not 8.
-                    //
-                    // Vertically there was nothing, so the placeholder's 8 pt put the grey
-                    // text a whole 8 pt below the caret that was supposed to sit in front of
-                    // it. Padding the editor rather than un-padding the placeholder, because
-                    // the drawing gives this pane `padding: 8px 5px` — the margin is wanted,
-                    // it was simply being applied to the wrong one of the two.
-                    .padding(.top, Self.textTopInset)
-                    .focused($editorFocused)
+                // A hosted text view and not `TextEditor`, since 2026-09-02, for one reason:
+                // ⌘V has to read the pasteboard's HTML. `SourceTextView` says why nothing
+                // short of hosting gives that. The 8 pt margin the `TextEditor` took as
+                // SwiftUI padding is the view's own `textContainerInset` now, which is inside
+                // its hit region — so the click-to-focus overlay the padding needed is gone
+                // with it, and the strip above the first line places the caret by itself.
+                SourceEditorView(text: $model.sourceText, font: font, focusRequest: focusRequest)
                 // A placeholder and not a first line of grey text in the editor itself:
                 // anything in the binding is text the user would have to delete, and would
                 // be translated if they did not.
@@ -63,35 +52,12 @@ struct SourceEditor: View {
                         // different baseline from the caret in front of it — the same defect the
                         // 8 pt inset above was written to fix, arriving through the font instead.
                         .font(font.font).foregroundStyle(.tertiary)
-                        // The same constant the editor is padded by, so the two cannot drift.
+                        // The same constant the editor is inset by, so the two cannot drift.
                         // The 5 is `lineFragmentPadding`, measured, not chosen.
                         .padding(.top, Self.textTopInset).padding(.leading, 5)
-                        .allowsHitTesting(false)
+                        // A click on the placeholder is a click into the empty editor.
+                        .onTapGesture { focusRequest += 1 }
                 }
-            }
-            // **The margin above is padding, and padding is outside its child's hit region.**
-            // The editor's own frame moves down by those 8 pt, the stack has no background and
-            // the placeholder refuses hits, so the top strip of the pane landed on nothing: a
-            // click there neither focused the editor nor placed a caret, and the user had to
-            // aim lower.
-            //
-            // The gesture covers **the strip and nothing else**. Hung on the stack, as it
-            // first was, its hit region covered the `TextEditor` too — and if SwiftUI resolves
-            // an ancestor tap before the hosted `NSTextView`'s own mouse handling, every click
-            // in the pane would only set focus: no caret placed mid-paragraph, no click-drag
-            // selection, editing a pasted source reduced to appending. Which way that
-            // resolves is exactly the kind of AppKit routing this project refuses to assert
-            // from memory, so the fix is to not depend on the answer.
-            //
-            // Padding and not an inset inside the editor because there is no way to ask for
-            // one: `TextEditor`'s `textContainerInset` is `{0, 0}` and not exposed, and
-            // `.contentMargins` does not reach its text — measured, in all three spellings,
-            // each leaving the caret flush with the top while the frame stayed full height.
-            .overlay(alignment: .top) {
-                Color.clear
-                    .frame(height: Self.textTopInset)
-                    .contentShape(Rectangle())
-                    .onTapGesture { editorFocused = true }
             }
             .overlay(alignment: .bottomTrailing) { SourceFooter(model: model).padding(6) }
         }
