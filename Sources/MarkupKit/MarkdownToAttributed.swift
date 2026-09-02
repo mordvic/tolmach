@@ -115,7 +115,7 @@ public enum MarkdownToAttributed {
                                                          length: (source as NSString).length),
                                           source: source,
                                           language: language.isEmpty ? nil : language))
-                result.append(codeBlock(source, config: config))
+                result.append(codeBlock(source, language: language, config: config))
             case let .table(header, rows, alignments):
                 result.append(table(header: header, rows: rows, alignments: alignments,
                                     in: text, config: config))
@@ -244,7 +244,7 @@ public enum MarkdownToAttributed {
     /// The same all-or-nothing fence discipline `MarkupSkeleton.inlineCodeSpans` documents for
     /// its own fence-blind scan — and here, unlike there, the guarantee is local: this
     /// function is the only one a `codeBlock` is routed to.
-    private static func codeBlock(_ source: String,
+    private static func codeBlock(_ source: String, language: String,
                                  config: MarkdownFontConfig) -> NSAttributedString {
         let table = NSTextTable()
         table.numberOfColumns = 1
@@ -259,11 +259,20 @@ public enum MarkdownToAttributed {
         block.backgroundColor = .quaternaryLabelColor
         let style = NSMutableParagraphStyle()
         style.textBlocks = [block]
-        return terminated(NSAttributedString(string: source, attributes: [
+        let code = NSMutableAttributedString(string: source, attributes: [
             .font: NSFont.monospacedSystemFont(ofSize: config.baseSize, weight: .regular),
             .foregroundColor: NSColor.labelColor,
             .paragraphStyle: style,
-        ]))
+        ])
+        // Colour on top of the same bytes: the highlighter returns ranges into `source`, the
+        // string is `source` verbatim, and only `.foregroundColor` changes — so `CodeRegion`'s
+        // promise («the block's own bytes») and the RTF flavour both hold. No profile for the
+        // language means no tokens and a block in the label colour, as before.
+        for token in SyntaxHighlighter.tokens(in: source, language: language) {
+            code.addAttribute(.foregroundColor, value: SyntaxPalette.color(for: token.kind),
+                              range: token.range)
+        }
+        return terminated(code)
     }
 
     private static func table(header: [Range<String.Index>], rows: [[Range<String.Index>]],

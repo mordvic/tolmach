@@ -312,6 +312,15 @@ to give for free is not.
 | **A file dropped on the pane still reaching `DroppedDocument`** | The text view registers for strings only, so the file drop should fall through to the pane's `dropDestination`; whether AppKit's routing agrees is exactly the kind of thing this project does not assert from memory | `SourceTextView.updateDragTypeRegistration`, `SourceEditor` |
 | **The paste stall from Word** | The RTF path is reached only with no HTML on the board and costs 216–262 ms cold; the paste is synchronous on purpose (the reasoning is on the type). Whether a quarter-second before the text appears reads as a stall or as nothing is a judgement | `SourceTextView` |
 
+**Owed by syntax colouring (2026-09-02).** The lexer is pinned per language; the palette's
+contrast is a test; the look was judged from `renderPreview` on seven languages.
+
+| What to check | Why it needs eyes | Code |
+|---|---|---|
+| **The six colours together on one card, both appearances** | Each clears 4.5:1 alone; whether keyword pink, string coral and number gold read as one theme beside each other rather than as a fruit bowl is a judgement the ratio cannot make | `SyntaxPalette` |
+| **A language the lexer mis-reads** | Twenty profiles, all hand-written keyword lists; a real file in any of them will show an identifier coloured as a keyword or a comment marker missed. Report the snippet, add the case to `SyntaxHighlighterTests` | `SyntaxHighlighter.Profile` |
+| **Colours in the RTF flavour pasted into Word** | Dynamic colours resolve at copy time for the appearance the copy was made in; a dark-mode copy pasted into a white Word page carries the dark palette | `SyntaxPalette.color(for:)` |
+
 **Owed by the typography pass (2026-09-02, spec #72 follow-up).** Judged from
 `renderPreview`'s PNGs at 620 pt, both appearances, on the LM Studio document — the first
 by-eye check of this pane that an agent could take itself. What the images cannot show:
