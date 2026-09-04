@@ -22,22 +22,36 @@ enum PanelSizer {
     ///
     /// 120 while this region held the header, one line and the buttons. The panel is three
     /// sections now and the status row is pinned too, so the floor has to clear that as well
-    /// — measured on the real view at each width, in the states that pin the most:
+    /// — measured on the real view at each width, in the states that pin the most.
+    /// **Re-taken 2026-09-04** (spec #81 item 5) through the same two calls
+    /// `PanelController.measure` makes — a detached `NSHostingController` over the real
+    /// `PanelView` in the `.measured` variant, `layoutSubtreeIfNeeded()`, then
+    /// `sizeThatFits(in:)` at the width:
     ///
     ///     width  idle+empty  running  failed  finished, one line
-    ///       300      92        118      130          94
-    ///       560      92        118      120          94
+    ///       300      98        124      136          100
+    ///       560      98        124      126          100
     ///
-    /// 130 is a failure message wrapping to two lines in a 300 pt panel, which is the widest
-    /// the pinned block ever gets. At 120 it overflowed by 10, and since the translation is
-    /// the section that stretches, the overflow came out of it: dragged to the floor with a
-    /// failure showing, the pane went to nothing while the buttons stayed.
+    /// Every figure is **+6 on the table this replaces** (92 / 118 / 130 / 94), uniformly and
+    /// in every state, including the three that step 4 does not touch — so it is drift that
+    /// arrived with some earlier row-height change and not a cost of the change marks. Recorded
+    /// rather than quietly overwritten, because a uniform shift is the shape that says «the
+    /// chrome grew», and the next person to re-take this table should expect that of it.
     ///
-    /// **Not** raised to clear the pinned block *plus* a line of translation, which the same
-    /// table puts at ~148. The floor is what a settled short reply is padded to — a one-line
-    /// translation wants 94 — so every point above the content is a hole between the text and
-    /// the button row, which is the defect this panel was rebuilt to remove. 12 pt of that is
-    /// a trade; 54 is the thing itself.
+    /// 136 is a failure message wrapping to two lines in a 300 pt panel. At 120 it overflowed,
+    /// and since the translation is the section that stretches, the overflow came out of it:
+    /// dragged to the floor with a failure showing, the pane went to nothing while the buttons
+    /// stayed.
+    ///
+    /// **Not** raised to clear the pinned block *plus* a line of translation. The floor is what
+    /// a settled short reply is padded to — a one-line translation wants 100 — so every point
+    /// above the content is a hole between the text and the button row, which is the defect
+    /// this panel was rebuilt to remove. And it is not raised for правка either, whose rows are
+    /// all *above* it (122 idle, 145 finished with the summary and the three menus): this floor
+    /// is only ever consulted when the measured content is **smaller** than it, and the
+    /// measurement includes the pinned block, so a taller state answers for itself. What the
+    /// floor governs is the short-reply case, which has not moved relative to 132. Holding the
+    /// drag is `dragMinHeight`'s job, and it is a different number for that reason.
     static let minHeight: CGFloat = 132
 
     /// The smallest the **user** may drag the panel to, which is not the same number.
@@ -48,18 +62,37 @@ enum PanelSizer {
     /// size, and the one thing that cannot be allowed is a size where the pinned block runs
     /// off the frame, because nothing there scrolls.
     ///
-    /// Measured at 300 pt, the narrowest the panel gets, over the states that pin the most:
+    /// Measured at 300 pt, the narrowest the panel gets, over the states that pin the most.
+    /// **Re-taken 2026-09-04** (spec #81 item 5), the same way `minHeight`'s table above was:
     ///
-    ///     finished                        92
-    ///     finished + «окно занято»       126
-    ///     failed (wrapping to two lines) 130
-    ///     failed + «окно занято»         164   ← both at once, and reachable
+    ///     finished перевод                            100
+    ///     finished перевод + «окно занято»            134
+    ///     failed (wrapping to two lines)              136
+    ///     finished правка, summary row, three menus   145
+    ///     failed + «окно занято»                      170   ← was 164
+    ///     finished правка + «окно занято»             179   ← the floor
+    ///     failed правка + «окно занято»               194
+    ///     failed перевод + «окно занято» + терминал   204
+    ///     failed правка + «окно занято» + терминал    228
     ///
-    /// The last is a window already translating when ⌥⌘T is pressed and the panel's own run
-    /// then failing. It was missed when `minHeight` was measured — that table stopped at the
-    /// four states above it — so `contentMinSize` let the drag reach 132 and the caption
-    /// explaining the greyed-out «Открыть в окне» ran off the bottom with the button row.
-    static let dragMinHeight: CGFloat = 164
+    /// «окно занято» is a window already translating when the shortcut is pressed, which is why
+    /// every second row here has it: it is one caption, it is pinned, and it is reachable
+    /// alongside anything. That combination is what first took this number past `minHeight` —
+    /// `contentMinSize` had let the drag reach 132 and the caption explaining the greyed-out
+    /// «Открыть в окне» ran off the bottom with the button row.
+    ///
+    /// **179, and the three rows below it are a stated limitation rather than an oversight.**
+    /// The floor is one constant serving every state, so it is a trade in both directions: too
+    /// low and a pinned block runs off a hand-dragged frame, too high and *every* panel jumps to
+    /// it the instant an edge is touched, in states whose content is 100 pt tall. 179 is the
+    /// worst state **this** change creates — the summary row is what takes a finished правка
+    /// beside a busy window from ~155 to 179. The three above it are older: none of them draws a
+    /// summary row, so all three measured exactly the same before spec #81 as they do now, and
+    /// all three were already past the 164 this replaces. 204 does not involve правка at all.
+    /// Raising the floor to 228 to cover them would put that jump on every перевод panel for a
+    /// state that needs two captions at once, which is a decision for whoever re-opens the
+    /// panel's floors — `docs/reference/OPEN-ITEMS.md` — and not a side effect of the marks.
+    static let dragMinHeight: CGFloat = 179
     /// The panel floats over the work the user is reading; taking more than this much of
     /// the screen makes it a window with no way to move it aside.
     static let maxHeightFraction: CGFloat = 0.6

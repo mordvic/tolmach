@@ -14,7 +14,7 @@ Three groups of numbers in this codebase are measurements of chrome at the syste
 setting that moved the chrome would turn each of them from a constant into a function of a
 preference:
 
-- `PanelSizer.minHeight` (132) and `dragMinHeight` (164) are the height of the panel's *pinned*
+- `PanelSizer.minHeight` (132) and `dragMinHeight` (179) are the height of the panel's *pinned*
   block — header, status row, buttons, and the «окно занято» caption — measured state by state
   at 300 pt. They are what stops a hand-dragged panel from putting its own button row off the
   frame, and nothing in that block scrolls.

@@ -443,7 +443,7 @@ not cosmetic — **the safe direction is inverted**. See
   `ContentFont.markdownConfig` is the single bridge that carries the pair into `MarkupKit`. The
   count is still four surfaces; what grew is what «the перевод» means inside one of them.
   Never a label, a button, a status row or a table, because
-  `PanelSizer.minHeight` 132 and `dragMinHeight` 164 are measurements of the *pinned* block at
+  `PanelSizer.minHeight` 132 and `dragMinHeight` 179 are measurements of the *pinned* block at
   the system size and would otherwise become functions of a preference. `docs/adr/0008` is the
   decision. Three things about it are load-bearing: the panel's **hidden reservation `Text`
   takes the same font as the visible one** or it stops predicting the reply's height; the font

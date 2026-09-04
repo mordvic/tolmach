@@ -160,7 +160,7 @@ struct PanelView: View {
     /// «Шрифт текста» — the face and size the *reply* is drawn in. Nothing else in this view
     /// takes it: the header, the степень/стиль row, the status line, the warnings and the
     /// buttons all keep the system's size, which is what keeps `PanelSizer`'s floors
-    /// (`minHeight` 132, `dragMinHeight` 164 — both measurements of the pinned block) true at
+    /// (`minHeight` 132, `dragMinHeight` 179 — both measurements of the pinned block) true at
     /// every setting. See `docs/adr/0008`.
     ///
     /// **Two `Text`s take it, and that pairing is load-bearing.** The visible one and the
@@ -484,10 +484,23 @@ struct PanelView: View {
     /// control that scrolls away with them is one the user cannot reach at the moment they
     /// want it.
     ///
-    /// Both are `.menu` pickers rather than a segmented степень: the panel's width floor is
-    /// 300 pt and `PanelView` pads by 14 a side, so the row has 272 pt for everything in it,
+    /// All three are `.menu` pickers rather than a segmented степень: the panel's width floor
+    /// is 300 pt and `PanelView` pads by 14 a side, so the row has 272 pt for everything in it,
     /// and «только ошибки» beside «ошибки и стиль» does not fit in that.
     /// `Scripts/panel-proofread-row.swift` carries the measurement.
+    ///
+    /// **Three menus stay on one line, and that is measured against the panel rather than
+    /// against the 272 pt floor.** Re-taken 2026-09-04 with «Вид» in the row (spec #81 item 4):
+    /// степень + стиль want 241 × 16 pt, and with «Вид» 331 × 16 — the same 331 at each of the
+    /// three items, so the widest label decides nothing. That is past 272, and the script's
+    /// stacked fallback (122 × 56, one picker a line) is what 272 would send it to. It is not
+    /// taken, because 272 is the *floor* and not this panel's width: measured through the same
+    /// two calls `PanelController.measure` makes, the real `PanelView` asks for 367 pt in an
+    /// idle правка, 440 running, 442 failed and 481 finished — the bottom action row, which
+    /// carries «Ещё вариант» beside the other three. 331 + 28 of padding is 359, under every one
+    /// of them, so the third menu widens no panel at all and stacking would buy 40 pt of height
+    /// (56 against 16) for nothing. `docs/reference/OPEN-ITEMS.md` already owes a look at the
+    /// panel's real width floor being the button row rather than `PanelSizer.minWidth`.
     @ViewBuilder private var proofreadingControls: some View {
         if Self.showsProofreadingControls(operation: model.operation, selection: selection) {
             HStack(spacing: 8) {
