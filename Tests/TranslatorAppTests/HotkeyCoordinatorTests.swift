@@ -97,6 +97,9 @@ private func makeCoordinator(reader: ScriptedReader,
                              isTrusted: Bool = true,
                              replies: [String] = ["перевод"],
                              delayPerToken: Duration = .zero,
+                             /// Hold every reply until the test calls `release()` on the
+                             /// returned client — see `ScriptedClient.held`.
+                             held: Bool = false,
                              settings: AppSettings? = nil,
                              pasteboard: NSPasteboard? = nil,
                              selectionWriter: SelectionWriter? = nil,
@@ -109,7 +112,7 @@ private func makeCoordinator(reader: ScriptedReader,
     let glossary = GlossaryStore(url: FileManager.default.temporaryDirectory
         .appendingPathComponent("hk-\(UUID().uuidString).json"))
     try? glossary.load()
-    let client = ScriptedClient(responses: replies, delayPerToken: delayPerToken)
+    let client = ScriptedClient(responses: replies, delayPerToken: delayPerToken, held: held)
     let coordinator = HotkeyCoordinator(
         settings: settings ?? AppSettings(defaults: InMemoryDefaults(prefix: "hk")),
         glossary: glossary,
@@ -134,10 +137,18 @@ private func makeCoordinator(reader: ScriptedReader,
 /// regression fails instead of hanging the suite.
 @MainActor
 private func waitUntil(_ condition: @MainActor () -> Bool,
-                       limit: Duration = .seconds(5)) async {
+                       limit: Duration = .seconds(5),
+                       sourceLocation: SourceLocation = #_sourceLocation) async {
     let deadline = ContinuousClock.now + limit
     while !condition(), ContinuousClock.now < deadline {
         try? await Task.sleep(for: .milliseconds(2))
+    }
+    // Loud, not silent. This used to return quietly at the deadline, and a test whose
+    // condition was never met then went on to assert against whatever state it found —
+    // the shape `docs/reference/TESTING.md` lists as «a timing assertion both branches
+    // satisfy». A wait that gave up is the finding; the assertions after it are noise.
+    if !condition() {
+        Issue.record("waited \(limit) and the condition never held", sourceLocation: sourceLocation)
     }
 }
 
@@ -209,10 +220,16 @@ private func waitUntil(_ condition: @MainActor () -> Bool,
     // reads the selection and reassigns `sourceText` — which would swap the source out from
     // under a running translation and leave the panel showing one text's translation above
     // another's, and would spend a second synthetic ⌘C on the user's application to do it.
+    //
+    // The first run is *held*, not slowed: a token delay is a window (80 ms for «Один» at
+    // 20 ms a character), and on a loaded CI runner the whole first press finished inside it
+    // before this test's poll saw `.running` — the second press then read «Второй» and every
+    // assertion below was about the wrong run (GitHub runner, 2026-09-04, suite at 8 s). A
+    // held client keeps the run open until the test says so, whatever the machine is doing.
     let reader = ScriptedReader(["Первый", "Второй"])
-    let (coordinator, _) = makeCoordinator(reader: reader,
-                                           replies: ["Один", "Два"],
-                                           delayPerToken: .milliseconds(20))
+    let (coordinator, client) = makeCoordinator(reader: reader,
+                                                replies: ["Один", "Два"],
+                                                held: true)
     let first = Task { await coordinator.handlePress() }
     await waitUntil { coordinator.panelModel.state == .running }
 
@@ -221,6 +238,7 @@ private func waitUntil(_ condition: @MainActor () -> Bool,
     #expect(coordinator.panelModel.sourceText == "Первый")
     #expect(reader.callCount == 1)
 
+    client.release()
     await first.value
     #expect(coordinator.panelModel.translatedText == "Один")
 }
