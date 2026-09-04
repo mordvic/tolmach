@@ -350,17 +350,9 @@ struct PanelView: View {
                                hasChanges: model.hasChanges)
     }
 
-    /// The text «Вид» puts in the reply area instead of the reply, or nil for the reply itself.
-    ///
-    /// **Never while a run is in flight**, and that clause is not belt and braces. The menu is
-    /// disabled during a run, but the flag survives one: `retry()` re-runs the selection without
-    /// clearing it — deliberately, since `handlePress`, `switchOperation` and `anotherVariant`
-    /// are the three moments the panel's own reply is replaced by a *different* one — so without
-    /// this, a «Повторить» taken while «оригинал» was up would stream the new reply into a view
-    /// showing the old source. `awaitingReply` is the same window the status row calls a run.
     private var shownOriginal: String? {
-        guard !awaitingReply, replyView == .original else { return nil }
-        return model.sourceText
+        Self.shownOriginal(view: replyView, awaitingReply: awaitingReply,
+                           source: model.sourceText)
     }
 
     private var background: AnyShapeStyle {
@@ -1082,6 +1074,24 @@ struct PanelView: View {
         guard !awaitingRun, state != .running else { return false }
         if hasChanges { return true }
         return rendersMarkup(text: text, showsRenderedMarkup: showsRenderedMarkup)
+    }
+
+    /// The text «Вид» puts in the reply area instead of the reply, or nil for the reply itself.
+    ///
+    /// **Never while a run is in flight**, and that clause is not belt and braces. The menu is
+    /// disabled during a run, but the flag survives one: `retry()` re-runs the selection without
+    /// clearing it — deliberately, since `handlePress`, `switchOperation(to:)` and
+    /// `anotherVariant()` are the three moments the panel's reply is replaced by a *different*
+    /// one — so without this, a «Повторить» taken while «оригинал» was up would stream the new
+    /// reply into a view still showing the old source. `awaitingReply` is the same window the
+    /// status row calls a run.
+    ///
+    /// A value for the reason `status(for:)` is one: it is a decision, and a decision written
+    /// inside a computed property of a `View` can only be read by rendering the panel.
+    nonisolated static func shownOriginal(view: PanelReplyView, awaitingReply: Bool,
+                                          source: String) -> String? {
+        guard !awaitingReply, view == .original else { return nil }
+        return source
     }
 
     /// Whether a text in the reply area is drawn from its Markdown or as plain characters.

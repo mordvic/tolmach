@@ -72,10 +72,15 @@ struct RenderedReplyView: NSViewRepresentable {
     static let lineFragmentPadding: CGFloat = 0
 
     /// The text on screen: the reply, or the original when «Вид» is on «оригинал».
-    private var shown: String { original ?? text }
+    ///
+    /// Internal rather than private, like `measuredSize` below and for the same reason: this and
+    /// `marks` are the whole of what «оригинал» does to this view, and a test that reached them
+    /// only through `Coordinator.rendering(of:…)` would be pinning the builder while claiming to
+    /// pin the wiring (`docs/reference/TESTING.md`, shape 5).
+    var shown: String { original ?? text }
     /// The marks to apply to it — none over the original, for the reason `original` gives.
-    private var marks: ChangeSet? { original == nil ? changes : nil }
-    private var detail: ChangeMarks.Detail { showsChangeDetail ? .changes : .result }
+    var marks: ChangeSet? { original == nil ? changes : nil }
+    var detail: ChangeMarks.Detail { showsChangeDetail ? .changes : .result }
 
     /// The rendering both `updateNSView` and `sizeThatFits` draw their answer from, so the
     /// panel is never sized for one document and shown another.
