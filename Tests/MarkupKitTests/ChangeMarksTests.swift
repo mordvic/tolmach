@@ -128,7 +128,9 @@ private func fixture(source: String, result: String, detail: ChangeMarks.Detail 
     #expect(marked.attributed.string == clean.attributed.string)
     #expect(marks(marked).map(\.text) == ["Отчёт"])
     #expect(marks(marked).map(\.index) == [0])
-    #expect(underlineStyle(marked, under: "Отчёт") == .single)
+    // Dotted in a paragraph too, since 2026-09-04: the solid line was the link's, measured
+    // 1.49:1 apart from it in colour (`ChangeMarks.pattern` carries the figure).
+    #expect(underlineStyle(marked, under: "Отчёт") == [.single, .patternDot])
 }
 
 @Test func aCorrectedWordInAHeadingIsUnderlinedInTheHeadingsOwnRun() {
@@ -144,7 +146,9 @@ private func fixture(source: String, result: String, detail: ChangeMarks.Detail 
                                  result: "- первый пункт\n- второй пунктик\n")
     #expect(marks(marked).map(\.text) == ["пунктик"])
     // Dotted, and still the base weight: the two are combined, not chosen between, so a
-    // 32 pt list keeps its thick line and its dots.
+    // 32 pt list keeps its thick line and its dots. The dots are no longer the list's own —
+    // every mark wears them — so what this pins is that a list item is located and marked
+    // like a paragraph, bullet label and all.
     #expect(underlineStyle(marked, under: "пунктик") == [.single, .patternDot])
 }
 
@@ -354,7 +358,7 @@ private func fixture(source: String, result: String, detail: ChangeMarks.Detail 
     let marked = ChangeMarks.apply(set,
                                    to: MarkdownToAttributed.rendering(of: result, config: large),
                                    resultMarkdown: result, detail: .result, config: large)
-    #expect(underlineStyle(marked, under: "Отчёт") == .thick)
+    #expect(underlineStyle(marked, under: "Отчёт") == [.thick, .patternDot])
 }
 
 // MARK: - Refusals
