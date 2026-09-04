@@ -20,6 +20,10 @@ struct Options {
     /// The «Оформить» pass on its own: print the reconstructed text and `FormattingGate`'s
     /// verdict, translate nothing. The measurement tool for spec #72's threshold.
     var formatOnly = false
+    /// The change set as JSON on stdout instead of the corrected text — the feed for
+    /// `Scripts/change-density.sh`, which is how `TextDiff`'s density threshold stops being a
+    /// start value. Refused without `--proofread`, like every other one-sided flag here.
+    var changesJSON = false
     var level: ProofreadingLevel?
     var style: RewriteStyle?
     var model: String?
@@ -79,6 +83,8 @@ func parse(_ args: [String]) -> Result<Options, ParseFailure> {
             options.proofread = true
         case "--format-only":
             options.formatOnly = true
+        case "--changes-json":
+            options.changesJSON = true
         case "--level":
             guard let value = takeValue() else { return .failure(ParseFailure(message: "--level needs a value")) }
             // Read through `init(rawValue:)` with the choices listed from `allCases`, the
@@ -114,7 +120,7 @@ func parse(_ args: [String]) -> Result<Options, ParseFailure> {
 }
 
 let usage = "usage: translate-cli --to <ru|en|de|fr|es|pt|it|zh|ja> [--from L] [--tone neutral|formal|casual|technical|literal] [--engine ollama|lmstudio] [--model NAME] [--chunk N] [--think off|low|medium|high] [text]\n"
-    + "       translate-cli --proofread [--level errorsOnly|errorsAndStyle|rewrite] [--style original|friendly|business|professional|plain] [--from L] [--engine ollama|lmstudio] [--model NAME] [--chunk N] [--think off|low|medium|high] [text]\n"
+    + "       translate-cli --proofread [--level errorsOnly|errorsAndStyle|rewrite] [--style original|friendly|business|professional|plain] [--from L] [--engine ollama|lmstudio] [--model NAME] [--chunk N] [--think off|low|medium|high] [--changes-json] [text]   # --changes-json prints the change set instead of the corrected text\n"
     + "       translate-cli --format-only [--from L] [--engine ollama|lmstudio] [--model NAME] [--chunk N] [--think off|low|medium|high] [text]   # prints the «Оформить» pass's result and verdict; exit 1 on rejection\n"
 
 func fail(_ message: String) -> Never {
@@ -145,6 +151,7 @@ if parsed.formatOnly {
     if parsed.level != nil || parsed.style != nil {
         fail("--level and --style apply to --proofread only")
     }
+    if parsed.changesJSON { fail("--changes-json applies to --proofread only") }
 } else if parsed.proofread {
     if parsed.to != nil {
         fail("--to applies to translation only; a proofread stays in the text's own language")
@@ -156,6 +163,10 @@ if parsed.formatOnly {
     if parsed.level != nil || parsed.style != nil {
         fail("--level and --style apply to --proofread only")
     }
+    // A translation carries no change set at all — its two texts are in two languages, and a
+    // word diff between them would call every word a change. Refused rather than ignored, for
+    // the reason the split above gives.
+    if parsed.changesJSON { fail("--changes-json applies to --proofread only") }
     guard let toRaw = parsed.to, let parsedTarget = Language(rawValue: toRaw) else {
         fail(parsed.to == nil ? "--to is required" : "--to needs one of ru|en|de|fr|es|pt|it|zh|ja, got \"\(parsed.to!)\"")
     }
@@ -242,10 +253,17 @@ do {
     }
     let outcome: TranslationOutcome
     if parsed.proofread {
+        // Under `--changes-json` stdout carries the change set and nothing else, so the
+        // streamed text is dropped rather than written and then contradicted — the flag says
+        // «instead of the text», and a stream on the same handle would make the output
+        // unparseable for the script it exists for.
         outcome = try await translator.proofread(
             text: text, level: level, style: style, source: source,
             options: chatOptions, maxChunkCharacters: chunk,
-            onToken: { FileHandle.standardOutput.write(Data($0.utf8)) })
+            onToken: { piece in
+                guard !parsed.changesJSON else { return }
+                FileHandle.standardOutput.write(Data(piece.utf8))
+            })
     } else {
         // Non-nil by the operation split above; the guard keeps the unwrap honest.
         guard let target else { fail("--to is required") }
@@ -259,6 +277,18 @@ do {
             source: source,
             options: chatOptions, maxChunkCharacters: chunk,
             onToken: { FileHandle.standardOutput.write(Data($0.utf8)) })
+    }
+    if parsed.changesJSON {
+        // Non-nil by the operation split above — `--changes-json` needs `--proofread`, and
+        // правка always computes a set. Said out loud rather than defaulted to `{}`, which
+        // would hand the density measurement an empty distribution and look like data.
+        guard let changes = outcome.changes else {
+            FileHandle.standardError.write(Data("error: no change set was computed\n".utf8))
+            exit(1)
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        FileHandle.standardOutput.write(try encoder.encode(changes))
     }
     FileHandle.standardOutput.write(Data("\n".utf8))
     let ttftDescription = outcome.timeToFirstTokenMS.map { "\(Int($0))ms" } ?? "—"
@@ -277,6 +307,18 @@ do {
         footer += " · document glossary failed: \(failure)"
     }
     FileHandle.standardError.write(Data((footer + "\n").utf8))
+    // A line of its own rather than another `·` clause, because it is the one number this
+    // route exists to report and a script greps for it. «none» is said out loud for
+    // `markupNotCompared`'s reason: an absent line would read as «no changes», and a refused
+    // comparison and a clean text must not print the same thing.
+    if parsed.proofread, let changes = outcome.changes {
+        let description: String
+        switch changes.notCompared {
+        case let .tooLong(tokens): description = "not compared (too long, \(tokens) tokens)"
+        case nil: description = changes.count == 0 ? "none" : "\(changes.count)"
+        }
+        FileHandle.standardError.write(Data("changes: \(description)\n".utf8))
+    }
 } catch {
     FileHandle.standardError.write(Data("error: \(error.localizedDescription)\n".utf8)); exit(1)
 }

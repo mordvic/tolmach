@@ -33,6 +33,11 @@ private let listWithIndentedFence = """
     #expect(fake.receivedMessages.count == 1) // no term-list call for a single chunk
     #expect(outcome.detectedSource == .en)
     #expect(outcome.documentGlossary.isEmpty)
+    // Nil, and not an empty change set: «Hello, world.» and «Привет, мир.» share no token, so
+    // a word diff between them would report every word as changed and every surface reading
+    // the count would say «4 изменения» about a faithful translation. Правка is the only
+    // route where the two texts are comparable.
+    #expect(outcome.changes == nil)
 }
 
 @Test func multiChunkRunsTermListCallFirst() async throws {

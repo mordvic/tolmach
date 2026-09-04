@@ -120,3 +120,76 @@ import Foundation
     let prose = "Цена 5 * 3 = 15, файл a_b_c.txt и #хэштег"
     #expect(MarkdownPlainText.render(prose) == prose)
 }
+
+// MARK: - The golden pin
+
+/// Every block kind, and the joins between them, with the exact string `render` produced
+/// **before** `plain(_:in:)` was factored out of it.
+///
+/// Written and frozen against the shipped outputs before the refactor, so that «`render` is
+/// byte-identical afterwards» is something this file can fail on rather than a claim in a
+/// commit message. Every expectation here is a captured output, not a hand-written guess: the
+/// mutation it dies under is any change to a per-block spelling («•» to «-», the em-dash
+/// count) or to the separator between two blocks (a list joined by a blank line, table rows
+/// joined by two newlines).
+private let goldenFixtures: [(name: String, markdown: String, plain: String)] = [
+    ("atx heading", "# Отчёт за август", "Отчёт за август"),
+    ("setext heading", "Отчёт за август\n===", "Отчёт за август"),
+    ("paragraph with inline markers", "Совсем **жирный**, *курсивный* и `read()` текст.",
+     "Совсем жирный, курсивный и read() текст."),
+    ("paragraph over two lines", "Первая строка\nвторая строка.", "Первая строка\nвторая строка."),
+    ("link", "см. [сайт](https://x.org) сегодня", "см. сайт сегодня"),
+    ("bullet list", "- раз\n- два\n- три", "• раз\n• два\n• три"),
+    ("nested bullet list", "- снаружи\n  - внутри\n    - глубже",
+     "• снаружи\n  • внутри\n    • глубже"),
+    ("ordered list", "1. раз\n2. два", "1. раз\n2. два"),
+    ("blockquote", "> цитата в одну строку", "цитата в одну строку"),
+    ("fenced code", "```swift\nif x {\n        return\n}\n```", "if x {\n        return\n}"),
+    ("unterminated fence", "```\nlet x = 1", "let x = 1"),
+    ("table", "| Ключ | Значение |\n| --- | --- |\n| раз | 1 |\n| два | 2 |",
+     "Ключ\tЗначение\nраз\t1\nдва\t2"),
+    ("table without a delimiter row", "| раз | 1 |\n| два | 2 |", "раз\t1\nдва\t2"),
+    ("thematic break", "первый\n\n---\n\nвторой", "первый\n\n———\n\nвторой"),
+    ("list then paragraph", "- раз\n- два\n\nАбзац после списка.",
+     "• раз\n• два\n\nАбзац после списка."),
+    ("paragraph then list", "Абзац перед списком.\n\n- раз\n- два",
+     "Абзац перед списком.\n\n• раз\n• два"),
+    ("crlf document", "# Заголовок\r\n\r\nАбзац.\r\n\r\n- раз\r\n- два",
+     "Заголовок\n\nАбзац.\n\n• раз\n• два"),
+    ("plain prose", "Первое предложение. Второе предложение.\n\nВторой абзац.",
+     "Первое предложение. Второе предложение.\n\nВторой абзац."),
+    ("everything at once", """
+        ## Отчёт
+
+        Первый **абзац** с `кодом`.
+
+        - раз
+        - два
+
+        > цитата
+
+        ```
+        let x = 1
+        ```
+
+        | a | b |
+        | --- | --- |
+        | 1 | 2 |
+
+        ---
+
+        Последний абзац.
+        """,
+     "Отчёт\n\nПервый абзац с кодом.\n\n• раз\n• два\n\nцитата\n\nlet x = 1\n\na\tb\n1\t2"
+     + "\n\n———\n\nПоследний абзац."),
+]
+
+@Test func renderSpellsEveryBlockKindExactlyAsItDidBeforeThePerBlockRefactor() {
+    for fixture in goldenFixtures {
+        // Asserted one fixture at a time, with the name in the message: a single
+        // `allSatisfy` over the array would report «false» and leave the reader to find
+        // which of nineteen documents moved.
+        #expect(MarkdownPlainText.render(fixture.markdown) == fixture.plain,
+                "\(fixture.name)")
+    }
+}

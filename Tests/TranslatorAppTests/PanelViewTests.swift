@@ -310,7 +310,8 @@ private func makeFinishedOutcome(detected: Language?) -> TranslationOutcome {
                        totalMS: 34,
                        documentGlossaryFailure: nil,
                        documentGlossaryAttempted: false,
-                       modelChunkCount: 1)
+                       modelChunkCount: 1,
+                       changes: nil)
 }
 
 @Test func theHeaderLineSaysПравкаForAProofreadOutcome() {
