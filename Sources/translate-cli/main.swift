@@ -8,6 +8,32 @@ import TranslationCore
 /// doesn't need a retroactive `Error` conformance just to ride inside a `Result`.
 struct ParseFailure: Error { let message: String }
 
+/// `ChangeSet`'s own three top-level keys, plus one more — `--explain --changes-json`'s output,
+/// so a reader gets one JSON object rather than two. Restated rather than wrapping `ChangeSet`
+/// itself: nesting it under a `"changes"` key would rename every existing key
+/// `Scripts/change-density.sh` already parses, and this route must not cost that script a line.
+private struct ChangeSetWithExplanations: Encodable {
+    let changes: [TextChange]
+    let blocks: [BlockPair]
+    let notCompared: ChangeSet.NotComparedReason?
+    /// Keyed by the change's 1-based position as a string — JSON object keys are strings, and
+    /// that position is the same "N" the reply and `ExplanationGate` both use. Empty, not
+    /// absent, when the reply was rejected or skipped: an absent key would read as "not asked
+    /// for `--explain`" to anything that parses this JSON without also reading stderr.
+    let explanations: [String: String]
+}
+
+/// The token `Scripts/explanation-quality.sh` greps for after `.token`, with the measurement
+/// each carries appended — `FormattingRejection`'s "raw value plus a number" precedent, applied
+/// to a reason that is not itself a bare string.
+private func describe(_ reason: ExplanationGate.SkipReason) -> String {
+    switch reason {
+    case .noChanges: return reason.token
+    case let .tooManyChanges(count, cap): return "\(reason.token) (\(count) > \(cap))"
+    case let .tooLongForOneRequest(characters, limit): return "\(reason.token) (\(characters) > \(limit))"
+    }
+}
+
 struct Options {
     var to: String?
     var from: String?
@@ -24,6 +50,11 @@ struct Options {
     /// `Scripts/change-density.sh`, which is how `TextDiff`'s density threshold stops being a
     /// start value. Refused without `--proofread`, like every other one-sided flag here.
     var changesJSON = false
+    /// Run `Translator.explain` over the правка's own change set and report the gate's verdict.
+    /// Refused without `--proofread` — правка is the only route that computes a change set, so
+    /// explaining one is meaningless anywhere else, and a flag that quietly did nothing would
+    /// make a mistyped measurement look like a result (the same rule `--changes-json` follows).
+    var explain = false
     var level: ProofreadingLevel?
     var style: RewriteStyle?
     var model: String?
@@ -85,6 +116,8 @@ func parse(_ args: [String]) -> Result<Options, ParseFailure> {
             options.formatOnly = true
         case "--changes-json":
             options.changesJSON = true
+        case "--explain":
+            options.explain = true
         case "--level":
             guard let value = takeValue() else { return .failure(ParseFailure(message: "--level needs a value")) }
             // Read through `init(rawValue:)` with the choices listed from `allCases`, the
@@ -120,7 +153,7 @@ func parse(_ args: [String]) -> Result<Options, ParseFailure> {
 }
 
 let usage = "usage: translate-cli --to <ru|en|de|fr|es|pt|it|zh|ja> [--from L] [--tone neutral|formal|casual|technical|literal] [--engine ollama|lmstudio] [--model NAME] [--chunk N] [--think off|low|medium|high] [text]\n"
-    + "       translate-cli --proofread [--level errorsOnly|errorsAndStyle|rewrite] [--style original|friendly|business|professional|plain] [--from L] [--engine ollama|lmstudio] [--model NAME] [--chunk N] [--think off|low|medium|high] [--changes-json] [text]   # --changes-json prints the change set instead of the corrected text\n"
+    + "       translate-cli --proofread [--level errorsOnly|errorsAndStyle|rewrite] [--style original|friendly|business|professional|plain] [--from L] [--engine ollama|lmstudio] [--model NAME] [--chunk N] [--think off|low|medium|high] [--changes-json] [--explain] [text]   # --changes-json prints the change set instead of the corrected text; --explain also runs Translator.explain over it and reports the gate's verdict on stderr (extends the --changes-json output with an \"explanations\" object)\n"
     + "       translate-cli --format-only [--from L] [--engine ollama|lmstudio] [--model NAME] [--chunk N] [--think off|low|medium|high] [text]   # prints the «Оформить» pass's result and verdict; exit 1 on rejection\n"
 
 func fail(_ message: String) -> Never {
@@ -152,6 +185,7 @@ if parsed.formatOnly {
         fail("--level and --style apply to --proofread only")
     }
     if parsed.changesJSON { fail("--changes-json applies to --proofread only") }
+    if parsed.explain { fail("--explain applies to --proofread only") }
 } else if parsed.proofread {
     if parsed.to != nil {
         fail("--to applies to translation only; a proofread stays in the text's own language")
@@ -167,6 +201,7 @@ if parsed.formatOnly {
     // word diff between them would call every word a change. Refused rather than ignored, for
     // the reason the split above gives.
     if parsed.changesJSON { fail("--changes-json applies to --proofread only") }
+    if parsed.explain { fail("--explain applies to --proofread only") }
     guard let toRaw = parsed.to, let parsedTarget = Language(rawValue: toRaw) else {
         fail(parsed.to == nil ? "--to is required" : "--to needs one of ru|en|de|fr|es|pt|it|zh|ja, got \"\(parsed.to!)\"")
     }
@@ -278,6 +313,20 @@ do {
             options: chatOptions, maxChunkCharacters: chunk,
             onToken: { FileHandle.standardOutput.write(Data($0.utf8)) })
     }
+    // Run before `--changes-json`'s own output below, so that flag can fold the verdict into
+    // the same JSON object rather than printing it twice. `--explain` is refused without
+    // `--proofread` above, so `outcome.changes` is non-nil here for the same reason
+    // `--changes-json` can already assume it — правка always computes a set.
+    var explanationOutcome: ExplanationOutcome?
+    if parsed.proofread, parsed.explain {
+        guard let changes = outcome.changes else {
+            FileHandle.standardError.write(Data("error: no change set was computed\n".utf8))
+            exit(1)
+        }
+        explanationOutcome = try await translator.explain(
+            source: text, result: outcome.final, changes: changes,
+            language: outcome.detectedSource, options: chatOptions)
+    }
     if parsed.changesJSON {
         // Non-nil by the operation split above — `--changes-json` needs `--proofread`, and
         // правка always computes a set. Said out loud rather than defaulted to `{}`, which
@@ -288,7 +337,21 @@ do {
         }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        FileHandle.standardOutput.write(try encoder.encode(changes))
+        if parsed.explain {
+            // Extended with the same keys `ChangeSet` itself encodes to, plus one more —
+            // never a second top-level object, so a reader of this JSON does not have to
+            // know whether `--explain` was passed to find the change set.
+            var explanations: [String: String] = [:]
+            if case let .accepted(map) = explanationOutcome {
+                explanations = Dictionary(uniqueKeysWithValues: map.map { (String($0.key), $0.value) })
+            }
+            let extended = ChangeSetWithExplanations(changes: changes.changes, blocks: changes.blocks,
+                                                     notCompared: changes.notCompared,
+                                                     explanations: explanations)
+            FileHandle.standardOutput.write(try encoder.encode(extended))
+        } else {
+            FileHandle.standardOutput.write(try encoder.encode(changes))
+        }
     }
     FileHandle.standardOutput.write(Data("\n".utf8))
     let ttftDescription = outcome.timeToFirstTokenMS.map { "\(Int($0))ms" } ?? "—"
@@ -318,6 +381,17 @@ do {
         case nil: description = changes.count == 0 ? "none" : "\(changes.count)"
         }
         FileHandle.standardError.write(Data("changes: \(description)\n".utf8))
+    }
+    // A line of its own, in the shape `Scripts/explanation-quality.sh` greps for — the
+    // `changes:` line's own precedent, one number or one reason per run.
+    if let explanationOutcome {
+        let line: String
+        switch explanationOutcome {
+        case let .accepted(map): line = "accepted \(map.count)"
+        case let .rejected(reason): line = "rejected: \(reason.rawValue)"
+        case let .skipped(reason): line = "skipped: \(describe(reason))"
+        }
+        FileHandle.standardError.write(Data("explanations: \(line)\n".utf8))
     }
 } catch {
     FileHandle.standardError.write(Data("error: \(error.localizedDescription)\n".utf8)); exit(1)

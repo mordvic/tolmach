@@ -230,4 +230,64 @@ public enum PromptBuilder {
                 ChatMessage(role: "user",
                             content: "Please mark up the following \(language.map { "\($0.englishName) " } ?? "")text:\n\n\n\(text)")]
     }
+
+    /// One правка change, prepared for the explanation prompt by `Translator.explain`. `index`
+    /// is the change's 1-based position in `ChangeSet.changes` — the numbering the prompt hands
+    /// out and the reply is asked to echo back, so `ExplanationGate` can match a line to a
+    /// change without trusting reply order. `context` is the containing block's plain text when
+    /// one could be found and nothing when it could not — never a guess (see
+    /// `Translator.explain`'s doc comment for why source and result both contribute it).
+    public struct ExplanationItem: Sendable, Equatable {
+        public let index: Int
+        public let context: String
+        public let before: String
+        public let after: String
+        public init(index: Int, context: String, before: String, after: String) {
+            self.index = index; self.context = context; self.before = before; self.after = after
+        }
+    }
+
+    /// The explanation route's system prompt: one sentence per numbered change, in the text's
+    /// own language, plain prose only. The reply shape (`"N: sentence"`, one line each) is
+    /// `ExplanationGate.parse`'s contract, stated here in the same words so the two cannot
+    /// drift — the same discipline `preambleLineMaxLength` gives the streaming buffer and
+    /// `clean()` a shared decision.
+    public static func explainSystemPrompt(language: Language?) -> String {
+        let languageClause = language.map(\.englishName) ?? "the same language as the corrections below"
+        var lines = [
+            "You are a copy editor. Below is a numbered list of corrections already made to a "
+                + "text — for each one, its surrounding context, what it said before (\"before\") "
+                + "and what it says now (\"after\"). Write one short sentence in \(languageClause) "
+                + "explaining why each correction improves the text.",
+            "",
+            "Rules:",
+            "- Output ONLY the numbered lines, one per correction, in exactly this format: "
+                + "\"N: sentence\" — the same N as given, one per line, nothing else.",
+            "- No preamble, no notes, no heading, no blank line inside a sentence.",
+            "- Each sentence is plain prose: no Markdown markers (no *, _, `, #, [ or ]) and no "
+                + "quotation marks around the words that changed.",
+            "- Keep each sentence short — a single clause, under \(ExplanationGate.maxSentenceLength) "
+                + "characters.",
+        ]
+        lines.append(antiAnsweringRule(verb: "explain"))
+        return lines.joined(separator: "\n")
+    }
+
+    /// The user turn: the material handed over plainly under one closing line, `userPrompt(for:)`'s
+    /// measured shape — no `<text>…</text>` wrapper, because nothing here is a question either,
+    /// and the same failure mode (an echoed marker, or the material itself answered as if it
+    /// were addressed to the model) is exactly as available here as it was there.
+    public static func explainUserPrompt(items: [ExplanationItem]) -> String {
+        let material = items.map { item in
+            "\(item.index)) context: \(item.context.isEmpty ? "(none)" : item.context)\n"
+                + "   before: \(item.before.isEmpty ? "(nothing)" : item.before)\n"
+                + "   after: \(item.after.isEmpty ? "(nothing)" : item.after)"
+        }.joined(separator: "\n")
+        return "Please explain the following corrections:\n\n\n\(material)"
+    }
+
+    public static func explainMessages(language: Language?, items: [ExplanationItem]) -> [ChatMessage] {
+        [ChatMessage(role: "system", content: explainSystemPrompt(language: language)),
+         ChatMessage(role: "user", content: explainUserPrompt(items: items))]
+    }
 }

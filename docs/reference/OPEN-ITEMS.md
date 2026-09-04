@@ -847,6 +847,15 @@ Deliberate, with the reason. Do not "fix" these without reading the reason first
 Open questions, honestly labelled. None of these is known to be a defect; none is known not
 to be.
 
+- **Whether explanations per change are worth showing, and at what material cap.** Measured
+  2026-09-04 (`MEASUREMENTS.md`, «explanations per change»): the gate accepts 95 % of runs on
+  `translategemma:12b`, but a first reading of 18 accepted sentences puts truth at ≈ 85 % — below
+  the 90 % the criterion asks — with grammar explained specifically and spelling explained by a
+  template, and 5 of 108 runs skipped because a dozen changes with a context line each exceed
+  `ExplanationGate.maxMaterialCharacters` 8 000. Three things a person decides: read all 103
+  accepted outputs and record «N of M true»; whether the cap moves to ~12 000 or the context
+  shrinks to the sentence the change sits in; and whether a `.words` change that differs by one
+  character should skip the model and show the pair alone. Until then the route is CLI-only.
 - **Why the clipboard fallback also returned nothing when the panel was shown before the
   capture.** The Accessibility half is measured and understood — the panel becomes the key
   window and system-wide AX focus follows the key window, so `kAXSelectedTextAttribute`
