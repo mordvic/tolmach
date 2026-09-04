@@ -91,6 +91,13 @@ struct TranslationPane: View {
     var showsChangeDetail: Binding<Bool> = .constant(false)
     /// The change the status bar's stepper is standing on; the text view selects and flashes it.
     var changeCursor: Int? = nil
+    /// A click on a change's mark — the same shape `onCopy` already is here, threaded down to
+    /// `RenderedTextView` rather than a model reference this view has none of.
+    var onChangeSelected: (Int) -> Void = { _ in }
+    /// Whether «Вернуть» would do anything for a change, asked before the popover draws it.
+    var canRevertChange: (Int) -> Bool = { _ in false }
+    /// «Вернуть» was pressed for a change.
+    var onRevertChange: (Int, UndoManager?) -> Void = { _, _ in }
 
     /// The one rule for whether «Разметка | Исходник» is drawn. A function so a test can pin
     /// it without rendering the header.
@@ -215,7 +222,10 @@ struct TranslationPane: View {
                                  isStreaming: isRunning,
                                  changes: isRunning ? nil : changes,
                                  showsChangeDetail: showsChangeDetail.wrappedValue,
-                                 changeCursor: changeCursor)
+                                 changeCursor: changeCursor,
+                                 onChangeSelected: onChangeSelected,
+                                 canRevertChange: canRevertChange,
+                                 onRevertChange: onRevertChange)
             } else {
                 ScrollView {
                     Text(text)

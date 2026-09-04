@@ -48,6 +48,14 @@ struct RenderedTextView: NSViewRepresentable {
     /// The change the stepper is standing on, selected and flashed in the view. Not part of the
     /// storage's mode: moving it must not rebuild the document.
     var changeCursor: Int? = nil
+    /// A click on a change's mark — moves the model's cursor there. The same shape `onCopy`
+    /// already is on this view's siblings; never a reference to the model itself.
+    var onChangeSelected: (Int) -> Void = { _ in }
+    /// Whether «Вернуть» would do anything for a change, asked of the model before the
+    /// popover's button is drawn.
+    var canRevertChange: (Int) -> Bool = { _ in false }
+    /// «Вернуть» was pressed for a change.
+    var onRevertChange: (Int, UndoManager?) -> Void = { _, _ in }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -82,6 +90,10 @@ struct RenderedTextView: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? CodeBlockTextView else { return }
+        textView.contentFont = font
+        textView.onChangeSelected = onChangeSelected
+        textView.canRevertChange = canRevertChange
+        textView.onRevertChange = onRevertChange
         context.coordinator.apply(text: text, font: font, rendersMarkup: rendersMarkup,
                                   isStreaming: isStreaming, changes: changes,
                                   showsChangeDetail: showsChangeDetail, to: textView)
@@ -154,6 +166,10 @@ struct RenderedTextView: NSViewRepresentable {
                 }
                 textView.textStorage?.setAttributedString(rendering.attributed)
                 textView.codeRegions = rendering.codeRegions
+                // Not `isStreaming`'s condition again: `changes` is already nil while
+                // streaming (the pane's own gate, `apply`'s assert), so this is `changes`
+                // verbatim — the popover's own card is read straight from it.
+                textView.changeSet = changes
                 settledSource = ""
                 settledLength = rendering.attributed.length
                 tailLength = 0
@@ -199,6 +215,9 @@ struct RenderedTextView: NSViewRepresentable {
             tailLength = 0
             textView.textStorage?.setAttributedString(NSAttributedString())
             textView.codeRegions = []
+            // The streaming path this reset serves never carries marks (`apply`'s assert), and
+            // a rebuilt storage's popover, if one was open, points at a document that is gone.
+            textView.changeSet = nil
             // A rebuilt storage has no selection worth keeping, and the next `select` must
             // land on the change again rather than believing it already did.
             selectedChange = nil
@@ -261,6 +280,40 @@ class CodeBlockTextView: NSTextView {
         didSet { rebuildButtons() }
     }
 
+    /// The finished правка's own change set, set by `RenderedTextView.Coordinator` alongside
+    /// `codeRegions` — the popover reads a change's «было»/«стало» straight from here, keyed by
+    /// the same index `ChangeMarks.changeKey` marks the storage with, so it cannot disagree
+    /// with what is underlined. Nil (перевод, a run in flight, «Изменений нет») closes whatever
+    /// popover was open: a rebuilt storage's marks describe a document this view no longer
+    /// shows.
+    var changeSet: ChangeSet? {
+        didSet { closeChangePopover() }
+    }
+    /// «Шрифт текста» — the popover's text keeps this font's *family* at the system caption
+    /// size, never its own size (`docs/adr/0008`; `ChangeCardView`'s doc comment carries why).
+    var contentFont: ContentFont = .default
+    /// A click landed on change `index`'s mark — the window's stepper and the popover agree on
+    /// the same cursor because both read it. Never a reference to the model: this view and
+    /// `MarkupKit` know nothing about `TranslationViewModel`, only this closure, the same shape
+    /// `onCopy` already is elsewhere in this app.
+    var onChangeSelected: ((Int) -> Void)?
+    /// Whether «Вернуть» would do anything for change `index`, asked before the button is even
+    /// drawn — never guessed from inside this view, which has no way to run
+    /// `ChangeMarks.revertEdit` against the *plain* result (its own storage may be a rendering).
+    var canRevertChange: ((Int) -> Bool)?
+    /// «Вернуть» was pressed for change `index`, alongside this view's own `undoManager` — the
+    /// text view is where AppKit gives a non-editable, selectable view its lazily-created undo
+    /// manager (`NSResponder.undoManager`, overridden by `NSTextView`), and handing it over here
+    /// is simpler than threading it through several SwiftUI layers to a caller that has no
+    /// other reason to know a text view exists. Fire-and-forget: a successful revert changes
+    /// the model's `changes`, which flows back down as a new `changeSet`/storage and closes
+    /// this popover through the `didSet` above — there is nothing here for this view to undo
+    /// on its own account.
+    var onRevertChange: ((Int, UndoManager?) -> Void)?
+
+    private var changePopover: NSPopover?
+    private var scrollBoundsObserver: NSObjectProtocol?
+
     /// The TextKit 1 triple, built by hand, plus the settings both surfaces share.
     ///
     /// **This construction is the trap, which is why there is one of it.** A text view that
@@ -322,6 +375,119 @@ class CodeBlockTextView: NSTextView {
     /// `SourceTextView` limits its own registration to strings.
     override func updateDragTypeRegistration() {
         unregisterDraggedTypes()
+    }
+
+    // MARK: - «Было → стало» on click
+
+    /// The change whose marked range contains `point`, read straight from the storage's own
+    /// `ChangeMarks.changeKey` attribute — so this can never disagree with what is underlined.
+    /// Exposed rather than kept behind `mouseDown(with:)`: a real drag-selection gesture is not
+    /// something this environment can simulate (`docs/reference/TESTING.md`), so a test drives
+    /// this — and `reportClick(at:)` below — directly instead of a synthetic `NSEvent` pair.
+    ///
+    /// **Not `NSTextView.characterIndex(for:)` — measured unreliable off a real, on-screen
+    /// window.** A test built exactly this view (no window, then a real one, both) and it
+    /// answered `storage.length` — one past the last character, so `< storage.length` always
+    /// failed — for every point tried, on either window. `NSLayoutManager.characterIndex(for:
+    /// in:fractionOfDistanceBetweenInsertionPoints:)` answers correctly in both: it is the
+    /// lower-level call the convenience method is presumably built on, so this calls it
+    /// directly rather than depend on whatever the convenience method needs that a test
+    /// process does not reliably have. `docs/reference/PLATFORM-TRAPS.md` carries the finding.
+    func changeIndex(at point: NSPoint) -> Int? {
+        guard let storage = textStorage, storage.length > 0,
+              let layoutManager, let textContainer else { return nil }
+        // The subtraction `characterIndex(for:)` itself is documented to perform before
+        // calling into the layout manager — `point` arrives in this view's own coordinates,
+        // and the container's are offset from them by exactly this inset.
+        let containerPoint = NSPoint(x: point.x - textContainerOrigin.x,
+                                     y: point.y - textContainerOrigin.y)
+        let index = layoutManager.characterIndex(for: containerPoint, in: textContainer,
+                                                  fractionOfDistanceBetweenInsertionPoints: nil)
+        guard index < storage.length else { return nil }
+        return storage.attribute(ChangeMarks.changeKey, at: index, effectiveRange: nil) as? Int
+    }
+
+    /// A click (not a drag) landed at `point`: move the model's cursor to the change there and
+    /// open the popover over it. Nothing happens off a point with no mark, or with no change
+    /// set to read a card from.
+    func reportClick(at point: NSPoint) {
+        guard let index = changeIndex(at: point), let changeSet, index < changeSet.changes.count
+        else { return }
+        onChangeSelected?(index)
+        presentChangePopover(for: index, change: changeSet.changes[index])
+    }
+
+    /// **Only a plain click opens the popover — a drag must still select text.** AppKit's own
+    /// `mouseDown(with:)` runs a blocking tracking loop for a text view's drag-selection, so it
+    /// has already returned by the time this reads `selectedRange()`: a plain click leaves a
+    /// zero-length caret where the mouse went down, and a drag leaves a real selection. Reading
+    /// the *post-drag* selection is therefore the only reliable discriminator — a flag set from
+    /// `mouseDragged(with:)` would work too, but this needs nothing this view does not already
+    /// have, and it is what a test can drive without a synthetic drag.
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        super.mouseDown(with: event)
+        guard event.clickCount == 1, selectedRange().length == 0 else { return }
+        reportClick(at: point)
+    }
+
+    /// The popover's own gate: a change `canRevertChange` refuses (or that has none set) draws
+    /// «Вернуть» disabled with a reason, never a button that fails silently when pressed.
+    private func presentChangePopover(for index: Int, change: TextChange) {
+        // `NSPopover.show(relativeTo:of:preferredEdge:)` throws `NSInvalidArgumentException`
+        // for a positioning view with no window (measured: a scratch view built for a test,
+        // with no window at all) — so a click reported against this view before it has one
+        // opens nothing rather than crash, which a real click can never do in the running app
+        // (nothing is clickable before it is on screen) but a test driving `reportClick(at:)`
+        // directly can (`ChangeClickTests`).
+        guard window != nil else { return }
+        guard let range = RenderedTextView.Coordinator.range(ofChange: index, in: self),
+              let layoutManager, let textContainer else { return }
+        let glyphs = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+        var rect = layoutManager.boundingRect(forGlyphRange: glyphs, in: textContainer)
+        rect.origin.x += textContainerOrigin.x
+        rect.origin.y += textContainerOrigin.y
+
+        let canRevert = canRevertChange?(index) ?? false
+        let content = ChangeCardView(
+            card: .of(change), typeface: contentFont.typeface,
+            revertUnavailableReason: canRevert
+                ? nil : "Это изменение нельзя восстановить автоматически",
+            onRevert: { [weak self] in
+                guard let self else { return }
+                self.onRevertChange?(index, self.undoManager)
+            })
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = NSHostingController(rootView: content)
+        changePopover = popover
+        popover.show(relativeTo: rect, of: self, preferredEdge: .maxY)
+        observeScrolling()
+    }
+
+    /// **Measured, `Scripts/popover-anchor.swift`: a `.transient` popover neither repositions
+    /// nor auto-closes when its anchor scrolls — not even for a real, posted `scrollWheel`
+    /// event.** So this view closes it itself the moment the scroll view under it moves, rather
+    /// than trust the behaviour to do a job it was measured not to do.
+    /// `docs/reference/PLATFORM-TRAPS.md` carries the finding.
+    private func observeScrolling() {
+        if let scrollBoundsObserver { NotificationCenter.default.removeObserver(scrollBoundsObserver) }
+        guard let clipView = enclosingScrollView?.contentView else { return }
+        scrollBoundsObserver = NotificationCenter.default.addObserver(
+            forName: NSView.boundsDidChangeNotification, object: clipView, queue: .main
+        ) { [weak self] _ in
+            // `queue: .main` guarantees this runs on the main thread, but the closure's own
+            // type is `nonisolated` — the compiler has no way to know that from the API
+            // signature — so the hop is stated rather than assumed away.
+            Task { @MainActor in self?.closeChangePopover() }
+        }
+    }
+
+    private func closeChangePopover() {
+        changePopover?.close()
+        changePopover = nil
+        if let scrollBoundsObserver { NotificationCenter.default.removeObserver(scrollBoundsObserver) }
+        scrollBoundsObserver = nil
     }
 
     override func layout() {

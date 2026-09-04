@@ -675,7 +675,12 @@ struct PanelView: View {
                                     showsRenderedMarkup: showsRenderedMarkup),
                                 changes: model.changes,
                                 showsChangeDetail: replyView == .changes,
-                                original: shownOriginal)
+                                original: shownOriginal,
+                                onChangeSelected: { model.selectChange($0) },
+                                canRevertChange: { model.canRevertChange(at: $0) },
+                                onRevertChange: { index, undoManager in
+                                    model.revertChange(at: index, undoManager: undoManager)
+                                })
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         } else {
                             // The plain path takes «оригинал» too, so the menu never points at
