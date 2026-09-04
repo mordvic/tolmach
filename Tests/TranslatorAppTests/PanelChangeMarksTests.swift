@@ -204,28 +204,48 @@ private let floorResult = "Привет, мир. Как дела?"
             > RenderedReplyView.measuredSize(of: result.attributed, width: 300).height)
 }
 
-/// The marks reach a **plain** reply, which is the case the panel gains at this step: prose with
-/// no markup used to be drawn as characters and now goes through `plainRendering` so the
-/// underlines have a storage to live in.
-///
-/// Mutation: `Coordinator.rendering` calling `rendering(of:)` unconditionally — the raw text is
-/// then parsed as Markdown and the block ranges no longer match the projection, so the alignment
-/// refuses and no `changeKey` run survives.
-@MainActor
-@Test func aProseReplyCarriesItsMarksThroughThePlainRenderingPath() {
-    let changes = TextDiff.changes(source: markSource, result: markResult)
-    let config = MarkdownFontConfig(baseSize: 13)
-    // `rendersMarkup: false` is what `PanelView` passes for prose, and the coordinator is where
-    // the two lines that answer it live.
-    let marked = RenderedReplyView.Coordinator()
-        .rendering(of: markResult, config: config, rendersMarkup: false,
-                   changes: changes, detail: .result)
+private func markedRuns(in rendering: MarkdownToAttributed.Rendering) -> Int {
     var marks = 0
-    marked.attributed.enumerateAttribute(ChangeMarks.changeKey,
-                                         in: NSRange(location: 0, length: marked.attributed.length)) {
-        value, _, _ in if value != nil { marks += 1 }
-    }
-    #expect(marks > 0, "a prose правка's changes have to be locatable in the plain rendering")
+    rendering.attributed.enumerateAttribute(
+        ChangeMarks.changeKey,
+        in: NSRange(location: 0, length: rendering.attributed.length)) { value, _, _ in
+            if value != nil { marks += 1 }
+        }
+    return marks
+}
+
+/// The marks reach a reply drawn **as characters**, which is the case the panel gains at this
+/// step twice over: prose with no markup used to be a `Text`, and «Исходник» over a правка with
+/// markup used to be one too. Both go through `plainRendering` now, so the underlines have a
+/// storage to live in.
+///
+/// The Markdown half is what makes this test able to fail. Prose alone cannot: with no markers
+/// in it, `rendering(of:)` and `plainRendering(of:)` produce the same characters, so a
+/// coordinator that always parsed Markdown would locate the same marks and stay green —
+/// measured, by running that mutation. With `**` and `##` in the text the two paths differ in
+/// their very string, and the assertion below says which one was taken.
+@MainActor
+@Test func aReplyDrawnAsCharactersCarriesItsMarksThroughThePlainRenderingPath() {
+    let config = MarkdownFontConfig(baseSize: 13)
+    let coordinator = RenderedReplyView.Coordinator()
+
+    let prose = coordinator.rendering(of: markResult, config: config, rendersMarkup: false,
+                                      changes: TextDiff.changes(source: markSource,
+                                                                result: markResult),
+                                      detail: .result)
+    #expect(markedRuns(in: prose) > 0,
+            "a prose правка's changes have to be locatable in the plain rendering")
+
+    // «Исходник» over a правка that has markup: the raw bytes, markers and all, still marked.
+    let rawSource = "## Заголвок\n\nАбзац с **жирной** ошибкай."
+    let rawResult = "## Заголовок\n\nАбзац с **жирной** ошибкой."
+    let raw = RenderedReplyView.Coordinator()
+        .rendering(of: rawResult, config: config, rendersMarkup: false,
+                   changes: TextDiff.changes(source: rawSource, result: rawResult),
+                   detail: .result)
+    #expect(raw.attributed.string == rawResult,
+            "«Исходник» draws the document's own bytes; a parsed rendering would drop ## and **")
+    #expect(markedRuns(in: raw) > 0, "story 6: the toggle must not cost the marks")
 }
 
 /// «оригинал» draws the source and is **never** marked, whichever detail the setting is on.
