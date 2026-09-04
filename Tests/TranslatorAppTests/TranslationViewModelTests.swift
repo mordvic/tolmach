@@ -21,21 +21,43 @@ final class ScriptedClient: LLMClient, @unchecked Sendable {
     /// `FakeLLMClient.errors` rather than a third mechanism — the term-list call is call 0,
     /// which is what the document-terms tests need to break.
     private let failCallAtIndex: Int?
-    init(responses: [String], delayPerToken: Duration = .zero, failCallAtIndex: Int? = nil) {
+    /// A held client opens its stream and then answers nothing until `release()` — the run is
+    /// `.running` for as long as the test needs it to be, and not for as long as a token delay
+    /// happens to last. `delayPerToken` was the previous way to keep a run open, and it is a
+    /// window, not a gate: «Один» at 20 ms a character is 80 ms, and a CI runner under load
+    /// let a whole press finish inside it before the test's 2 ms poll ever saw `.running`
+    /// (`aSecondPressWhileTranslatingIsIgnoredRatherThanInterleaved`, 2026-09-04, failed on
+    /// GitHub's runner with the suite reading 8 s where this machine reads 3). The stream is
+    /// finished rather than yielded to, so every call that is waiting, and every call that
+    /// arrives later, proceeds.
+    private let gate: AsyncStream<Void>?
+    private let gateContinuation: AsyncStream<Void>.Continuation?
+    init(responses: [String], delayPerToken: Duration = .zero, failCallAtIndex: Int? = nil,
+         held: Bool = false) {
         self.responses = responses; self.delayPerToken = delayPerToken
         self.failCallAtIndex = failCallAtIndex
+        if held {
+            let (stream, continuation) = AsyncStream<Void>.makeStream()
+            gate = stream; gateContinuation = continuation
+        } else {
+            gate = nil; gateContinuation = nil
+        }
     }
+    /// Lets every held reply through. Idempotent; a no-op on a client that was not held.
+    func release() { gateContinuation?.finish() }
     func chat(messages: [ChatMessage], options: ChatOptions) -> AsyncThrowingStream<ChatEvent, Error> {
         let index = callCount
         callCount += 1
         receivedMessages.append(messages)
         let reply = responses.isEmpty ? "" : responses.removeFirst()
         let delay = delayPerToken
+        let gate = self.gate
         if index == failCallAtIndex {
             return AsyncThrowingStream { $0.finish(throwing: ScriptedFailure()) }
         }
         return AsyncThrowingStream { continuation in
             Task {
+                if let gate { for await _ in gate {} }
                 for piece in reply.map(String.init) {
                     if delay > .zero { try? await Task.sleep(for: delay) }
                     continuation.yield(.token(piece))
