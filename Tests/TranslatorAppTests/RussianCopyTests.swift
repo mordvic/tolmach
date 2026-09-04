@@ -386,3 +386,31 @@ func pullStatusesAreShownInRussian(raw: String, expected: String) {
     }
     #expect(RussianCopy.pullStatus("verifying sha256 digest") == "Проверяю контрольную сумму…")
 }
+
+// MARK: - Change counts
+
+@Test func changeCountsDeclineLikeEveryOtherCountInTheApp() {
+    // Each form on its own line (TESTING.md shape 2): 11 and 21 are the two cases a
+    // last-digit rule gets wrong in opposite directions, and 104 is «few» past a hundred.
+    #expect(RussianCopy.changeCount(1) == "1 изменение")
+    #expect(RussianCopy.changeCount(2) == "2 изменения")
+    #expect(RussianCopy.changeCount(5) == "5 изменений")
+    #expect(RussianCopy.changeCount(11) == "11 изменений")
+    #expect(RussianCopy.changeCount(21) == "21 изменение")
+    #expect(RussianCopy.changeCount(104) == "104 изменения")
+}
+
+@Test func zeroChangesIsASentenceAndNotACounterAtZero() {
+    // Mutation: `guard count > 0` removed → «0 изменений», a counter that failed to count.
+    #expect(RussianCopy.changeCount(0) == "изменений нет")
+}
+
+@Test func aSetThatWasNotComparedSaysSoInsteadOfCountingNothing() {
+    // The bound is not a clean run: an empty list with `notCompared` set must not read as
+    // «изменений нет». Mutation: `changeSummary` reading `count` alone fails here.
+    let tooLong = ChangeSet(changes: [], blocks: [], notCompared: .tooLong(tokens: 71204))
+    #expect(RussianCopy.changeSummary(tooLong) == RussianCopy.changesNotCompared)
+    #expect(RussianCopy.changesNotCompared.contains("слишком длинный"))
+    let clean = ChangeSet(changes: [], blocks: [], notCompared: nil)
+    #expect(RussianCopy.changeSummary(clean) == "изменений нет")
+}
