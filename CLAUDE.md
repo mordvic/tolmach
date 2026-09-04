@@ -603,11 +603,14 @@ not cosmetic — **the safe direction is inverted**. See
   `showsRenderedMarkup` and `showsChangeDetail` (a tested mapping; «Исходник» leaves the
   detail alone), and the pane hosts `RenderedTextView` whenever there are changes, markup or
   not. One picker rather than two, because this control governs *both* panes and a second one
-  is the shape `Scripts/toolbar-fit.swift` exists to refuse. **Measured and not fixed here:
-  the header does not fit the pane's 280 pt floor with either shape** — three segments want
-  495 pt, today's two 397, a `.menu` 352 (`Scripts/pane-header-fit.swift`) — so the floor is
-  owed a look in `docs/reference/OPEN-ITEMS.md`, and the segments stayed because the fallback
-  rule had no state to save.
+  is the shape `Scripts/toolbar-fit.swift` exists to refuse. **The picker is segmented where
+  it fits and a `.menu` where it does not, and the pane's floor is 360 pt** — measured
+  (`Scripts/pane-header-fit.swift`, 2026-09-04): three segments want 495 pt, перевод's two
+  397, the menu form 352, and the old 280 pt floor clipped «Скопировать» in every operation
+  since the toggle arrived. `ViewThatFits` holds both pickers over one binding and one item
+  list, so the menu cannot say anything the segments do not; 360 is the first round number
+  past the narrowest form, and the исходник pane keeps 280 (its header is the mode switch
+  alone), so the two panes want 640 of the window's 700.
 - Capture order is Accessibility first, synthetic ⌘C fallback second, and the fallback must restore
   the *whole* pasteboard. **One exception since 2026-09-02: a selection inside web content —
   an `AXWebArea` in the focused element's ancestry — skips the Accessibility tier**, because

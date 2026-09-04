@@ -504,7 +504,7 @@ own comments; this is what each item decided.
 2. **Kept 60 000 / 4 000, deviating from the 50 ms target on purpose**: 133–187 ms at the 256 KB
    ceiling, off the main actor, at the end of a run that took minutes. A limit meeting 50 ms
    would cost the marks on every document over ~60 KB.
-3. **Segments kept**; no shape fits 280 pt (495 / 397 / 352), the floor is the open question.
+3. **Segments where they fit, a `.menu` where they do not, floor 360 pt.** No shape fit 280 (495 / 397 / 352, and the two-segment header never had); `ViewThatFits` over one binding and a floor one round number past the menu form fixed it in PR 5.
 4. **Inline row kept**; 331 pt against a 272 pt «floor» the panel never reaches.
 5. **`dragMinHeight` 164 → 179**; the +6 drift and the 194 / 204 / 228 states are recorded.
 6. **Not taken** — phase 2's gate.

@@ -72,6 +72,17 @@ app.setActivationPolicy(.accessory)
 let host = NSHostingController(rootView: Header(variant: variant))
 host.view.layoutSubtreeIfNeeded()
 let size = host.view.fittingSize
-print(String(format: "%@ header wants %.1f × %.1f pt; the pane's floor is 280 pt",
-             variant, size.width, size.height))
-print(size.width <= 280 ? "FITS" : "DOES NOT FIT — change the header's shape, not the pane's floor")
+// The floor moved from 280 to 360 on 2026-09-04, and the header gained a `ViewThatFits` that
+// falls back to the `menu` form: so the question this answers is no longer «does the widest
+// form fit the floor» — it does not, by design — but «does the *narrowest* form fit it», which
+// is what keeps «Скопировать» on screen. Run with V=menu for the form the floor is set from.
+let floor: CGFloat = 360
+print(String(format: "%@ header wants %.1f × %.1f pt; the pane's floor is %.0f pt",
+             variant, size.width, size.height, floor))
+if variant == "menu" {
+    print(size.width <= floor ? "FITS — the floor holds the narrowest form"
+                              : "DOES NOT FIT — raise the floor or shorten the header; ViewThatFits has nothing narrower to fall back to")
+} else {
+    print(size.width <= floor ? "FITS — segments are shown at the floor"
+                              : "does not fit at the floor — ViewThatFits shows the menu form there instead; run V=menu to check that one")
+}
