@@ -39,36 +39,59 @@ public enum MarkdownPlainText {
 
     public static func render(_ markdown: String) -> String {
         var blocks: [MarkdownOutputBlock] = []
-        // Exhaustive with no `default:`, so a new `MarkdownBlock` case has to be given a plain
-        // spelling here rather than silently disappearing out of someone's document.
         for block in MarkdownBlockScanner.blocks(of: markdown) {
-            switch block {
-            case let .heading(_, range):
-                blocks.append(.init(text: inline(String(markdown[range])), run: .other))
-            case let .paragraph(range):
-                blocks.append(.init(text: inline(String(markdown[range])), run: .other))
-            case let .listItem(depth, marker, range):
-                let label: String
-                switch marker {
-                case .bullet: label = "• "
-                case let .ordered(number): label = "\(number). "
-                }
-                blocks.append(.init(text: String(repeating: "  ", count: depth) + label
-                                        + inline(String(markdown[range])), run: .listItem))
-            case let .blockquote(_, range):
-                blocks.append(.init(text: inline(String(markdown[range])), run: .other))
-            case let .codeBlock(_, range, _):
-                blocks.append(.init(text: String(markdown[range]), run: .other))
-            case let .table(header, rows, _):
-                for row in ([header] + rows) where !row.isEmpty {
-                    blocks.append(.init(text: row.map { inline(String(markdown[$0])) }
-                        .joined(separator: "\t"), run: .tableRow))
-                }
-            case .thematicBreak:
-                blocks.append(.init(text: thematicBreak, run: .other))
-            }
+            blocks.append(contentsOf: outputs(of: block, in: markdown))
         }
         return blocks.joinedAsMarkdown()
+    }
+
+    /// One block's plain spelling, with no joining whitespace of its own.
+    ///
+    /// The same bytes `render` would put in the document for this block — its own text and
+    /// nothing about what sits above or below it, because the separator between two blocks is
+    /// `MarkdownOutputBlock`'s rule and stays there. A table is the one block that renders as
+    /// several output blocks; they are of the same run kind, so joining them with the single
+    /// newline that rule gives them is `render`'s spelling and not a second one.
+    ///
+    /// Public for `TextDiff`, which diffs a правка block against its source block over exactly
+    /// what a reader sees: no `#`, no `**`, no pipes, a list label kept because a list without
+    /// one reads as glued prose. One spelling, two callers — a second projection written for
+    /// the diff would make the count describe a document the pane never draws.
+    public static func plain(_ block: MarkdownBlock, in markdown: String) -> String {
+        outputs(of: block, in: markdown).lazy.map(\.text).filter { !$0.isEmpty }
+            .joined(separator: "\n")
+    }
+
+    /// What one block contributes to the document: one output block, or one per row for a
+    /// table. Exhaustive with no `default:`, so a new `MarkdownBlock` case has to be given a
+    /// plain spelling here rather than silently disappearing out of someone's document.
+    private static func outputs(of block: MarkdownBlock, in markdown: String)
+        -> [MarkdownOutputBlock] {
+        switch block {
+        case let .heading(_, range):
+            return [.init(text: inline(String(markdown[range])), run: .other)]
+        case let .paragraph(range):
+            return [.init(text: inline(String(markdown[range])), run: .other)]
+        case let .listItem(depth, marker, range):
+            let label: String
+            switch marker {
+            case .bullet: label = "• "
+            case let .ordered(number): label = "\(number). "
+            }
+            return [.init(text: String(repeating: "  ", count: depth) + label
+                            + inline(String(markdown[range])), run: .listItem)]
+        case let .blockquote(_, range):
+            return [.init(text: inline(String(markdown[range])), run: .other)]
+        case let .codeBlock(_, range, _):
+            return [.init(text: String(markdown[range]), run: .other)]
+        case let .table(header, rows, _):
+            return ([header] + rows).filter { !$0.isEmpty }.map { row in
+                .init(text: row.map { inline(String(markdown[$0])) }.joined(separator: "\t"),
+                      run: .tableRow)
+            }
+        case .thematicBreak:
+            return [.init(text: thematicBreak, run: .other)]
+        }
     }
 
     /// One block's inline markers removed, by Foundation's own parse rather than by a second

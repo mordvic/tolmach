@@ -119,3 +119,68 @@ private final class StreamCollector: @unchecked Sendable {
     #expect(collector.value == outcome.final)
     #expect(outcome.modelChunkCount == 1)
 }
+
+@Test func proofreadReportsWhatItChangedWordByWord() async throws {
+    let source = "Превет, мир. Это тестовый текст."
+    let fake = FakeLLMClient(responses: ["Привет, мир. Это тестовый текст."])
+    let outcome = try await Translator(client: fake).proofread(
+        text: source, level: .errorsOnly,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900)
+    let changes = try #require(outcome.changes,
+                               "правка is the one route the diff applies to")
+    #expect(changes.count == 1)
+    #expect(changes.changes.first?.removed == "Превет")
+    #expect(changes.changes.first?.inserted == "Привет")
+    #expect(changes.notCompared == nil)
+    // The правка marker is unchanged and is still the one to switch on: `changes != nil` says
+    // «the diff ran», which is a different question.
+    #expect(outcome.documentGlossaryAttempted == false)
+}
+
+@Test func aCancellationAfterTheLastChunkStillStopsBeforeTheDiff() async throws {
+    // `aCancellationMidStreamSurfacesAsCancellationError` above covers the checks around the
+    // model calls; this one reaches the *last* link. The run is cancelled from `onProgress` for the final часть,
+    // which is the one instant at which every earlier `checkCancellation` has been passed and
+    // only the one before `TextDiff.changes` is left. The mutation: delete that check and this
+    // returns a finished outcome for a run the user cancelled.
+    let fake = FakeLLMClient(responses: ["один", "два"], delayPerToken: .milliseconds(1))
+    let translator = Translator(client: fake)
+    let box = CancelWhenAdopted()
+    let run = Task {
+        try await translator.proofread(
+            text: twoParagraphs, level: .errorsOnly,
+            options: ChatOptions(model: "test"), maxChunkCharacters: 200,
+            onProgress: { progress in
+                if progress.partsDone == progress.partsTotal { box.cancel() }
+            })
+    }
+    box.adopt(run)
+    await #expect(throws: CancellationError.self) { try await run.value }
+}
+
+/// Cancels a task that may not exist yet.
+///
+/// `onProgress` can fire before the `Task` initialiser has returned, and a box that dropped a
+/// cancellation arriving in that window would make the test above pass for the wrong reason on
+/// a loaded machine. Remembering the request instead is what makes the ordering irrelevant.
+private final class CancelWhenAdopted: @unchecked Sendable {
+    private let lock = NSLock()
+    private var task: Task<TranslationOutcome, Error>?
+    private var requested = false
+
+    func adopt(_ task: Task<TranslationOutcome, Error>) {
+        lock.lock()
+        self.task = task
+        let requested = self.requested
+        lock.unlock()
+        if requested { task.cancel() }
+    }
+
+    func cancel() {
+        lock.lock()
+        requested = true
+        let task = self.task
+        lock.unlock()
+        task?.cancel()
+    }
+}

@@ -1036,7 +1036,7 @@ private func resizablePanel(text: String)
         markupNotCompared: false,
         stats: [], timeToFirstTokenMS: 12, totalMS: 34,
         documentGlossaryFailure: nil, documentGlossaryAttempted: false,
-        modelChunkCount: 1)
+        modelChunkCount: 1, changes: nil)
 
     let controller = PanelController { variant in
         AnyView(PanelView(model: model, selection: .text(CapturedSelection(plain: text)),

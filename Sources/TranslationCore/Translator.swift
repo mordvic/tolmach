@@ -89,6 +89,19 @@ public struct TranslationOutcome: Sendable {
     /// this count before reading that nil as a failure (spec §2.1, the renegotiated
     /// contract; `TranslationViewModel` is the consumer that got this wrong first).
     public let modelChunkCount: Int
+    /// What правка changed, word by word — and **nil for anything that is not a правка**.
+    ///
+    /// Nil is «this run was not one the diff applies to», not «nothing changed»: a translation
+    /// is never diffed against its source, because the two texts are in different languages
+    /// and every token of the comparison would be a change. `ChangeSet.changes.isEmpty` is
+    /// what «нет изменений» reads, and `ChangeSet.notCompared` is what «not looked at» reads —
+    /// the same three-way shape as `markupDiffs` / `markupNotCompared`.
+    ///
+    /// `documentGlossaryAttempted == false` stays the правка marker. This is not a substitute
+    /// for it: a translation whose diff was skipped and a правка look nothing alike, and a
+    /// consumer that switched on `changes != nil` would be reading «the diff ran» as «this is
+    /// правка».
+    public let changes: ChangeSet?
 
     /// «The model was asked for something and returned nothing» — the only reading of a nil
     /// `timeToFirstTokenMS` that is a failure.
@@ -502,7 +515,10 @@ public struct Translator: Sendable {
             totalMS: (Date().timeIntervalSince(started) - reviewWait) * 1000,
             documentGlossaryFailure: documentGlossaryFailure,
             documentGlossaryAttempted: documentGlossaryAttempted,
-            modelChunkCount: modelChunks.count)
+            modelChunkCount: modelChunks.count,
+            // Nil, and not an empty set: a translation and its source are in two languages,
+            // so a word diff between them would report every token as changed.
+            changes: nil)
     }
 
     /// Правка: the same route as `translate` — detect → chunk → per-chunk streamed calls →
@@ -515,6 +531,11 @@ public struct Translator: Sendable {
     /// Returns `TranslationOutcome` rather than a parallel type: every consumer speaks it,
     /// and the glossary fields come back honest and empty. `detectedSource` is the text's
     /// own language; `timeToFirstTokenMS` keeps its nil-means-empty-reply contract.
+    ///
+    /// It is also the one route that fills `changes`: правка's source and its result are the
+    /// same text in the same language, which is the only situation in which a word diff
+    /// between them says anything (`TextDiff`). Nothing about the model round-trip above
+    /// changes for it — the diff runs once, on the assembled `final`, after the settle.
     public func proofread(
         text: String, level: ProofreadingLevel, style: RewriteStyle = .original,
         source: Language? = nil,
@@ -571,6 +592,17 @@ public struct Translator: Sendable {
 
         // One comparison, read twice — the diffs and whether they were computed at all.
         let markup = MarkupSkeleton.compare(source: text, translation: final)
+        // Taken **before** the diff, and deliberately: «Готово за N мс» and every figure in
+        // `docs/reference/BASELINE.md` mean «how long the machine took to produce this text»,
+        // and folding a local computation that no model participated in into that number would
+        // move a baseline without any engine having changed. The diff's own cost is measured
+        // separately (the spec's measurement protocol item 2).
+        let totalMS = Date().timeIntervalSince(started) * 1000
+        // The last link in this route's cancellation chain, and the one that matters here:
+        // everything above it has already been checked, and without this a run cancelled
+        // after the final chunk would spend the diff's time and return a truncated document
+        // as a finished правка. Same rule as every other call site in this type.
+        try Task.checkCancellation()
         return TranslationOutcome(
             final: final,
             chunks: chunks,
@@ -582,10 +614,11 @@ public struct Translator: Sendable {
             markupNotCompared: markup.notCompared != nil,
             stats: acc.stats,
             timeToFirstTokenMS: acc.firstTokenAt.map { $0.timeIntervalSince(started) * 1000 },
-            totalMS: Date().timeIntervalSince(started) * 1000,
+            totalMS: totalMS,
             documentGlossaryFailure: nil,
             documentGlossaryAttempted: false,
-            modelChunkCount: chunks.lazy.filter { !$0.passthrough }.count)
+            modelChunkCount: chunks.lazy.filter { !$0.passthrough }.count,
+            changes: TextDiff.changes(source: text, result: final))
     }
 
     /// The «Оформить» pass: one call that may add structure to `text` and may change nothing
