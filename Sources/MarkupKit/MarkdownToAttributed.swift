@@ -60,10 +60,28 @@ public enum MarkdownToAttributed {
     public struct Rendering {
         public let attributed: NSAttributedString
         public let codeRegions: [CodeRegion]
+        /// One range per block, in the order the blocks were rendered — the bridge between a
+        /// `TextChange`, which names a block by its index in `MarkdownBlockScanner.blocks(of:)`,
+        /// and the characters that block became. `ChangeMarks` is the only reader.
+        ///
+        /// From `rendering(blocks:in:config:)` these **tile** the output: each covers its
+        /// block's own characters including the terminator, and they run end to end with no
+        /// gaps, because that is how the blocks were appended. From `plainRendering(of:)` they
+        /// do **not** — see that function; the locator needs a block's own characters and
+        /// nothing about what lies between two blocks, so both shapes serve it.
+        ///
+        /// Empty from the two-argument init: a caller that assembled a rendering by hand (the
+        /// app's plain path, the streaming tail) has no block list to name, and an empty array
+        /// is what `ChangeMarks.apply` refuses to guess against.
+        public let blockRanges: [NSRange]
 
-        public init(attributed: NSAttributedString, codeRegions: [CodeRegion]) {
+        /// `blockRanges` defaults to empty so the app's hand-assembled renderings keep
+        /// compiling unchanged; nothing that omits it can be marked.
+        public init(attributed: NSAttributedString, codeRegions: [CodeRegion],
+                    blockRanges: [NSRange] = []) {
             self.attributed = attributed
             self.codeRegions = codeRegions
+            self.blockRanges = blockRanges
         }
 
         /// `public.rtf`, the flavour the pane's «Скопировать» writes beside the Markdown.
@@ -89,7 +107,9 @@ public enum MarkdownToAttributed {
                                 config: MarkdownFontConfig) -> Rendering {
         let result = NSMutableAttributedString()
         var regions: [CodeRegion] = []
+        var ranges: [NSRange] = []
         for block in blocks {
+            let start = result.length
             switch block {
             case let .heading(level, range):
                 result.append(heading(level: level, range, in: text, config: config))
@@ -122,8 +142,64 @@ public enum MarkdownToAttributed {
             case .thematicBreak:
                 result.append(thematicBreak(config: config))
             }
+            ranges.append(NSRange(location: start, length: result.length - start))
         }
-        return Rendering(attributed: result, codeRegions: regions)
+        return Rendering(attributed: result, codeRegions: regions, blockRanges: ranges)
+    }
+
+    /// The document as itself, with its blocks located — «Исходник» and plain prose.
+    ///
+    /// `plain(_:config:)` is what draws it and is unchanged; what this adds is
+    /// `blockRanges`, so a change set can be marked over the raw Markdown as well as over the
+    /// rendered document (spec story 6: the toggle must not cost the marks).
+    ///
+    /// **The ranges are each block's own source span and do not tile the string**, unlike the
+    /// rendered path's. `MarkdownBlock` carries the range of a block's *content* — a heading
+    /// without its `#`s, a list item without its marker, a quote without its `>` — and the
+    /// separators between blocks belong to no block at all (`Block.range` moves edge
+    /// whitespace into them, `docs/design/specs/2026-08-07-lossless-chunking-design.md`).
+    /// Reconstructing a tiling would mean inventing a rule for who owns a blank line, and the
+    /// locator does not need one: it reads a block's own characters and never what lies
+    /// between two of them.
+    public static func plainRendering(of text: String,
+                                      config: MarkdownFontConfig) -> Rendering {
+        var ranges: [NSRange] = []
+        var previousEnd = 0
+        for block in MarkdownBlockScanner.blocks(of: text) {
+            guard let span = sourceSpan(of: block) else {
+                // A table the scanner found no cells in: nothing to locate, and a zero-length
+                // range where the previous block ended rather than at 0, so a `.changes`
+                // splice anchored on it cannot land at the top of an unrelated document.
+                ranges.append(NSRange(location: previousEnd, length: 0))
+                continue
+            }
+            let range = NSRange(span, in: text)
+            ranges.append(range)
+            previousEnd = range.location + range.length
+        }
+        return Rendering(attributed: plain(text, config: config), codeRegions: [],
+                         blockRanges: ranges)
+    }
+
+    /// The span of the document a block was read from: its content range, or for a table the
+    /// hull of its cells — the one case whose ranges are per cell rather than per block.
+    ///
+    /// Exhaustive with no `default:`, for `MarkdownPlainText.outputs`' reason: a new
+    /// `MarkdownBlock` case has to be given a span here rather than silently losing its marks.
+    static func sourceSpan(of block: MarkdownBlock) -> Range<String.Index>? {
+        switch block {
+        case let .heading(_, range): return range
+        case let .paragraph(range): return range
+        case let .listItem(_, _, range): return range
+        case let .blockquote(_, range): return range
+        case let .codeBlock(_, range, _): return range
+        case let .thematicBreak(range): return range
+        case let .table(header, rows, _):
+            let cells = ([header] + rows).flatMap { $0 }
+            guard let first = cells.map(\.lowerBound).min(),
+                  let last = cells.map(\.upperBound).max() else { return nil }
+            return first..<last
+        }
     }
 
     /// The document as itself: «Исходник», and the unsettled tail of a stream.
