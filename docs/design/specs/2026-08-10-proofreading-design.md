@@ -295,6 +295,12 @@ docs gain one line each saying so.
    faith. Deferred on effort (structured output is a separate quality investigation for a
    local 8b model), but deliberately first in this list: when правка ships and holds, this
    is the next piece of it, ahead of anything else here (product review, 2026-08-10).
+   **Half of it landed on 2026-09-04 — the marks without the explanations.** The diff is
+   computed locally (`TextDiff`), drawn as dotted underlines with a count and a stepper on
+   both surfaces, and needs no model; designed in
+   `2026-09-04-content-presentation-design.md` §7, specified in
+   `2026-09-04-change-marks-spec.md` (issue #81), decided in `docs/adr/0012`. The
+   explanations stay deferred for the reason given here.
 2. **A length axis («короче / длиннее»).** Teams `Make it: concise/longer`, QuillBot
    `Expand/Shorten`, Notion. Always a separate axis in the wild; would be a third control
    here, added only if wanted after the feature lands.

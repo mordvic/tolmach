@@ -211,6 +211,37 @@ any степень whose wording may move — «ещё вариант» of «т�
 deterministic minimal diff is a contradiction.
 _Avoid_: «Повторить» — that is the failure retry
 
+**Изменение** — *a change*
+One range a правка changed: a run of words in a block, or a whole block when more of it
+moved than `densityThreshold` allows. Counted in the status bar («6 изменений»), stepped
+with ‹ › and ⌘G, drawn as a dotted underline in the accent. Computed locally by `TextDiff`,
+never by the model.
+→ `TextChange`, `ChangeSet`, `ChangeMarks`, `TranslationOutcome.changes`
+_Avoid_: диф, правка (that is the operation), исправление (a change under «переписать» is
+not a correction)
+
+**«Результат» / «Изменения»** — *the two views of a правка*
+«Результат» is the corrected text with every изменение underlined; «Изменения» is the same
+text with the removed words spliced in, struck through, before what replaced them. In the
+window they are segments of the pane header's picker beside «Исходник»; the choice is the
+setting `showsChangeDetail`, written directly, like «Разметка | Исходник».
+→ `PaneViewChoice`, `ChangeMarks.Detail`, `AppSettings.showsChangeDetail`
+_Avoid_: «с изменениями», «diff view», «разметка изменений»
+
+**«Вид»** — *the panel's view menu*
+The third `.menu` in the panel's степень/стиль row: «результат», «изменения», «оригинал».
+The first two write `showsChangeDetail`; the third is a per-presentation peek.
+→ `PanelReplyView`, `HotkeyCoordinator.showsOriginal`
+_Avoid_: «режим», «вкладка»
+
+**Оригинал** — *the text before правка, as the panel shows it*
+The selection a press captured, shown in the panel's reply area with no marks. **Not
+«исходник»**: «Исходник» already means the *raw form* of a pane's text (the Markdown under
+«Разметка»), and the panel has no such pane — what it lacks is the text before the operation,
+which is what Apple's own «Original» button names.
+→ `PanelReplyView.original`
+_Avoid_: исходник, источник, «было»
+
 ---
 
 ## Вид

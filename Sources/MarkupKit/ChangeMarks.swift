@@ -40,15 +40,67 @@ public enum ChangeMarks {
 
     /// Where the underline becomes `.thick`.
     ///
-    /// **A start rule, not a measurement**: a 1 pt line under 32 pt words is the failure story
-    /// 16 names, and 17 pt is the size at which the system's own text stops being «small».
-    /// Measurement protocol item 7 (`Scripts/accent-contrast.swift` extended to the accent
-    /// under label-coloured text at 11, 13, 17, 22 and 32 pt in both appearances) is what
-    /// replaces it, and this comment must then carry the figure.
+    /// 17 pt is the size at which the system's own text stops being «small», and a 1 pt line
+    /// under 32 pt words is the failure story 16 names. **Looked at, not computed** (measurement
+    /// protocol item 7, 2026-09-04): `renderChangesPreview` drew the marks at 13 and 22 pt in
+    /// both appearances — `.single` under 13 pt text and `.thick` under 22 pt text each read as
+    /// one line that belongs to its word, and a `.thick` line under 13 pt would be the weight of
+    /// the strikethrough beside it. The break itself was not bisected; 17 stays as the system's
+    /// own boundary.
     static let thickFromSize: CGFloat = 17
 
     public static func underlineStyle(for baseSize: CGFloat) -> NSUnderlineStyle {
         baseSize >= thickFromSize ? .thick : .single
+    }
+
+    /// The pattern every change mark wears, on top of its weight: `.patternDot`.
+    ///
+    /// **Dotted everywhere, not only inside tables and lists — measured, 2026-09-04.** The
+    /// design drew a solid accent line and reserved the dots for cells and list items, and
+    /// named its own fallback: «if a screen says the mark and a link confuse, every mark becomes
+    /// dotted». `Scripts/accent-contrast.swift` said it before a screen did — `linkColor`
+    /// against the blue accent is **1.49:1** in the light appearance and **1.14:1** in the
+    /// dark, i.e. the same colour to any eye — and `renderChangesPreview` showed «сайте» (a
+    /// link) and «отчёт» (a change) in one sentence, told apart by nothing. A pattern is a
+    /// shape, and shape is what this app lets carry meaning; the dots are what GitHub's
+    /// rendered diffs use for the same «low-key, this changed» reading.
+    static let pattern: NSUnderlineStyle = .patternDot
+
+    /// The colour under the mark: the accent, darkened in the light appearance.
+    ///
+    /// **The bare accent fails on the light pane — measured, `Scripts/accent-contrast.swift`,
+    /// 2026-09-04.** A change mark is a hairline in the accent on the pane's own ground, and a
+    /// non-text indicator wants 3:1 to be perceived. Against white, three of the eight accents
+    /// macOS offers are under it: оранжевый 2.31:1, зелёный 2.22:1, жёлтый 1.51:1 (синий 3.52,
+    /// графит 3.26 are the narrowest passes). On the dark pane every accent clears it (worst
+    /// 4.59:1, фиолетовый), so the dark value is the accent itself.
+    ///
+    /// The light value is the accent blended **35 %** toward black: the same script walked the
+    /// fraction in steps of 0.05 and 0.30 is the first that clears the floor for all eight
+    /// (жёлтый 3.08:1); 0.35 (жёлтый 3.53:1) is one step of margin for an accent the user may
+    /// have tinted, the way `StatusColour` keeps its light values a step past the line.
+    /// `ChangeMarksColourTests` holds all sixteen cells to the floor, the same discipline as
+    /// `SyntaxPaletteTests`.
+    ///
+    /// A dynamic colour rather than two literals, because the accent is the user's and can
+    /// change under a running app; `NSColor(name:dynamicProvider:)` re-resolves per appearance
+    /// and per draw.
+    public static let lightBlend: CGFloat = 0.35
+
+    public static var markColour: NSColor {
+        NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            return isDark ? .controlAccentColor : blendedTowardBlack(.controlAccentColor, by: lightBlend)
+        }
+    }
+
+    /// The light-appearance rule as a function over any colour, so the test can walk every
+    /// accent preset the way the script does rather than only the one this machine is set to.
+    static func blendedTowardBlack(_ colour: NSColor, by fraction: CGFloat) -> NSColor {
+        guard let c = colour.usingColorSpace(.sRGB) else { return colour }
+        return NSColor(srgbRed: c.redComponent * (1 - fraction),
+                       green: c.greenComponent * (1 - fraction),
+                       blue: c.blueComponent * (1 - fraction), alpha: c.alphaComponent)
     }
 
     /// The marked rendering. The input is never mutated.
@@ -147,8 +199,7 @@ public enum ChangeMarks {
             guard let marked = located(change, in: alignment,
                                        blockRange: blockRange) else { continue }
             storage.addAttributes(
-                marks(index: index, dotted: isDotted(blocks[change.block], in: resultMarkdown),
-                      config: config),
+                marks(index: index, config: config),
                 range: marked)
             guard detail == .changes, !change.removed.isEmpty else { continue }
             if change.scope == .block {
@@ -307,28 +358,15 @@ public enum ChangeMarks {
 
     // MARK: - The attributes
 
-    private static func marks(index: Int, dotted: Bool,
+    /// The weight from the size, the dots always, the colour from the appearance — see the
+    /// three declarations above for the measurement behind each.
+    private static func marks(index: Int,
                               config: MarkdownFontConfig) -> [NSAttributedString.Key: Any] {
         var style = underlineStyle(for: config.baseSize)
-        if dotted { style.insert(.patternDot) }
+        style.insert(pattern)
         return [.underlineStyle: style.rawValue,
-                .underlineColor: NSColor.controlAccentColor,
+                .underlineColor: markColour,
                 changeKey: index]
-    }
-
-    /// Where the mark is dotted: a solid line beside a table's rules or under a bullet's
-    /// hanging indent fights the block's own drawing.
-    ///
-    /// A «•»/«–» paragraph counts as a list item even though the scanner hands it over as a
-    /// paragraph, because the rule follows the drawing rather than the bytes — the renderer
-    /// draws exactly those lines as list items (`PlainBulletList`), and a reader who sees a
-    /// list has no way to know the scanner disagreed.
-    private static func isDotted(_ block: MarkdownBlock, in markdown: String) -> Bool {
-        switch block {
-        case .table, .listItem: return true
-        case let .paragraph(range): return PlainBulletList.items(of: markdown[range]) != nil
-        case .heading, .blockquote, .codeBlock, .thematicBreak: return false
-        }
     }
 
     private static func isCode(_ block: MarkdownBlock) -> Bool {

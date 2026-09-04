@@ -95,3 +95,53 @@ for (n, a, bg) in [("light", light, (1.0,1.0,1.0)), ("dark", dark, (30.0/255,30.
                  pad(n,6), contrast(f, bg), contrast(b, bg)))
 }
 print("  (a non-text indicator wants 3:1 to be perceivable)")
+
+// ---- Change marks (spec #81, measurement item 7) -------------------------------------------
+// The правка underline is a hairline in the accent, drawn on the pane's own ground — not white
+// text on a filled button. What decides whether it is *perceivable* is the accent against the
+// pane, and WCAG's figure for a non-text indicator is 3:1. The link underline sits beside it in
+// `linkColor`, so the two are printed together: on the default accent both are blue, and how far
+// apart they are is the question `docs/reference/OPEN-ITEMS.md` carries for a pair of eyes.
+print("\n== change-mark underline: every accent against the pane, both appearances ==")
+let panes: [(String, NSAppearance, (Double, Double, Double))] = [
+    ("light", light, (1.0, 1.0, 1.0)), ("dark", dark, (30.0/255, 30.0/255, 30.0/255)),
+]
+print("  " + pad("accent", 12) + pad("light vs pane", 24) + "dark vs pane")
+var worstMark = 99.0
+for (name, col) in choices {
+    var cells: [String] = []
+    for (_, a, bg) in panes {
+        let c = srgb(col, a)
+        let r = contrast(c, bg)
+        worstMark = min(worstMark, r)
+        cells.append(String(format: "%@ %.2f:1 %@", hex(c), r, r >= 3 ? "OK" : "low"))
+    }
+    print("  " + pad(name, 12) + pad(cells[0], 24) + cells[1])
+}
+print(String(format: "  worst accent on either pane: %.2f:1 (3:1 is the non-text floor)", worstMark))
+print("\n== the link underline beside it ==")
+for (n, a, bg) in panes {
+    let link = srgb(.linkColor, a), blue = srgb(.systemBlue, a), acc = srgb(.controlAccentColor, a)
+    print(String(format: "  %@  linkColor %@ (%.2f:1 vs pane) · systemBlue %@ · this machine's accent %@ · link-vs-blue %.2f:1",
+                 pad(n, 6), hex(link), contrast(link, bg), hex(blue), hex(acc), contrast(link, blue)))
+}
+print("  (a ratio near 1:1 between the link and the blue accent means the two underlines are told apart by nothing but context)")
+
+// ---- The mark's colour cannot be the bare accent ---------------------------------------------
+// Measured above: three of the eight accents sit under 3:1 on the light pane. `StatusColour`'s
+// answer to the same failure was a darkened light-appearance value held to a floor by a test;
+// this prints what blending the accent toward black by a fixed fraction does to every accent, so
+// the fraction `ChangeMarks` uses is the smallest one that clears 3:1 for all eight.
+print("\n== accent blended toward black in the light appearance, vs the white pane ==")
+print("  " + pad("fraction", 10) + "worst accent → ratio (all eight must clear 3:1)")
+for f in [0.0, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4] {
+    var worst = (name: "", ratio: 99.0)
+    for (name, col) in choices {
+        let c = srgb(col, light)
+        let b = (c.0 * (1 - f), c.1 * (1 - f), c.2 * (1 - f))
+        let r = contrast(b, (1.0, 1.0, 1.0))
+        if r < worst.ratio { worst = (name, r) }
+    }
+    print(String(format: "  %@ %@ → %.2f:1 %@", pad(String(format: "%.2f", f), 10), pad(worst.name, 12),
+                 worst.ratio, worst.ratio >= 3 ? "OK" : "low"))
+}

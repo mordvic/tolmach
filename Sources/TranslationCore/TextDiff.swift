@@ -125,19 +125,40 @@ public enum TextDiff {
     ///   - result: the assembled reply (`TranslationOutcome.final`).
     ///   - densityThreshold: below this similarity a block is one change instead of many, and
     ///     above this share of changed tokens a diffed block collapses to one.
-    ///     **A start value, not a measurement**: the spec's measurement protocol item 1
-    ///     (`Scripts/change-density.sh`, the правка corpus at all three степень) is what
-    ///     replaces it, and this comment must then carry the figure.
+    ///     **Measured 2026-09-04 and kept at 0.5** (`Scripts/change-density.sh`,
+    ///     `docs/proofreading-gate`, 12 texts × 3 степени × 3 runs, translategemma:12b and
+    ///     :27b, Ollama 0.33.2). The corrections half of the spec's criterion holds at any
+    ///     value from 0.15 up: no «только ошибки» block on either model changed more than 15 %
+    ///     of its tokens (51 + 51 blocks), and «ошибки и стиль» stayed under 0.46 on 12b. The
+    ///     rewrite half holds at **no** value: «переписать» on these models moves a quarter of
+    ///     a paragraph's tokens at the median (0.24 / 0.29) and only 12 % (12b) / 6 % (27b) of
+    ///     rewritten blocks cross 0.5 — the model rewrites lightly, and no threshold can make a
+    ///     quarter-changed paragraph read as «rewritten» without also collapsing a heavily
+    ///     corrected one. That is the spec's own fallback case: record both distributions
+    ///     (`docs/reference/MEASUREMENTS.md`, «change marks») and keep 0.5, which collapses
+    ///     the 6–12 % of blocks the model did rewrite whole (ratio 1.00) and nothing a model
+    ///     merely corrected.
     ///   - mergeGap: how many unchanged tokens may sit between two changes and still leave
     ///     them one change — what makes «посмотрите, пожалуйста,» one comma pair and not two.
-    ///     **A start value**: the spec names no measurement of its own for it, and item 1's
-    ///     corpus run is where over-merging would show.
+    ///     **Not measured on its own**: the corpus run above is where over-merging would have
+    ///     shown as a rewrite-like ratio on a corrected block, and none did.
     ///   - blockTokenLimit: past this many tokens on either side a block is compared by
     ///     equality alone, because the diff below is quadratic in the edit distance.
-    ///     **A start value**: measurement protocol item 2 (`Scripts/text-diff-cost.swift`,
-    ///     the 256 KB `DroppedDocument` ceiling) is what replaces it.
+    ///     **Measured 2026-09-04 and kept** (`TEXT_DIFF_COST=1 swift test --filter
+    ///     textDiffCost`, this machine, quiet): one 4 000-token paragraph fully reordered —
+    ///     the worst edit distance a block under the limit can have — costs 24 ms, median of
+    ///     five.
     ///   - inspectionLimit: past this many tokens in the two texts together nothing is
-    ///     compared at all and `notCompared` says so. **A start value**, item 2 again.
+    ///     compared at all and `notCompared` says so. **Measured 2026-09-04 and kept**: the
+    ///     256 KB `DroppedDocument` ceiling of prose (19 825 words, ~40 000 tokens, under the
+    ///     limit) costs 133 ms with 1 % of words changed and 187 ms with every other word
+    ///     changed; 200 rewritten paragraphs cost 56 ms. The spec asked for the worst case
+    ///     under 50 ms and this is not — a **deviation, kept deliberately**: the cost is paid
+    ///     once, inside `Translator.proofread` on the run's own task and never on the main
+    ///     actor, at the end of a правка that itself took minutes for a text this size, and
+    ///     lowering the limit to meet 50 ms would take the marks away from every document over
+    ///     ~60 KB to save a fifth of a second nobody is waiting on. Most of the 133 ms is the
+    ///     fixed part — scanning, projecting and tokenising 256 KB twice — not the diff.
     public static func changes(source: String, result: String,
                                densityThreshold: Double = 0.5,
                                mergeGap: Int = 1,

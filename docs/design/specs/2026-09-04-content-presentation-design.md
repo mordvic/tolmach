@@ -340,6 +340,14 @@ panel is not a setting: it is a per-presentation peek, cleared by `show(at:)`.
 
 ### 7.2 The marks
 
+> **Measured away on 2026-09-04, and the code is the authority (`docs/adr/0012`).** Two rows of
+> the table below did not survive measurement item 7: the mark is `.patternDot` **everywhere**,
+> because `linkColor` against the blue accent is 1.49:1 (light) and 1.14:1 (dark) and the
+> preview showed a link and a change told apart by nothing but the pattern; and the tint is the
+> accent blended 35 % toward black in the light appearance, because three of the eight accents
+> fall under 3:1 on the white pane bare (жёлтый 1.51:1). The «inside a cell or list item» row
+> therefore collapsed into the first. The reasoning below is kept as written.
+
 | Mark | Shape | Colour | Where |
 |---|---|---|---|
 | Changed range | Single underline, `.thick` at ≥ 17 pt base and `.single` below | `controlAccentColor` | «Результат», «Изменения» |

@@ -130,40 +130,56 @@ struct TranslationPane: View {
                     // stands for; «Исходник» leaves the detail alone, and that is a decision
                     // with a test, not an accident of the binding.
                     //
-                    // **Segmented, and measured to cost 98 pt over today's header.**
-                    // `Scripts/pane-header-fit.swift` (2026-09-04, detached host, `fittingSize`,
-                    // caption + picker + both link buttons): three segments 495 pt, today's two
-                    // 397 pt, a `.menu` fallback 352 pt — against this pane's 280 pt `minWidth`,
-                    // which *today's* header already exceeds. The spec's fallback rule («a
-                    // `.menu` for правка if it does not fit at 280») therefore has no state to
-                    // apply to: nothing fits at 280 and nothing did before. Segmented is kept so
-                    // правка's picker is the same control as перевод's; what the numbers say is
-                    // that the header's real floor is the picker plus two link buttons, and a
-                    // pane narrower than that clips the trailing button in either operation —
-                    // owed a look in `docs/reference/OPEN-ITEMS.md`.
-                    Picker("", selection: Binding(
+                    // **Segmented when there is room, a menu when there is not — and the room
+                    // is measured.** `Scripts/pane-header-fit.swift` (2026-09-04, detached host,
+                    // `fittingSize`, caption + picker + both link buttons): three segments want
+                    // 495 pt, перевод's two 397 pt, the `.menu` form 352 pt. The pane's floor
+                    // used to be 280 pt, which not even the two-segment header fit — the
+                    // trailing «Скопировать» was clipped at the floor in *either* operation and
+                    // had been since the toggle arrived. Two things fix that together:
+                    // `ViewThatFits` offers the segmented picker first and the same picker as a
+                    // `.menu` when the header's leftover width is short of it, so nothing is
+                    // ever clipped; and the floor below is 360 pt, the first round number past
+                    // the 352 the menu form needs with «Ещё вариант» showing. Between 360 and
+                    // 397 (перевод) or 495 (правка) the picker is therefore a menu, deliberately.
+                    // The two pickers share one binding and one item list, so the menu cannot
+                    // say something the segments do not.
+                    let selection = Binding(
                         get: {
                             PaneViewChoice.current(
                                 showsRenderedMarkup: showsRenderedMarkup.wrappedValue,
                                 showsChangeDetail: showsChangeDetail.wrappedValue,
                                 hasChanges: hasChanges)
                         },
-                        set: { choice in
+                        set: { (choice: PaneViewChoice) in
                             let writes = choice.writes
                             showsRenderedMarkup.wrappedValue = writes.showsRenderedMarkup
                             if let detail = writes.showsChangeDetail {
                                 showsChangeDetail.wrappedValue = detail
                             }
-                        })) {
-                        ForEach(PaneViewChoice.segments(hasChanges: hasChanges,
-                                                        offersSource: offersSource)) { choice in
-                            Text(choice.label(hasChanges: hasChanges)).tag(choice)
+                        })
+                    let segments = PaneViewChoice.segments(hasChanges: hasChanges,
+                                                           offersSource: offersSource)
+                    ViewThatFits(in: .horizontal) {
+                        Picker("", selection: selection) {
+                            ForEach(segments) { choice in
+                                Text(choice.label(hasChanges: hasChanges)).tag(choice)
+                            }
                         }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .controlSize(.small)
+                        .fixedSize()
+                        Picker("", selection: selection) {
+                            ForEach(segments) { choice in
+                                Text(choice.label(hasChanges: hasChanges)).tag(choice)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                        .controlSize(.small)
+                        .fixedSize()
                     }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .controlSize(.small)
-                    .fixedSize()
                     .help(hasChanges
                           ? "Показывать результат, изменения с удалённым текстом или исходный текст"
                           : "Показывать разметку как документ или как исходный текст")
@@ -210,6 +226,10 @@ struct TranslationPane: View {
                 }
             }
         }
-        .frame(minWidth: 280)
+        // 360 and not 280: the header's `.menu` form with «Ещё вариант» showing measures 352 pt
+        // (`Scripts/pane-header-fit.swift`), and 280 clipped «Скопировать» in every operation.
+        // The исходник pane keeps 280 — its header is the mode switch alone — so the two panes
+        // together want 640 of the window's 700 pt minimum.
+        .frame(minWidth: 360)
     }
 }
