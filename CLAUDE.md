@@ -32,6 +32,9 @@ swiftc -O -o /tmp/tbh Scripts/toolbar-height.swift && /tmp/tbh   # what the tool
 swiftc -O -o /tmp/cf Scripts/content-font.swift && /tmp/cf   # every measurement behind «Шрифт текста»
 swiftc -O -o /tmp/vm Scripts/view-menu.swift && /tmp/vm   # which menu the размер items land in, and how ⌘+ is stored
 swiftc -O -o /tmp/phf Scripts/pane-header-fit.swift && /tmp/phf   # what the перевод pane's header wants at its narrowest, per picker shape
+RENDER_PREVIEW_CHANGES=/tmp/preview swift test --filter renderChangesPreview   # draw a правка's marks at 13 and 22 pt, both views, both appearances
+TEXT_DIFF_COST=1 swift test --filter textDiffCost   # what TextDiff costs at the 256 KB ceiling — run on a quiet machine
+./Scripts/change-density.sh docs/proofreading-gate   # live: where densityThreshold sits, per степень; needs the release CLI
 RENDER_PREVIEW=/tmp/preview swift test --filter renderPreview   # draw the rendered pane to light/dark PNGs and look
 swift run translate-cli --to ru --tone technical "text"   # needs a live engine; reads stdin if no text
 swift run translate-cli --engine lmstudio --model qwen/qwen3.8-27b --to ru "text"   # the other engine
@@ -247,6 +250,51 @@ Facts that will bite you if you "tidy" them:
   protection rules demand exact structure preservation two lines below it and the two must
   not fight (issue #40; merge is gated on the calibration protocol in
   `docs/reference/OPEN-ITEMS.md`). See `docs/design/specs/2026-08-10-proofreading-design.md`.
+  **A правка says what it changed, since 2026-09-04, and no model is asked.** `proofread`
+  runs `TextDiff.changes(source:result:)` after `final` is assembled — `totalMS` is taken
+  *before* it, so «Готово за N мс» and the baseline do not move — and returns the result in
+  `TranslationOutcome.changes` (`nil` means «not a правка»; `documentGlossaryAttempted ==
+  false` is still the marker). The diff is per block over the plain projections
+  (`MarkdownPlainText.plain(_:in:)`), token by token (`TextTokenizer`: words and marks,
+  whitespace a boundary, so a collapsed double space is not a change), through
+  `CollectionDifference`; code blocks are never compared (they never reached the model).
+  **Four constants govern it and each is a parameter with a default, never a literal in the
+  algorithm**: `densityThreshold` (a block whose similarity is below it, or whose changed-token
+  ratio is above it, becomes *one* change — a «переписать» paragraph reads as rewritten, not
+  as confetti), `mergeGap` (two changes with at most one unchanged word between them merge,
+  which is what makes «посмотрите, пожалуйста,» one change), `blockTokenLimit` and
+  `inspectionLimit` (past them the diff is by equality only, or not run — `notCompared`). The
+  figures behind them are in `docs/reference/MEASUREMENTS.md` under «change marks», and
+  `changedTokens` is counted **before** the merge on purpose (PR #83): a ratio that moved with
+  `mergeGap` would be a poor thing to measure a threshold on. `translate-cli --proofread`
+  prints `changes: N`; `--changes-json` is what `Scripts/change-density.sh` reads.
+  **The marks are located, not carried** (`MarkupKit.ChangeMarks`): a change names tokens of
+  a block's plain projection, the storage holds a rendered document or the raw Markdown, and
+  the two are aligned by walking the same tokenizer's tokens — so one change set marks
+  «Разметка», «Исходник» and plain prose, and a block the aligner cannot consume is left
+  unmarked with the count untouched (a guessed underline is worse than none). They are
+  **attributes** — `.underlineStyle`, `.underlineColor`, `ChangeMarks.changeKey` — in
+  «Результат», and the «Изменения» view splices the removed words in as characters, struck
+  through in the secondary colour: a second document, like «Исходник» is. **The mark is a
+  dotted underline in the accent, darkened 35 % in the light appearance, everywhere** —
+  measured (`Scripts/accent-contrast.swift`, 2026-09-04): `linkColor` against the blue accent
+  is 1.49:1 light / 1.14:1 dark, so a solid accent line *was* the link's underline, and bare,
+  three of the eight accents fall under the 3:1 non-text floor on the white pane (жёлтый
+  1.51:1); `ChangeMarksColourTests` holds all sixteen cells. `docs/adr/0012` is the decision.
+  **Nothing about the marks reaches the pasteboard or «Заменить»**: `PaneRendering.rtf` and
+  both `richFlavour()` sites take no change set, pinned by a test. In the window the count and
+  a ‹ › stepper sit in `RunStatusBar`'s finished line («Готово за N мс · 6 изменений»,
+  «изменений нет»), ⌘G / ⇧⌘G in the «Перевод» menu step too (measured free: SwiftUI's standard
+  «Правка» menu binds nothing to `g`), and `TranslationViewModel.changeCursor` is what both
+  read; a step selects the range and shows AppKit's find indicator. In the panel a правка reply
+  renders at the settle whether or not it has markup (`rendersFinalReply(… hasChanges:)`), the
+  степень/стиль row gains «Вид» (`PanelReplyView`: результат / изменения / оригинал — the last
+  a per-presentation `HotkeyCoordinator.showsOriginal`, cleared on every press, switch and «Ещё
+  вариант», and *not* «исходник», which already means a pane's raw form), and the status row
+  says «Исправлено: 6 изменений» (`PanelStatus.Kind.summary`) — the 24 pt the reservation
+  already books, so the settle does not grow the panel for it. That row and the third menu are
+  why `PanelSizer.dragMinHeight` is **179**, re-measured 2026-09-04. See
+  `docs/design/specs/2026-09-04-change-marks-spec.md` and issue #81.
 
 ### Engine rules (empirical, non-negotiable)
 
@@ -550,6 +598,16 @@ not cosmetic — **the safe direction is inverted**. See
   this app chose. `PaneRendering` is the one place that rule is written: the pane's button and
   the «Перевод» menu's ⇧⌘C both read it, and a restated condition is how the two come to copy
   different things. See `docs/design/specs/2026-08-31-formatting-design.md`.
+  **In правка mode the same picker has a third segment, since 2026-09-04 — «Результат |
+  Изменения | Исходник»** — driven by `PaneViewChoice` over the two settings
+  `showsRenderedMarkup` and `showsChangeDetail` (a tested mapping; «Исходник» leaves the
+  detail alone), and the pane hosts `RenderedTextView` whenever there are changes, markup or
+  not. One picker rather than two, because this control governs *both* panes and a second one
+  is the shape `Scripts/toolbar-fit.swift` exists to refuse. **Measured and not fixed here:
+  the header does not fit the pane's 280 pt floor with either shape** — three segments want
+  495 pt, today's two 397, a `.menu` 352 (`Scripts/pane-header-fit.swift`) — so the floor is
+  owed a look in `docs/reference/OPEN-ITEMS.md`, and the segments stayed because the fallback
+  rule had no state to save.
 - Capture order is Accessibility first, synthetic ⌘C fallback second, and the fallback must restore
   the *whole* pasteboard. **One exception since 2026-09-02: a selection inside web content —
   an `AXWebArea` in the focused element's ancestry — skips the Accessibility tier**, because

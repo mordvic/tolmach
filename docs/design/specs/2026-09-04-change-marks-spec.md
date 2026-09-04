@@ -493,6 +493,26 @@ date, the machine and the model.
    label-coloured text at 11, 13, 17, 22 and 32 pt on both appearances for every accent macOS
    offers; the finding decides whether `.thick` from 17 pt is right or the break moves.
 
+### Outcomes (measured 2026-09-04, PR 5)
+
+The figures are in `docs/reference/MEASUREMENTS.md` under «change marks» and in the constants'
+own comments; this is what each item decided.
+
+1. **Kept 0.5.** The corrections half of the criterion holds at any threshold from 0.15; the
+   rewrite half holds at none — `translategemma` rewrites a quarter of a paragraph at the
+   median, so the fallback («record both, keep 0.5») is what shipped.
+2. **Kept 60 000 / 4 000, deviating from the 50 ms target on purpose**: 133–187 ms at the 256 KB
+   ceiling, off the main actor, at the end of a run that took minutes. A limit meeting 50 ms
+   would cost the marks on every document over ~60 KB.
+3. **Segments kept**; no shape fits 280 pt (495 / 397 / 352), the floor is the open question.
+4. **Inline row kept**; 331 pt against a 272 pt «floor» the panel never reaches.
+5. **`dragMinHeight` 164 → 179**; the +6 drift and the 194 / 204 / 228 states are recorded.
+6. **Not taken** — phase 2's gate.
+7. **Changed the rule, not only a number**: the mark is `.patternDot` *everywhere* (link vs
+   blue accent 1.49:1 / 1.14:1), and the light tint is the accent blended 35 % toward black
+   (three accents under 3:1 bare). §«Step 2» above described a solid line with dots reserved
+   for structure; `docs/adr/0012` and `ChangeMarks` are the authority now.
+
 ## What only a human can check
 
 Rows for `docs/reference/OPEN-ITEMS.md` §1 when the code exists:
