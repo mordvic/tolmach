@@ -14,12 +14,20 @@ import Foundation
 /// process launches. The binary itself is a side effect of `swift test`'s own build step (see
 /// `.github/workflows/ci.yml`'s "Build (including tests)" before "Test"), not something this
 /// test builds.
-@Test func explainWithoutProofreadIsRefusedByTheCLI() throws {
-    let binary = RepoRoot.url.appendingPathComponent(".build/debug/translate-cli")
-    guard FileManager.default.isExecutableFile(atPath: binary.path) else {
-        Issue.record("translate-cli binary not found at \(binary.path) — build the package first (swift build --build-tests)")
-        return
-    }
+/// The built CLI, or nil when this checkout has not built it. A **trait**, not a recorded
+/// issue: `swift test` builds the test targets and their dependencies, and `translate-cli` is an
+/// executable product nothing in the tests depends on — so after a partial build the binary is
+/// legitimately absent and a failure here would be about the build order, not about the flag.
+/// CI runs `swift build --build-tests` first, which builds every product, so there the test
+/// runs; a `--filter` run on a fresh clone skips it and says so in the test log.
+private let cliBinary: URL? = {
+    let url = RepoRoot.url.appendingPathComponent(".build/debug/translate-cli")
+    return FileManager.default.isExecutableFile(atPath: url.path) ? url : nil
+}()
+
+@Test(.enabled(if: cliBinary != nil, "translate-cli is not built; run swift build --build-tests"))
+func explainWithoutProofreadIsRefusedByTheCLI() throws {
+    let binary = try #require(cliBinary)
     let (status, stderr) = try run(binary, arguments: ["--to", "ru", "--explain", "hello"])
     // `fail()`'s own exit code — the same one `--to`, `--chunk` and every other rejected flag
     // in this file uses, not a code invented for this one.
@@ -29,12 +37,9 @@ import Foundation
 
 /// The mirror case: `--format-only` is its own operation, and `--explain` is refused there too
 /// rather than silently answering about a change set `--format-only` never computes.
-@Test func explainUnderFormatOnlyIsAlsoRefused() throws {
-    let binary = RepoRoot.url.appendingPathComponent(".build/debug/translate-cli")
-    guard FileManager.default.isExecutableFile(atPath: binary.path) else {
-        Issue.record("translate-cli binary not found at \(binary.path) — build the package first (swift build --build-tests)")
-        return
-    }
+@Test(.enabled(if: cliBinary != nil, "translate-cli is not built; run swift build --build-tests"))
+func explainUnderFormatOnlyIsAlsoRefused() throws {
+    let binary = try #require(cliBinary)
     let (status, stderr) = try run(binary, arguments: ["--format-only", "--explain", "hello"])
     #expect(status == 2)
     #expect(stderr.contains("--explain applies to --proofread only"))
