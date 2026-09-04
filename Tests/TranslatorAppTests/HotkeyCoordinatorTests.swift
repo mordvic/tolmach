@@ -521,9 +521,12 @@ private struct PressHarness {
 
     func press() async { await coordinator.handlePress() }
 
-    init(reader: ScriptedReader, responses: [String]) async {
+    /// - Parameter settings: passed through when a test needs to read a setting the coordinator
+    ///   writes — «Вид»'s detail half. Nil keeps the scratch store `makeCoordinator` builds.
+    init(reader: ScriptedReader, responses: [String], settings: AppSettings? = nil) async {
         self.reader = reader
-        (coordinator, fake) = makeCoordinator(reader: reader, replies: responses)
+        (coordinator, fake) = makeCoordinator(reader: reader, replies: responses,
+                                              settings: settings)
         await coordinator.handlePress()
     }
 }
@@ -554,6 +557,81 @@ private func makePressedCoordinator(responses: [String]) async -> PressHarness {
     await harness.press()
     // The hotkey is predictable: every press starts with перевод (spec §8).
     #expect(harness.coordinator.panelModel.operation == .translate)
+}
+
+// MARK: - «Вид» (spec #81, step 4)
+
+/// «оригинал» describes **one answer**, so every moment the panel is about to hold a different
+/// one takes it away.
+///
+/// Three writers, and each is a separate press of this test rather than one loop, because the
+/// mutation that matters is per site: deleting the clear in `switchOperation(to:)` leaves the
+/// second assertion green and the third red, and so on. Watched, one line at a time.
+///
+/// The failure it prevents is not cosmetic. `PanelView.shownOriginal` draws
+/// `model.sourceText`, and `handlePress` overwrites that with the *new* selection — so a flag
+/// surviving a press would put the panel's «Вид» on «оригинал» over a source the reader never
+/// asked about, under a header describing a run they did ask for.
+@MainActor
+@Test func theOriginalViewIsForgottenWhereverTheReplyItDescribesIsReplaced() async {
+    let harness = await makePressedCoordinator(
+        responses: ["перевод", "правка", "перевод снова", "ещё вариант"])
+    #expect(harness.coordinator.showsOriginal == false)
+
+    harness.coordinator.setReplyView(.original)
+    #expect(harness.coordinator.showsOriginal)
+    await harness.coordinator.switchOperation(to: .proofread)
+    #expect(harness.coordinator.showsOriginal == false)
+
+    harness.coordinator.setReplyView(.original)
+    await harness.press()
+    #expect(harness.coordinator.showsOriginal == false)
+
+    harness.coordinator.setReplyView(.original)
+    await harness.coordinator.anotherVariant()
+    #expect(harness.coordinator.showsOriginal == false)
+}
+
+/// The other half of «Вид», which is a *setting* and must survive exactly what the flag above
+/// does not: it is the reader's standing answer to «show me the deletions», the same way
+/// «степень» is their standing answer to «how much correcting».
+///
+/// And «оригинал» leaves it alone — `PanelReplyView.writes`' one nil — so a glance at the
+/// source comes back to «изменения» rather than to «результат». Mutation: `.original` writing
+/// `false` there fails the last assertion.
+@MainActor
+@Test func theDetailHalfOfTheViewMenuIsASettingAndTheOriginalDoesNotDisturbIt() async {
+    let settings = AppSettings(defaults: InMemoryDefaults(prefix: "reply-view"))
+    let harness = await PressHarness(reader: ScriptedReader(["Hello, world.", "Hello, world."]),
+                                     responses: ["перевод", "перевод снова"],
+                                     settings: settings)
+    #expect(settings.showsChangeDetail == false)
+
+    harness.coordinator.setReplyView(.changes)
+    #expect(settings.showsChangeDetail)
+    #expect(harness.coordinator.showsOriginal == false)
+
+    harness.coordinator.setReplyView(.original)
+    #expect(harness.coordinator.showsOriginal)
+    #expect(settings.showsChangeDetail, "«оригинал» must leave the detail choice where it was")
+
+    // …and a new press, which forgets «оригинал», keeps the setting.
+    await harness.press()
+    #expect(harness.coordinator.showsOriginal == false)
+    #expect(settings.showsChangeDetail)
+}
+
+/// «Вид» asks the model nothing. Степень and стиль beside it re-run the selection because they
+/// change what the model is told; this one chooses between texts the panel already holds, and a
+/// second wait for a view of a finished answer would be the whole cost of the feature for none
+/// of its value.
+@MainActor
+@Test func choosingAViewNeverRerunsTheSelection() async {
+    let harness = await makePressedCoordinator(responses: ["перевод"])
+    let callsBefore = harness.fake.receivedMessages.count
+    for view in PanelReplyView.allCases { harness.coordinator.setReplyView(view) }
+    #expect(harness.fake.receivedMessages.count == callsBefore)
+    #expect(harness.selectionReads == 1)
 }
 
 @MainActor

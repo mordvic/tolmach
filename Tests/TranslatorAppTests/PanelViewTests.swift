@@ -41,6 +41,43 @@ import Foundation
     #expect(PanelView.status(for: .interrupted) != nil)
 }
 
+/// …and the one settled state that is **not** quiet, since 2026-09-04: a правка reports how
+/// much it moved.
+///
+/// The three sentences are `RussianCopy.proofreadSummary`'s and are asserted there; what is
+/// pinned here is the *routing* — which combination of state, operation and set produces a row
+/// at all. Every clause below dies under a different mutation of the `guard`: dropping the
+/// operation test gives a перевод one, dropping the `let changes` gives a row with nothing to
+/// say, and moving the case back beside `.idle` takes all of them away.
+@Test func onlyAFinishedProofreadWithASetSaysHowMuchItChanged() {
+    let six = ChangeSet(changes: (0..<6).map {
+        TextChange(scope: .words, block: 0, insertedTokens: $0..<($0 + 1),
+                   removed: "было", inserted: "стало")
+    }, blocks: [], notCompared: nil)
+
+    let summary = PanelView.status(for: .finished, operation: .proofread, changes: six)
+    #expect(summary?.kind == .summary)
+    #expect(summary?.message == "Исправлено: 6 изменений")
+    // Never a retry: nothing failed, and the row is a report rather than an offer.
+    #expect(summary?.offersRetry == false)
+
+    // A перевод is never diffed against its source (story 18), so its settle stays silent even
+    // when a caller hands one over.
+    #expect(PanelView.status(for: .finished, operation: .translate, changes: six) == nil)
+    // And a правка with no set — the panel before this step, and any caller that has none.
+    #expect(PanelView.status(for: .finished, operation: .proofread) == nil)
+    // A clean run is a sentence, not a zero, and a bounded one says why rather than «0».
+    #expect(PanelView.status(for: .finished, operation: .proofread,
+                             changes: ChangeSet(changes: [], blocks: [], notCompared: nil))?
+        .message == "Изменений нет")
+    #expect(PanelView.status(for: .finished, operation: .proofread,
+                             changes: ChangeSet(changes: [], blocks: [],
+                                                notCompared: .tooLong(tokens: 71_204)))?
+        .message == "Изменения не отмечены — текст слишком длинный")
+    // The state still governs: a run that has not settled reports progress, whatever it found.
+    #expect(PanelView.status(for: .running, operation: .proofread, changes: six)?.kind == .progress)
+}
+
 // MARK: - The header line
 
 private final class PacedClient: LLMClient, @unchecked Sendable {
@@ -192,9 +229,12 @@ private func model() -> TranslationViewModel {
 @MainActor @Test func everyStatusThatIsNotProgressCarriesAGlyphAsWellAsAColour() {
     let kinds = PanelStatus.Kind.allCases
     // Five since 2026-09-02: `.formatting` joined with its own glyph, the «Оформляю…» row of
-    // the «Оформить» pass, which like `.awaitingUser` draws no spinner.
-    #expect(kinds.count == 5, "a new kind needs a glyph decision, not a bigger count here")
-    #expect(kinds.filter { $0.symbol != nil }.count == 4)
+    // the «Оформить» pass, which like `.awaitingUser` draws no spinner. Six since 2026-09-04:
+    // `.summary`, the finished правка's «Исправлено: 6 изменений», which draws no spinner
+    // either — and is the case this shape exists for, since it was added to the enum after the
+    // rule was written.
+    #expect(kinds.count == 6, "a new kind needs a glyph decision, not a bigger count here")
+    #expect(kinds.filter { $0.symbol != nil }.count == 5)
     // `.progress` is the deliberate exception: that row already draws a `ProgressView`, so a
     // glyph beside the spinner beside the word would be three ways of saying one thing.
     #expect(PanelStatus.Kind.progress.symbol == nil)
@@ -339,6 +379,35 @@ private func makeFinishedOutcome(detected: Language?) -> TranslationOutcome {
             == "Правка прервана, показана пришедшая часть")
     #expect(PanelView.announcement(for: .interrupted, operation: .translate)
             == "Перевод прерван, показана пришедшая часть")
+}
+
+/// Story 13: what the underlines say to a reader who sees them, the settle says to one who does
+/// not. The panel is the surface where this matters most — it is summoned by a shortcut, never
+/// activates the app and appears beside the pointer — so «Правка готова» alone would leave a
+/// VoiceOver user with no way at all to learn that a clean run changed nothing.
+///
+/// The count is `RussianCopy.changeSummary`, the same fragment the window's status bar prints,
+/// so the two surfaces cannot come to count differently. Mutation: dropping the `changes.map`
+/// leaves every assertion below reading «Правка готова».
+@Test func theSettleAnnouncesHowMuchAProofreadChanged() {
+    let one = ChangeSet(changes: [TextChange(scope: .words, block: 0, insertedTokens: 0..<1,
+                                             removed: "отчет", inserted: "отчёт")],
+                        blocks: [], notCompared: nil)
+    let none = ChangeSet(changes: [], blocks: [], notCompared: nil)
+
+    #expect(PanelView.announcement(for: .finished, operation: .proofread, changes: one)
+            == "Правка готова, 1 изменение")
+    #expect(PanelView.announcement(for: .finished, operation: .proofread, changes: none)
+            == "Правка готова, изменений нет")
+    // A перевод is never diffed, and a caller with no set says what it always said — the two
+    // clauses that keep every other settle byte-identical to what it announced before.
+    #expect(PanelView.announcement(for: .finished, operation: .translate, changes: one)
+            == "Перевод готов")
+    #expect(PanelView.announcement(for: .finished, operation: .proofread) == "Правка готова")
+    // An interrupted правка has no set (the model's accessor is gated on `.finished`) and its
+    // sentence must not gain one.
+    #expect(PanelView.announcement(for: .interrupted, operation: .proofread, changes: one)
+            == "Правка прервана, показана пришедшая часть")
 }
 
 // MARK: - «Заменить» — issue #27

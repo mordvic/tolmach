@@ -346,6 +346,40 @@ final class HotkeyCoordinator {
     /// Accessibility prompt, which is the other case where a press cannot proceed.
     private(set) var needsModelChoice = false
 
+    /// Whether the panel's «Вид» is on «оригинал» — the text the user selected, drawn instead
+    /// of the правка of it.
+    ///
+    /// **Per presentation, and never persisted, which is the one asymmetry inside one control.**
+    /// «результат» and «изменения» are `AppSettings.showsChangeDetail`, for the reason
+    /// «степень» and «стиль» are settings: a reader who wants the deletions shown wants them
+    /// shown next time too. «оригинал» is a glance backwards at one answer, and a panel that
+    /// opened already showing the *previous* selection's source would be showing the wrong text
+    /// outright. So it is cleared wherever the reply the reader chose it against is about to be
+    /// replaced by a different one: a new press, a switch of operation, «Ещё вариант».
+    ///
+    /// Deliberately **not** cleared by `retry()`: that re-runs the same selection under the same
+    /// settings, so the view the reader chose still describes what they are looking at.
+    /// `PanelView.shownOriginal` is what keeps the flag from being read while that run streams.
+    ///
+    /// `private(set)`: `setReplyView(_:)` and the three clears below are the only writers, the
+    /// same discipline `isStartingRun` and `needsModelChoice` keep.
+    private(set) var showsOriginal = false
+
+    /// The panel's «Вид» menu.
+    ///
+    /// **Not a re-run**, unlike степень and стиль beside it in the same row, and that is the
+    /// whole difference between this method and those two: they change what the model is asked
+    /// and must ask it again, while this chooses which of three texts the panel already holds
+    /// gets drawn. Synchronous, and it touches nothing a run reads.
+    ///
+    /// What each item writes is `PanelReplyView.writes`, so the rule that «оригинал» leaves
+    /// `showsChangeDetail` alone is a value with a test rather than a condition here.
+    func setReplyView(_ wanted: PanelReplyView) {
+        let writes = wanted.writes
+        showsOriginal = writes.showsOriginal
+        if let detail = writes.showsChangeDetail { settings.showsChangeDetail = detail }
+    }
+
     /// Read the selection, then translate it. Everything the panel shows is decided here so
     /// the view stays a readout.
     ///
@@ -467,6 +501,12 @@ final class HotkeyCoordinator {
         // for the same reason — an empty or unpermitted capture draws neither the row nor the
         // switch, so there is nothing for a stale value to be right or wrong about.
         panelModel.operation = operation
+        // «Вид» goes back to «результат» with it, and **before `afterCapture()`** for the reason
+        // the line above is: the panel is measured inside that call, and «оригинал» draws a
+        // different text of a different length. A press inheriting the previous presentation's
+        // «оригинал» would also show the *previous* selection's source under the new run's
+        // header, which is the same predictability rule the operation assignment above states.
+        showsOriginal = false
         // Refused **before** the panel is measured, because the panel is measured inside
         // `afterCapture()` and this decides which content it holds. Nothing is translated and
         // nothing already on screen is cleared: a press that cannot run must cost the previous
@@ -583,6 +623,9 @@ final class HotkeyCoordinator {
         guard case .text = selection, panelModel.state != .running,
               panelModel.operation != operation else { return }
         panelModel.operation = operation
+        // A different operation's answer is a different answer: the view the reader chose for
+        // the one they were reading does not carry over. See `showsOriginal`.
+        showsOriginal = false
         await runTranslation()
     }
 
@@ -619,6 +662,9 @@ final class HotkeyCoordinator {
     /// степень allowed wording to move — never «только ошибки» (`offersAnotherVariant`).
     func anotherVariant() async {
         guard case .text = selection, panelModel.state != .running else { return }
+        // Same rule as `switchOperation(to:)`: a second variant is a second answer, and the
+        // reader is being shown it rather than the one they had chosen a view of.
+        showsOriginal = false
         await runTranslation()
     }
 
