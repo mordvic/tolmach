@@ -33,6 +33,8 @@ swiftc -O -o /tmp/cf Scripts/content-font.swift && /tmp/cf   # every measurement
 swiftc -O -o /tmp/vm Scripts/view-menu.swift && /tmp/vm   # which menu the размер items land in, and how ⌘+ is stored
 swiftc -O -o /tmp/phf Scripts/pane-header-fit.swift && /tmp/phf   # what the перевод pane's header wants at its narrowest, per picker shape
 RENDER_PREVIEW_CHANGES=/tmp/preview swift test --filter renderChangesPreview   # draw a правка's marks at 13 and 22 pt, both views, both appearances
+RENDER_PREVIEW_CODE=/tmp/preview swift test --filter renderCodePreview   # word- vs char-wrapped code cards at 560/300 pt, both appearances
+RENDER_PREVIEW_TABLE=/tmp/preview swift test --filter renderTablePreview   # a 4-column table at 300/430/560 pt, through the panel's own measuring path
 TEXT_DIFF_COST=1 swift test --filter textDiffCost   # what TextDiff costs at the 256 KB ceiling — run on a quiet machine
 ./Scripts/change-density.sh docs/proofreading-gate   # live: where densityThreshold sits, per степень; needs the release CLI
 RENDER_PREVIEW=/tmp/preview swift test --filter renderPreview   # draw the rendered pane to light/dark PNGs and look

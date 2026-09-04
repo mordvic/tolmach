@@ -564,6 +564,34 @@ nothing in this environment can see either.
 - **`PlainBulletList` lives in `TranslationCore`, not in `MarkupKit`** as spec #72 placed it,
   because `MarkdownPresence` — which decides whether the toggle appears — is domain code and
   must read the same rule. The chunker, the skeleton and the prompts still never consult it.
+- **Code wraps by word, not by character — looked at 2026-09-04 and kept.**
+  `docs/design/specs/2026-09-04-content-presentation-design.md` §6.2 proposed `.byCharWrapping`
+  on the code card so an identifier is never split at an underscore. `renderCodePreview`
+  (`RENDER_PREVIEW_CODE=… swift test --filter renderCodePreview`) drew a shell command with
+  long flags, a JSON line and a Swift signature with underscored parameters at 560 and 300 pt,
+  word- and char-wrapped, both appearances. Word wrap already keeps an underscore- or
+  hyphen-joined run whole (`keep_alive_duration_seconds` never breaks at either width, because
+  AppKit's word-wrap unit is a run of non-whitespace); `.byCharWrapping` broke words at
+  whatever character happened to fit — `disable` into `disab`/`le-sandbox`,
+  `modelIdentifierWithNamespace` into `modelIdent`/`ifierWithNamespace` — which is worse for
+  exactly the case the proposal wanted to help, not better. `MarkdownToAttributed.codeBlock`'s
+  doc comment carries the same measurement.
+- **A table in a 300 pt panel wraps illegibly, and nothing was changed because nothing needs
+  to be — looked at 2026-09-04.** `renderTablePreview`
+  (`RENDER_PREVIEW_TABLE=… swift test --filter renderTablePreview`) drew a realistic 4-column
+  table (headers «Регион», «Итог за август», «Ответственный», «Комментарий», cells of
+  realistic length) at 300, 430 and 560 pt through the panel's own measuring path
+  (`RenderedReplyView.measuredSize`). At 300 both headers and long cells break mid-word
+  («Ответст»/«венный», «перевып»/«олнен») because a column's content is wider than the column;
+  at 430 headers still split; at 560 everything sits on its own line. But the panel does not
+  open at 300 for this table: `RenderedReplyView.measuredSize(of:width: nil)` — the same
+  natural-width measurement `PanelController.measure` uses for `fittingSize` — reports 529 pt
+  for this fixture, under the 560 ceiling, and at 529 pt the table is fully legible with no
+  mid-word breaks anywhere. The 300 pt case is reachable only by a hand-resize the user made
+  deliberately (`PanelSizer`'s «a hand-resize wins» rule), the same rare gesture the other
+  entries in this section accept the cost of. No minimum cell width was added: the rule's own
+  scope for this pass allowed only the table's cell padding to change, and padding (a few
+  points) does not fix a column narrower than a word.
 
 - **Making the text smaller while the панель is open leaves a gap under it.** The panel
   re-measures on a font change, but `PanelSizer`'s height is monotonic within a presentation —
