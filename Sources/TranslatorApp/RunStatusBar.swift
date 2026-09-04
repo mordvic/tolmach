@@ -217,9 +217,27 @@ struct RunStatusBar: View {
             }
         case .finished:
             if let outcome = model.outcome {
-                Text(summary.map { "Готово за \(Int(outcome.totalMS)) мс · \($0)" }
-                     ?? "Готово за \(Int(outcome.totalMS)) мс")
+                Text(Self.finishedLine(outcome: outcome, summary: summary))
                     .font(.caption).foregroundStyle(.secondary)
+                // The stepper, beside the count it steps through and nowhere else. Here and
+                // not in the pane's header, which at the pane's 280 pt minimum already holds a
+                // picker and two link buttons; this row is the run's own summary line and has
+                // the width (spec, «Deviations from the design»). ‹ › and not chevron glyphs,
+                // because the two glyphs beside «6 изменений» are what Apple's Proofread and
+                // Word's Next/Previous both draw. Disabled rather than hidden at zero, so the
+                // row keeps its shape between a clean run and a marked one.
+                if model.changes != nil {
+                    HStack(spacing: 2) {
+                        Button("‹") { model.stepChange(by: -1) }
+                            .accessibilityLabel("Предыдущее изменение")
+                        Button("›") { model.stepChange(by: 1) }
+                            .accessibilityLabel("Следующее изменение")
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                    .font(.caption)
+                    .disabled(!model.hasChanges)
+                }
             }
         case .interrupted:
             Text("Перевод прерван — показана та часть, что успела прийти")
@@ -261,6 +279,22 @@ struct RunStatusBar: View {
     /// `> 0` of. There is one count in the program that says how many warnings an outcome
     /// carries, and both the disclosure's visibility and its label are read from it, so they
     /// cannot drift apart the way two independently-written conditions could.
+    /// «Готово за 1812 мс · 6 изменений · 2 предупреждения» — the finished line, in one place
+    /// so a test can pin its spelling without rendering the bar.
+    ///
+    /// The change count comes **before** the warnings: it describes the text, the warnings
+    /// describe what went wrong around it, and the stepper that follows the line acts on the
+    /// former. Only a правка has a set (`outcome.changes`), so a translation's line is exactly
+    /// what it was. The `Int(totalMS)` spelling is the line's own and predates
+    /// `RussianCopy.finishedIn`; changing it here would move a string the queue's rows do not
+    /// share, for no gain.
+    static func finishedLine(outcome: TranslationOutcome, summary: String?) -> String {
+        var parts = ["Готово за \(Int(outcome.totalMS)) мс"]
+        if let changes = outcome.changes { parts.append(RussianCopy.changeSummary(changes)) }
+        if let summary { parts.append(summary) }
+        return parts.joined(separator: " · ")
+    }
+
     static func summary(outcome: TranslationOutcome?,
                         formattingNotice: FormattingNotice? = nil) -> String? {
         // No outcome, nothing to summarise. It used to answer «1 предупреждение» for a

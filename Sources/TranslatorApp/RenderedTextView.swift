@@ -37,6 +37,17 @@ struct RenderedTextView: NSViewRepresentable {
     /// as plain characters, so a block is never redrawn as something else. See
     /// `Coordinator.apply`.
     let isStreaming: Bool
+    /// A finished правка's change set, or nil. Marks are drawn only over a whole render — the
+    /// pane passes nil while a run streams, and `apply` asserts it — because the diff is taken
+    /// at the settle and a mark located in a document still arriving would move under the
+    /// reader (spec §7.9).
+    var changes: ChangeSet? = nil
+    /// «Изменения» (deletions spliced in, struck through) against «Результат» (underlines
+    /// only). Meaningless without `changes`.
+    var showsChangeDetail = false
+    /// The change the stepper is standing on, selected and flashed in the view. Not part of the
+    /// storage's mode: moving it must not rebuild the document.
+    var changeCursor: Int? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -72,7 +83,9 @@ struct RenderedTextView: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? CodeBlockTextView else { return }
         context.coordinator.apply(text: text, font: font, rendersMarkup: rendersMarkup,
-                                  isStreaming: isStreaming, to: textView)
+                                  isStreaming: isStreaming, changes: changes,
+                                  showsChangeDetail: showsChangeDetail, to: textView)
+        context.coordinator.select(change: changeCursor, in: textView)
     }
 
     /// What has already been drawn, so a streamed token costs the tail rather than the
@@ -97,13 +110,28 @@ struct RenderedTextView: NSViewRepresentable {
             let font: ContentFont
             let rendersMarkup: Bool
             let isStreaming: Bool
+            /// Both halves of the marks are in the mode, so a new change set or a flip of
+            /// «Результат | Изменения» rebuilds the storage: the «Изменения» document has
+            /// characters the «Результат» one does not, and an incremental edit between the
+            /// two would be a second diff nobody asked for.
+            let changes: ChangeSet?
+            let showsChangeDetail: Bool
         }
+        /// The change last selected through `select(change:in:)`, so a `body` re-evaluation
+        /// that passes the same cursor does not re-select and re-flash it on every token.
+        private var selectedChange: Int?
 
         func apply(text: String, font: ContentFont, rendersMarkup: Bool, isStreaming: Bool,
+                   changes: ChangeSet? = nil, showsChangeDetail: Bool = false,
                    to textView: CodeBlockTextView) {
+            // The pane's promise, checked where it would be broken: a change set is a fact about
+            // a *finished* text, and `TranslationPane` passes one only when `state == .finished`.
+            assert(changes == nil || !isStreaming,
+                   "change marks over a streaming text would be located in a moving document")
             let config = font.markdownConfig
             let wanted = Mode(font: font, rendersMarkup: rendersMarkup,
-                              isStreaming: isStreaming)
+                              isStreaming: isStreaming, changes: changes,
+                              showsChangeDetail: showsChangeDetail)
             if mode != wanted {
                 mode = wanted
                 reset(textView)
@@ -114,11 +142,16 @@ struct RenderedTextView: NSViewRepresentable {
             // line is never *settled* — nothing may follow it — so the incremental path alone
             // would leave the tail of every completed translation unrendered.
             guard rendersMarkup, isStreaming else {
-                let rendering = rendersMarkup
+                // `plainRendering` and not `plain`: the raw view needs block ranges for the marks
+                // to be located in, and it is byte-identical to `plain` otherwise.
+                var rendering = rendersMarkup
                     ? MarkdownToAttributed.rendering(of: text, config: config)
-                    : MarkdownToAttributed.Rendering(
-                        attributed: MarkdownToAttributed.plain(text, config: config),
-                        codeRegions: [])
+                    : MarkdownToAttributed.plainRendering(of: text, config: config)
+                if let changes, !isStreaming {
+                    rendering = ChangeMarks.apply(changes, to: rendering, resultMarkdown: text,
+                                                  detail: showsChangeDetail ? .changes : .result,
+                                                  config: config)
+                }
                 textView.textStorage?.setAttributedString(rendering.attributed)
                 textView.codeRegions = rendering.codeRegions
                 settledSource = ""
@@ -166,6 +199,42 @@ struct RenderedTextView: NSViewRepresentable {
             tailLength = 0
             textView.textStorage?.setAttributedString(NSAttributedString())
             textView.codeRegions = []
+            // A rebuilt storage has no selection worth keeping, and the next `select` must
+            // land on the change again rather than believing it already did.
+            selectedChange = nil
+        }
+
+        /// Put the selection on change `index` and point at it, once per change of cursor.
+        ///
+        /// The selection moves so VoiceOver reads the change in its sentence, and
+        /// `showFindIndicator(for:)` is AppKit's own way of pointing at a range — the bubble
+        /// «Найти» draws — so nothing here invents a highlight of its own. Whether that bubble
+        /// reads well over an underline is `docs/reference/OPEN-ITEMS.md`'s to answer.
+        /// `nil` clears nothing: the reader's own selection is theirs, and the cursor going
+        /// away (a new run) comes with a `reset` anyway.
+        func select(change index: Int?, in textView: CodeBlockTextView) {
+            guard index != selectedChange else { return }
+            selectedChange = index
+            guard let index, let range = Self.range(ofChange: index, in: textView) else { return }
+            textView.setSelectedRange(range)
+            textView.scrollRangeToVisible(range)
+            textView.showFindIndicator(for: range)
+        }
+
+        /// Where change `index` was drawn — the storage is the record, read back through
+        /// `ChangeMarks.changeKey`, so this cannot disagree with what is on screen. Nil for a
+        /// change the locator left unmarked (spec §«Step 2», «nothing is guessed»).
+        static func range(ofChange index: Int, in textView: NSTextView) -> NSRange? {
+            guard let storage = textView.textStorage, storage.length > 0 else { return nil }
+            var found: NSRange?
+            storage.enumerateAttribute(ChangeMarks.changeKey,
+                                       in: NSRange(location: 0, length: storage.length),
+                                       options: []) { value, range, stop in
+                guard let value = value as? Int, value == index else { return }
+                found = range
+                stop.pointee = true
+            }
+            return found
         }
     }
 }
