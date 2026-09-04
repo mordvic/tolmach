@@ -658,6 +658,87 @@ public struct Translator: Sendable {
                                  totalMS: Date().timeIntervalSince(started) * 1000)
     }
 
+    /// A fourth route, in `format`'s shape: one call, the whole reply buffered — **never**
+    /// streamed to a consumer, because a partial explanation is not a smaller true one, it is a
+    /// sentence about a change the reader has not been told about yet — cleaned the way every
+    /// other route's reply is, then judged whole by `ExplanationGate`. No chunking: the material
+    /// sent is the change list, not the document, and `ExplanationGate.skipReason` refuses a
+    /// list too large for one request instead of splitting it, because a change explained by
+    /// half of one call and half of another could ask the model to reconcile numbering across
+    /// two replies with nothing tying them together.
+    ///
+    /// This is the offline half of the route: the prompt, the gate and the plumbing exist and
+    /// are tested against `FakeLLMClient`; whether a real model's replies actually hold under
+    /// `ExplanationGate` — the gate's acceptance rate and, past that, whether an accepted
+    /// sentence is *true* of its change — is `Scripts/explanation-quality.sh`'s job, not this
+    /// function's, and is still owed (see `docs/reference/MEASUREMENTS.md`).
+    ///
+    /// - Parameters:
+    ///   - source: the правка's own source text, the same one `TextDiff.changes(source:result:)`
+    ///     was given. Used only as a fallback for `context` below — every change this route is
+    ///     ever asked about already carries its own `removed`/`inserted` text, so `source` is
+    ///     never needed for *that*.
+    ///   - result: the assembled правка reply (`TranslationOutcome.final`) `changes` was
+    ///     computed against. The primary source of `context`.
+    ///   - changes: the same `ChangeSet` `TranslationOutcome.changes` carries. Explanations
+    ///     travel beside it, never inside it — `TranslationOutcome` gains no field for this.
+    ///   - language: the text's own language (`TranslationOutcome.detectedSource`), named to the
+    ///     model the same way правка's own prompt names it — this route explains a correction,
+    ///     it does not perform one, but a model left to guess the language of a one-line
+    ///     "before"/"after" pair has less to go on than правка's own prompt does.
+    public func explain(source: String, result: String, changes: ChangeSet, language: Language?,
+                        options: ChatOptions) async throws -> ExplanationOutcome {
+        try Task.checkCancellation()
+
+        // `context` is the containing block's plain projection — the same projection the diff
+        // itself compared (`MarkdownPlainText.plain(_:in:)`), read from `result` because that is
+        // where `TextChange.block` indexes and where правка's own marks are drawn
+        // (`docs/adr/0012`: "in «Результат» the storage is byte-identical to the clean
+        // rendering"). `source` is a fallback only, for a change anchored past the result's own
+        // block list (a removal at the very end) — the same index is not guaranteed to be that
+        // change's real counterpart once the two texts have different block counts, but it is a
+        // better guess than none, and a duller sentence is the whole cost of being wrong here —
+        // unlike a mark, nothing about an explanation is drawn on trust (`ExplanationOutcome`'s
+        // doc comment is the reason a *wrong* one is refused wholesale instead).
+        let resultBlocks = MarkdownBlockScanner.blocks(of: result)
+        let sourceBlocks = MarkdownBlockScanner.blocks(of: source)
+        func context(for change: TextChange) -> String {
+            if change.block < resultBlocks.count {
+                let text = MarkdownPlainText.plain(resultBlocks[change.block], in: result)
+                if !text.isEmpty { return text }
+            }
+            if change.block < sourceBlocks.count {
+                return MarkdownPlainText.plain(sourceBlocks[change.block], in: source)
+            }
+            return ""
+        }
+
+        let items = changes.changes.enumerated().map { offset, change in
+            PromptBuilder.ExplanationItem(index: offset + 1, context: context(for: change),
+                                          before: change.removed, after: change.inserted)
+        }
+        let materialCharacters = items.reduce(0) { $0 + $1.context.count + $1.before.count + $1.after.count }
+        if let reason = ExplanationGate.skipReason(changeCount: items.count,
+                                                   materialCharacters: materialCharacters) {
+            return .skipped(reason)
+        }
+
+        var buffer = ""
+        for try await event in client.chat(messages: PromptBuilder.explainMessages(language: language, items: items),
+                                           options: options) {
+            if case .token(let token) = event { buffer += token }
+        }
+        // Same rule as every other route: the stream *finishes*, silently, on cancellation —
+        // without this check a cancelled call's partial buffer would be cleaned, parsed and
+        // possibly accepted as a finished explanation.
+        try Task.checkCancellation()
+        let cleaned = ResponseCleaner.clean(buffer).text
+        switch ExplanationGate.parse(cleaned, changeCount: items.count) {
+        case .success(let accepted): return .accepted(accepted)
+        case .failure(let reason): return .rejected(reason)
+        }
+    }
+
     // Streams one chunk's translation call, delivering content to `onToken` as
     // early as it safely can instead of only after the whole chunk finishes.
     //
