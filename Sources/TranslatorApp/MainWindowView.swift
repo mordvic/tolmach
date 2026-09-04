@@ -286,7 +286,15 @@ struct MainWindowView: View {
                                 // wear the text model's marks.
                                 changes: mode == .text ? model.changes : nil,
                                 showsChangeDetail: $settings.showsChangeDetail,
-                                changeCursor: mode == .text ? model.changeCursor : nil)
+                                changeCursor: mode == .text ? model.changeCursor : nil,
+                                // «Файлы» never has changes (`model.changes` above is already
+                                // nil there), so these three read the text model unconditionally
+                                // — the same reasoning `onCopy` already applies two lines up.
+                                onChangeSelected: { model.selectChange($0) },
+                                canRevertChange: { model.canRevertChange(at: $0) },
+                                onRevertChange: { index, undoManager in
+                                    model.revertChange(at: index, undoManager: undoManager)
+                                })
             }
             Divider()
             RunStatusBar(model: model, status: status, engineName: engineName,

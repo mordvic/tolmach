@@ -384,3 +384,143 @@ private func fixture(source: String, result: String, detail: ChangeMarks.Detail 
                                    resultMarkdown: text, detail: .changes, config: config)
     #expect(marked.attributed.isEqual(to: clean.attributed))
 }
+
+// MARK: - «Вернуть»: revertEdit
+
+/// Apply a `RevertEdit` to `text` the way `TranslationViewModel.revertChange` does — an
+/// `NSString` replacement, never an attributed one, because `revertEdit` names a range in the
+/// raw result and nothing about the storage it might once have been drawn into.
+private func reverted(_ edit: ChangeMarks.RevertEdit, in text: String) -> String {
+    (text as NSString).replacingCharacters(in: edit.range, with: edit.replacement)
+}
+
+@Test func revertingAWordLevelSubstitutionRestoresExactlyTheSourceWord() {
+    let source = "Отчет за август готов."
+    let result = "Отчёт за август готов."
+    let set = TextDiff.changes(source: source, result: result)
+    #expect(set.changes.count == 1)
+    guard let edit = ChangeMarks.revertEdit(for: set.changes[0], in: result) else {
+        Issue.record("expected a locatable edit")
+        return
+    }
+    #expect(reverted(edit, in: result) == source)
+}
+
+// A pure removal and a pure insertion both refuse, and it is a real defect they were caught
+// pinning rather than an assumption: reverting either one by insertion/deletion alone was
+// tried here first and both came back with the wrong whitespace — «Смотрите, пожалуйста,
+// повнимательнее.» became «Смотрите , пожалуйста, повнимательнее.» and «Готово.» became
+// «Готово .». Neither `removed` nor `inserted` carries the separator a token boundary ate, so
+// there is nothing to restore it from without guessing — `revertEdit`'s own doc comment carries
+// the reasoning, these two tests pin the refusal it settled on.
+
+@Test func revertEditRefusesAPureRemovalRatherThanGuessTheSeparator() {
+    let source = "Смотрите, пожалуйста, повнимательнее."
+    let result = "Смотрите повнимательнее."
+    let set = TextDiff.changes(source: source, result: result)
+    #expect(set.changes.count == 1)
+    #expect(set.changes[0].inserted.isEmpty)
+    #expect(ChangeMarks.revertEdit(for: set.changes[0], in: result) == nil)
+}
+
+@Test func revertEditRefusesAPureInsertionRatherThanLeaveAnOrphanedSpace() {
+    let source = "Готово."
+    let result = "Готово уже."
+    let set = TextDiff.changes(source: source, result: result)
+    #expect(set.changes.count == 1)
+    #expect(set.changes[0].removed.isEmpty)
+    #expect(ChangeMarks.revertEdit(for: set.changes[0], in: result) == nil)
+}
+
+@Test func revertingABlockScopeChangeRestoresTheWholeParagraphNotJustAWord() {
+    let source = "Абзац с несколькими словами, который модель полностью переписала целиком."
+    let result = "Совершенно другой абзац, переписанный моделью с нуля от начала и до конца."
+    let set = TextDiff.changes(source: source, result: result)
+    #expect(set.changes.count == 1)
+    #expect(set.changes[0].scope == .block)
+    guard let edit = ChangeMarks.revertEdit(for: set.changes[0], in: result) else {
+        Issue.record("expected a locatable edit")
+        return
+    }
+    #expect(reverted(edit, in: result) == source)
+}
+
+@Test func revertEditRefusesABlockRemovedMidDocument() {
+    // A pure removal at block scope — nothing in the result stands where the paragraph did,
+    // the same shape and the same reason a word-level pure removal refuses.
+    let source = """
+    Первый абзац.
+
+    Средний абзац, который исчез из результата.
+
+    Последний абзац.
+    """
+    let result = """
+    Первый абзац.
+
+    Последний абзац.
+    """
+    let set = TextDiff.changes(source: source, result: result)
+    let removal = set.changes.first { $0.scope == .block && $0.insertedTokens.isEmpty }
+    guard let removal else { Issue.record("expected a removed-block change"); return }
+    #expect(ChangeMarks.revertEdit(for: removal, in: result) == nil)
+}
+
+@Test func revertEditRefusesABlockRemovedFromTheEnd() {
+    let source = """
+    Первый абзац.
+
+    Последний абзац, который пропадёт из результата.
+    """
+    let result = "Первый абзац."
+    let set = TextDiff.changes(source: source, result: result)
+    #expect(set.changes.count == 1)
+    #expect(ChangeMarks.revertEdit(for: set.changes[0], in: result) == nil)
+}
+
+@Test func revertEditIsNilForAChangeTheAlignerCannotLocate() {
+    // A change whose block index and token range describe a result this text does not carry
+    // at all: the aligner cannot walk it onto anything, and «Вернуть» must refuse rather than
+    // guess an offset.
+    let bogus = TextChange(scope: .words, block: 4, insertedTokens: 0..<1,
+                           removed: "было", inserted: "стало")
+    #expect(ChangeMarks.revertEdit(for: bogus, in: "Единственный короткий абзац.") == nil)
+}
+
+@Test func revertEditIsNilForAChangeInsideACodeBlock() {
+    // Step 1's own guarantee (`isDiffable`) means `TextDiff` never produces this change, but
+    // the locator refuses it independently rather than trusting the caller — the same
+    // discipline `apply`'s `assertionFailure` pins from the drawing side.
+    let result = """
+    Текст перед кодом.
+
+    ```swift
+    let x = 1
+    ```
+    """
+    let change = TextChange(scope: .words, block: 1, insertedTokens: 0..<1,
+                            removed: "x", inserted: "y")
+    #expect(ChangeMarks.revertEdit(for: change, in: result) == nil)
+}
+
+@Test func aSecondRevertOnTheAlreadyEditedTextFindsTheNextChangeCorrectly() {
+    // The rule the view model relies on: revert edits the text, then a fresh `TextDiff` run
+    // against the edited text is what the next revert locates against — never a second
+    // `revertEdit` call against the original result with stale offsets.
+    let source = "Первый абзац неверен. Второй абзац тоже неверен."
+    let result = "Первый абзац исправлен. Второй абзац тоже исправлен."
+    var set = TextDiff.changes(source: source, result: result)
+    #expect(set.changes.count == 2)
+    guard let firstEdit = ChangeMarks.revertEdit(for: set.changes[0], in: result) else {
+        Issue.record("expected a locatable edit")
+        return
+    }
+    let afterFirst = reverted(firstEdit, in: result)
+    set = TextDiff.changes(source: source, result: afterFirst)
+    #expect(set.changes.count == 1)
+    guard let secondEdit = ChangeMarks.revertEdit(for: set.changes[0], in: afterFirst) else {
+        Issue.record("expected a locatable edit")
+        return
+    }
+    #expect(reverted(secondEdit, in: afterFirst) == source)
+}

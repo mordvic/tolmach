@@ -190,9 +190,9 @@ public enum ChangeMarks {
                 guard detail == .changes, !change.removed.isEmpty,
                       let anchor = anchor(for: change, in: alignment,
                                           blockRange: blockRange) else { continue }
-                splice(padded(change.removed, at: anchor, in: storage), at: anchor,
-                       into: storage, codeRegions: &codeRegions, blockRanges: &blockRanges,
-                       config: config)
+                splice(padded(change.removed, at: anchor, in: storage.string as NSString),
+                       at: anchor, into: storage, codeRegions: &codeRegions,
+                       blockRanges: &blockRanges, config: config)
                 continue
             }
 
@@ -209,7 +209,8 @@ public enum ChangeMarks {
                                 codeRegions: &codeRegions, blockRanges: &blockRanges,
                                 config: config)
             } else {
-                splice(padded(change.removed, at: marked.location, in: storage),
+                splice(padded(change.removed, at: marked.location,
+                              in: storage.string as NSString),
                        at: marked.location, into: storage, codeRegions: &codeRegions,
                        blockRanges: &blockRanges, config: config)
             }
@@ -217,6 +218,63 @@ public enum ChangeMarks {
 
         return MarkdownToAttributed.Rendering(attributed: storage, codeRegions: codeRegions,
                                               blockRanges: blockRanges)
+    }
+
+    // MARK: - «Вернуть»: locating one change's edit in the raw result
+
+    /// What restoring `change`'s source text would do to `resultMarkdown` — a range to
+    /// replace and the text to put there. Nil when the change cannot be located, which is
+    /// when the caller must disable «Вернуть» rather than guess (issue #89).
+    ///
+    /// **Only a genuine substitution — something removed *and* something inserted — has a
+    /// revert with nothing to guess.** Tried and measured, in
+    /// `ChangeMarksTests.swift` under «Вернуть»: a pure removal (nothing in `resultMarkdown`
+    /// stands where the source words did) and a pure insertion (deleting the inserted span
+    /// alone) both leave the wrong whitespace behind — «Смотрите, пожалуйста, повнимательнее.»
+    /// came back «Смотрите , пожалуйста, повнимательнее.» and «Готово.» came back «Готово .».
+    /// The reason is structural, not a bug to fix with more padding: a token boundary is
+    /// whitespace (`TextTokenizer`'s own rule), so neither `removed` nor `inserted` carries
+    /// the separator that stood, or now stands, beside it, and `apply`'s `padded`/
+    /// `spliceParagraph` only ever have to look *approximate* for the «Изменения» display —
+    /// they splice the removed word in *beside* the reply that is still there, never in place
+    /// of the only anchor a pure removal or a removed block has. A block with no counterpart
+    /// (`TextChange.block == blocks.count`, or `scope == .block` with `insertedTokens` empty)
+    /// is a pure removal at block scope for the same reason and refuses for it too. Reverting
+    /// those shapes is therefore refused rather than guessed, matching the spec's own escape
+    /// hatch — the popover disables «Вернуть» exactly where this returns nil.
+    ///
+    /// **A located substitution needs no padding at all.** The same token alignment `apply`
+    /// locates a mark with, run directly against the raw Markdown instead of a rendering's
+    /// storage — `MarkdownToAttributed.plainRendering(of:config:)`'s `blockRanges` are exactly
+    /// a block's own source span and its `attributed.string` is `resultMarkdown` verbatim, so
+    /// `align` needs no second implementation. The located range's neighbours are the same
+    /// unchanged words on both documents, so replacing it outright with `change.removed`
+    /// reproduces the source's own spacing by construction — proven by the tests beside this
+    /// one that do pass.
+    public struct RevertEdit: Equatable {
+        /// Where to replace in `resultMarkdown` — always the located substitution's own span,
+        /// never zero-length: an insertion with nothing to replace is one of the refused
+        /// shapes above.
+        public let range: NSRange
+        /// What to put there — `change.removed`, verbatim.
+        public let replacement: String
+    }
+
+    public static func revertEdit(for change: TextChange, in resultMarkdown: String) -> RevertEdit? {
+        guard !change.removed.isEmpty, !change.inserted.isEmpty else { return nil }
+        let blocks = MarkdownBlockScanner.blocks(of: resultMarkdown)
+        let blockRanges = MarkdownToAttributed.plainRendering(of: resultMarkdown,
+                                                               config: .default).blockRanges
+        guard blockRanges.count == blocks.count, change.block < blocks.count,
+              !isCode(blocks[change.block]) else { return nil }
+        let blockRange = blockRanges[change.block]
+        let rendered = resultMarkdown as NSString
+        guard let alignment = align(block: blocks[change.block], range: blockRange,
+                                    rendered: rendered, markdown: resultMarkdown),
+              let located = located(change, in: alignment, blockRange: blockRange) else {
+            return nil
+        }
+        return RevertEdit(range: located, replacement: change.removed)
     }
 
     // MARK: - Locating a change in the storage
@@ -332,8 +390,7 @@ public enum ChangeMarks {
     /// when the character after is alphanumeric, which is what «уже» needs before «готов» and
     /// what it must not get before «.».
     private static func padded(_ removed: String, at location: Int,
-                               in storage: NSAttributedString) -> String {
-        let string = storage.string as NSString
+                               in string: NSString) -> String {
         var text = removed
         if location > 0, !isMember(.whitespacesAndNewlines, string.character(at: location - 1)) {
             text = " " + text
@@ -385,15 +442,28 @@ public enum ChangeMarks {
                                         codeRegions: inout [MarkdownToAttributed.CodeRegion],
                                         blockRanges: inout [NSRange],
                                         config: MarkdownFontConfig) {
+        let text = paragraphInsertionText(removed, at: location,
+                                          in: storage.string as NSString)
+        splice(text, at: location, into: storage, codeRegions: &codeRegions,
+               blockRanges: &blockRanges, config: config)
+    }
+
+    /// The decision half of `spliceParagraph`, over a plain `NSString` rather than the storage
+    /// it is about to be spliced into — so «Вернуть» can compute the identical insertion text
+    /// against the raw Markdown result with nothing to splice into yet.
+    ///
+    /// A leading terminator when the character before it is not one, because a rendering's
+    /// blocks each end in their own `"\n"` but the raw Markdown of «Исходник» need not.
+    private static func paragraphInsertionText(_ removed: String, at location: Int,
+                                               in string: NSString) -> String {
         var text = removed + "\n"
         if location > 0 {
-            let before = (storage.string as NSString).character(at: location - 1)
+            let before = string.character(at: location - 1)
             // 0x0A and 0x0D, the two line terminators a rendering or a raw document can end a
             // block with — `LineScanner`'s reading, in the one form an NSString offers.
             if before != 0x0A, before != 0x0D { text = "\n" + text }
         }
-        splice(text, at: location, into: storage, codeRegions: &codeRegions,
-               blockRanges: &blockRanges, config: config)
+        return text
     }
 
     /// Insert characters and move everything that was at or after them.

@@ -299,6 +299,18 @@ Facts that will bite you if you "tidy" them:
   already books, so the settle does not grow the panel for it. That row and the third menu are
   why `PanelSizer.dragMinHeight` is **179**, re-measured 2026-09-04. See
   `docs/design/specs/2026-09-04-change-marks-spec.md` and issue #81.
+  **A click on a mark opens «было → стало», since 2026-09-04 (issue #89), in both surfaces —
+  `CodeBlockTextView` detects a click (not a drag: a post-`mouseDown` zero-length
+  `selectedRange()` is the discriminator) and shows an `NSPopover` anchored to the change's own
+  glyph rect, closing it itself on a scroll because `.transient` was measured not to
+  (`Scripts/popover-anchor.swift`, `docs/reference/PLATFORM-TRAPS.md`). «Вернуть» replaces the
+  change's inserted text with its removed text in `translatedText` and re-derives the whole set
+  with `TextDiff.changes(source:result:)` — never patched by hand — pushing the edit onto the
+  text view's own `undoManager`. It is offered only for a genuine substitution: `ChangeMarks.
+  revertEdit` refuses a pure removal or insertion rather than guess the whitespace neither
+  `removed` nor `inserted` carries, measured by two reverts that came back byte-wrong before
+  the refusal shipped (`ChangeMarksTests`), and the popover disables the button on that same
+  answer (`TranslationViewModel.canRevertChange`).
 - **Explanations per change are a fourth route, `Translator.explain`, in `format`'s shape — one
   buffered call, judged whole, never streamed — and it is gated, off, and CLI-only until
   measured.** The правка design named change explanations «the designated first fast-follow»

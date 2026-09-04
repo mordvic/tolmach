@@ -406,6 +406,51 @@ the last control and the trailing button, reading as a control itself.
 `NSPanel` answers `canBecomeKey` true with *and* without the style bit — the bit is what lets
 the panel take key without activating the app. → `Sources/TranslatorApp/TranslationPanel.swift`
 
+**An `NSPopover` anchored to `boundingRect(forGlyphRange:in:)` lands on the glyphs, but tracks
+nothing after that — measured, `Scripts/popover-anchor.swift`, issue #89's gate.** Three
+findings, none assumed:
+
+1. **The anchor is exact.** Shown against a marked word's glyph rect inside an `NSScrollView`,
+   the popover's own window sits edge-to-edge with the anchor rect converted to screen
+   coordinates, horizontally aligned to the word's own span rather than the whole line.
+2. **It does not survive the anchor scrolling, and `.transient` does not save it.** Scrolling
+   the text view programmatically left the popover's window at its original screen frame
+   (`frame moved = false`) — it does not reposition, so it visually detaches from the word it
+   points at. A **real, posted `scrollWheel` `CGEvent`** dispatched through
+   `NSApplication.sendEvent(_:)` left a `.transient` popover shown (`isShown` still `true`)
+   afterward too — so the behaviour's documented "closes on interaction outside" does not
+   extend to a scroll gesture, on either engineering path tried. The app has to close it itself.
+3. **It survives the hosting view's `rootView` being reassigned — as long as the
+   `NSViewRepresentable` keeps the same position in the view tree**, which is what SwiftUI's
+   structural identity is for: a fresh `AnyView` wrapping the same representable type, built
+   from the same builder, kept the *same* underlying `NSTextView` instance and the popover
+   stayed shown and pointed at it, true for both `.transient` and `.semitransient`. This is
+   `PanelController.measure`'s steady state (`rootView` reassigned on every fit while
+   `rendersFinalReply` stays true); a full branch change — a new run, or `rendersFinalReply`
+   flipping back to false — tears the representable's position down and already hides the
+   panel through `show(at:)`'s own reset, so nothing extra was needed for that case.
+
+`CodeBlockTextView` (`Sources/TranslatorApp/RenderedTextView.swift`) therefore closes its own
+popover on an `NSView.boundsDidChangeNotification` from `enclosingScrollView?.contentView`,
+rather than lean on `.transient` for the one case it was measured not to cover.
+
+**`NSTextView.characterIndex(for:)` answered `storage.length` for every point tried, on a
+scratch view with no window and on one inside a real, ordered-front `NSWindow` alike** —
+measured while building the click handler above: `layoutManager.characterIndex(for:in:
+fractionOfDistanceBetweenInsertionPoints:)`, called directly against the same layout manager
+and text container, answered correctly (0, 1, 3, 4, 6, 8 walking across one five-letter word)
+in both. `changeIndex(at:)` calls the layout manager directly rather than the convenience
+method, subtracting `textContainerOrigin` itself — the one step `characterIndex(for:)` is
+documented to perform before it would have reached the same call.
+→ `Sources/TranslatorApp/RenderedTextView.swift`, `Tests/TranslatorAppTests/ChangeClickTests.swift`
+
+**`NSPopover.show(relativeTo:of:preferredEdge:)` throws for a positioning view with no
+window** (`NSInvalidArgumentException`, "view has no window") rather than failing quietly —
+reachable from a test that drives a click handler directly against a scratch view, which a
+real click never can (nothing is clickable before it is on screen). The handler guards on
+`window != nil` before showing.
+→ `Sources/TranslatorApp/RenderedTextView.swift`
+
 ---
 
 ## Preferences

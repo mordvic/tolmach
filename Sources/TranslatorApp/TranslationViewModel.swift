@@ -2,6 +2,7 @@
 import Foundation
 import Observation
 import AppKit
+import MarkupKit
 import OllamaKit
 import TranslationCore
 import TextCapture
@@ -79,6 +80,17 @@ final class TranslationViewModel {
     /// dropped at every site that drops or replaces `outcome` — a cursor that outlived its
     /// change set would point into the next run's list.
     private(set) var changeCursor: Int?
+    /// «Вернуть»'s override of `outcome.changes`, once at least one change has been reverted
+    /// in this run — nil until then. `outcome` stays exactly what the run produced (issue #89:
+    /// «keep `outcome` itself immutable»), because `WarningsView` and everything else that
+    /// reads a правка's own numbers must still describe what the model actually returned; only
+    /// `changes` — the one property anything draws marks or counts a stepper from — prefers
+    /// this when it is set. Recomputed whole by `TextDiff.changes(source:result:)` on every
+    /// revert, never patched: a hand-patched set is exactly the «guessed» shape issue #89 asks
+    /// this feature not to be. Dropped at every site that drops `outcome` — the same pairing
+    /// `changeCursor` already keeps, because a stale override describing a text this model no
+    /// longer shows is worse than none.
+    private(set) var revertedChanges: ChangeSet?
     /// The target the last run actually resolved — the override if there was one, the
     /// settings rule otherwise. `TranslationOutcome` carries no target, and
     /// `GlossaryEntry.translations` is keyed by language, so without this the warnings
@@ -233,6 +245,10 @@ final class TranslationViewModel {
         sourceText = other.sourceText
         translatedText = other.translatedText
         outcome = other.outcome
+        // The panel's own «Вернуть» edits travel with it — `other.translatedText` above is
+        // already the edited result, and without this the window would show that text next
+        // to `other.outcome.changes`, which still names the change the panel just reverted.
+        revertedChanges = other.revertedChanges
         // Nil and not `other.changeCursor`: the panel has no stepper, so its cursor is
         // always nil anyway, and a window adopting a правка starts reading it from the top.
         changeCursor = nil
@@ -333,6 +349,7 @@ final class TranslationViewModel {
         // outcome that outlives its text renders the previous run's markup diffs and
         // glossary checks under whatever is on screen now.
         outcome = nil
+        revertedChanges = nil
         changeCursor = nil
         resolvedTarget = nil
         resolvedOperation = nil
@@ -373,9 +390,12 @@ final class TranslationViewModel {
     /// run's first token, but an *interrupted* правка never assigns one, so the previous
     /// finished set could outlive its text; `state == .finished` is what says the set
     /// describes the text in the pane.
+    /// `revertedChanges` once «Вернуть» has touched this run, `outcome.changes` otherwise —
+    /// the one property the marks, the stepper and the count all read, so a reverted change
+    /// disappears from every one of them together rather than only from the text.
     var changes: ChangeSet? {
         guard state == .finished else { return nil }
-        return outcome?.changes
+        return revertedChanges ?? outcome?.changes
     }
 
     /// Whether the stepper and the menu items have anything to step through.
@@ -394,6 +414,70 @@ final class TranslationViewModel {
             return
         }
         changeCursor = ((current + delta) % count + count) % count
+    }
+
+    /// Move the stepper straight to change `index` — a click on its mark, rather than a step
+    /// from wherever it stood. `RenderedTextView`'s and `RenderedReplyView`'s click callback is
+    /// the only caller; it is a plain assignment and not `stepChange` because a click names an
+    /// absolute change, not a direction.
+    func selectChange(_ index: Int) {
+        guard let count = changes?.count, index >= 0, index < count else { return }
+        changeCursor = index
+    }
+
+    /// Whether «Вернуть» would succeed for change `index`, asked without touching anything —
+    /// the popover's own gate, so a change the aligner cannot place disables the button rather
+    /// than letting a press fail silently. The same locator `revertChange` itself calls.
+    func canRevertChange(at index: Int) -> Bool {
+        guard let changeSet = changes, index >= 0, index < changeSet.changes.count else {
+            return false
+        }
+        return ChangeMarks.revertEdit(for: changeSet.changes[index], in: translatedText) != nil
+    }
+
+    /// «Вернуть»: replace change `index`'s inserted text with its removed text in
+    /// `translatedText`, then re-derive the change set against the edited result —
+    /// `TextDiff.changes(source:result:)`, never a hand-patched copy of the old one (issue
+    /// #89's own rule, restated in `ChangeMarks.revertEdit`'s doc comment). Returns false, with
+    /// nothing changed, when the aligner cannot locate the change — a pure removal or
+    /// insertion, or a block with no counterpart, none of which has a revert that does not
+    /// guess a separator (`ChangeMarks.revertEdit`'s doc comment carries the measurement); the
+    /// popover disables its button on that same answer rather than calling this to find out.
+    ///
+    /// `undoManager` is the text view's own, threaded in by the caller rather than held here:
+    /// this model knows nothing about a window or a view, and `docs/design/specs/…-change-
+    /// marks-spec.md`'s rule is that the undo story belongs to the app layer, not to this
+    /// class. Passing nil (a caller with no text view, or a test) skips registration and
+    /// nothing else — the edit itself is unconditional.
+    @discardableResult
+    func revertChange(at index: Int, undoManager: UndoManager? = nil) -> Bool {
+        guard let changeSet = changes, index >= 0, index < changeSet.changes.count else {
+            return false
+        }
+        guard let edit = ChangeMarks.revertEdit(for: changeSet.changes[index],
+                                                in: translatedText) else { return false }
+        let string = translatedText as NSString
+        guard edit.range.location >= 0, NSMaxRange(edit.range) <= string.length else {
+            return false
+        }
+        let before = translatedText
+        let after = string.replacingCharacters(in: edit.range, with: edit.replacement)
+        applyRevertedText(after, undoingTo: before, undoManager: undoManager)
+        return true
+    }
+
+    /// The one place `translatedText` and `revertedChanges` move together for «Вернуть», in
+    /// either direction — an undo of a revert is just this called with the two texts swapped,
+    /// which is what keeps a redo from re-deriving a *third*, possibly different change set
+    /// instead of the one the user is undoing back to.
+    private func applyRevertedText(_ text: String, undoingTo previous: String,
+                                   undoManager: UndoManager?) {
+        translatedText = text
+        revertedChanges = TextDiff.changes(source: sourceText, result: text)
+        changeCursor = nil
+        undoManager?.registerUndo(withTarget: self) { model in
+            model.applyRevertedText(previous, undoingTo: text, undoManager: undoManager)
+        }
     }
 
     /// The availability rule for the style controls, resolved the way the next run would
@@ -530,6 +614,7 @@ final class TranslationViewModel {
             resolvedProofreadingLevel = nil
             resolvedRewriteStyle = nil
             outcome = result
+            revertedChanges = nil
             changeCursor = nil
             // The one place the engine's swallowed document-glossary failure is recorded. The
             // user is deliberately not told — it is a diagnostic about an enhancement, not a
@@ -593,6 +678,9 @@ final class TranslationViewModel {
             resolvedProofreadingLevel = level
             resolvedRewriteStyle = style
             outcome = result
+            // A fresh правка's own set, not the previous one's edits — «Вернуть» describes a
+            // result this run did not produce.
+            revertedChanges = nil
             // A new change set, no change standing on it yet: the stepper starts from the
             // top of the new list rather than from wherever the previous one was left.
             changeCursor = nil
@@ -660,6 +748,7 @@ final class TranslationViewModel {
                     // and Task 9 renders warnings from it, so it would describe a document
                     // that is no longer on screen.
                     self.outcome = nil
+                    self.revertedChanges = nil
                     self.changeCursor = nil
                     self.clearedPrevious = true
                     self.translatedText += pending

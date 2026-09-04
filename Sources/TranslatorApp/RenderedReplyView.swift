@@ -58,6 +58,13 @@ struct RenderedReplyView: NSViewRepresentable {
     /// would underline whatever words happened to sit at those offsets. The reader wanting to
     /// see the original is asking what it said before, not where it will be corrected.
     var original: String?
+    /// A click on a change's mark — moves the model's cursor there. Same shape as
+    /// `RenderedTextView`'s own, and for the same reason: neither view holds a model reference.
+    var onChangeSelected: (Int) -> Void = { _ in }
+    /// Whether «Вернуть» would do anything for a change, asked before the popover draws it.
+    var canRevertChange: (Int) -> Bool = { _ in false }
+    /// «Вернуть» was pressed for a change.
+    var onRevertChange: (Int, UndoManager?) -> Void = { _, _ in }
 
     /// Nothing, and that is not the pane's answer.
     ///
@@ -112,6 +119,14 @@ struct RenderedReplyView: NSViewRepresentable {
         // same content several times per fit.
         textView.textStorage?.setAttributedString(rendering.attributed)
         textView.codeRegions = rendering.codeRegions
+        // `marks` and not `changes`: while «Вид» shows «оригинал» the storage carries no marks
+        // at all (`marks`'s own doc comment), so a popover reading `changes` here would offer
+        // «Вернуть» over text that has nothing underlined to click.
+        textView.changeSet = marks
+        textView.contentFont = font
+        textView.onChangeSelected = onChangeSelected
+        textView.canRevertChange = canRevertChange
+        textView.onRevertChange = onRevertChange
     }
 
     /// What the detached measuring host is answered with, and therefore what the panel's height
