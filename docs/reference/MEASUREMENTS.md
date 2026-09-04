@@ -145,27 +145,22 @@ measurement protocol.
 | **Item 7 — the mark is dotted everywhere and the light tint is the accent blended 35 % toward black.** `Scripts/accent-contrast.swift`: bare accent vs the white pane — синий 3.52:1, фиолетовый 4.17, розовый 3.65, красный 3.57, графит 3.26 pass the 3:1 non-text floor; **оранжевый 2.31, зелёный 2.22, жёлтый 1.51 fail**; vs the 0.12 dark pane all eight pass (worst фиолетовый 4.59). Blending toward black: 0.30 is the first fraction that clears 3:1 for all eight (жёлтый 3.08), 0.35 gives 3.53. `linkColor` against `systemBlue`: **1.49:1 light, 1.14:1 dark** — a solid accent underline is the link's underline, hence the dots. Thickness was looked at, not computed: `renderChangesPreview` at 13 and 22 pt, `.single` below 17 and `.thick` from 17 kept | `ChangeMarks.markColour`, `ChangeMarks.pattern`, `ChangeMarks.thickFromSize`, `Tests/MarkupKitTests/ChangeMarksColourTests.swift`, `Tests/TranslatorAppTests/RenderPreview.swift` |
 | **Item 6 is not taken** — the find indicator and the popover anchor gate phase 2, which is not started | — |
 
-## Owed — explanations per change (issue #81 phase 3)
+## Durable — explanations per change (issue #81 phase 3; first half taken 2026-09-04)
 
-Not yet taken. `Translator.explain`, `ExplanationGate` and `translate-cli --proofread --explain`
-are built and tested offline against `FakeLLMClient` only — the live half of this feature, per
-`docs/design/specs/2026-08-10-proofreading-design.md` §10.1's original deferral. No UI reads
-this route until the pass criterion below is met; the surface it would land on is change-marks
-phase 2's popover (#89).
+`Translator.explain`, `ExplanationGate` and `translate-cli --proofread --explain` are built and
+tested offline; **no UI reads this route**, and the figures below are why it stays that way for
+now. The surface it would land on is change-marks phase 2's popover (#89).
 
-- Corpus: `docs/proofreading-gate` (the same 12 texts `change-density.sh` reads).
-- Runs: three per text, per степень (`errorsOnly`, `errorsAndStyle`, `rewrite`), on
-  `translategemma:12b` and `translategemma:27b`, at `--chunk 4000`, through
-  `swift build -c release --product translate-cli` and
-  `Scripts/explanation-quality.sh <dir>`.
-- Pass criterion, agreed alongside the route: `ExplanationGate` accepts (`explanations: accepted
-  N` on stderr) in **≥ 80 %** of runs on the правка model, **and** a person reading the kept
-  accepted outputs judges **≥ 90 %** of the accepted sentences true of the change they explain —
-  the script counts the first half; the second half is not something a script can judge and is
-  read by eye from the outputs the script keeps.
-- Record here: date, Ollama version, the per-model accepted/rejected/skipped totals the script
-  prints, which rejection/skip reasons showed up and how often, and the human judgement's own
-  count (N of M sentences read as true). Then, and only then, may this route reach the UI.
+| Fact | Where |
+|---|---|
+| **The gate holds against a live model: 103 / 108 runs accepted (95 %), 0 rejected, 5 skipped.** `Scripts/explanation-quality.sh docs/proofreading-gate 12b`, 2026-09-04, Ollama 0.33.2, `translategemma:12b` — the правка model this install names — 12 texts × 3 степени × 3 runs. Every reply that reached the gate had the shape asked for; not one was rejected. The first half of the pass criterion (≥ 80 %) is met with room. `translategemma:27b` was not run: the criterion is stated on the правка model | `ExplanationGate.parse`, `Scripts/explanation-quality.sh` |
+| **All 5 skips are `tooLongForOneRequest`** — 8 062 to 10 519 characters of material against `maxMaterialCharacters` 8 000 — and all on the two `-clunky` texts under «ошибки и стиль» / «переписать», where a dozen changes each carry a context line. The cap was a *start* value; the material's cost is the context, not the pairs, so either the cap moves or the context shrinks before this reaches a user. Unresolved, in `OPEN-ITEMS.md` §3 | `ExplanationGate.maxMaterialCharacters` |
+| **The second half — a person judging ≥ 90 % of accepted sentences true — is not met on a first reading, and not formally taken.** 18 sentences read across four kept outputs (ru-spelling, ru-grammar, en-spelling, en-grammar): the grammar ones are specific and true («согласование прилагательного с существительным в роде» for «Новый → Новая»; «the verb agrees with the singular subject she» for «don't → doesn't»); the spelling ones are true but templated — five «finaly → finally»-class fixes all read «The correction fixes a misspelled word, improving readability»; and two of five in ru-spelling are wrong or beside the point: «'' → 'в'» is called «пропущенная буква» (it is a missing preposition), and «нашлась опечятка → оказалась опечатка» is explained as a word choice with the spelling fix unmentioned. Roughly 15–16 of 18 true, ≈ 85 %, under the bar, on a sample too small to be the measurement — the kept outputs are the measurement's material, and reading all 103 is owed. What this sample says already: the sentences are honest about grammar and generic about spelling, and a generic sentence beside a one-letter fix adds nothing a reader could not see | the kept outputs (`/var/folders/…/tmp.jKG16kHxd2` at the time of writing — rerun the script to regenerate) |
+
+Before the route may reach the UI: the full reading of the accepted outputs recorded here as
+«N of M true», the material cap resolved, and a decision on whether a templated sentence for a
+spelling fix is worth showing at all (the popover could show the pair alone for a `.words` change
+whose tokens differ by one character — a rule, not a model).
 
 ## Adding a measurement
 
