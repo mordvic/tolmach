@@ -35,10 +35,12 @@ swiftc -O -o /tmp/phf Scripts/pane-header-fit.swift && /tmp/phf   # what the п�
 RENDER_PREVIEW_CHANGES=/tmp/preview swift test --filter renderChangesPreview   # draw a правка's marks at 13 and 22 pt, both views, both appearances
 TEXT_DIFF_COST=1 swift test --filter textDiffCost   # what TextDiff costs at the 256 KB ceiling — run on a quiet machine
 ./Scripts/change-density.sh docs/proofreading-gate   # live: where densityThreshold sits, per степень; needs the release CLI
+./Scripts/explanation-quality.sh docs/proofreading-gate   # live: the gate's acceptance rate per model, per степень; needs the release CLI
 RENDER_PREVIEW=/tmp/preview swift test --filter renderPreview   # draw the rendered pane to light/dark PNGs and look
 swift run translate-cli --to ru --tone technical "text"   # needs a live engine; reads stdin if no text
 swift run translate-cli --engine lmstudio --model qwen/qwen3.8-27b --to ru "text"   # the other engine
 swift run translate-cli --proofread --level rewrite --style business --from ru "text"   # правка route; --to/--tone are refused here, --level/--style only here
+swift run translate-cli --proofread --explain --changes-json --from ru "text"   # runs Translator.explain over the change set; prints the gate's verdict on stderr, the change set plus an "explanations" object on stdout
 swift run acceptance              # live corpus run; MUST run from the package root (reads ./corpus)
 swift run acceptance --model translategemma:12b --chunk 4000   # any installed model / the chunk budget you actually run
 swift run acceptance --engine lmstudio --model google/gemma-4-e4b   # the other engine; both gates go info-only
@@ -295,6 +297,27 @@ Facts that will bite you if you "tidy" them:
   already books, so the settle does not grow the panel for it. That row and the third menu are
   why `PanelSizer.dragMinHeight` is **179**, re-measured 2026-09-04. See
   `docs/design/specs/2026-09-04-change-marks-spec.md` and issue #81.
+- **Explanations per change are a fourth route, `Translator.explain`, in `format`'s shape — one
+  buffered call, judged whole, never streamed — and it is gated, off, and CLI-only until
+  measured.** The правка design named change explanations «the designated first fast-follow»
+  and deferred them on the cost of asking a local model for structured output (§10.1); the
+  marks landed without them (`docs/adr/0012`) and this route is the deferred half, still
+  deferred at the UI layer. It asks the model for one short sentence per change, numbered
+  «N: sentence» against the same numbering `ChangeSet.changes` already carries, and
+  `ExplanationGate` accepts the reply only whole: every index present once and in range, every
+  sentence non-empty, free of Markdown markers, and under a length cap, or the whole reply is
+  `.rejected` — never a partial dictionary, because a wrong explanation beside a right one is
+  worse than none. `.skipped` covers what never reaches the model at all: no changes, more
+  changes than a cap, or a change list too large for the one request this route makes (it never
+  chunks — the material sent is the change list, not the document). `ExplanationOutcome`
+  travels beside `TranslationOutcome`, never inside it — this route adds no field there.
+  Reachable today only through `translate-cli --proofread --explain` (stderr gets the verdict,
+  `--changes-json` gains an `explanations` object); no UI wiring exists, because the offline
+  half of this work (the gate, the prompt, the plumbing) is not the same thing as knowing a
+  real model's replies hold under the gate or that an accepted sentence is true of its change —
+  `Scripts/explanation-quality.sh` is how that gets measured, and `docs/reference/MEASUREMENTS.md`
+  is where the «Owed» section for it lives until it has been. When it lands in the UI, the
+  popover of change-marks phase 2 (#89) is the surface it belongs on.
 
 ### Engine rules (empirical, non-negotiable)
 

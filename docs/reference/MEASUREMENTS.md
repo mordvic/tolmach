@@ -145,6 +145,28 @@ measurement protocol.
 | **Item 7 — the mark is dotted everywhere and the light tint is the accent blended 35 % toward black.** `Scripts/accent-contrast.swift`: bare accent vs the white pane — синий 3.52:1, фиолетовый 4.17, розовый 3.65, красный 3.57, графит 3.26 pass the 3:1 non-text floor; **оранжевый 2.31, зелёный 2.22, жёлтый 1.51 fail**; vs the 0.12 dark pane all eight pass (worst фиолетовый 4.59). Blending toward black: 0.30 is the first fraction that clears 3:1 for all eight (жёлтый 3.08), 0.35 gives 3.53. `linkColor` against `systemBlue`: **1.49:1 light, 1.14:1 dark** — a solid accent underline is the link's underline, hence the dots. Thickness was looked at, not computed: `renderChangesPreview` at 13 and 22 pt, `.single` below 17 and `.thick` from 17 kept | `ChangeMarks.markColour`, `ChangeMarks.pattern`, `ChangeMarks.thickFromSize`, `Tests/MarkupKitTests/ChangeMarksColourTests.swift`, `Tests/TranslatorAppTests/RenderPreview.swift` |
 | **Item 6 is not taken** — the find indicator and the popover anchor gate phase 2, which is not started | — |
 
+## Owed — explanations per change (issue #81 phase 3)
+
+Not yet taken. `Translator.explain`, `ExplanationGate` and `translate-cli --proofread --explain`
+are built and tested offline against `FakeLLMClient` only — the live half of this feature, per
+`docs/design/specs/2026-08-10-proofreading-design.md` §10.1's original deferral. No UI reads
+this route until the pass criterion below is met; the surface it would land on is change-marks
+phase 2's popover (#89).
+
+- Corpus: `docs/proofreading-gate` (the same 12 texts `change-density.sh` reads).
+- Runs: three per text, per степень (`errorsOnly`, `errorsAndStyle`, `rewrite`), on
+  `translategemma:12b` and `translategemma:27b`, at `--chunk 4000`, through
+  `swift build -c release --product translate-cli` and
+  `Scripts/explanation-quality.sh <dir>`.
+- Pass criterion, agreed alongside the route: `ExplanationGate` accepts (`explanations: accepted
+  N` on stderr) in **≥ 80 %** of runs on the правка model, **and** a person reading the kept
+  accepted outputs judges **≥ 90 %** of the accepted sentences true of the change they explain —
+  the script counts the first half; the second half is not something a script can judge and is
+  read by eye from the outputs the script keeps.
+- Record here: date, Ollama version, the per-model accepted/rejected/skipped totals the script
+  prints, which rejection/skip reasons showed up and how often, and the human judgement's own
+  count (N of M sentences read as true). Then, and only then, may this route reach the UI.
+
 ## Adding a measurement
 
 Put it in a comment at the code it justifies, with the count, not just the conclusion —

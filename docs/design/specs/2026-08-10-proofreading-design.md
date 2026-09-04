@@ -301,6 +301,12 @@ docs gain one line each saying so.
    `2026-09-04-content-presentation-design.md` §7, specified in
    `2026-09-04-change-marks-spec.md` (issue #81), decided in `docs/adr/0012`. The
    explanations stay deferred for the reason given here.
+   **The other half's offline shape landed too, still deferred at the UI**: `Translator.explain`,
+   `ExplanationGate` and `translate-cli --proofread --explain` exist and are tested against
+   `FakeLLMClient`, but nothing wires them into the app — the live question this list deferred on
+   (whether a local model's replies hold under the gate, and whether an accepted sentence is true
+   of its change) is `Scripts/explanation-quality.sh`'s to answer, not built code's, and the UI
+   surface it would land on is change-marks phase 2's popover (#89).
 2. **A length axis («короче / длиннее»).** Teams `Make it: concise/longer`, QuillBot
    `Expand/Shorten`, Notion. Always a separate axis in the wild; would be a third control
    here, added only if wanted after the feature lands.
