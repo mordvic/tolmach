@@ -320,6 +320,23 @@ public enum MarkdownToAttributed {
     /// The same all-or-nothing fence discipline `MarkupSkeleton.inlineCodeSpans` documents for
     /// its own fence-blind scan — and here, unlike there, the guarantee is local: this
     /// function is the only one a `codeBlock` is routed to.
+    ///
+    /// **Long lines wrap by word, and `.byCharWrapping` was tried and rejected — decided
+    /// 2026-09-04, `docs/design/specs/2026-09-04-content-presentation-design.md` §6.2, §11
+    /// item 6.** The paragraph style below takes no `lineBreakMode`, which leaves AppKit's
+    /// default (word wrap); the design's proposal was to set `.byCharWrapping` on the card so
+    /// «an identifier is never split from its neighbour at an underscore». Measured instead of
+    /// assumed (`RENDER_PREVIEW_CODE=… swift test --filter renderCodePreview`, a fixture with a
+    /// long shell command, a JSON line and a Swift signature with underscored parameter names,
+    /// at 560 and 300 pt, both appearances): word wrap already keeps an underscore- or
+    /// hyphen-joined run whole — `keep_alive_duration_seconds` never breaks, at either width —
+    /// because AppKit's word-wrap unit is a run of non-whitespace, not a token this pipeline
+    /// defines. `.byCharWrapping` does the opposite of what the design hoped: it breaks at the
+    /// exact character that fits, which split `disable` into `disab`/`le-sandbox`,
+    /// `keep_alive_duration_seconds` into `keep_alive_d`/`uration_seconds` (mid-word, not even
+    /// at the underscore it was meant to protect) and `modelIdentifierWithNamespace` into
+    /// `modelIdent`/`ifierWithNamespace`, at both widths. Word wrap is strictly better for
+    /// exactly the case the change was proposed for, so nothing here changed.
     private static func codeBlock(_ source: String, language: String,
                                  config: MarkdownFontConfig) -> NSAttributedString {
         let table = NSTextTable()

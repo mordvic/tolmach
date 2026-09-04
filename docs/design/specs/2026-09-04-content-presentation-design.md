@@ -286,6 +286,14 @@ in TextKit 1. The proposal is **wrap by character for code** (`.byCharWrapping` 
 paragraph style) so an identifier is never split from its neighbour by a soft break that a word
 rule would place at an underscore — measured only by looking (§12).
 
+**Decided 2026-09-04** (phase 4, `renderCodePreview` / `renderTablePreview`,
+`docs/reference/OPEN-ITEMS.md` §2): code stays word-wrapped — `.byCharWrapping` broke
+underscore-joined identifiers *worse* than word wrap, not better, splitting mid-word at
+whatever character happened to fit rather than respecting the underscore it was meant to
+protect. The table needs nothing changed: today's natural-width-first measurement already
+opens the panel wide enough for a realistic table (529 pt for the fixture below 560, fully
+legible) rather than leaving it at 300, where any table breaks headers and long cells mid-word.
+
 ### 6.3 Code
 
 The card is right and stays. Three things the research adds:
@@ -598,7 +606,8 @@ be written as though it did.
 3. **Explanations**, when a model can be made to produce them under the acceptance harness's
    discipline — unchanged from the правка design.
 4. **Cosmetics judged from `renderPreview` PNGs**: character wrapping for code; the table in a
-   300 pt panel; anything §12 turns up.
+   300 pt panel; anything §12 turns up. **Decided 2026-09-04** (§6.2) — both by looking at the
+   PNGs `renderCodePreview` and `renderTablePreview` draw; neither needed a code change.
 
 ---
 

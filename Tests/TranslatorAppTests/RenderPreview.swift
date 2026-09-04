@@ -179,3 +179,149 @@ func renderChangesPreview() throws {
         }
     }
 }
+
+/// The two cosmetic questions §6.2's last paragraph and §14 phase 4 left to a look: whether a
+/// code card should wrap by word (today) or by character. Not a test either — same contract as
+/// the two above: writes files, off unless asked for, and the outcome is a judgement made by
+/// reading the PNGs, not an assertion.
+///
+///     RENDER_PREVIEW_CODE=/tmp/preview swift test --filter renderCodePreview
+///
+/// Twelve images: three code blocks (a shell command with long flags, a JSON line, a comment
+/// carrying a URL beside a signature with underscored parameter names) at 560 and 300 pt, word-
+/// and char-wrapped, light and dark. `.byCharWrapping` is applied to a **copy** of the
+/// rendering's paragraph style, scoped to the code regions alone — never to
+/// `MarkdownToAttributed` itself, because the decision in the design (§11 item 6) is made by
+/// looking first and the source changes once, after, with the reason written beside it.
+@MainActor
+@Test(.enabled(if: ProcessInfo.processInfo.environment["RENDER_PREVIEW_CODE"] != nil))
+func renderCodePreview() throws {
+    let directory = URL(fileURLWithPath: ProcessInfo.processInfo.environment["RENDER_PREVIEW_CODE"] ?? ".")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let config = MarkdownFontConfig.default
+    let rendering = MarkdownToAttributed.rendering(of: codePreviewDocument, config: config)
+    for (mode, byChar) in [("word", false), ("char", true)] {
+        let attributed = NSMutableAttributedString(attributedString: rendering.attributed)
+        if byChar {
+            for region in rendering.codeRegions {
+                attributed.enumerateAttribute(.paragraphStyle, in: region.range,
+                                              options: []) { value, range, _ in
+                    guard let style = (value as? NSParagraphStyle)?
+                        .mutableCopy() as? NSMutableParagraphStyle else { return }
+                    style.lineBreakMode = .byCharWrapping
+                    attributed.addAttribute(.paragraphStyle, value: style, range: range)
+                }
+            }
+        }
+        for width in [CGFloat(560), 300] {
+            for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+                let view = CodeBlockTextView(textKit1Inset: NSSize(width: 3, height: 8))
+                view.appearance = NSAppearance(named: appearance)
+                view.frame = NSRect(x: 0, y: 0, width: width, height: 10)
+                view.isVerticallyResizable = true
+                view.minSize = .zero
+                view.maxSize = NSSize(width: 10_000, height: 100_000)
+                view.textStorage?.setAttributedString(attributed)
+                view.codeRegions = rendering.codeRegions
+                guard let layout = view.layoutManager, let container = view.textContainer else {
+                    Issue.record("the view is not in TextKit 1"); return
+                }
+                layout.ensureLayout(for: container)
+                view.frame = NSRect(x: 0, y: 0, width: width,
+                                    height: ceil(layout.usedRect(for: container).height) + 16)
+                view.layout()
+                view.drawsBackground = true
+                view.backgroundColor = appearance == .aqua ? .white : NSColor(calibratedWhite: 0.12, alpha: 1)
+                guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+                    Issue.record("no bitmap"); return
+                }
+                view.appearance?.performAsCurrentDrawingAppearance {
+                    view.cacheDisplay(in: view.bounds, to: rep)
+                }
+                guard let png = rep.representation(using: .png, properties: [:]) else {
+                    Issue.record("no png"); return
+                }
+                let file = "code-\(mode)-\(Int(width))pt-\(name).png"
+                try png.write(to: directory.appendingPathComponent(file))
+            }
+        }
+    }
+}
+
+private let codePreviewDocument = """
+    # Длинные строки в коде
+
+    Команда с длинными флагами:
+
+    ```bash
+    swift build --build-tests --disable-sandbox --destination generic/platform=macOS --extremely-long-additional-flag-name
+    ```
+
+    Строка JSON:
+
+    ```json
+    {"engine_identifier": "ollama-loopback-http-client", "keep_alive_duration_seconds": 1800, "quiet_thinking_enabled": true}
+    ```
+
+    Комментарий со ссылкой и сигнатура с подчёркиваниями в именах:
+
+    ```swift
+    // See https://developer.apple.com/documentation/appkit/nstextcontainer/widthtrackstextview for the trap this avoids
+    func chatOptions(model modelIdentifierWithNamespace: String, quietThinkingLevelOverride: ThinkingLevel?) -> ChatOptions
+    ```
+    """
+
+/// Question 2 of phase 4: does a realistic four-column table stay legible at the panel's own
+/// floor, or does it need the panel to grow past it? Drawn through the panel's own measuring
+/// path — `RenderedReplyView.measuredSize` for the height a real fit would ask for, then the
+/// same attributed string in a `CodeBlockTextView` at that height — so what is judged is what
+/// `PanelController.measure` would actually produce, not a stand-in geometry.
+///
+///     RENDER_PREVIEW_TABLE=/tmp/preview swift test --filter renderTablePreview
+///
+/// Six images: 300, 430 and 560 pt, light and dark. Header and cell text are realistic lengths
+/// («Регион», «Итог за август», «Ответственный», «Комментарий»), because a table of single
+/// words never shows what a narrow column does to a sentence.
+@MainActor
+@Test(.enabled(if: ProcessInfo.processInfo.environment["RENDER_PREVIEW_TABLE"] != nil))
+func renderTablePreview() throws {
+    let directory = URL(fileURLWithPath: ProcessInfo.processInfo.environment["RENDER_PREVIEW_TABLE"] ?? ".")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let config = MarkdownFontConfig.default
+    let rendering = MarkdownToAttributed.rendering(of: tablePreviewDocument, config: config)
+    for width in [CGFloat(300), 430, 560] {
+        let size = RenderedReplyView.measuredSize(of: rendering.attributed, width: width)
+        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            let view = CodeBlockTextView(textKit1Inset: RenderedReplyView.inset,
+                                        lineFragmentPadding: RenderedReplyView.lineFragmentPadding)
+            view.appearance = NSAppearance(named: appearance)
+            view.isVerticallyResizable = false
+            view.isHorizontallyResizable = false
+            view.textStorage?.setAttributedString(rendering.attributed)
+            view.codeRegions = rendering.codeRegions
+            view.frame = NSRect(x: 0, y: 0, width: width, height: size.height)
+            view.layout()
+            view.drawsBackground = true
+            view.backgroundColor = appearance == .aqua ? .white : NSColor(calibratedWhite: 0.12, alpha: 1)
+            guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+                Issue.record("no bitmap"); return
+            }
+            view.appearance?.performAsCurrentDrawingAppearance {
+                view.cacheDisplay(in: view.bounds, to: rep)
+            }
+            guard let png = rep.representation(using: .png, properties: [:]) else {
+                Issue.record("no png"); return
+            }
+            let file = "table-\(Int(width))pt-\(name).png"
+            try png.write(to: directory.appendingPathComponent(file))
+        }
+    }
+}
+
+private let tablePreviewDocument = """
+    | Регион | Итог за август | Ответственный | Комментарий |
+    | --- | --- | --- | --- |
+    | Северо-Запад | 128 400 ₽, план перевыполнен | Иванова А. С. | Рост за счёт нового клиента, нужно согласовать бюджет на сентябрь |
+    | Юг | 94 200 ₽, отставание 6 % | Петров Д. Н. | Задержка поставки повлияла на закрытие месяца, ждём документы от логистики |
+    | Урал | 61 000 ₽, план выполнен | Сидоров К. В. | Без замечаний |
+    """
