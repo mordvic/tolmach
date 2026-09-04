@@ -172,11 +172,17 @@ private let floorResult = "Привет, мир. Как дела?"
     #expect(changes.count > 0, "the fixture must actually change something")
     let config = MarkdownFontConfig(baseSize: 13)
 
+    // Through the coordinator the view actually asks, rather than through `ChangeMarks.apply`
+    // beside it: the memo the panel is measured from is keyed on the whole tuple, and a key that
+    // dropped `detail` would answer the «Изменения» fit with the «Результат» rendering — the
+    // shape `docs/reference/TESTING.md` calls testing the builder while claiming the wiring.
+    // One coordinator for both calls, so a stale memo would show up here.
+    let coordinator = RenderedReplyView.Coordinator()
     let clean = MarkdownToAttributed.plainRendering(of: markResult, config: config)
-    let result = ChangeMarks.apply(changes, to: clean, resultMarkdown: markResult,
-                                   detail: .result, config: config)
-    let detail = ChangeMarks.apply(changes, to: clean, resultMarkdown: markResult,
-                                   detail: .changes, config: config)
+    let result = coordinator.rendering(of: markResult, config: config, rendersMarkup: false,
+                                       changes: changes, detail: .result)
+    let detail = coordinator.rendering(of: markResult, config: config, rendersMarkup: false,
+                                       changes: changes, detail: .changes)
 
     // The underlines cost no characters; the deletions do.
     #expect(result.attributed.string == clean.attributed.string)
@@ -209,10 +215,11 @@ private let floorResult = "Привет, мир. Как дела?"
 @Test func aProseReplyCarriesItsMarksThroughThePlainRenderingPath() {
     let changes = TextDiff.changes(source: markSource, result: markResult)
     let config = MarkdownFontConfig(baseSize: 13)
-    let marked = ChangeMarks.apply(changes,
-                                   to: MarkdownToAttributed.plainRendering(of: markResult,
-                                                                           config: config),
-                                   resultMarkdown: markResult, detail: .result, config: config)
+    // `rendersMarkup: false` is what `PanelView` passes for prose, and the coordinator is where
+    // the two lines that answer it live.
+    let marked = RenderedReplyView.Coordinator()
+        .rendering(of: markResult, config: config, rendersMarkup: false,
+                   changes: changes, detail: .result)
     var marks = 0
     marked.attributed.enumerateAttribute(ChangeMarks.changeKey,
                                          in: NSRange(location: 0, length: marked.attributed.length)) {
