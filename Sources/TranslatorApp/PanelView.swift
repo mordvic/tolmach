@@ -14,7 +14,7 @@ struct PanelStatus: Equatable {
     /// not — `.awaitingUser` was added to this enum and never to that list, so the one case
     /// whose glyph rule is least obvious was the one nothing checked.
     enum Kind: Equatable, CaseIterable {
-        case progress, awaitingUser, formatting, interrupted, failure
+        case progress, awaitingUser, formatting, summary, interrupted, failure
 
         /// Whether this row's state means *the machine* is working.
         ///
@@ -54,6 +54,11 @@ struct PanelStatus: Equatable {
             // that is about to be replaced, and «Перевожу…» with a spinner over it read as a
             // stall), so the glyph is what carries the meaning.
             case .formatting: "text.alignleft"
+            // The one row in this panel that reports a *result* rather than a state, and it
+            // draws no spinner either — so the glyph is again what carries the meaning beside
+            // «Исправлено: 6 изменений». `checkmark.circle` is the symbol «Основные» already
+            // puts beside «предоставлен», which is the vocabulary rule the two below follow.
+            case .summary: "checkmark.circle"
             case .interrupted: "exclamationmark.triangle.fill"
             case .failure: "xmark.octagon.fill"
             }
@@ -130,6 +135,28 @@ struct PanelView: View {
     var rewriteStyle: RewriteStyle = .original
     var onProofreadingLevelChange: (ProofreadingLevel) -> Void = { _ in }
     var onRewriteStyleChange: (RewriteStyle) -> Void = { _ in }
+    /// `AppSettings.showsRenderedMarkup` — the «Разметка | Исходник» choice the window's pane
+    /// writes. The panel has no control of its own for it and follows the one setting.
+    ///
+    /// Read by this view rather than only by `PanelHost` because «Вид» made it a question about
+    /// *two* texts: whether the reply is drawn from its Markdown, and whether «оригинал» is —
+    /// and a source and its правка need not agree about carrying markup.
+    /// `Self.rendersMarkup(text:showsRenderedMarkup:)` is the rule, in one place.
+    ///
+    /// Defaults to the setting's own default, so a call site that does not pass it measures and
+    /// draws what an untouched install does.
+    var showsRenderedMarkup = true
+    /// `AppSettings.showsChangeDetail` — «результат» against «изменения». Meaningless without a
+    /// change set, which is why `PanelReplyView.current(...)` and not this flag decides what the
+    /// «Вид» menu points at.
+    var showsChangeDetail = false
+    /// «оригинал»: `HotkeyCoordinator.showsOriginal`, a per-presentation choice and never a
+    /// setting — see that property for why the two halves of «Вид» are kept in different places.
+    var showsOriginal = false
+    /// «Вид» — threaded like `onProofreadingLevelChange` above, and for the identical reason:
+    /// this view is a readout and `HotkeyCoordinator` owns every decision a press makes, of
+    /// which writing a setting is one.
+    var onReplyViewChange: (PanelReplyView) -> Void = { _ in }
     /// «Шрифт текста» — the face and size the *reply* is drawn in. Nothing else in this view
     /// takes it: the header, the степень/стиль row, the status line, the warnings and the
     /// buttons all keep the system's size, which is what keeps `PanelSizer`'s floors
@@ -314,6 +341,28 @@ struct PanelView: View {
     /// and a «Повторить» that does nothing, over a run already in flight.
     private var awaitingReply: Bool { awaitingRun || model.state == .running }
 
+    /// Which item «Вид» is on, derived rather than stored — `PanelReplyView.current(...)`, a
+    /// value with a test. The menu's selection and the reply area read this one expression, so
+    /// they cannot come to disagree about which text is up.
+    private var replyView: PanelReplyView {
+        PanelReplyView.current(showsOriginal: showsOriginal,
+                               showsChangeDetail: showsChangeDetail,
+                               hasChanges: model.hasChanges)
+    }
+
+    /// The text «Вид» puts in the reply area instead of the reply, or nil for the reply itself.
+    ///
+    /// **Never while a run is in flight**, and that clause is not belt and braces. The menu is
+    /// disabled during a run, but the flag survives one: `retry()` re-runs the selection without
+    /// clearing it — deliberately, since `handlePress`, `switchOperation` and `anotherVariant`
+    /// are the three moments the panel's own reply is replaced by a *different* one — so without
+    /// this, a «Повторить» taken while «оригинал» was up would stream the new reply into a view
+    /// showing the old source. `awaitingReply` is the same window the status row calls a run.
+    private var shownOriginal: String? {
+        guard !awaitingReply, replyView == .original else { return nil }
+        return model.sourceText
+    }
+
     private var background: AnyShapeStyle {
         reduceTransparency
             ? AnyShapeStyle(Color(nsColor: .windowBackgroundColor))
@@ -462,6 +511,22 @@ struct PanelView: View {
                 // disagree about what is available (правка design §7).
                 .disabled(!proofreadingLevel.allowsRewriteStyle)
                 .accessibilityLabel("Стиль правки")
+                // «Вид» — which of the three texts the reply area draws. Third and last
+                // because it is the only one of the three that changes nothing about the run:
+                // степень and стиль re-run the selection, this one re-draws an answer the
+                // panel already has (`HotkeyCoordinator.setReplyView(_:)`).
+                //
+                // The items are `PanelReplyView.items(hasChanges:)` rather than `allCases`, so
+                // a правка that changed nothing offers two rather than a third whose selection
+                // would snap back.
+                Picker("", selection: Binding(get: { replyView },
+                                              set: { onReplyViewChange($0) })) {
+                    ForEach(PanelReplyView.items(hasChanges: model.hasChanges)) {
+                        Text($0.russianName).tag($0)
+                    }
+                }
+                .fixedSize()
+                .accessibilityLabel("Вид ответа")
                 Spacer(minLength: 0)
             }
             .pickerStyle(.menu)
@@ -592,10 +657,27 @@ struct PanelView: View {
                             // No `.textSelection` and no `.updatesFrequently`: the text view
                             // selects across the whole document by construction, which is why
                             // it is a text view, and a settled reply is not a live region.
-                            RenderedReplyView(text: model.translatedText, font: font)
+                            // «Вид» decides which text and how it is marked; the markup
+                            // question is asked of whatever text that turns out to be, because
+                            // a источник and its правка need not agree about carrying markup.
+                            // `changes` is handed over unconditionally — the view drops it for
+                            // «оригинал» itself, where the diff's token indices point into the
+                            // *result*'s blocks and would underline arbitrary words.
+                            RenderedReplyView(
+                                text: model.translatedText, font: font,
+                                rendersMarkup: Self.rendersMarkup(
+                                    text: shownOriginal ?? model.translatedText,
+                                    showsRenderedMarkup: showsRenderedMarkup),
+                                changes: model.changes,
+                                showsChangeDetail: replyView == .changes,
+                                original: shownOriginal)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         } else {
-                            Text(model.translatedText)
+                            // The plain path takes «оригинал» too, so the menu never points at
+                            // a text the panel is not showing — a правка that was interrupted
+                            // has no change set and no marks to draw, and is still a run whose
+                            // «до» the reader may want.
+                            Text(shownOriginal ?? model.translatedText)
                                 .font(font.font)
                                 .textSelection(.enabled)
                                 // Without this the text is a live region VoiceOver has no
@@ -808,7 +890,11 @@ struct PanelView: View {
         awaitingReply ? Self.status(for: .running, awaitingTerms: model.isAwaitingTerms,
                                     operation: model.operation, formatting: model.isFormatting)
                       : Self.status(for: model.state, awaitingTerms: model.isAwaitingTerms,
-                                    operation: model.operation, formatting: model.isFormatting)
+                                    operation: model.operation, formatting: model.isFormatting,
+                                    // Gated on `.finished` by the model itself, which is why
+                                    // the running branch above has nothing to pass: a summary
+                                    // is a sentence about a run that ended.
+                                    changes: model.changes)
     }
 
     @ViewBuilder private var statusLine: some View {
@@ -841,7 +927,9 @@ struct PanelView: View {
 
     private func colour(of kind: PanelStatus.Kind) -> Color {
         switch kind {
-        case .progress, .awaitingUser, .formatting: .secondary
+        // `.summary` is secondary with the other three: it is the panel saying what it did,
+        // not a warning about it, and `StatusColour` is reserved for the two rows that are.
+        case .progress, .awaitingUser, .formatting, .summary: .secondary
         case .interrupted: StatusColour.warning
         case .failure: StatusColour.failure
         }
@@ -898,11 +986,18 @@ struct PanelView: View {
     /// `.idle`, which is not a settle.
     ///
     /// Exhaustive with no `default:` for the same reason as everything else here.
+    /// - Parameter changes: the finished правка's change set, so the settle carries the count a
+    ///   sighted reader gets from the status row — story 13. Nil for перевод, for a run that did
+    ///   not finish, and for a caller that has none, where the sentence is what it always was.
+    ///   `RussianCopy.changeSummary` is the same fragment the window's status bar prints, so the
+    ///   two surfaces cannot come to count differently.
     nonisolated static func announcement(for state: TranslationState,
-                                         operation: TextOperation = .translate) -> String? {
+                                         operation: TextOperation = .translate,
+                                         changes: ChangeSet? = nil) -> String? {
         switch state {
         case .idle, .running: nil
-        case .finished: operation == .proofread ? "Правка готова" : "Перевод готов"
+        case .finished: operation != .proofread ? "Перевод готов"
+            : changes.map { "Правка готова, \(RussianCopy.changeSummary($0))" } ?? "Правка готова"
         case .interrupted: operation == .proofread
             ? "Правка прервана, показана пришедшая часть"
             : "Перевод прерван, показана пришедшая часть"
@@ -952,13 +1047,38 @@ struct PanelView: View {
     ///   design puts it in the pane's header — so this reads the same
     ///   `AppSettings.showsRenderedMarkup` the pane writes.
     ///
+    /// - **There is markup — *or* there are changes.** A правка's marks are attributes, and a
+    ///   `Text` carries none of them: an underline under a corrected word cannot be drawn
+    ///   without a text view, so a finished правка is a document whether or not its text has a
+    ///   single `**` in it and whether or not the reader has chosen «Исходник». Neither setting
+    ///   is overruled by that — they still decide how the text is *drawn*, and
+    ///   `RenderedReplyView` takes the plain path (`plainRendering`) for prose exactly as the
+    ///   pane's `RenderedTextView` does. What they do not get to decide is whether the changes
+    ///   are visible.
+    ///
     /// `nonisolated` for the reason `direction(outcome:target:operation:)` is.
+    /// - Parameter hasChanges: `TranslationViewModel.changes != nil` — a finished правка,
+    ///   including one whose diff was refused as too long, which still owes the reader the
+    ///   status row that says so. Defaults to false, so a call site that knows nothing about
+    ///   правка decides on the markup rule alone.
     nonisolated static func rendersFinalReply(state: TranslationState,
                                               awaitingRun: Bool,
                                               text: String,
-                                              showsRenderedMarkup: Bool) -> Bool {
-        guard !awaitingRun, state != .running, showsRenderedMarkup else { return false }
-        return MarkdownPresence.hasMarkup(text)
+                                              showsRenderedMarkup: Bool,
+                                              hasChanges: Bool = false) -> Bool {
+        guard !awaitingRun, state != .running else { return false }
+        if hasChanges { return true }
+        return rendersMarkup(text: text, showsRenderedMarkup: showsRenderedMarkup)
+    }
+
+    /// Whether a text in the reply area is drawn from its Markdown or as plain characters.
+    ///
+    /// Split out of `rendersFinalReply` because «Вид» asks it of a *second* text: «оригинал» is
+    /// the selection the user made, and a plain-prose mail corrected into a table — or the
+    /// reverse — would otherwise be drawn by whichever answer the other text happened to
+    /// deserve. One rule, asked twice.
+    nonisolated static func rendersMarkup(text: String, showsRenderedMarkup: Bool) -> Bool {
+        showsRenderedMarkup && MarkdownPresence.hasMarkup(text)
     }
 
     /// The rich flavour the panel's «Скопировать» and its ⏎ write beside the Markdown, or nil
@@ -993,15 +1113,29 @@ struct PanelView: View {
     ///   state the run *reaches* — it is a thing happening inside `.running`, and adding a
     ///   case would make every other switch over `TranslationState` in this app answer a
     ///   question it has no business answering.
+    /// - Parameter changes: the finished правка's change set, or nil. It is the **only** thing
+    ///   that gives a settled panel a status row at all: a translation still says nothing, for
+    ///   the reason below, and a правка says how much it moved — «Исправлено: 6 изменений»,
+    ///   «Изменений нет» — because the underlines above it are otherwise the whole report, and
+    ///   a clean «только ошибки» run has nothing to underline and would look like a run that
+    ///   did not happen (story 8).
     nonisolated static func status(for state: TranslationState,
                                    awaitingTerms: Bool = false,
                                    operation: TextOperation = .translate,
-                                   formatting: Bool = false) -> PanelStatus? {
+                                   formatting: Bool = false,
+                                   changes: ChangeSet? = nil) -> PanelStatus? {
         switch state {
-        case .idle, .finished:
+        case .idle:
             // Nothing to add. The panel opens on a translation and closes on Esc; a caption
             // saying so would be a line of chrome over a result the user is trying to read.
             return nil
+        case .finished:
+            // The same silence for a finished перевод, and for a правка whose caller has no
+            // set to describe: `RussianCopy.proofreadSummary` is a sentence about a diff, and
+            // there is no honest one to write without it.
+            guard operation == .proofread, let changes else { return nil }
+            return PanelStatus(kind: .summary, message: RussianCopy.proofreadSummary(changes),
+                               offersRetry: false)
         case .running:
             // The «Оформить» pass: the model is working, on the source, and the reply has not
             // begun. Before the terms check, because the pass runs before anything that

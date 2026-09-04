@@ -106,6 +106,25 @@ extension RewriteStyle {
     }
 }
 
+extension PanelReplyView {
+    /// The panel's «Вид» items. Lower case, like «только ошибки» and «профессиональный» in the
+    /// two `.mini` menus beside them: that row reads as one line of settings rather than as
+    /// three headings, and the window's own picker capitalises its segments because they are
+    /// segments of a segmented control.
+    ///
+    /// «оригинал» and not «исходник» — the reason is on `PanelReplyView.original` and is the
+    /// whole point of the type existing: «Исходник» already names the raw form of a pane.
+    ///
+    /// Exhaustive with no `default:`, for `Tone.russianName`'s reason.
+    var russianName: String {
+        switch self {
+        case .result: "результат"
+        case .changes: "изменения"
+        case .original: "оригинал"
+        }
+    }
+}
+
 extension ThinkRequest.Level {
     /// The control these label is «длина рассуждения», not «глубина» and not «степень».
     /// `CONTEXT.md` gives «степень» to правка and lists «глубина» among the words *not* to use
@@ -320,6 +339,31 @@ enum RussianCopy {
     /// there is none, so the window and a test read the same sentence for the same set.
     static func changeSummary(_ changes: ChangeSet) -> String {
         changes.notCompared == nil ? changeCount(changes.count) : changesNotCompared
+    }
+
+    /// The **panel's** status row for a finished правка: «Исправлено: 6 изменений»,
+    /// «Изменений нет», «Изменения не отмечены — текст слишком длинный».
+    ///
+    /// Built on `changeSummary` rather than beside it, deliberately. The window's status bar
+    /// puts the count after «Готово за 1812 мс · », so its sentence is a lower-case fragment;
+    /// the panel's row has nothing before it, so the same fragment stands alone and is
+    /// capitalised here — which is exactly what `changesNotCompared`'s own comment promised the
+    /// panel would do. Two builders would be two sentences to keep in step, and the count
+    /// declension is the part that must never drift.
+    ///
+    /// «Исправлено: » only where something was corrected: it is a claim about work done, and a
+    /// clean run says «Изменений нет» rather than «Исправлено: изменений нет».
+    static func proofreadSummary(_ changes: ChangeSet) -> String {
+        let summary = changeSummary(changes)
+        guard changes.notCompared == nil, changes.count > 0 else { return capitalised(summary) }
+        return "Исправлено: \(summary)"
+    }
+
+    /// First letter up, the rest untouched — never `capitalized`, which lower-cases every other
+    /// letter in the sentence and would turn «изменения не отмечены — текст слишком длинный»
+    /// into a title.
+    private static func capitalised(_ sentence: String) -> String {
+        sentence.prefix(1).uppercased() + sentence.dropFirst()
     }
 
     /// Keyed by the same model-name prefixes as `ModelPolicy.blacklist`, because the engine

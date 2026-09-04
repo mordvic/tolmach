@@ -192,9 +192,12 @@ private func model() -> TranslationViewModel {
 @MainActor @Test func everyStatusThatIsNotProgressCarriesAGlyphAsWellAsAColour() {
     let kinds = PanelStatus.Kind.allCases
     // Five since 2026-09-02: `.formatting` joined with its own glyph, the «Оформляю…» row of
-    // the «Оформить» pass, which like `.awaitingUser` draws no spinner.
-    #expect(kinds.count == 5, "a new kind needs a glyph decision, not a bigger count here")
-    #expect(kinds.filter { $0.symbol != nil }.count == 4)
+    // the «Оформить» pass, which like `.awaitingUser` draws no spinner. Six since 2026-09-04:
+    // `.summary`, the finished правка's «Исправлено: 6 изменений», which draws no spinner
+    // either — and is the case this shape exists for, since it was added to the enum after the
+    // rule was written.
+    #expect(kinds.count == 6, "a new kind needs a glyph decision, not a bigger count here")
+    #expect(kinds.filter { $0.symbol != nil }.count == 5)
     // `.progress` is the deliberate exception: that row already draws a `ProgressView`, so a
     // glyph beside the spinner beside the word would be three ways of saying one thing.
     #expect(PanelStatus.Kind.progress.symbol == nil)

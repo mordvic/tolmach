@@ -33,6 +33,31 @@ struct RenderedReplyView: NSViewRepresentable {
     /// «Шрифт текста». Every rendered run is a multiple of it — `docs/adr/0008`, and
     /// `ContentFont.markdownConfig` is the one bridge that carries it into `MarkupKit`.
     let font: ContentFont
+    /// Whether what is shown is drawn from its Markdown (`rendering(of:)`) or as plain
+    /// characters (`plainRendering(of:)` — byte-identical to `plain`, plus the block ranges the
+    /// marks are located in).
+    ///
+    /// Decided by the caller, `PanelView.rendersMarkup(text:showsRenderedMarkup:)`, and not
+    /// here: it is asked of whichever text «Вид» is showing, and «оригинал» is a different
+    /// document from the reply — a plain-prose mail corrected into a table, or the reverse,
+    /// would otherwise be drawn by the answer the other text deserved.
+    ///
+    /// Defaults to true so every call site that predates «Вид» renders exactly what it did.
+    var rendersMarkup = true
+    /// What the правка changed, marked over the rendering — or nil for a перевод, whose reply
+    /// is never diffed against anything.
+    var changes: ChangeSet?
+    /// «изменения» rather than «результат»: the removed words spliced in, struck through,
+    /// before what replaced them. Meaningless without `changes`.
+    var showsChangeDetail = false
+    /// The text the user selected, when «Вид» is on «оригинал» — drawn **instead of** `text`
+    /// and never marked, whatever `changes` says.
+    ///
+    /// Unmarked by construction rather than by the caller remembering: `TextChange.block` and
+    /// `insertedTokens` index the *result*'s blocks and tokens, so applying them to the source
+    /// would underline whatever words happened to sit at those offsets. The reader wanting to
+    /// see the original is asking what it said before, not where it will be corrected.
+    var original: String?
 
     /// Nothing, and that is not the pane's answer.
     ///
@@ -45,6 +70,19 @@ struct RenderedReplyView: NSViewRepresentable {
     /// here rather than compensated for.
     static let inset = NSSize(width: 0, height: 0)
     static let lineFragmentPadding: CGFloat = 0
+
+    /// The text on screen: the reply, or the original when «Вид» is on «оригинал».
+    private var shown: String { original ?? text }
+    /// The marks to apply to it — none over the original, for the reason `original` gives.
+    private var marks: ChangeSet? { original == nil ? changes : nil }
+    private var detail: ChangeMarks.Detail { showsChangeDetail ? .changes : .result }
+
+    /// The rendering both `updateNSView` and `sizeThatFits` draw their answer from, so the
+    /// panel is never sized for one document and shown another.
+    private func rendering(_ coordinator: Coordinator) -> MarkdownToAttributed.Rendering {
+        coordinator.rendering(of: shown, config: font.markdownConfig,
+                              rendersMarkup: rendersMarkup, changes: marks, detail: detail)
+    }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -61,11 +99,12 @@ struct RenderedReplyView: NSViewRepresentable {
     }
 
     func updateNSView(_ textView: PanelReplyTextView, context: Context) {
-        let rendering = context.coordinator.rendering(of: text, config: font.markdownConfig)
-        // Assigned unconditionally rather than diffed: this view is installed once per settle,
-        // so «has the text changed» is a question with one answer. The `Rendering` behind it is
-        // memoised for the *measuring* host's sake, which asks for the same content several
-        // times per fit.
+        let rendering = rendering(context.coordinator)
+        // Assigned unconditionally rather than diffed: this view is installed at the settle and
+        // updated only when «Вид» moves, which is a whole new document either way — «изменения»
+        // holds characters «результат» does not, and «оригинал» is another text entirely. The
+        // `Rendering` behind it is memoised for the *measuring* host's sake, which asks for the
+        // same content several times per fit.
         textView.textStorage?.setAttributedString(rendering.attributed)
         textView.codeRegions = rendering.codeRegions
     }
@@ -87,7 +126,10 @@ struct RenderedReplyView: NSViewRepresentable {
     /// (274 for a word, 6929 for a paragraph).
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: PanelReplyTextView,
                       context: Context) -> CGSize? {
-        let rendering = context.coordinator.rendering(of: text, config: font.markdownConfig)
+        // The *marked* rendering, deliberately: the underlines cost no height but the deletions
+        // «изменения» splices in are characters, and a panel measured against «результат» while
+        // showing «изменения» would put the tail of every changed paragraph past its own frame.
+        let rendering = rendering(context.coordinator)
         guard let width = proposal.width, width.isFinite, width > 0 else {
             return Self.measuredSize(of: rendering.attributed, width: nil)
         }
@@ -122,29 +164,50 @@ struct RenderedReplyView: NSViewRepresentable {
                       height: ceil(used.height) + inset.height * 2)
     }
 
-    /// One rendering per (text, font) pair, held for the several `sizeThatFits` calls a single
-    /// fit makes.
+    /// One rendering per (text, font, «Вид») tuple, held for the several `sizeThatFits` calls a
+    /// single fit makes.
     ///
     /// `PanelController.measure` asks twice per fit — `fittingSize`, then `sizeThatFits(in:)` at
     /// the chosen width — and SwiftUI probes a layout more often than that. Converting the
     /// document each time would put a full Markdown parse plus an `NSAttributedString` build on
     /// each of them; the panel's own text is short, but «Открыть в окне» and «Ещё вариант» make
     /// no promise about that, and the memo costs one comparison.
+    ///
+    /// **The key is the whole tuple, and each part of it earns its place.** The marks are a
+    /// second pass over the storage and «Изменения» is a *different document* from «Результат»
+    /// — it has the removed words in it — so a key of (text, font) alone would answer the
+    /// question the panel is asking now with the answer it gave before «Вид» moved, and the
+    /// panel would be measured for one view while drawing the other.
     @MainActor
     final class Coordinator {
         private struct Key: Equatable {
             let text: String
             let config: MarkdownFontConfig
+            let rendersMarkup: Bool
+            let changes: ChangeSet?
+            let detail: ChangeMarks.Detail
         }
 
         private var key: Key?
         private var cached: MarkdownToAttributed.Rendering?
 
-        func rendering(of text: String,
-                       config: MarkdownFontConfig) -> MarkdownToAttributed.Rendering {
-            let wanted = Key(text: text, config: config)
+        func rendering(of text: String, config: MarkdownFontConfig, rendersMarkup: Bool,
+                       changes: ChangeSet?,
+                       detail: ChangeMarks.Detail) -> MarkdownToAttributed.Rendering {
+            let wanted = Key(text: text, config: config, rendersMarkup: rendersMarkup,
+                             changes: changes, detail: detail)
             if key == wanted, let cached { return cached }
-            let made = MarkdownToAttributed.rendering(of: text, config: config)
+            // The same two lines the pane's coordinator runs, and deliberately the same order:
+            // `plainRendering` and not `plain`, because prose still needs the block ranges the
+            // marks are located in, and `ChangeMarks.apply` over whichever of the two came out,
+            // so one change set marks a document and a plain reply alike.
+            var made = rendersMarkup
+                ? MarkdownToAttributed.rendering(of: text, config: config)
+                : MarkdownToAttributed.plainRendering(of: text, config: config)
+            if let changes {
+                made = ChangeMarks.apply(changes, to: made, resultMarkdown: text,
+                                         detail: detail, config: config)
+            }
             key = wanted
             cached = made
             return made

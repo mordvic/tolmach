@@ -614,6 +614,10 @@ struct TranslatorApp: App {
                 onRewriteStyleChange: { style in
                     Task { await coordinator.setRewriteStyle(style) }
                 },
+                // No `Task`, unlike the two above: «Вид» asks the model nothing — it chooses
+                // which of the texts the panel already holds is drawn. See
+                // `HotkeyCoordinator.setReplyView(_:)`.
+                onReplyViewChange: { view in coordinator.setReplyView(view) },
                 onContentChange: { settling in panel.contentDidChange(settling: settling) },
                 // Gated on `variant`, not unconditional: `PanelController` builds *two* live
                 // hosts from this same closure — `hosting` (installed) and `measuring`
@@ -642,7 +646,11 @@ struct TranslatorApp: App {
                     // tested; posting it is all that happens here.
                     if let said = PanelView.announcement(
                         for: coordinator.panelModel.state,
-                        operation: coordinator.panelModel.resolvedOperation ?? .translate) {
+                        operation: coordinator.panelModel.resolvedOperation ?? .translate,
+                        // Story 13: a user who cannot see the underlines hears the count
+                        // instead. Nil for everything but a finished правка, so every other
+                        // settle says exactly what it said before.
+                        changes: coordinator.panelModel.changes) {
                         AccessibilityNotification.Announcement(said).post()
                     }
                     await statusModel.refresh(interactiveModel: settings.interactiveModel)
@@ -844,6 +852,8 @@ private struct PanelHost: View {
     /// `HotkeyCoordinator.setProofreadingLevel(_:)`.
     let onProofreadingLevelChange: (ProofreadingLevel) -> Void
     let onRewriteStyleChange: (RewriteStyle) -> Void
+    /// «Вид», threaded the same way — see `HotkeyCoordinator.setReplyView(_:)`.
+    let onReplyViewChange: (PanelReplyView) -> Void
     let onContentChange: (Bool) -> Void
     /// Refreshes `OllamaStatusModel` after a hotkey run settles. Folded into the
     /// `panelModel.state` hook below rather than a second `.onChange` on the same value —
@@ -872,6 +882,15 @@ private struct PanelHost: View {
                   rewriteStyle: settings.defaultRewriteStyle,
                   onProofreadingLevelChange: onProofreadingLevelChange,
                   onRewriteStyleChange: onRewriteStyleChange,
+                  // All three read inside `body`, for the reason `settings` itself is: the
+                  // controller keeps two hosts built from one builder, and a value resolved
+                  // where the builder is constructed would freeze at launch on both of them.
+                  // `showsRenderedMarkup` reaches `PanelView` now because «Вид» made it a
+                  // question about two texts — see `PanelView.rendersMarkup(text:...)`.
+                  showsRenderedMarkup: settings.showsRenderedMarkup,
+                  showsChangeDetail: settings.showsChangeDetail,
+                  showsOriginal: coordinator.showsOriginal,
+                  onReplyViewChange: onReplyViewChange,
                   // Read here for the reason every other setting on this line is: the
                   // controller keeps two hosts built from one builder, and the *detached* one
                   // is what the panel's size comes from. A font resolved where the builder is
@@ -905,6 +924,23 @@ private struct PanelHost: View {
             // it. Same deferral as every other hook here.
             .onChange(of: settings.showsRenderedMarkup) { _, _ in
                 Task { @MainActor in updateReplyRendering() }
+            }
+            // «Вид», in its two halves. Neither can change what `rendersFinalReply` answers —
+            // a finished правка is a document under all three items — so there is nothing to
+            // tell the controller except that the content is a different height: «Изменения»
+            // has the removed words in it, and «оригинал» is another text altogether.
+            //
+            // `onContentChange(false)` and never `settling: true`, which is the same choice
+            // `settings.contentFont` above makes and for the same two reasons: a settle freezes
+            // the presentation's width, which a view choice has no business deciding, and it is
+            // the one fit allowed to shrink. So the panel grows into «Изменения» and keeps that
+            // height on the way back — `docs/reference/OPEN-ITEMS.md` carries that trade for the
+            // font, and this is the same one.
+            .onChange(of: settings.showsChangeDetail) { _, _ in
+                Task { @MainActor in onContentChange(false) }
+            }
+            .onChange(of: coordinator.showsOriginal) { _, _ in
+                Task { @MainActor in onContentChange(false) }
             }
             // A panel already on screen when the size changes. Same deferral and the same
             // throttle as a streamed token, and the same tolerated doubling: both hosts carry
@@ -950,7 +986,12 @@ private struct PanelHost: View {
             state: state ?? coordinator.panelModel.state,
             awaitingRun: coordinator.isStartingRun,
             text: coordinator.panelModel.translatedText,
-            showsRenderedMarkup: settings.showsRenderedMarkup))
+            showsRenderedMarkup: settings.showsRenderedMarkup,
+            // `changes != nil` and not `hasChanges`: a правка whose diff was refused as too
+            // long still owes the reader the status row that says so, and the row is drawn
+            // beneath a reply this rule decides the shape of. The model's accessor is already
+            // gated on `state == .finished`, so this is nil for everything else.
+            hasChanges: coordinator.panelModel.changes != nil))
     }
 }
 
