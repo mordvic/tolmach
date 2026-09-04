@@ -31,6 +31,7 @@ swiftc -O -o /tmp/tf Scripts/toolbar-fit.swift && /tmp/tf   # narrowest width th
 swiftc -O -o /tmp/tbh Scripts/toolbar-height.swift && /tmp/tbh   # what the toolbar band costs, per style
 swiftc -O -o /tmp/cf Scripts/content-font.swift && /tmp/cf   # every measurement behind «Шрифт текста»
 swiftc -O -o /tmp/vm Scripts/view-menu.swift && /tmp/vm   # which menu the размер items land in, and how ⌘+ is stored
+swiftc -O -o /tmp/phf Scripts/pane-header-fit.swift && /tmp/phf   # what the перевод pane's header wants at its narrowest, per picker shape
 RENDER_PREVIEW=/tmp/preview swift test --filter renderPreview   # draw the rendered pane to light/dark PNGs and look
 swift run translate-cli --to ru --tone technical "text"   # needs a live engine; reads stdin if no text
 swift run translate-cli --engine lmstudio --model qwen/qwen3.8-27b --to ru "text"   # the other engine

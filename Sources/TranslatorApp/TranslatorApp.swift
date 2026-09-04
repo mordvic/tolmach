@@ -322,6 +322,30 @@ struct TranslatorApp: App {
                     .disabled(!action.canCopy)
                 Button("Очистить исходник", action: action.clear)
                     .disabled(!action.canClear)
+
+                Divider()
+
+                // ⌘G / ⇧⌘G — the platform's Find Next / Find Previous, and stepping through a
+                // правка's changes is that gesture: the marks are what this window has instead
+                // of find results. Free here because this window installs no Find menu:
+                // measured by dumping the installed menu bar from a copy of these three
+                // scenes (`Scripts/view-menu.swift`'s method, 2026-09-04): the standard Edit
+                // menu SwiftUI installs has 15 items — Undo ⌘Z, Redo ⇧⌘Z, Cut, Copy, Paste,
+                // Delete, Select All, an AutoFill submenu, Start Dictation, Emoji & Symbols —
+                // and the only items whose key is `g` are these two. Should a Find menu ever
+                // be added, these two move to ⌥⌘↓ / ⌥⌘↑.
+                //
+                // `ChangeNavigation.isAvailable` and not a restated pair of conditions, for
+                // `PrimaryAction`'s reason: the toolbar has no twin of these, so the rule
+                // would otherwise live only here, unreadable by a test.
+                Button("Следующее изменение") { translation.stepChange(by: 1) }
+                    .keyboardShortcut("g", modifiers: .command)
+                    .disabled(!ChangeNavigation.isAvailable(mode: mode,
+                                                           changes: translation.changes))
+                Button("Предыдущее изменение") { translation.stepChange(by: -1) }
+                    .keyboardShortcut("g", modifiers: [.command, .shift])
+                    .disabled(!ChangeNavigation.isAvailable(mode: mode,
+                                                           changes: translation.changes))
             }
 
             // In «Окно», beside the window list, because that is what it does. It duplicates

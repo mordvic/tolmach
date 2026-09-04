@@ -299,6 +299,29 @@ enum RussianCopy {
         "\(count) \(plural(count, "предупреждение", "предупреждения", "предупреждений"))"
     }
 
+    /// «6 изменений» / «1 изменение» / «изменений нет» — how many ranges a правка moved.
+    ///
+    /// Zero is a sentence and not «0 изменений», because it is the whole answer to a clean
+    /// «только ошибки» run: the pane shows a text identical to the source, and «0» beside it
+    /// reads as a counter that failed to count. The word is «изменение», never «правка» — that
+    /// is the operation's name (`CONTEXT.md`), and «6 правок» under a правка would be the same
+    /// word twice meaning two things.
+    static func changeCount(_ count: Int) -> String {
+        guard count > 0 else { return "изменений нет" }
+        return "\(count) \(plural(count, "изменение", "изменения", "изменений"))"
+    }
+
+    /// The one sentence for a правка whose diff was not run. Lower-case because it sits after
+    /// «Готово за N мс · » in the status bar, like `changeCount`; the panel capitalises it
+    /// itself where it stands alone.
+    static let changesNotCompared = "изменения не отмечены — текст слишком длинный"
+
+    /// The status bar's word for a правка's change set, in one place: the count, or the reason
+    /// there is none, so the window and a test read the same sentence for the same set.
+    static func changeSummary(_ changes: ChangeSet) -> String {
+        changes.notCompared == nil ? changeCount(changes.count) : changesNotCompared
+    }
+
     /// Keyed by the same model-name prefixes as `ModelPolicy.blacklist`, because the engine
     /// matches by prefix so that every tag of a bad model is covered.
     ///

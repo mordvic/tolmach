@@ -71,6 +71,14 @@ final class TranslationViewModel {
     var translatedText = ""
     var state: TranslationState = .idle
     var outcome: TranslationOutcome?
+    /// Which of the finished правка's changes the window's stepper is standing on, or nil for
+    /// none — the index into `outcome.changes.changes` that `RenderedTextView` selects and
+    /// flashes. Lives here and not in `MainWindowView`'s `@State` for `mode`'s reason: the
+    /// «Перевод» menu's «Следующее изменение» has to drive it, and a menu declared in the
+    /// app's scene cannot reach a view's state. It describes the outcome on screen and is
+    /// dropped at every site that drops or replaces `outcome` — a cursor that outlived its
+    /// change set would point into the next run's list.
+    private(set) var changeCursor: Int?
     /// The target the last run actually resolved — the override if there was one, the
     /// settings rule otherwise. `TranslationOutcome` carries no target, and
     /// `GlossaryEntry.translations` is keyed by language, so without this the warnings
@@ -225,6 +233,9 @@ final class TranslationViewModel {
         sourceText = other.sourceText
         translatedText = other.translatedText
         outcome = other.outcome
+        // Nil and not `other.changeCursor`: the panel has no stepper, so its cursor is
+        // always nil anyway, and a window adopting a правка starts reading it from the top.
+        changeCursor = nil
         resolvedTarget = other.resolvedTarget
         resolvedOperation = other.resolvedOperation
         resolvedProofreadingLevel = other.resolvedProofreadingLevel
@@ -322,6 +333,7 @@ final class TranslationViewModel {
         // outcome that outlives its text renders the previous run's markup diffs and
         // glossary checks under whatever is on screen now.
         outcome = nil
+        changeCursor = nil
         resolvedTarget = nil
         resolvedOperation = nil
         resolvedProofreadingLevel = nil
@@ -355,6 +367,34 @@ final class TranslationViewModel {
     /// button-availability rules on this model covers it too, rather than leaving the rule
     /// inlined in `PanelView`'s `.disabled(...)` where only a rendered view could pin it.
     var offersReplace: Bool { state == .finished && !translatedText.isEmpty }
+
+    /// The finished правка's change set, or nil — for перевод, for a run still in flight, and
+    /// for an interrupted one. `outcome` alone is not the gate: it is dropped at the next
+    /// run's first token, but an *interrupted* правка never assigns one, so the previous
+    /// finished set could outlive its text; `state == .finished` is what says the set
+    /// describes the text in the pane.
+    var changes: ChangeSet? {
+        guard state == .finished else { return nil }
+        return outcome?.changes
+    }
+
+    /// Whether the stepper and the menu items have anything to step through.
+    var hasChanges: Bool { (changes?.count ?? 0) > 0 }
+
+    /// Move the stepper by `delta` changes, wrapping at both ends; a no-op without changes.
+    ///
+    /// Wrapping rather than stopping, because a reader who presses «следующее» past the last
+    /// change wants the first one again, not a dead button — Word's Next wraps, and so does
+    /// Apple's ›. From nil the first press lands on the first change for `+1` and on the last
+    /// for `−1`, which is what «предыдущее» means before anything has been visited.
+    func stepChange(by delta: Int) {
+        guard let count = changes?.count, count > 0 else { return }
+        guard let current = changeCursor else {
+            changeCursor = delta >= 0 ? 0 : count - 1
+            return
+        }
+        changeCursor = ((current + delta) % count + count) % count
+    }
 
     /// The availability rule for the style controls, resolved the way the next run would
     /// resolve the level. Both the toolbar and the settings pane read the rule from
@@ -490,6 +530,7 @@ final class TranslationViewModel {
             resolvedProofreadingLevel = nil
             resolvedRewriteStyle = nil
             outcome = result
+            changeCursor = nil
             // The one place the engine's swallowed document-glossary failure is recorded. The
             // user is deliberately not told — it is a diagnostic about an enhancement, not a
             // warning about their translation — but «this long document was translated without
@@ -552,6 +593,9 @@ final class TranslationViewModel {
             resolvedProofreadingLevel = level
             resolvedRewriteStyle = style
             outcome = result
+            // A new change set, no change standing on it yet: the stepper starts from the
+            // top of the new list rather than from wherever the previous one was left.
+            changeCursor = nil
         })
     }
 
@@ -616,6 +660,7 @@ final class TranslationViewModel {
                     // and Task 9 renders warnings from it, so it would describe a document
                     // that is no longer on screen.
                     self.outcome = nil
+                    self.changeCursor = nil
                     self.clearedPrevious = true
                     self.translatedText += pending
                     pending = ""

@@ -82,6 +82,15 @@ struct TranslationPane: View {
     /// something to show — a Markdown source with no translation yet still needs its way back
     /// to the editor. The queue passes nothing: its left pane is a file list.
     var sourceHasMarkup = false
+    /// A finished правка's change set, or nil — nil for перевод, for the queue, and while a run
+    /// is in flight. `MainWindowView` passes `model.changes`, which is already gated on
+    /// `state == .finished`, so an interrupted run's partial text is never marked.
+    var changes: ChangeSet? = nil
+    /// «Результат | Изменения» — the setting, written through by the header's picker like
+    /// `showsRenderedMarkup` is. Defaulted for the queue, which has no правка.
+    var showsChangeDetail: Binding<Bool> = .constant(false)
+    /// The change the status bar's stepper is standing on; the text view selects and flashes it.
+    var changeCursor: Int? = nil
 
     /// The one rule for whether «Разметка | Исходник» is drawn. A function so a test can pin
     /// it without rendering the header.
@@ -89,27 +98,75 @@ struct TranslationPane: View {
         translationHasMarkup || sourceHasMarkup
     }
 
+    /// Whether the header draws a picker at all: the raw view when either pane has markup, or
+    /// the «Результат | Изменения» pair when there is a change set. With neither, the header
+    /// is exactly what it was — a plain translation grows no control that would do nothing.
+    static func offersPicker(translationHasMarkup: Bool, sourceHasMarkup: Bool,
+                             hasChanges: Bool) -> Bool {
+        offersToggle(translationHasMarkup: translationHasMarkup, sourceHasMarkup: sourceHasMarkup)
+            || hasChanges
+    }
+
     var body: some View {
         // One scan per body evaluation, and the value both halves of the pane read. `hasMarkup`
         // walks the blocks and stops at the first non-paragraph, so the expensive case is
         // plain prose — the same order of work the `Text` below already does laying it out.
         let rendering = PaneRendering.of(text, showsRenderedMarkup: showsRenderedMarkup.wrappedValue)
+        // A set with no changes still counts: «изменений нет» is a result, and its pane is a
+        // hosted text view like any other правка's, so switching степень does not swap the
+        // pane's whole kind of view under the reader.
+        let hasChanges = changes != nil
+        let offersSource = Self.offersToggle(translationHasMarkup: rendering.hasMarkup,
+                                             sourceHasMarkup: sourceHasMarkup)
         VStack(alignment: .leading, spacing: 0) {
             PaneHeader(title: title) {
-                // Only when there is something to render. With no markup the header is exactly
-                // what it was, which is what keeps a plain translation from growing a control
-                // that would do nothing.
-                if Self.offersToggle(translationHasMarkup: rendering.hasMarkup,
-                                     sourceHasMarkup: sourceHasMarkup) {
-                    Picker("", selection: showsRenderedMarkup) {
-                        Text("Разметка").tag(true)
-                        Text("Исходник").tag(false)
+                // Only when there is something to choose between. With no markup and no правка
+                // the header is exactly what it was, which is what keeps a plain translation
+                // from growing a control that would do nothing.
+                if Self.offersPicker(translationHasMarkup: rendering.hasMarkup,
+                                     sourceHasMarkup: sourceHasMarkup, hasChanges: hasChanges) {
+                    // One picker, up to three segments — `PaneViewChoice` is the rule. The
+                    // binding reads the two settings and writes whichever the chosen segment
+                    // stands for; «Исходник» leaves the detail alone, and that is a decision
+                    // with a test, not an accident of the binding.
+                    //
+                    // **Segmented, and measured to cost 98 pt over today's header.**
+                    // `Scripts/pane-header-fit.swift` (2026-09-04, detached host, `fittingSize`,
+                    // caption + picker + both link buttons): three segments 495 pt, today's two
+                    // 397 pt, a `.menu` fallback 352 pt — against this pane's 280 pt `minWidth`,
+                    // which *today's* header already exceeds. The spec's fallback rule («a
+                    // `.menu` for правка if it does not fit at 280») therefore has no state to
+                    // apply to: nothing fits at 280 and nothing did before. Segmented is kept so
+                    // правка's picker is the same control as перевод's; what the numbers say is
+                    // that the header's real floor is the picker plus two link buttons, and a
+                    // pane narrower than that clips the trailing button in either operation —
+                    // owed a look in `docs/reference/OPEN-ITEMS.md`.
+                    Picker("", selection: Binding(
+                        get: {
+                            PaneViewChoice.current(
+                                showsRenderedMarkup: showsRenderedMarkup.wrappedValue,
+                                showsChangeDetail: showsChangeDetail.wrappedValue,
+                                hasChanges: hasChanges)
+                        },
+                        set: { choice in
+                            let writes = choice.writes
+                            showsRenderedMarkup.wrappedValue = writes.showsRenderedMarkup
+                            if let detail = writes.showsChangeDetail {
+                                showsChangeDetail.wrappedValue = detail
+                            }
+                        })) {
+                        ForEach(PaneViewChoice.segments(hasChanges: hasChanges,
+                                                        offersSource: offersSource)) { choice in
+                            Text(choice.label(hasChanges: hasChanges)).tag(choice)
+                        }
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
                     .controlSize(.small)
                     .fixedSize()
-                    .help("Показывать разметку как документ или как исходный текст")
+                    .help(hasChanges
+                          ? "Показывать результат, изменения с удалённым текстом или исходный текст"
+                          : "Показывать разметку как документ или как исходный текст")
                 }
                 if let onAnotherVariant {
                     Button("Ещё вариант", action: onAnotherVariant)
@@ -131,13 +188,18 @@ struct TranslationPane: View {
                         .font(.callout).foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if rendering.hasMarkup {
+            } else if rendering.hasMarkup || hasChanges {
                 // Both modes are the same hosted text view: «Исходник» is this string without
                 // the conversion, which is what makes the raw Markdown selectable as one
-                // document rather than a `Text` the toggle swaps in and out.
+                // document rather than a `Text` the toggle swaps in and out. A правка takes
+                // this view even without markup, because its marks are attributes a `Text`
+                // cannot carry and its stepper needs a selection to move.
                 RenderedTextView(text: text, font: font,
                                  rendersMarkup: rendering.showsRendered,
-                                 isStreaming: isRunning)
+                                 isStreaming: isRunning,
+                                 changes: isRunning ? nil : changes,
+                                 showsChangeDetail: showsChangeDetail.wrappedValue,
+                                 changeCursor: changeCursor)
             } else {
                 ScrollView {
                     Text(text)

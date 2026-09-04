@@ -279,7 +279,14 @@ struct MainWindowView: View {
                                 // The same bounded scan the pane runs on its own text, on
                                 // the source, so the toggle appears for a Markdown source
                                 // before any translation exists. «Файлы» has no source pane.
-                                sourceHasMarkup: mode == .text && sourceRendering.hasMarkup)
+                                sourceHasMarkup: mode == .text && sourceRendering.hasMarkup,
+                                // `model.changes` is already nil unless `state == .finished`,
+                                // and the queue is перевод only — dispatching on `mode` for the
+                                // reason the text above does: a file's translation must never
+                                // wear the text model's marks.
+                                changes: mode == .text ? model.changes : nil,
+                                showsChangeDetail: $settings.showsChangeDetail,
+                                changeCursor: mode == .text ? model.changeCursor : nil)
             }
             Divider()
             RunStatusBar(model: model, status: status, engineName: engineName,

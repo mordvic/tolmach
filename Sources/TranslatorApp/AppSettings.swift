@@ -408,6 +408,30 @@ final class AppSettings {
         }
     }
 
+    /// Whether a правка result shows its removed words struck through inline («Изменения»)
+    /// or only the changed ranges underlined («Результат»).
+    ///
+    /// Default **false**: the clean text first, with the marks that Apple's own Proofread
+    /// draws, and the deletions one click away — Word's Simple Markup against All Markup,
+    /// DeepL Write's «Show changes» toggle, both defaulting to the readable text
+    /// (`docs/design/specs/2026-09-04-content-presentation-design.md` §7.1).
+    ///
+    /// One key for the window's pane and the panel's «Вид» menu, the way `showsRenderedMarkup`
+    /// is one key for both panes: a choice made where the text is read survives the window
+    /// closing and is not a per-run override. Not in the settings window — the picker and the
+    /// menu are its controls.
+    var showsChangeDetail: Bool {
+        get {
+            access(keyPath: \.showsChangeDetail)
+            return bool("showsChangeDetail", false)
+        }
+        set {
+            withMutation(keyPath: \.showsChangeDetail) {
+                defaults.set(newValue, forKey: "showsChangeDetail")
+            }
+        }
+    }
+
     /// The face the user's own text is drawn in. See `ContentFont` and `docs/adr/0008`.
     ///
     /// An unreadable value falls back to the system face rather than to nothing, for the reason
