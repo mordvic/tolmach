@@ -310,6 +310,13 @@ struct MainWindowView: View {
         // and 680 pt with the longest names selected on both sides, both measured on the
         // bundle against `NSToolbar.visibleItems`. 700 therefore covers every selection with
         // room to spare, and a number the drawing specifies does not have to be argued with.
+        //
+        // **That stopped being true of macOS 27, and 700 stays anyway.** Those two figures
+        // predate the «Перевод | Правка» switch and that system's wider toolbar items; the
+        // probe's transcription of today's row reads 770 / 800 pt there (2026-09-22, the
+        // comment on the primary action below has the run). The floor is not raised to meet
+        // it: the two panes want 640, and what the row does when it does not fit is now
+        // stated — «Тон» goes into », «Перевести» does not — rather than left to item order.
         .frame(minWidth: 700, minHeight: 480)
         .toolbar { toolbar }
         // The window's title is **not** drawn, and the drawing is deliberate about it: every
@@ -474,6 +481,7 @@ struct MainWindowView: View {
                 }
             }
         }
+        .overflowing(.first)
         // The two правка menus, text mode's «Правка» only.
         ToolbarItem(placement: .navigation) {
             if mode == .text, model.operation == .proofread {
@@ -511,6 +519,7 @@ struct MainWindowView: View {
                 .disabled(!model.rewriteStyleSelectable)
             }
         }
+        .overflowing(.first)
 
         // Neither button declares a keyboard shortcut any more, and that is the point of the
         // change rather than a side effect. ⌘↩ and ⌘. now live once, in the «Перевод» menu
@@ -539,6 +548,20 @@ struct MainWindowView: View {
                     .disabled(!status.isHealthy || !action.canStart)
             }
         }
+        // **The primary action is the last thing to leave the toolbar, not the first.**
+        // `NSToolbar` overflows from the trailing end, and `.primaryAction` *is* the trailing
+        // end — so when the row stops fitting, «Перевести» is what goes into » first. Measured
+        // 2026-09-22 on macOS 27.0 (26A428, SDK 27.0) with `V=current Scripts/toolbar-fit.swift`,
+        // a transcription of this row with the title hidden, read off
+        // `NSToolbar.visibleItems` and looked at in a screenshot of the probe's window: the
+        // перевод row fits from 770 pt with the placeholders and 800 pt with the longest
+        // names, the правка row from 670 / 710 — and at this window's 700 pt minimum both
+        // «Тон» and «Перевести» were in the overflow. With the priorities below, at 700 pt
+        // the button stays and «Тон» alone overflows (правка, longest names: «Стиль» alone).
+        // The 650 / 680 pt figures in the `minWidth` comment further up were taken on the
+        // bundle on an earlier macOS; re-taking them on the bundle is owed in
+        // `docs/reference/OPEN-ITEMS.md`, and this holds whichever way that comes out.
+        .overflowing(.last)
     }
 
     /// «По умолчанию» — written once, read by the button's title and by the row it selects.
@@ -714,6 +737,24 @@ struct MainWindowView: View {
 /// Control and VoiceOver announce.
 ///
 /// `docs/reference/PLATFORM-TRAPS.md` carries both findings.
+/// Which end of the queue into » a toolbar item stands at.
+private enum ToolbarOverflowOrder { case first, last }
+
+private extension ToolbarContent {
+    /// `visibilityPriority(_:)` behind its availability — the SDK marks it macOS 26.1, this
+    /// package's floor is 14, and below 26.1 the row keeps the order it always had. An enum
+    /// of this file's own because `ToolbarItemVisibilityPriority` itself cannot be named in a
+    /// signature that has to compile for macOS 14.
+    @ToolbarContentBuilder
+    func overflowing(_ order: ToolbarOverflowOrder) -> some ToolbarContent {
+        if #available(macOS 26.1, *) {
+            visibilityPriority(order == .last ? .high : .low)
+        } else {
+            self
+        }
+    }
+}
+
 private struct WindowTitleHidden: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView { TitleHidingView() }
 

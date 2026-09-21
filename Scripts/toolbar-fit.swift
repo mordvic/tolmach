@@ -8,6 +8,22 @@
 //     V=paired /tmp/toolbar-fit   # a Text beside a Picker inside one toolbar item
 //     V=loose  /tmp/toolbar-fit   # each label its own toolbar item
 //     V=bare   /tmp/toolbar-fit   # no labels at all
+//     V=current /tmp/toolbar-fit            # today's перевод row, title hidden as the app hides it
+//     V=current-proofread /tmp/toolbar-fit  # today's правка row
+//     V=current-long /tmp/toolbar-fit       # …with the longest names selected («-proofread-long» too)
+//     PRIO=0 V=current /tmp/toolbar-fit     # without the visibility priorities the app sets
+//     SHOT=/some/dir V=current /tmp/toolbar-fit   # also screenshot the window at 700 pt
+//
+// **The `current` variants are what `MainWindowView.toolbar` is today** — the operation switch,
+// the menus, the ⇄, the prominent primary button, the items a hidden control leaves empty,
+// the title hidden, and the `visibilityPriority` pair — and they are why this file was
+// reopened on 2026-09-22. macOS 27.0 (26A428), SDK 27.0, one run: перевод fits from 770 pt
+// (800 with the longest names), правка from 670 (710). At the window's 700 pt minimum, without
+// the priorities, 4 of 6 items were visible and the two in » were «Тон» **and «Перевести»** —
+// the primary action is the trailing item, so it is the first to go. With them, 5 of 6, and
+// the one in » is «Тон». `SHOT` exists because `screencapture -l` works from this process, so
+// what the figures say can be looked at; the «unverified» warning below still stands for the
+// absolute numbers, and the bundle re-measure is still owed (`docs/reference/OPEN-ITEMS.md`).
 //
 // `NSToolbar.visibleItems` excludes overflowed items, so the test is exact rather than
 // visual. The sweep steps 10 pt, so a reported figure is the true threshold rounded up.
@@ -60,8 +76,24 @@ var langs: [String] { variant.contains("short") ? shortLanguages : languages }
 var size: ControlSize { variant.contains("small") ? .small : .regular }
 var forced: Bool { variant.contains("small") || variant.contains("regular") }
 
+var isCurrent: Bool { variant.hasPrefix("current") }
+var isProofread: Bool { variant.contains("proofread") }
+var setsPriorities: Bool { ProcessInfo.processInfo.environment["PRIO"] != "0" }
+
+extension ToolbarContent {
+    /// `MainWindowView`'s `overflowing(_:)`, switchable so the two states can be compared.
+    @ToolbarContentBuilder func overflowing(last: Bool) -> some ToolbarContent {
+        if #available(macOS 26.1, *), setsPriorities {
+            visibilityPriority(last ? .high : .low)
+        } else {
+            self
+        }
+    }
+}
+
 struct Probe: App {
     @Environment(\.openWindow) private var openWindow
+    @State private var operation = 0
     var body: some Scene {
         MenuBarExtra { Text("m") } label: { Image(systemName: "a").task { await run() } }
         Window("Толмач", id: "w") {
@@ -69,7 +101,64 @@ struct Probe: App {
         }
     }
 
+    /// Today's row, item for item — including the items whose `if` is false. Those cost
+    /// nothing: eight are declared, and `NSToolbar.items` reads 6 for перевод and 4 for правка.
+    @ToolbarContentBuilder var currentBar: some ToolbarContent {
+        let long = variant.contains("long")
+        ToolbarItem(placement: .navigation) {
+            Picker("", selection: $operation) { Text("Перевод").tag(0); Text("Правка").tag(1) }
+                .pickerStyle(.segmented).labelsHidden().controlSize(.small).fixedSize()
+        }
+        ToolbarItem(placement: .navigation) {
+            if !isProofread { title("Из", long ? "португальский" : "Определить") }
+        }
+        ToolbarItem(placement: .navigation) {
+            if !isProofread { Button { } label: { Image(systemName: "arrow.left.arrow.right") } }
+        }
+        ToolbarItem(placement: .navigation) {
+            if !isProofread { title("В", long ? "португальский" : "По правилу") }
+        }
+        ToolbarItem(placement: .navigation) {
+            if !isProofread { title("Тон", long ? "нейтральный" : "По умолчанию") }
+        }
+        .overflowing(last: false)
+        ToolbarItem(placement: .navigation) {
+            if isProofread { title("Степень", long ? "ошибки и стиль" : "По умолчанию") }
+        }
+        ToolbarItem(placement: .navigation) {
+            if isProofread { title("Стиль", long ? "профессиональный" : "По умолчанию") }
+        }
+        .overflowing(last: false)
+        ToolbarItem(placement: .primaryAction) {
+            Button { } label: { Text(isProofread ? "Исправить" : "Перевести") }
+                .buttonStyle(.borderedProminent)
+        }
+        .overflowing(last: true)
+    }
+
+    /// `MainWindowView.directionMenu`: one concatenated `Text` as the menu's title.
+    @ViewBuilder func title(_ label: String, _ value: String) -> some View {
+        Menu {
+            Picker("", selection: .constant(value)) {
+                ForEach(shortLanguages, id: \.self) { Text($0).tag($0) }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            Text(label + " ").foregroundStyle(.secondary) + Text(value)
+        }
+        .fixedSize()
+    }
+
     @ToolbarContentBuilder var bar: some ToolbarContent {
+        if isCurrent {
+            currentBar
+        } else {
+            legacyBar
+        }
+    }
+
+    @ToolbarContentBuilder var legacyBar: some ToolbarContent {
         if variant.hasPrefix("menu") {
             // What ships: one control per item, the label inside its title.
             ToolbarItem(placement: .navigation) { menu("Из", sourceTitle, langs) }
@@ -149,6 +238,12 @@ struct Probe: App {
         try? await Task.sleep(for: .milliseconds(900))
         guard let w = NSApp.windows.first(where: { $0.toolbar != nil }),
               let tb = w.toolbar else { print("no window"); return }
+        if isCurrent {
+            // What `WindowTitleHidden` does in the app. The title costs the row its own width
+            // — with it drawn, the same перевод row read 930 pt rather than 770.
+            w.titleVisibility = .hidden
+            try? await Task.sleep(for: .milliseconds(200))
+        }
         var fits = -1
         for width in stride(from: 320, through: 1300, by: 10) {
             w.setContentSize(NSSize(width: CGFloat(width), height: 400))
@@ -159,6 +254,22 @@ struct Probe: App {
         print(String(format: "%-16@ items=%d  fits from %@ pt",
                      variant as NSString, tb.items.count,
                      (fits < 0 ? ">1300" : "\(fits)") as NSString))
+        if isCurrent {
+            // The window's own minimum, which is the width that matters.
+            w.setContentSize(NSSize(width: 700, height: 400))
+            w.orderFrontRegardless()
+            try? await Task.sleep(for: .milliseconds(500))
+            print("  at 700 pt: \(tb.visibleItems?.count ?? -1) of \(tb.items.count) visible"
+                  + (setsPriorities ? ", priorities set" : ", no priorities"))
+            if let dir = ProcessInfo.processInfo.environment["SHOT"] {
+                let shot = Process()
+                shot.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+                shot.arguments = ["-x", "-o", "-l", "\(w.windowNumber)",
+                                  "\(dir)/toolbar-\(variant)\(setsPriorities ? "" : "-noprio")-700.png"]
+                try? shot.run()
+                shot.waitUntilExit()
+            }
+        }
         NSApp.terminate(nil)
     }
 }
