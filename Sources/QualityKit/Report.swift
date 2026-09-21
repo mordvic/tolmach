@@ -93,7 +93,7 @@ public enum Report {
                              shiftSource: median(ok.compactMap { mechanics[Self.id($0)]?.shift }),
                              shiftControl: isControl ? nil : median(controlShifts),
                              noiseFloor: isControl ? median(noise) : nil,
-                             flagCounts: flags, addedBlocks: ok.filter { $0.addedBlocks == true }.count,
+                             flagCounts: flags, addedBlocks: ok.filter(\.currentAddedBlocks).count,
                              medianTotalMS: median(ok.map(\.totalMS)))
         }
 

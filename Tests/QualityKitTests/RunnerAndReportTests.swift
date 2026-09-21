@@ -214,3 +214,17 @@ private let friendly = "Привет! Пришлите, пожалуйста, о
     #expect(manifest.headline.contains("abc1234+dirty"))
     #expect(text.contains("mechanics only"))
 }
+
+@Test func theModelAnsweredSignalIsAskedOfTheBytesByTheAppsOwnRule() throws {
+    // A record written by a build that did not keep the signal (`addedBlocks == nil`) must
+    // count like any other: the SQL answer appended after the sentence it was asked to edit.
+    let source = "Напишите запрос, который вернёт всех клиентов за 2026 год до 15 марта."
+    let answered = source + "\n\n```sql\nSELECT * FROM clients;\n```"
+    let c = cell(.business)
+    let old = CellRecord(item: memo.name, language: "ru", configuration: c.configuration, run: 1, source: source,
+                         reply: answered, facts: [], mechanics: nil, addedBlocks: nil, ttftMS: 1, totalMS: 1,
+                         modelChunkCount: 1, markupDiffs: 1, markupNotCompared: false, error: nil)
+    #expect(old.currentAddedBlocks)
+    #expect(try #require(Report.rows([old]).first).addedBlocks == 1)
+    #expect(!record(.business, run: 1, reply: rewritten).currentAddedBlocks)
+}

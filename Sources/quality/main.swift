@@ -191,7 +191,7 @@ case "run":
             let m = record.currentMechanics
             tail = "\(String(format: "%.1f", record.totalMS / 1000)) s · " +
                    "shift \(m.shift.map { String(format: "%.2f", $0) } ?? "–")\(m.idle ? " · IDLE" : "")" +
-                   (record.addedBlocks == true ? " · ADDED BLOCKS" : "") +
+                   (record.currentAddedBlocks ? " · ADDED BLOCKS" : "") +
                    (m.flags.isEmpty ? "" : " · \(m.flags.map(\.rawValue).joined(separator: ", "))")
         }
         print("[\(index + 1)/\(pending.count)] \(cell.item.name) · \(c.model) · \(c.level ?? "-") · " +

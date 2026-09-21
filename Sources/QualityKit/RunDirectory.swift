@@ -68,6 +68,14 @@ extension CellRecord {
         error = try c.decodeIfPresent(String.self, forKey: .error)
     }
 
+    /// The app's «похоже, модель ответила на текст» signal, asked of this record's own bytes by
+    /// the app's own rule (`TranslationOutcome.addedBlocks(in:)`) — so a record written before
+    /// the harness kept the signal answers like any other. A правка-only reading, as in the app.
+    public var currentAddedBlocks: Bool {
+        guard error == nil, configuration.operation == "proofread" else { return false }
+        return TranslationOutcome.addedBlocks(in: MarkupSkeleton.compare(source: source, translation: reply).diffs)
+    }
+
     /// The mechanics of this record under the checks as they are **now**.
     public var currentMechanics: Mechanics {
         let translated = configuration.operation == "translate"
