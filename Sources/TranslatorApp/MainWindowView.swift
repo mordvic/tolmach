@@ -745,13 +745,25 @@ private extension ToolbarContent {
     /// package's floor is 14, and below 26.1 the row keeps the order it always had. An enum
     /// of this file's own because `ToolbarItemVisibilityPriority` itself cannot be named in a
     /// signature that has to compile for macOS 14.
+    ///
+    /// **Two gates, because there are two ways not to have it.** `#available` answers for the
+    /// system the app runs on; it does nothing for an SDK that has never heard of the symbol,
+    /// and the first push of this failed CI exactly there — Xcode 26.6, «cannot find
+    /// 'visibilityPriority' in scope». Measured across the SDKs on this machine: SwiftUI
+    /// module version 7.5.3 (macOS 26 and 26.5 SDKs) declares it 0 times, 8.0 (the 27 SDK)
+    /// twice. `canImport(_:_version:)` asks that question itself rather than inferring it
+    /// from the compiler's version.
     @ToolbarContentBuilder
     func overflowing(_ order: ToolbarOverflowOrder) -> some ToolbarContent {
+        #if canImport(SwiftUI, _version: 8.0)
         if #available(macOS 26.1, *) {
             visibilityPriority(order == .last ? .high : .low)
         } else {
             self
         }
+        #else
+        self
+        #endif
     }
 }
 
