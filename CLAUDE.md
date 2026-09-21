@@ -28,6 +28,7 @@ swift Scripts/colour-contrast.swift               # re-measure the status colour
 swiftc -O -o /tmp/ac Scripts/accent-contrast.swift && /tmp/ac   # white on every accent macOS offers
 swiftc -O -o /tmp/wt Scripts/window-title.swift && /tmp/wt   # why the window title needs re-asserting
 swiftc -O -o /tmp/tf Scripts/toolbar-fit.swift && /tmp/tf   # narrowest width the toolbar fits in
+V=current /tmp/tf   # …today's row as the app builds it; PRIO=0 without the priorities, SHOT=dir to look
 swiftc -O -o /tmp/tbh Scripts/toolbar-height.swift && /tmp/tbh   # what the toolbar band costs, per style
 swiftc -O -o /tmp/cf Scripts/content-font.swift && /tmp/cf   # every measurement behind «Шрифт текста»
 swiftc -O -o /tmp/vm Scripts/view-menu.swift && /tmp/vm   # which menu the размер items land in, and how ⌘+ is stored
@@ -47,6 +48,11 @@ swift run acceptance              # live corpus run; MUST run from the package r
 swift run acceptance --model translategemma:12b --chunk 4000   # any installed model / the chunk budget you actually run
 swift run acceptance --engine lmstudio --model google/gemma-4-e4b   # the other engine; both gates go info-only
 ```
+
+**On the macOS 27 SDK every command above needs an Xcode toolchain, not the Command Line
+Tools** — `@State` is a macro there and the CLT ships no `SwiftUIMacros` plug-in, so
+`TranslatorApp` fails to compile. `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`
+in front of the command is enough; `docs/reference/RUNBOOK.md` §2 has the error text.
 
 No test count here on purpose: it went stale twice in one review cycle, and a number nothing
 checks is a contract nobody can keep. The suite is offline and reads **~2.8 s** (2026-08-26;
@@ -311,6 +317,13 @@ Facts that will bite you if you "tidy" them:
   `removed` nor `inserted` carries, measured by two reverts that came back byte-wrong before
   the refusal shipped (`ChangeMarksTests`), and the popover disables the button on that same
   answer (`TranslationViewModel.canRevertChange`).
+  **A правка can come back as an answer, and the surfaces say so rather than «Исправлено»**
+  (2026-09-22): under «дружеский» an English instruction is carried out instead of edited —
+  6 of 6 on `translategemma:12b`, three prompt rewordings measured and reverted — and
+  `TranslationOutcome.replyAddedBlocks` reads the one signal that separated 57 answers from
+  39 edits and from the corpus's 36: blocks the source never had. Not a length threshold;
+  `docs/reference/MEASUREMENTS.md` has why. The panel's row becomes `.suspect`, `WarningsView`
+  gains a counted section, «Заменить» stays the user's call.
 - **Explanations per change are a fourth route, `Translator.explain`, in `format`'s shape — one
   buffered call, judged whole, never streamed — and it is gated, off, and CLI-only until
   measured.** The правка design named change explanations «the designated first fast-follow»
@@ -442,6 +455,12 @@ not cosmetic — **the safe direction is inverted**. See
   must copy that directory in **before** `codesign`, like the icon. `CommandGroup(replacing:)`
   empties a menu but does not remove it, so `pruneEmptyMenus()` takes away whatever is left
   with no items.
+- **The primary action overflows last, by statement.** `NSToolbar` overflows from the trailing
+  end and `.primaryAction` *is* the trailing end; on macOS 27 the перевод row wants 770–800 pt
+  against the window's 700 minimum, and «Перевести» was in » (probe, 2026-09-22).
+  `ToolbarContent.overflowing(_:)` wraps `visibilityPriority` (macOS 26.1+): `.last` on the
+  primary action, `.first` on «Тон» and «Стиль». The bundle re-measure is owed in
+  `docs/reference/OPEN-ITEMS.md`.
 - **A run must not straddle two servers.** The router reads «Движок» on every call, which is
   what makes the radio button take effect without a relaunch — but a translation is many calls,
   so each run freezes its target at the start through `LLMClient.pinnedForRun()` (defaulting to

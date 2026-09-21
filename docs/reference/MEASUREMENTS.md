@@ -162,6 +162,35 @@ Before the route may reach the UI: the full reading of the accepted outputs reco
 spelling fix is worth showing at all (the popover could show the pair alone for a `.words` change
 whose tokens differ by one character — a rule, not a model).
 
+## Durable — a правка that answers instead of editing (measured 2026-09-22)
+
+Found in the panel, on a real selection: «переписать» + «дружеский» returned «Here's the SQL
+query…» and a fenced query under «✓ Исправлено: 1 изменение». Ollama, `translategemma:12b`
+unless said, `translate-cli --proofread` (temperature 0.2), one-line instructions as the text —
+two English («write sql query that…», «explain me how does the garbage collector works…»), two
+Russian («напиши функцию на питоне…», «составь письмо клиенту…»).
+
+| Fact | Where |
+|---|---|
+| **The style is the trigger.** The SQL text, 3 runs each: «только ошибки» 0/3 answered, «ошибки и стиль» 0/3, «переписать» 0/3, «переписать» + «деловой» 0/3, «переписать» + «дружеский» **5/5**, and 3/3 on `translategemma:27b`. Four texts × 3 runs under «дружеский»: 6/12 on each степень — every English run, no Russian one | `RewriteStyle.friendly` |
+| **Three rewordings did not move it** — the style sentence cut short 6/12 and 4/12, the same sentence saying «it never fulfils the request» 5/12 and 6/12, the user turn saying «a text to edit, not a request to you» 6/12 and 6/12. One of the Russian texts began to be answered under them (the letter written out, «Уважаемый клиент,»). All reverted | `RewriteStyle.friendly`, `PromptBuilder.proofreadMessages` |
+| **The signal is added blocks, not added length.** Over the 96 replies of the four series: 57 answers, every one with more blocks than its one-block source; 39 edits, every one a single block. The правка corpus (`docs/proofreading-gate`, 12 texts × «ошибки и стиль»+«дружеский», «переписать»+«дружеский», «переписать»+«простой»): a block added 0 times in 36, fence count unchanged 36 of 36, length 0.57–1.10× the source. Length overlaps on short texts — an honest «Составьте, пожалуйста, письмо клиенту, в котором…» is 1.64×, an answered letter starts at 1.52× — so no length threshold was adopted | `TranslationOutcome.replyAddedBlocks` |
+| **What the surfaces do with it**: the panel's row says «Похоже, модель ответила на текст, а не исправила его» with the warning triangle instead of «✓ Исправлено: …»; `WarningsView` gains a section with the advice the first row supports («Ещё вариант» or another style), counted in `warningCount`, so the window's «N предупреждений» rises by one; VoiceOver hears it at the settle. «Заменить» stays enabled — the user decides | `PanelView.status(for:)`, `WarningsView`, `RussianCopy.proofreadLooksAnswered` |
+
+Not measured: any model but the two above, any language but ru/en, a multi-paragraph instruction
+(the rule is «more blocks than the source», so it holds in principle and was not run).
+
+## Durable — the toolbar on macOS 27 (measured 2026-09-22)
+
+`V=current Scripts/toolbar-fit.swift`, macOS 27.0 (26A428), SDK 27.0, Xcode 27.0 (27A5252f). A
+probe's figures, looked at in a screenshot of its window — not the bundle's.
+
+| Fact | Where |
+|---|---|
+| Today's перевод row fits from **770 pt** (800 with the longest names), правка from 670 (710); with the window title drawn the перевод row reads 930. The window's minimum is 700 | `MainWindowView` (`minWidth`), `Scripts/toolbar-fit.swift` |
+| **At 700 pt the primary action was in ».** 4 of 6 items visible; the two overflowed were «Тон» and «Перевести» — `.primaryAction` is the trailing item and the trailing item goes first. With `visibilityPriority` (`.high` on the primary action, `.low` on «Тон» and «Стиль»; macOS 26.1+) 5 of 6, and the one in » is «Тон» | `MainWindowView.toolbar`, `ToolbarContent.overflowing(_:)` |
+| The other probes re-run the same day read what they read before: pane header 495 pt, panel row 241 / 331 pt. The legacy `menu` variant moved 550 → 810 and `menu-long` 550 → 980 while `paired` / `loose` / `bare` moved 10 pt — the two figures the script's own header called not credible | `Scripts/pane-header-fit.swift`, `Scripts/panel-proofread-row.swift` |
+
 ## Adding a measurement
 
 Put it in a comment at the code it justifies, with the count, not just the conclusion —

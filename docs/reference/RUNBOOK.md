@@ -35,6 +35,20 @@ swift Scripts/make-icon.swift build/AppIcon.icns   # only to look at the icon on
 open build/LocalTranslator.app
 ```
 
+**With the macOS 27 SDK the Command Line Tools alone do not build this package.** `@State` is
+a macro there, and the plug-in that expands it ships with Xcode and not with the CLT — observed
+2026-09-22 (CLT 27.0, SDK 27.0): `swift build` fails on every `@State` in `TranslatorApp` with
+«external macro implementation type 'SwiftUIMacros.StateMacro' could not be found … plugin for
+module 'SwiftUIMacros' not found», while the five targets that import no SwiftUI build. Point
+the toolchain at an Xcode instead — once with `sudo xcode-select -s /Applications/Xcode.app`, or
+per command, which is also what the `swiftc` probes in `Scripts/` need:
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift build --build-tests
+```
+
+The same day's run under Xcode 27.0 (27A5252f): zero warnings, the whole suite green.
+
 The icon is drawn by `Scripts/make-icon.swift`, not stored as a file. `make-app-bundle.sh` runs it
 by itself whenever `build/AppIcon.icns` is missing or older than the generator — missing is the
 common case on a fresh clone, since `build/` is git-ignored — so the command above is only needed
