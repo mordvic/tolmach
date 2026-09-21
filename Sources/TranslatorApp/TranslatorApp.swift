@@ -650,7 +650,8 @@ struct TranslatorApp: App {
                         // Story 13: a user who cannot see the underlines hears the count
                         // instead. Nil for everything but a finished правка, so every other
                         // settle says exactly what it said before.
-                        changes: coordinator.panelModel.changes) {
+                        changes: coordinator.panelModel.changes,
+                        answered: coordinator.panelModel.outcome?.replyAddedBlocks ?? false) {
                         AccessibilityNotification.Announcement(said).post()
                     }
                     await statusModel.refresh(interactiveModel: settings.interactiveModel)

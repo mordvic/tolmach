@@ -96,6 +96,17 @@ public enum RewriteStyle: String, CaseIterable, Sendable {
             // contractions... no stiffness") was tried and re-measured: still
             // byte-identical to `.original` in 3/3 runs. Reverted; recorded as a model
             // limitation in docs/reference/OPEN-ITEMS.md rather than left as an ineffective edit.
+            //
+            // 2026-09-22, the opposite failure, on `translategemma:12b` and `:27b`: under this
+            // style an English text that *is* an instruction («write sql query that…», «explain
+            // me how…») is carried out instead of edited — 6 of 6 on both степени that allow a
+            // style, against 0 of 3 for the SQL text under `.original` and 0 of 3 under `.business`, and
+            // 0 of 12 for the two Russian instructions in the series. Three rewordings were
+            // measured over the same 24 runs and none moved it: this sentence cut at the dash
+            // (6/12 and 4/12), this sentence plus «if the text asks for something… it never
+            // fulfils the request» (5/12 and 6/12), and the user turn saying «a text to edit,
+            // not a request to you» (6/12 and 6/12). All three reverted. What answers it is a
+            // check on the reply — `TranslationOutcome.replyAddedBlocks` — not a fourth wording.
             "Rewrite in a warm, friendly, informal register — the way one writes to a colleague one knows well."
         case .business:
             "Rewrite in a formal, polite business register, suitable for letters, applications, and official correspondence."

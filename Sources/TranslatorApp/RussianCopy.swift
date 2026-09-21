@@ -359,6 +359,29 @@ enum RussianCopy {
         return "Исправлено: \(summary)"
     }
 
+    /// The panel's status row for a правка whose reply grew blocks its source never had
+    /// (`TranslationOutcome.replyAddedBlocks`, which carries the measurement). «Похоже», because
+    /// the signal is structural and the reading of it is not certain: what is certain is in
+    /// the «Разметка изменилась» rows, and this sentence is the likeliest reason for them. It
+    /// replaces «Исправлено: N изменений» rather than joining it — that sentence is a claim
+    /// about work done, and this one says the work may not be the work that was asked for.
+    /// 52 characters against the 53 of «Правка прервана — показана та часть, что успела
+    /// прийти», the longest sentence this row already carries.
+    static let proofreadLooksAnswered = "Похоже, модель ответила на текст, а не исправила его"
+
+    /// The same, spoken at the settle. Shorter than the row: an announcement is heard once,
+    /// in full, before anything else can be done.
+    static let proofreadLooksAnsweredAnnouncement = "Правка готова, но похоже на ответ, а не на правку"
+
+    /// `WarningsView`'s section for it — the one place with room to say what was seen and what
+    /// to do. «Другой стиль» is the measured advice, not a guess: the series that found this
+    /// (2026-09-22, `translategemma:12b`) answered under «дружеский» and edited the same text
+    /// 3 of 3 under «как в оригинале» and 3 of 3 under «деловой».
+    static let answeredSectionTitle = "Похоже на ответ, а не на правку"
+    static let answeredSectionBody = "В результате появились абзацы или блоки кода, которых нет "
+        + "в исходнике. Модель могла выполнить текст как просьбу — попробуйте «Ещё вариант» "
+        + "или другой стиль."
+
     /// First letter up, the rest untouched — never `capitalized`, which lower-cases every other
     /// letter in the sentence and would turn «изменения не отмечены — текст слишком длинный»
     /// into a title.

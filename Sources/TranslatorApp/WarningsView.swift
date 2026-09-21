@@ -32,12 +32,19 @@ struct WarningsView: View {
     /// outcome — the engine's route never knows whether anyone asked — so it travels beside
     /// it, from `TranslationViewModel`. The queue never formats, so its callers pass nothing.
     var formattingNotice: FormattingNotice?
+    /// `TranslationOutcome.replyAddedBlocks`: a правка whose reply has blocks its source did
+    /// not, which is what an answered instruction looks like. Here, and not only in the panel's
+    /// status row, because this is the one view both surfaces draw — and the one with room for
+    /// what to do about it. The queue is перевод only, so its caller passes nothing.
+    let answered: Bool
 
     init(checks: [GlossaryCheck], markupDiffs: [MarkupDiff], markupNotCompared: Bool = false,
          documentGlossary: [GlossaryEntry],
          target: Language? = nil,
          formattingNotice: FormattingNotice? = nil,
+         answered: Bool = false,
          onMute: @escaping (String) -> Void = { _ in }) {
+        self.answered = answered
         self.checks = checks
         self.markupDiffs = markupDiffs
         self.markupNotCompared = markupNotCompared
@@ -55,7 +62,8 @@ struct WarningsView: View {
         self.init(checks: outcome.checks, markupDiffs: outcome.markupDiffs,
                   markupNotCompared: outcome.markupNotCompared,
                   documentGlossary: outcome.documentGlossary,
-                  target: target, formattingNotice: formattingNotice, onMute: onMute)
+                  target: target, formattingNotice: formattingNotice,
+                  answered: outcome.replyAddedBlocks, onMute: onMute)
     }
 
     private var glossaryWarnings: [(check: GlossaryCheck, text: String)] {
@@ -85,6 +93,7 @@ struct WarningsView: View {
             + glossaryWarnings.count
             + (documentGlossary.isEmpty ? 0 : 1)
             + (formattingNotice == nil ? 0 : 1)
+            + (answered ? 1 : 0)
     }
 
     /// Whether this view would draw anything at all.
@@ -120,6 +129,14 @@ struct WarningsView: View {
                 // below are about that text.
                 section("Оформить не удалось") {
                     Text("• " + RussianCopy.formattingNotice(formattingNotice)).font(.caption)
+                }
+            }
+            if answered {
+                // Above the markup rows it is a reading of: «добавлено: блок кода (sql)» is
+                // what was seen, this is what it most likely means.
+                section(RussianCopy.answeredSectionTitle) {
+                    Text("• " + RussianCopy.answeredSectionBody).font(.caption)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             if markupNotCompared {

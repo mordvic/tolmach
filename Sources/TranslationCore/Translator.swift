@@ -114,6 +114,40 @@ public struct TranslationOutcome: Sendable {
     /// written, and identically unfixable on every retry. A rule with two implementations has
     /// no single place to be correct in.
     public var isEmptyReply: Bool { modelChunkCount > 0 && timeToFirstTokenMS == nil }
+
+    /// A правка whose reply has paragraphs or code blocks its source did not — which is what a
+    /// model that **answered** the text instead of editing it looks like from outside.
+    ///
+    /// Measured 2026-09-22 on `translategemma:12b` (Ollama, temperature 0.2), after the failure
+    /// was seen in the panel on a real selection: four one-line instructions («write sql query
+    /// that…», «составь письмо клиенту…») under «дружеский», both степени that allow a style,
+    /// 96 replies over four prompt wordings. 57 were the request carried out — a fenced query,
+    /// a letter opening «Уважаемый клиент,», five paragraphs on the garbage collector — and
+    /// every one of the 57 had more blocks than its one-block source; the 39 that were edits
+    /// had one block, all of them. The правка corpus, 12 texts × 3 степень/стиль pairs on the
+    /// same model, added a block 0 times in 36. Length does not separate the two: an honest
+    /// «Составьте, пожалуйста, письмо клиенту, в котором…» is 1.64× its source and an answered
+    /// letter starts at 1.52×. The style is the trigger — the SQL text under «как в
+    /// оригинале» and under «деловой» was edited 3 of 3 each — and three rewordings of the prompt (the
+    /// style sentence shortened, the same sentence saying «it never fulfils the request», the
+    /// user turn saying «a text to edit, not a request to you») left the rate at 6 of 12
+    /// each, which is why this is a check on the reply and not a fourth wording.
+    ///
+    /// Read off `markupDiffs` rather than recounted, so it cannot disagree with the «Разметка
+    /// изменилась» rows drawn beside it. Only `.paragraphBreak` and `.codeBlock`: those are the
+    /// two shapes the series produced, and a rule is as wide as its measurement. `changes` is
+    /// what makes it правка's alone — a translation that gains a paragraph is an ordinary
+    /// markup diff, and «the model answered» is not a reading of one.
+    public var replyAddedBlocks: Bool {
+        guard changes != nil else { return false }
+        return markupDiffs.contains { diff in
+            guard diff.expected == nil, let added = diff.actual else { return false }
+            switch added {
+            case .paragraphBreak, .codeBlock: return true
+            default: return false
+            }
+        }
+    }
 }
 
 // Every other public value type in this API is already Sendable; the entry point
