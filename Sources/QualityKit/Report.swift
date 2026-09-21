@@ -33,6 +33,9 @@ public enum Report {
         struct Key: Hashable { let model: String; let temperature: Double; let language, level, style: String }
         struct ControlKey: Hashable { let item: String; let configuration: Configuration; let run: Int }
 
+        // Recomputed, never read back: see `CellRecord.mechanics`.
+        let mechanics = Dictionary(records.filter { $0.error == nil }.map { (Self.id($0), $0.currentMechanics) },
+                                   uniquingKeysWith: { first, _ in first })
         let answered = records.filter { $0.error == nil }
         let controls = Dictionary(answered.filter(\.configuration.isControl)
             .map { (ControlKey(item: $0.item, configuration: $0.configuration, run: $0.run), $0) },
@@ -76,14 +79,14 @@ public enum Report {
             }
 
             var flags: [Mechanics.Flag: Int] = [:]
-            for flag in ok.flatMap(\.mechanics.flags) { flags[flag, default: 0] += 1 }
+            for flag in ok.flatMap({ mechanics[Self.id($0)]?.flags ?? [] }) { flags[flag, default: 0] += 1 }
 
             return ReportRow(model: key.model, temperature: key.temperature, language: key.language,
                              level: key.level, style: key.style, cells: ok.count,
                              errors: members.count - ok.count,
-                             idleSource: ok.filter(\.mechanics.idle).count,
+                             idleSource: ok.filter { mechanics[Self.id($0)]?.idle == true }.count,
                              idleControl: isControl ? nil : idleControl, comparedWithControl: compared,
-                             shiftSource: median(ok.compactMap(\.mechanics.shift)),
+                             shiftSource: median(ok.compactMap { mechanics[Self.id($0)]?.shift }),
                              shiftControl: isControl ? nil : median(controlShifts),
                              noiseFloor: isControl ? median(noise) : nil,
                              flagCounts: flags, medianTotalMS: median(ok.map(\.totalMS)))
@@ -97,6 +100,10 @@ public enum Report {
         }
     }
 
+    private static func id(_ record: CellRecord) -> String {
+        Cell.fileName(item: record.item, configuration: record.configuration, run: record.run)
+    }
+
     public static func median(_ values: [Double]) -> Double? {
         guard !values.isEmpty else { return nil }
         let sorted = values.sorted(), mid = sorted.count / 2
@@ -106,8 +113,9 @@ public enum Report {
     /// One line per answered cell that carries a flag — the diagnostic half: not «how often»,
     /// but which text, under which configuration, lost what.
     public static func failures(_ records: [CellRecord]) -> [String] {
-        records.filter { $0.error == nil && !$0.mechanics.flags.isEmpty }.map { record in
-            let c = record.configuration, m = record.mechanics
+        records.filter { $0.error == nil }.compactMap { record -> String? in
+            let c = record.configuration, m = record.currentMechanics
+            guard !m.flags.isEmpty else { return nil }
             let details = m.flags.map { flag -> String in
                 switch flag {
                 case .missingNumber: "missingNumber: \(m.missingNumbers.joined(separator: ", "))"

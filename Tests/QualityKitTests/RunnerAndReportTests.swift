@@ -53,6 +53,7 @@ private func cell(_ style: RewriteStyle, model: String = "translategemma:12b", r
     #expect(record.error == nil)
     #expect(!record.mechanics.idle)
     #expect(record.mechanics.flags == [])
+    #expect(record.facts == memo.facts)
 
     let call = try #require(client.calls.first)
     #expect(call.options.model == "translategemma:12b")
@@ -90,7 +91,7 @@ private func record(_ style: RewriteStyle, run: Int, reply: String, error: Strin
                     totalMS: Double = 1000) -> CellRecord {
     let c = cell(style, run: run)
     return CellRecord(item: memo.name, language: "ru", configuration: c.configuration, run: run,
-                      source: memo.text, reply: reply,
+                      source: memo.text, reply: reply, facts: memo.facts,
                       mechanics: MechanicalChecks.evaluate(source: memo.text, reply: reply, expectedLanguage: .ru,
                                                            sameLanguage: true, facts: memo.facts),
                       ttftMS: 200, totalMS: totalMS, modelChunkCount: 1, markupDiffs: 0,
@@ -153,6 +154,26 @@ private let friendly = "Привет! Пришлите, пожалуйста, о
     let row = try #require(rows.first { $0.style == "friendly" })
     #expect(row.idleControl == 1)
     #expect(row.comparedWithControl == 1)
+}
+
+@Test func theReportJudgesARecordsBytesAndNeverItsStoredSnapshot() throws {
+    // A night's run written by a build whose check was wrong: the snapshot says «clean», the
+    // bytes say the deadline is gone. The table must follow the bytes — that is what lets a
+    // corrected check correct last night's table without calling the model again.
+    let lossy = "Коллеги, пришлите отчёт за 2026 год как можно скорее."
+    let c = cell(.friendly)
+    let stale = CellRecord(item: memo.name, language: "ru", configuration: c.configuration, run: 1,
+                           source: memo.text, reply: lossy, facts: memo.facts,
+                           mechanics: MechanicalChecks.evaluate(source: memo.text, reply: memo.text,
+                                                                expectedLanguage: .ru, sameLanguage: true, facts: []),
+                           ttftMS: 200, totalMS: 1000, modelChunkCount: 1, markupDiffs: 0,
+                           markupNotCompared: false, error: nil)
+    #expect(stale.mechanics.flags == [] && stale.mechanics.idle)
+    let row = try #require(Report.rows([stale]).first)
+    #expect(row.idleSource == 0)
+    #expect(row.flagCounts[.missingFact] == 1)
+    #expect(row.flagCounts[.missingNumber] == 1)
+    #expect(Report.failures([stale]).count == 1)
 }
 
 @Test func theMedianOfAnEvenCountIsTheMeanOfTheMiddleTwo() {

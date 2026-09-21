@@ -1,4 +1,5 @@
 import Foundation
+import TranslationCore
 
 /// What one call produced — one JSON file under `cells/`.
 public struct CellRecord: Codable, Sendable, Equatable {
@@ -8,6 +9,13 @@ public struct CellRecord: Codable, Sendable, Equatable {
     public let run: Int
     public let source: String
     public let reply: String
+    /// The sidecar's facts as they were when the cell ran — with `source` and `reply` they make
+    /// the record **self-contained**: everything the mechanical layer and the judge's checklist
+    /// read is here, so neither needs the corpus directory to still exist or still match.
+    public let facts: [ItemMeta.Fact]
+    /// The mechanics **as computed when the cell ran** — a snapshot for whoever opens the JSON.
+    /// `Report` never reads it: it recomputes from the bytes above (`currentMechanics`), so a
+    /// check corrected after a night's run corrects that night's table too, without a re-run.
     public let mechanics: Mechanics
     /// nil when nothing was ever emitted — `TranslationOutcome`'s own contract, kept.
     public let ttftMS: Double?
@@ -20,12 +28,23 @@ public struct CellRecord: Codable, Sendable, Equatable {
     public var error: String?
 
     public init(item: String, language: String, configuration: Configuration, run: Int,
-                source: String, reply: String, mechanics: Mechanics, ttftMS: Double?, totalMS: Double,
+                source: String, reply: String, facts: [ItemMeta.Fact], mechanics: Mechanics,
+                ttftMS: Double?, totalMS: Double,
                 modelChunkCount: Int, markupDiffs: Int, markupNotCompared: Bool, error: String?) {
         self.item = item; self.language = language; self.configuration = configuration; self.run = run
-        self.source = source; self.reply = reply; self.mechanics = mechanics
+        self.source = source; self.reply = reply; self.facts = facts; self.mechanics = mechanics
         self.ttftMS = ttftMS; self.totalMS = totalMS; self.modelChunkCount = modelChunkCount
         self.markupDiffs = markupDiffs; self.markupNotCompared = markupNotCompared; self.error = error
+    }
+}
+
+extension CellRecord {
+    /// The mechanics of this record under the checks as they are **now**.
+    public var currentMechanics: Mechanics {
+        let translated = configuration.operation == "translate"
+        let expected = Language(rawValue: (translated ? configuration.target : nil) ?? language) ?? .en
+        return MechanicalChecks.evaluate(source: source, reply: reply, expectedLanguage: expected,
+                                         sameLanguage: !translated, facts: facts)
     }
 }
 

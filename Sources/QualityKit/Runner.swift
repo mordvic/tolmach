@@ -30,7 +30,7 @@ public struct Runner: Sendable {
         let c = cell.configuration
         func record(reply: String, outcome: TranslationOutcome?, error: String?) -> CellRecord {
             CellRecord(item: cell.item.name, language: cell.item.language.rawValue, configuration: c,
-                       run: cell.run, source: cell.item.text, reply: reply,
+                       run: cell.run, source: cell.item.text, reply: reply, facts: cell.item.facts,
                        mechanics: MechanicalChecks.evaluate(source: cell.item.text, reply: reply,
                                                             expectedLanguage: cell.item.language,
                                                             sameLanguage: true, facts: cell.item.facts),

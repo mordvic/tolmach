@@ -127,7 +127,7 @@ private func manifest(label: String = "night", temperature: Double = 0.2) -> Run
 
 private func record(for cell: Cell, reply: String = "ответ") -> CellRecord {
     CellRecord(item: cell.item.name, language: cell.item.language.rawValue, configuration: cell.configuration,
-               run: cell.run, source: cell.item.text, reply: reply,
+               run: cell.run, source: cell.item.text, reply: reply, facts: [],
                mechanics: MechanicalChecks.evaluate(source: cell.item.text, reply: reply, expectedLanguage: .ru,
                                                     sameLanguage: true, facts: []),
                ttftMS: 100, totalMS: 900, modelChunkCount: 1, markupDiffs: 0, markupNotCompared: false, error: nil)
