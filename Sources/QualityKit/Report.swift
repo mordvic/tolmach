@@ -115,15 +115,20 @@ public enum Report {
         return sorted.count.isMultiple(of: 2) ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
     }
 
-    /// One line per answered cell that carries a flag — the diagnostic half: not «how often»,
-    /// but which text, under which configuration, lost what.
+    /// One line per flagged finding — the diagnostic half: not «how often», but which text,
+    /// under which configuration, lost what. Runs that found the same thing share a line
+    /// («r1,r2,r3»): three identical lines say «deterministic» less clearly than one does, and
+    /// the first live table had thirty-six lines for twelve findings.
     public static func failures(_ records: [CellRecord]) -> [String] {
-        records.filter { $0.error == nil }.compactMap { record -> String? in
+        var order: [String] = []
+        var runs: [String: [Int]] = [:]
+        for record in records.sorted(by: { id($0) < id($1) }) where record.error == nil {
             let c = record.configuration, m = record.currentMechanics
-            guard !m.flags.isEmpty else { return nil }
+            guard !m.flags.isEmpty else { continue }
             let details = m.flags.map { flag -> String in
                 switch flag {
                 case .missingNumber: "missingNumber: \(m.missingNumbers.joined(separator: ", "))"
+                case .addedNumber: "addedNumber: \((m.addedNumbers ?? []).joined(separator: ", "))"
                 case .missingFact: "missingFact: \(m.missingFacts.joined(separator: ", "))"
                 case .wrongLanguage: "wrongLanguage: \(m.replyLanguage ?? "undetected")"
                 case .lostQuestion: "lostQuestion: \(m.sourceQuestions) → \(m.replyQuestions)"
@@ -131,8 +136,16 @@ public enum Report {
                 case .emptyReply: "emptyReply"
                 }
             }
-            return "\(record.item) · \(c.model) · t\(String(format: "%.2f", c.temperature)) · " +
-                   "\(c.level ?? "-") · \(c.style ?? "-") · r\(record.run) — \(details.joined(separator: "; "))"
+            let head = "\(record.item) · \(c.model) · t\(String(format: "%.2f", c.temperature)) · " +
+                       "\(c.level ?? "-") · \(c.style ?? "-")"
+            let key = head + "\u{0}" + details.joined(separator: "; ")
+            if runs[key] == nil { order.append(key) }
+            runs[key, default: []].append(record.run)
+        }
+        return order.map { key in
+            let parts = key.components(separatedBy: "\u{0}")
+            let list = (runs[key] ?? []).sorted().map { "r\($0)" }.joined(separator: ",")
+            return "\(parts[0]) · \(list) — \(parts[1])"
         }
     }
 
@@ -143,7 +156,7 @@ public enum Report {
         out += "mechanics only — no judge has read these replies; смысл, стиль and естественность are not in this table\n\n"
 
         let header = ["model", "t", "lang", "level", "style", "n", "err", "idle/src", "idle/ctl",
-                      "shift/src", "shift/ctl", "noise", "lang✗", "num✗", "fact✗", "q✗", "len✗", "empty", "added", "ms"]
+                      "shift/src", "shift/ctl", "noise", "lang✗", "num✗", "num+", "fact✗", "q✗", "len✗", "empty", "added", "ms"]
         func ratio(_ part: Int, _ whole: Int) -> String { whole == 0 ? "–" : "\(part)/\(whole)" }
         func share(_ value: Double?) -> String { value.map { String(format: "%.2f", $0) } ?? "–" }
         let body = rows(records).map { row -> [String] in
@@ -152,7 +165,7 @@ public enum Report {
                     String(row.cells), String(row.errors), ratio(row.idleSource, row.cells),
                     row.idleControl.map { ratio($0, row.comparedWithControl) } ?? "–",
                     share(row.shiftSource), share(row.shiftControl), share(row.noiseFloor),
-                    flag(.wrongLanguage), flag(.missingNumber), flag(.missingFact), flag(.lostQuestion),
+                    flag(.wrongLanguage), flag(.missingNumber), flag(.addedNumber), flag(.missingFact), flag(.lostQuestion),
                     flag(.lengthOutOfRange), flag(.emptyReply), String(row.addedBlocks),
                     row.medianTotalMS.map { String(Int($0.rounded())) } ?? "–"]
         }

@@ -10,7 +10,7 @@ import TranslationCore
 /// an answer where a correction was asked for — so the judge's attention goes to the rest.
 public struct Mechanics: Codable, Sendable, Equatable {
     public enum Flag: String, Codable, Sendable, CaseIterable {
-        case emptyReply, wrongLanguage, missingNumber, missingFact, lostQuestion, lengthOutOfRange
+        case emptyReply, wrongLanguage, missingNumber, addedNumber, missingFact, lostQuestion, lengthOutOfRange
     }
 
     /// No token-level change from the source — «холостой ход». For a translation: the reply
@@ -23,6 +23,9 @@ public struct Mechanics: Codable, Sendable, Equatable {
     public let replyLanguage: String?
     public let languageOK: Bool
     public let missingNumbers: [String]
+    /// Numbers the reply states and the source does not — the cheap probe for an invented fact.
+    /// nil in a snapshot written before the check existed.
+    public let addedNumbers: [String]?
     /// Sidecar fact ids.
     public let missingFacts: [String]
     public let sourceQuestions: Int
@@ -51,7 +54,7 @@ public enum MechanicalChecks {
             // An absent reply is one failure, not five: reporting its language as wrong and
             // every fact as missing would bury the only thing that happened.
             return Mechanics(idle: false, shift: nil, replyLanguage: nil, languageOK: false,
-                             missingNumbers: [], missingFacts: [],
+                             missingNumbers: [], addedNumbers: [], missingFacts: [],
                              sourceQuestions: sourceQuestions, replyQuestions: 0,
                              lengthRatio: 0, flags: [.emptyReply])
         }
@@ -67,17 +70,20 @@ public enum MechanicalChecks {
         let detected = LanguageDetector.detect(reply)
         let languageOK = detected == expectedLanguage
         let numbers = missingNumbers(source: source, reply: reply)
+        let added = addedNumbers(source: source, reply: reply)
         let lostFacts = missingFacts(facts, in: reply)
 
         var flags: [Mechanics.Flag] = []
         if !languageOK { flags.append(.wrongLanguage) }
         if !numbers.isEmpty { flags.append(.missingNumber) }
+        if !added.isEmpty { flags.append(.addedNumber) }
         if !lostFacts.isEmpty { flags.append(.missingFact) }
         if replyQuestions < sourceQuestions { flags.append(.lostQuestion) }
         if !lengthBand.contains(ratio) { flags.append(.lengthOutOfRange) }
 
         return Mechanics(idle: idle, shift: shift, replyLanguage: detected?.rawValue,
-                         languageOK: languageOK, missingNumbers: numbers, missingFacts: lostFacts,
+                         languageOK: languageOK, missingNumbers: numbers, addedNumbers: added,
+                         missingFacts: lostFacts,
                          sourceQuestions: sourceQuestions, replyQuestions: replyQuestions,
                          lengthRatio: ratio, flags: flags)
     }
@@ -139,6 +145,21 @@ public enum MechanicalChecks {
             if number.isMinutes, Int(number.value) == 0 { return false }
             return true
         }.map(\.value).filter { seen.insert($0).inserted }
+    }
+
+    /// Numbers the reply states and the source does not, each once, in reply order — the same
+    /// reading as `missingNumbers` with the texts exchanged, plus the twelve-hour allowance the
+    /// other way round: «7 p.m.» is not a new number where the source wrote «19:00».
+    ///
+    /// Written after the first live run (2026-09-22): «Вчера мне привезли машину» came back
+    /// under «деловой» as «Yesterday, September 20th» — an invented date, which a check that
+    /// only asks «what did the source have that the reply lacks» cannot see.
+    public static func addedNumbers(source: String, reply: String) -> [String] {
+        let sourceHours = Set(numbers(in: source).filter(\.isHour).compactMap { Int($0.value) })
+        return missingNumbers(source: reply, reply: source).filter { value in
+            guard let small = Int(value), (1...12).contains(small) else { return true }
+            return !sourceHours.contains(small == 12 ? 0 : small + 12)
+        }
     }
 
     /// Sidecar `literal` facts absent from the reply in every one of their spellings.

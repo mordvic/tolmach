@@ -194,6 +194,15 @@ private let friendly = "Привет! Пришлите, пожалуйста, о
     #expect(line.contains("missingFact: deadline"))
 }
 
+@Test func runsThatFoundTheSameThingShareOneLine() {
+    let lossy = "Привет! Пришлите, пожалуйста, отчёт до конца месяца — спасибо!"
+    let lines = Report.failures([1, 2, 3].map { record(.friendly, run: $0, reply: lossy) }
+                                + [record(.friendly, run: 4, reply: "Пришлите отчёт за 2026 год — спасибо!")])
+    #expect(lines.count == 2)
+    #expect(lines.contains { $0.contains("r1,r2,r3 —") && $0.contains("missingNumber: 2026, 15") })
+    #expect(lines.contains { $0.contains("· r4 —") && $0.contains("missingNumber: 15") })
+}
+
 @Test func theRenderedTableSaysTheJudgeHasNotLookedAndCarriesTheManifestsHeadline() {
     let manifest = RunManifest(label: "night", createdAt: "2026-09-22T23:00:00Z", commit: "abc1234", dirty: true,
                                engine: "ollama", engineVersion: "0.34.0", chunk: 4000, temperature: 0.5,

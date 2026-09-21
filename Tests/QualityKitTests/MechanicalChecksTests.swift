@@ -169,3 +169,26 @@ private let facts = [
                                       sameLanguage: true, facts: [])
     #expect(!m.idle)
 }
+
+// MARK: numbers the reply made up (read off the first live run: «Yesterday, September 20th»)
+
+@Test func aNumberTheSourceNeverStatedIsReportedAsAdded() {
+    // «Вчера мне привезли машину» became «Yesterday, September 20th» under «деловой» — a date
+    // the model invented. The lost-number check looks the other way and cannot see it.
+    let source = "On 12 September I ordered it. Yesterday the machine finally arrived."
+    let reply = "I placed the order on September 12th. Yesterday, September 20th, the machine was delivered."
+    #expect(MechanicalChecks.addedNumbers(source: source, reply: reply) == ["20"])
+    let m = MechanicalChecks.evaluate(source: source, reply: reply, expectedLanguage: .en,
+                                      sameLanguage: true, facts: [])
+    #expect(m.flags.contains(.addedNumber))
+    #expect(m.addedNumbers == ["20"])
+}
+
+@Test func theSameAllowancesHoldInTheOtherDirection() {
+    // A digit for a word, the twelve-hour clock for the twenty-four, regrouped thousands:
+    // none of these is a number the reply made up.
+    #expect(MechanicalChecks.addedNumbers(source: "Open until 19:00; three attempts; 10 000 roubles.",
+                                          reply: "Open until 7 p.m.; 3 attempts; 10,000 roubles.") == [])
+    // But a small number with no word behind it is added like any other.
+    #expect(MechanicalChecks.addedNumbers(source: "Several attempts.", reply: "4 attempts.") == ["4"])
+}
