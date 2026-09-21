@@ -51,8 +51,8 @@ private func cell(_ style: RewriteStyle, model: String = "translategemma:12b", r
     #expect(record.reply == "Коллеги, пришлите, пожалуйста, отчёт за 2026 год до 15 марта!")
     #expect(record.source == memo.text)
     #expect(record.error == nil)
-    #expect(!record.mechanics.idle)
-    #expect(record.mechanics.flags == [])
+    #expect(record.mechanics?.idle == false)
+    #expect(record.mechanics?.flags == [])
     #expect(record.facts == memo.facts)
 
     let call = try #require(client.calls.first)
@@ -168,7 +168,7 @@ private let friendly = "Привет! Пришлите, пожалуйста, о
                                                                 expectedLanguage: .ru, sameLanguage: true, facts: []),
                            ttftMS: 200, totalMS: 1000, modelChunkCount: 1, markupDiffs: 0,
                            markupNotCompared: false, error: nil)
-    #expect(stale.mechanics.flags == [] && stale.mechanics.idle)
+    #expect(stale.mechanics?.flags == [] && stale.mechanics?.idle == true)
     let row = try #require(Report.rows([stale]).first)
     #expect(row.idleSource == 0)
     #expect(row.flagCounts[.missingFact] == 1)

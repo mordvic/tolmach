@@ -16,7 +16,11 @@ public struct CellRecord: Codable, Sendable, Equatable {
     /// The mechanics **as computed when the cell ran** — a snapshot for whoever opens the JSON.
     /// `Report` never reads it: it recomputes from the bytes above (`currentMechanics`), so a
     /// check corrected after a night's run corrects that night's table too, without a re-run.
-    public let mechanics: Mechanics
+    public var mechanics: Mechanics?
+    /// `TranslationOutcome.replyAddedBlocks` as the run saw it — the app's own «похоже, модель
+    /// ответила на текст» signal. Recorded rather than recomputed: it is read off the run's
+    /// markup diffs, which a record does not keep. nil in a record written before 2026-09-22.
+    public var addedBlocks: Bool?
     /// nil when nothing was ever emitted — `TranslationOutcome`'s own contract, kept.
     public let ttftMS: Double?
     public let totalMS: Double
@@ -28,17 +32,42 @@ public struct CellRecord: Codable, Sendable, Equatable {
     public var error: String?
 
     public init(item: String, language: String, configuration: Configuration, run: Int,
-                source: String, reply: String, facts: [ItemMeta.Fact], mechanics: Mechanics,
-                ttftMS: Double?, totalMS: Double,
+                source: String, reply: String, facts: [ItemMeta.Fact], mechanics: Mechanics?,
+                addedBlocks: Bool? = nil, ttftMS: Double?, totalMS: Double,
                 modelChunkCount: Int, markupDiffs: Int, markupNotCompared: Bool, error: String?) {
         self.item = item; self.language = language; self.configuration = configuration; self.run = run
         self.source = source; self.reply = reply; self.facts = facts; self.mechanics = mechanics
+        self.addedBlocks = addedBlocks
         self.ttftMS = ttftMS; self.totalMS = totalMS; self.modelChunkCount = modelChunkCount
         self.markupDiffs = markupDiffs; self.markupNotCompared = markupNotCompared; self.error = error
     }
 }
 
 extension CellRecord {
+    /// **Lenient on purpose.** A run directory is a night of model time, and a decoder that
+    /// refuses yesterday's file turns «a corrected check corrects last night's table» into «a
+    /// new field deletes it». So what a later build added is optional here, and the mechanics
+    /// snapshot — which nothing computes from — is dropped rather than fatal when it no longer
+    /// decodes (a renamed `Mechanics.Flag` is enough).
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        item = try c.decode(String.self, forKey: .item)
+        language = try c.decode(String.self, forKey: .language)
+        configuration = try c.decode(Configuration.self, forKey: .configuration)
+        run = try c.decode(Int.self, forKey: .run)
+        source = try c.decode(String.self, forKey: .source)
+        reply = try c.decode(String.self, forKey: .reply)
+        facts = try c.decodeIfPresent([ItemMeta.Fact].self, forKey: .facts) ?? []
+        mechanics = try? c.decodeIfPresent(Mechanics.self, forKey: .mechanics)
+        addedBlocks = try c.decodeIfPresent(Bool.self, forKey: .addedBlocks)
+        ttftMS = try c.decodeIfPresent(Double.self, forKey: .ttftMS)
+        totalMS = try c.decodeIfPresent(Double.self, forKey: .totalMS) ?? 0
+        modelChunkCount = try c.decodeIfPresent(Int.self, forKey: .modelChunkCount) ?? 0
+        markupDiffs = try c.decodeIfPresent(Int.self, forKey: .markupDiffs) ?? 0
+        markupNotCompared = try c.decodeIfPresent(Bool.self, forKey: .markupNotCompared) ?? false
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+    }
+
     /// The mechanics of this record under the checks as they are **now**.
     public var currentMechanics: Mechanics {
         let translated = configuration.operation == "translate"
@@ -61,7 +90,8 @@ public struct RunManifest: Codable, Sendable, Equatable {
     public var temperature: Double
     public var corpusPath: String
     public var corpusHash: String
-    /// The corpus is not committed to this repository. **`quality blind` refuses such a run**:
+    /// The corpus is not committed to this repository. `quality blind` — issue #94, PR 2, not
+    /// in the code yet — keys its refusal on this flag:
     /// committed text is already public, a user's working texts are not
     /// (`docs/design/specs/2026-09-22-quality-harness-design.md` §3).
     public var external: Bool
@@ -85,24 +115,45 @@ public struct RunManifest: Codable, Sendable, Equatable {
         "\(external ? " · EXTERNAL" : "") · commit \(commit)\(dirty ? "+dirty" : "")"
     }
 
-    /// What must match for a directory to be resumed. Not the date, and not the engine's
-    /// version string — an Ollama update overnight is worth a line, not a refusal.
-    fileprivate var identity: RunManifest {
-        var copy = self
-        copy.createdAt = ""; copy.engineVersion = nil
-        return copy
+    /// What differs between this manifest and the one a directory was created under, as
+    /// «field (was → asked)» — empty means the directory may be resumed.
+    ///
+    /// Not the date; not the engine's version string (an Ollama update overnight is worth a
+    /// line, not a refusal); and **not the label**, because the hint a dead run prints says
+    /// «resume with --into <dir>» and nobody repeats `--label` from memory at that point.
+    /// The corpus is compared by its hash and by its path without a trailing slash.
+    func differences(from existing: RunManifest) -> [String] {
+        func path(_ p: String) -> String { p.hasSuffix("/") && p.count > 1 ? String(p.dropLast()) : p }
+        var found: [String] = []
+        func check<T: Equatable>(_ name: String, _ was: T, _ asked: T) {
+            if was != asked { found.append("\(name) (\(was) → \(asked))") }
+        }
+        check("commit", existing.commit, commit)
+        check("uncommitted changes", existing.dirty, dirty)
+        check("engine", existing.engine, engine)
+        check("chunk", existing.chunk, chunk)
+        check("temperature", existing.temperature, temperature)
+        check("corpus path", path(existing.corpusPath), path(corpusPath))
+        check("corpus hash", existing.corpusHash, corpusHash)
+        check("external", existing.external, external)
+        check("models", existing.filter.models, filter.models)
+        check("levels", existing.filter.levels, filter.levels)
+        check("styles", existing.filter.styles, filter.styles)
+        check("only", existing.filter.only, filter.only)
+        check("runs", existing.filter.runs, filter.runs)
+        return found
     }
 }
 
 /// `build/quality-runs/<stamp>-<label>/` — `manifest.json` and `cells/*.json`.
 public struct RunDirectory: Sendable {
     public enum Failure: Error, CustomStringConvertible {
-        case differentConfiguration(path: String)
+        case differentConfiguration(path: String, differences: [String])
         public var description: String {
             switch self {
-            case let .differentConfiguration(path):
-                "\(path) was created under a different configuration (model list, filter, temperature, " +
-                "chunk, corpus or commit) — two experiments in one directory would be one table describing both"
+            case let .differentConfiguration(path, differences):
+                "\(path) was created under a different configuration — \(differences.joined(separator: "; ")). " +
+                "Two experiments in one directory would be one table describing both."
             }
         }
     }
@@ -116,8 +167,9 @@ public struct RunDirectory: Sendable {
         let file = url.appendingPathComponent("manifest.json")
         if let data = try? Data(contentsOf: file) {
             let existing = try JSONDecoder().decode(RunManifest.self, from: data)
-            guard existing.identity == manifest.identity else {
-                throw Failure.differentConfiguration(path: url.path)
+            let differences = manifest.differences(from: existing)
+            guard differences.isEmpty else {
+                throw Failure.differentConfiguration(path: url.path, differences: differences)
             }
             return RunDirectory(url: url, manifest: existing)
         }
@@ -145,10 +197,21 @@ public struct RunDirectory: Sendable {
         try Self.encoder.encode(record).write(to: cells.appendingPathComponent(name), options: .atomic)
     }
 
-    public func records() throws -> [CellRecord] {
-        try FileManager.default.contentsOfDirectory(atPath: cells.path)
-            .filter { $0.hasSuffix(".json") }.sorted()
-            .map { try JSONDecoder().decode(CellRecord.self, from: Data(contentsOf: cells.appendingPathComponent($0))) }
+    public func records() throws -> [CellRecord] { try read().records }
+
+    /// Every record that reads, and the names of the files that do not — a torn write from a
+    /// killed process is one lost cell, not a lost table.
+    public func read() throws -> (records: [CellRecord], unreadable: [String]) {
+        var records: [CellRecord] = [], unreadable: [String] = []
+        for name in try FileManager.default.contentsOfDirectory(atPath: cells.path).sorted() where name.hasSuffix(".json") {
+            if let data = try? Data(contentsOf: cells.appendingPathComponent(name)),
+               let record = try? JSONDecoder().decode(CellRecord.self, from: data) {
+                records.append(record)
+            } else {
+                unreadable.append(name)
+            }
+        }
+        return (records, unreadable)
     }
 
     private static var encoder: JSONEncoder {

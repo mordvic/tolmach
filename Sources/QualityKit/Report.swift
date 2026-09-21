@@ -25,6 +25,9 @@ public struct ReportRow: Sendable, Equatable {
     /// A style's `shiftControl` means something only above this.
     public let noiseFloor: Double?
     public let flagCounts: [Mechanics.Flag: Int]
+    /// Cells the app itself would have called «похоже, модель ответила на текст»
+    /// (`TranslationOutcome.replyAddedBlocks`).
+    public let addedBlocks: Int
     public let medianTotalMS: Double?
 }
 
@@ -58,9 +61,10 @@ public enum Report {
                                                             configuration: record.configuration.control,
                                                             run: record.run)] else { continue }
                     compared += 1
-                    let changes = TextDiff.changes(source: control.reply, result: record.reply)
-                    if changes.notCompared == nil && changes.count == 0 { idleControl += 1 }
-                    if let shift = MechanicalChecks.shift(of: changes) { controlShifts.append(shift) }
+                    if MechanicalChecks.sameTokens(control.reply, record.reply) { idleControl += 1 }
+                    if let shift = MechanicalChecks.shift(between: control.reply, and: record.reply) {
+                        controlShifts.append(shift)
+                    }
                 }
             }
 
@@ -89,7 +93,8 @@ public enum Report {
                              shiftSource: median(ok.compactMap { mechanics[Self.id($0)]?.shift }),
                              shiftControl: isControl ? nil : median(controlShifts),
                              noiseFloor: isControl ? median(noise) : nil,
-                             flagCounts: flags, medianTotalMS: median(ok.map(\.totalMS)))
+                             flagCounts: flags, addedBlocks: ok.filter { $0.addedBlocks == true }.count,
+                             medianTotalMS: median(ok.map(\.totalMS)))
         }
 
         let levelOrder = ProofreadingLevel.allCases.map(\.rawValue), styleOrder = RewriteStyle.allCases.map(\.rawValue)
@@ -138,7 +143,7 @@ public enum Report {
         out += "mechanics only — no judge has read these replies; смысл, стиль and естественность are not in this table\n\n"
 
         let header = ["model", "t", "lang", "level", "style", "n", "err", "idle/src", "idle/ctl",
-                      "shift/src", "shift/ctl", "noise", "lang✗", "num✗", "fact✗", "q✗", "len✗", "empty", "ms"]
+                      "shift/src", "shift/ctl", "noise", "lang✗", "num✗", "fact✗", "q✗", "len✗", "empty", "added", "ms"]
         func ratio(_ part: Int, _ whole: Int) -> String { whole == 0 ? "–" : "\(part)/\(whole)" }
         func share(_ value: Double?) -> String { value.map { String(format: "%.2f", $0) } ?? "–" }
         let body = rows(records).map { row -> [String] in
@@ -148,7 +153,7 @@ public enum Report {
                     row.idleControl.map { ratio($0, row.comparedWithControl) } ?? "–",
                     share(row.shiftSource), share(row.shiftControl), share(row.noiseFloor),
                     flag(.wrongLanguage), flag(.missingNumber), flag(.missingFact), flag(.lostQuestion),
-                    flag(.lengthOutOfRange), flag(.emptyReply),
+                    flag(.lengthOutOfRange), flag(.emptyReply), String(row.addedBlocks),
                     row.medianTotalMS.map { String(Int($0.rounded())) } ?? "–"]
         }
         let widths = header.indices.map { column in ([header] + body).map { $0[column].count }.max() ?? 0 }

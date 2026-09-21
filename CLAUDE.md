@@ -145,8 +145,9 @@ TranslationCore ← QualityKit ← quality (+ OllamaKit)
   (the level changed the text either way). `shift/ctl` means something only above the control
   row's `noise`: the shift between two control runs of the same text. It is a comparison stand
   and a diagnostic, **not a gate** — no exit 1 on a threshold — and its table says «mechanics
-  only» on its second line until a judge exists. A corpus not wholly tracked by git is stamped
-  `external: true`; the blind-packet step refuses such a run, in code. See
+  only» on its second line until a judge exists. A corpus not wholly tracked
+  by git *and unmodified* is stamped `external: true` — any doubt reads as external — which is
+  the flag the blind-packet step (issue #94, PR 2; **not in the code yet**) keys its refusal on. See
   `docs/design/specs/2026-09-22-quality-harness-design.md` and issue #94.
 - `TextCapture` — every fragile macOS API, isolated on purpose: Carbon hotkey registration,
   the Accessibility read, the synthetic ⌘C fallback, the whole-pasteboard snapshot, the permission gate.

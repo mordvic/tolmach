@@ -29,15 +29,18 @@ public struct Runner: Sendable {
     public func run(_ cell: Cell) async throws -> CellRecord {
         let c = cell.configuration
         func record(reply: String, outcome: TranslationOutcome?, error: String?) -> CellRecord {
-            CellRecord(item: cell.item.name, language: cell.item.language.rawValue, configuration: c,
+            var record = CellRecord(
+                       item: cell.item.name, language: cell.item.language.rawValue, configuration: c,
                        run: cell.run, source: cell.item.text, reply: reply, facts: cell.item.facts,
-                       mechanics: MechanicalChecks.evaluate(source: cell.item.text, reply: reply,
-                                                            expectedLanguage: cell.item.language,
-                                                            sameLanguage: true, facts: cell.item.facts),
+                       mechanics: nil, addedBlocks: outcome?.replyAddedBlocks,
                        ttftMS: outcome?.timeToFirstTokenMS, totalMS: outcome?.totalMS ?? 0,
                        modelChunkCount: outcome?.modelChunkCount ?? 0,
                        markupDiffs: outcome?.markupDiffs.count ?? 0,
                        markupNotCompared: outcome?.markupNotCompared ?? false, error: error)
+            // One path to the mechanics, the report's own — a snapshot computed a second way
+            // is a snapshot that can disagree with the table.
+            record.mechanics = record.currentMechanics
+            return record
         }
 
         guard c.operation == "proofread",

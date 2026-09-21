@@ -28,20 +28,26 @@ directory calls only the cells it does not already hold. «original» is always 
 named style — it is the control.
 """
 
-/// A tool's trimmed stdout, nil when it is absent or failed — the manifest says «unknown»
-/// rather than the run refusing to start.
-func capture(_ arguments: [String]) -> (status: Int32, output: String)? {
+// A night's progress is read with `tail -f` on a redirected log, and redirected stdout is
+// block-buffered: the first run of this harness wrote nothing to its log for ten minutes.
+setvbuf(stdout, nil, _IOLBF, 0)
+
+/// A tool's trimmed stdout, **nil when it is absent or exits non-zero** — so the manifest says
+/// «unknown» rather than recording the empty string a failed `git rev-parse` prints, which
+/// would describe a clean, known commit that does not exist.
+func capture(_ arguments: [String]) -> String? {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
     process.arguments = arguments
     let pipe = Pipe()
     process.standardOutput = pipe
-    process.standardError = Pipe()
+    // Discarded, not piped: an undrained pipe blocks its writer once it fills.
+    process.standardError = FileHandle.nullDevice
     do { try process.run() } catch { return nil }
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
-    return (process.terminationStatus,
-            String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
+    guard process.terminationStatus == 0 else { return nil }
+    return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
 func list<T: RawRepresentable & CaseIterable>(_ value: String, _ flag: String) -> [T] where T.RawValue == String {
@@ -63,8 +69,13 @@ case "report":
     for (index, path) in arguments.enumerated() {
         do {
             let run = try RunDirectory.read(at: URL(fileURLWithPath: path))
+            let read = try run.read()
             if index > 0 { print("\n" + String(repeating: "─", count: 72) + "\n") }
-            print(Report.render(manifest: run.manifest, records: try run.records()), terminator: "")
+            print(Report.render(manifest: run.manifest, records: read.records), terminator: "")
+            if !read.unreadable.isEmpty {
+                print("\nunreadable (\(read.unreadable.count)) — in no row above, called again on resume: " +
+                      read.unreadable.joined(separator: ", "))
+            }
         } catch {
             fail("cannot read run directory \(path) — \(error)", code: 1)
         }
@@ -117,21 +128,39 @@ case "run":
     guard unknown.isEmpty else { fail("--only names no such item: \(unknown.joined(separator: ", "))") }
     let cells = Matrix.cells(items: items, filter: filter, temperature: temperature)
 
-    // Committed means *every* text is tracked: one untracked file is one text that is not
-    // public, and the refusal `quality blind` makes on this flag is about exactly that text.
-    let tracked = Set((capture(["git", "ls-files", "--", corpusPath])?.output ?? "")
-        .split(separator: "\n").map { URL(fileURLWithPath: String($0)).lastPathComponent })
-    let external = !items.allSatisfy { tracked.contains("\($0.name).txt") }
+    // «Not external» means the bytes the model was given are the bytes on GitHub: every text
+    // and every sidecar tracked **at this path**, and nothing under the corpus directory
+    // modified or untracked. A tracked file with working text pasted over it is still listed
+    // by `ls-files`, which is why `status` is asked as well; and any doubt — no git, an error —
+    // reads as external, because the flag guards texts that must not be handed to a cloud judge.
+    let corpusURL = URL(fileURLWithPath: corpusPath).standardizedFileURL
+    let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).standardizedFileURL
+    let tracked = capture(["git", "ls-files", "--", corpusPath]).map {
+        Set($0.split(separator: "\n").map { root.appendingPathComponent(String($0)).standardizedFileURL.path })
+    }
+    let untouched = capture(["git", "status", "--porcelain", "--", corpusPath])?.isEmpty
+    let external: Bool
+    if let tracked, untouched == true {
+        external = !items.allSatisfy { item in
+            let text = corpusURL.appendingPathComponent("\(item.name).txt").path
+            let sidecar = corpusURL.appendingPathComponent("\(item.name).meta.json").path
+            return tracked.contains(text) && (item.meta == nil || tracked.contains(sidecar))
+        }
+    } else {
+        external = true
+    }
 
     let stamp = DateFormatter()
     stamp.dateFormat = "yyyyMMdd-HHmm"
     let manifest = RunManifest(
         label: label, createdAt: ISO8601DateFormatter().string(from: Date()),
-        commit: capture(["git", "rev-parse", "--short", "HEAD"])?.output ?? "unknown",
-        dirty: !(capture(["git", "status", "--porcelain", "--untracked-files=no"])?.output ?? "").isEmpty,
+        commit: capture(["git", "rev-parse", "--short", "HEAD"]) ?? "unknown",
+        dirty: !(capture(["git", "status", "--porcelain", "--untracked-files=no"]) ?? "?").isEmpty,
         engine: "ollama",
-        engineVersion: capture(["ollama", "--version"])?.output
-            .split(separator: "\n").first?.split(separator: " ").last.map(String.init),
+        // The line that says so, not the first line: with the daemon down `ollama --version`
+        // opens with a warning, and the last word of a warning is not a version.
+        engineVersion: capture(["ollama", "--version"])?.split(separator: "\n")
+            .first { $0.contains("version is") }?.split(separator: " ").last.map(String.init),
         chunk: chunk, temperature: temperature, corpusPath: corpusPath,
         corpusHash: CorpusLoader.hash(of: items), external: external, filter: filter)
 
@@ -159,9 +188,10 @@ case "run":
             failures += 1
             tail = "FAILED — \(error)"
         } else {
-            let m = record.mechanics
+            let m = record.currentMechanics
             tail = "\(String(format: "%.1f", record.totalMS / 1000)) s · " +
                    "shift \(m.shift.map { String(format: "%.2f", $0) } ?? "–")\(m.idle ? " · IDLE" : "")" +
+                   (record.addedBlocks == true ? " · ADDED BLOCKS" : "") +
                    (m.flags.isEmpty ? "" : " · \(m.flags.map(\.rawValue).joined(separator: ", "))")
         }
         print("[\(index + 1)/\(pending.count)] \(cell.item.name) · \(c.model) · \(c.level ?? "-") · " +
@@ -169,7 +199,8 @@ case "run":
         // A dead engine fails every cell in milliseconds; forty of those in a row is not a
         // night's work worth finishing, and the directory resumes from here.
         if failures >= 40 && failures == index + 1 {
-            fail("the first \(failures) cells all failed — is the engine running? Resume with --into \(directory.url.path)", code: 1)
+            fail("the first \(failures) cells all failed — is the engine running? Resume with the same command " +
+                 "plus --into \(directory.url.path) (--label need not be repeated; everything else must match)", code: 1)
         }
     }
     print("\ndone: \(pending.count - failures) answered, \(failures) failed · quality report \(directory.url.path)")

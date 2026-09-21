@@ -56,16 +56,13 @@ public enum MechanicalChecks {
                              lengthRatio: 0, flags: [.emptyReply])
         }
 
-        let idle: Bool
         let shift: Double?
         if sameLanguage {
-            let changes = TextDiff.changes(source: source, result: reply)
-            idle = changes.notCompared == nil && changes.count == 0
-            shift = Self.shift(of: changes)
+            shift = Self.shift(of: TextDiff.changes(source: source, result: reply))
         } else {
-            idle = TextTokenizer.tokens(of: source).map(\.text) == TextTokenizer.tokens(of: reply).map(\.text)
             shift = nil
         }
+        let idle = sameTokens(source, reply)
 
         let detected = LanguageDetector.detect(reply)
         let languageOK = detected == expectedLanguage
@@ -83,6 +80,16 @@ public enum MechanicalChecks {
                          languageOK: languageOK, missingNumbers: numbers, missingFacts: lostFacts,
                          sourceQuestions: sourceQuestions, replyQuestions: replyQuestions,
                          lengthRatio: ratio, flags: flags)
+    }
+
+    /// «Холостой ход»: the two texts are the same tokens in the same order — whitespace is a
+    /// boundary, so a collapsed double space is not a change (`TextTokenizer`'s rule).
+    ///
+    /// **Not `TextDiff.changes(…).count == 0`**, which is what this was first: `TextDiff` never
+    /// compares code, so a reply that appended a whole fenced block — the answered-instruction
+    /// shape — had «no changes» and was reported as the model doing nothing.
+    public static func sameTokens(_ a: String, _ b: String) -> Bool {
+        TextTokenizer.tokens(of: a).map(\.text) == TextTokenizer.tokens(of: b).map(\.text)
     }
 
     /// Changed tokens over all tokens across every compared block — the post-check ratio
@@ -106,18 +113,53 @@ public enum MechanicalChecks {
     /// Compared as **whole numbers, never as substrings** — «15» is not present in «2015» —
     /// and with digit grouping removed, because «10 000» → «10,000» is what a translation
     /// into English does and is not a loss.
+    ///
+    /// Three allowances, each from the first live run (2026-09-22, `translategemma:12b`, the
+    /// style corpus, 48 cells) where the strict reading flagged replies that had lost nothing:
+    /// a number up to twelve **spelled out** («1 month» → «one month», 20 of 20 replies to one
+    /// text); an **afternoon hour on the twelve-hour clock** («19:00» → «7 p.m.», 18 of 18),
+    /// allowed only where the source writes it as an hour, so «19 заявок» → «7 заявок» is still
+    /// a loss; and the `:00` such a rewrite drops. And one from review: a grouped reading whose
+    /// parts all survive separately («101,102,103» → «101, 102 и 103») is a list, not a loss.
     public static func missingNumbers(source: String, reply: String) -> [String] {
-        let present = Set(numbers(in: reply))
+        let replyNumbers = numbers(in: reply)
+        let grouped = Set(replyNumbers.map(\.value))
+        let raw = Set(replyNumbers.flatMap(\.parts))
+        let words = Set(TextTokenizer.tokens(of: reply).filter { $0.kind == .word }.map { $0.text.lowercased() })
+
         var seen = Set<String>()
-        return numbers(in: source).filter { !present.contains($0) && seen.insert($0).inserted }
+        return numbers(in: source).filter { number in
+            if grouped.contains(number.value) || raw.contains(number.value) { return false }
+            if number.parts.count > 1, number.parts.allSatisfy(raw.contains) { return false }
+            if let small = Int(number.value), let spellings = numberWords[small], !words.isDisjoint(with: spellings) {
+                return false
+            }
+            if number.isHour, let hour = Int(number.value), (13...23).contains(hour) || hour == 0,
+               raw.contains(String(hour == 0 ? 12 : hour - 12)) { return false }
+            if number.isMinutes, Int(number.value) == 0 { return false }
+            return true
+        }.map(\.value).filter { seen.insert($0).inserted }
     }
 
     /// Sidecar `literal` facts absent from the reply in every one of their spellings.
+    ///
+    /// A spelling that is **only a number** («64», «7 500») is looked for as a whole number,
+    /// for the reason `missingNumbers` is: «64» is not present in «1964». Any other spelling is
+    /// a case-insensitive substring, deliberately — «Лесн» is how a sidecar says «Лесная, Лесной,
+    /// Лесную» without listing a declension.
     public static func missingFacts(_ facts: [ItemMeta.Fact], in reply: String) -> [String] {
         let haystack = normalised(reply)
-        return facts.filter { fact in
-            fact.kind == .literal && !fact.anyOf.contains { haystack.contains(normalised($0)) }
-        }.map(\.id)
+        let replyNumbers = numbers(in: reply)
+        let present = Set(replyNumbers.map(\.value)).union(replyNumbers.flatMap(\.parts))
+        func survives(_ spelling: String) -> Bool {
+            let numeric = spelling.unicodeScalars.allSatisfy {
+                ("0"..."9").contains($0) || [" ", "\u{00A0}", "\u{202F}", ",", "."].contains($0)
+            }
+            let wanted = numbers(in: spelling)
+            if numeric, !wanted.isEmpty { return wanted.allSatisfy { present.contains($0.value) } }
+            return haystack.contains(normalised(spelling))
+        }
+        return facts.filter { $0.kind == .literal && !$0.anyOf.contains(where: survives) }.map(\.id)
     }
 
     public static func questionMarks(in text: String) -> Int {
@@ -134,19 +176,37 @@ public enum MechanicalChecks {
             .lowercased()
     }
 
+    struct Number {
+        /// Grouping removed and leading zeros dropped: «10 000» is `10000`, «03» is `3`.
+        let value: String
+        /// The digit runs it was read from — more than one only for a grouped reading.
+        let parts: [String]
+        /// Written as the hour of a clock time: a run directly followed by «:» and a digit.
+        let isHour: Bool
+        /// Written as the minutes of one: a run directly preceded by «:» after an hour.
+        let isMinutes: Bool
+    }
+
     /// Digit runs, with a run of three-digit groups read as one number: «10 000», «10,000»
     /// and «10.000» are all `10000`. A decimal («3.5») is two runs, which is as strict as this
     /// needs to be — both halves still have to survive.
-    private static func numbers(in text: String) -> [String] {
-        var found: [String] = []
+    static func numbers(in text: String) -> [Number] {
+        var found: [Number] = []
         let scalars = Array(text.unicodeScalars)
         var i = 0
         func isDigit(_ s: Unicode.Scalar) -> Bool { ("0"..."9").contains(s) }
+        func canonical(_ digits: String) -> String {
+            let trimmed = String(digits.drop { $0 == "0" })
+            return trimmed.isEmpty ? "0" : trimmed
+        }
         let groupSeparators: Set<Unicode.Scalar> = [" ", "\u{00A0}", "\u{202F}", ",", "."]
+        var previousWasHour = false
         while i < scalars.count {
             guard isDigit(scalars[i]) else { i += 1; continue }
+            let start = i
             var run = ""
             while i < scalars.count, isDigit(scalars[i]) { run.unicodeScalars.append(scalars[i]); i += 1 }
+            var parts = [canonical(run)]
             // A leading group is 1–3 digits; every following one exactly three.
             if run.count <= 3 {
                 while i + 3 < scalars.count, groupSeparators.contains(scalars[i]) {
@@ -154,12 +214,35 @@ public enum MechanicalChecks {
                     guard group.allSatisfy(isDigit) else { break }
                     let after = i + 4
                     if after < scalars.count, isDigit(scalars[after]) { break }
-                    for s in group { run.unicodeScalars.append(s) }
+                    var piece = ""
+                    for s in group { run.unicodeScalars.append(s); piece.unicodeScalars.append(s) }
+                    parts.append(canonical(piece))
                     i = after
                 }
             }
-            found.append(run)
+            let isHour = parts.count == 1 && i + 1 < scalars.count && scalars[i] == ":" && isDigit(scalars[i + 1])
+            let isMinutes = previousWasHour && start > 0 && scalars[start - 1] == ":"
+            found.append(Number(value: canonical(run), parts: parts, isHour: isHour, isMinutes: isMinutes))
+            previousWasHour = isHour
         }
         return found
     }
+
+    /// Zero to twelve, in the forms a rewrite actually produces. Whole words, never prefixes:
+    /// «два» as a prefix would accept «двадцать» for a lost «2».
+    private static let numberWords: [Int: Set<String>] = [
+        0: ["zero", "ноль", "нуля"],
+        1: ["one", "один", "одна", "одно", "одного", "одной", "одну", "одним", "одном"],
+        2: ["two", "два", "две", "двух", "двум", "двумя", "двое"],
+        3: ["three", "три", "трёх", "трех", "трём", "трем", "тремя", "трое"],
+        4: ["four", "четыре", "четырёх", "четырех", "четырём", "четырем", "четырьмя", "четверо"],
+        5: ["five", "пять", "пяти", "пятью", "пятеро"],
+        6: ["six", "шесть", "шести", "шестью"],
+        7: ["seven", "семь", "семи", "семью"],
+        8: ["eight", "восемь", "восьми", "восемью"],
+        9: ["nine", "девять", "девяти", "девятью"],
+        10: ["ten", "десять", "десяти", "десятью"],
+        11: ["eleven", "одиннадцать", "одиннадцати"],
+        12: ["twelve", "двенадцать", "двенадцати"],
+    ]
 }

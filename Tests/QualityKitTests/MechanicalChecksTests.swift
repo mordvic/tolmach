@@ -120,3 +120,52 @@ private let facts = [
                                       expectedLanguage: .ru, sameLanguage: true, facts: facts.filter { $0.id == "owner" })
     #expect(m.flags == [])
 }
+
+// MARK: what the first live run taught the number check (2026-09-22, stage 1, 48 cells)
+
+@Test func aSmallNumberSpelledOutInWordsIsNotLost() {
+    // «extended by 1 month» → «by one month» was flagged 20 times in 20 replies; a rewrite
+    // into a friendlier register does exactly this, and it loses nothing.
+    #expect(MechanicalChecks.missingNumbers(source: "Extended by 1 month, up to 5 working days.",
+                                            reply: "Extended by one month, up to five business days.") == [])
+    #expect(MechanicalChecks.missingNumbers(source: "Продлена на 1 месяц, до 5 рабочих дней, 3 попытки.",
+                                            reply: "Продлена на один месяц, до пяти рабочих дней, три попытки.") == [])
+    // Twelve is where the words stop: «27 сделок» has no spelling anyone would write.
+    #expect(MechanicalChecks.missingNumbers(source: "Все 27 сделок.", reply: "Все сделки.") == ["27"])
+}
+
+@Test func anAfternoonHourRewrittenOnTheTwelveHourClockIsNotLost() {
+    // «10:00 to 19:00» → «10 a.m. to 7 p.m.», «16:30» → «4:30»: flagged 18 of 18.
+    #expect(MechanicalChecks.missingNumbers(source: "Open from 10:00 to 19:00, club at 16:30.",
+                                            reply: "Open from 10 a.m. to 7 p.m., club at 4:30.") == [])
+    // Only an hour reads that way: «19 заявок» → «7 заявок» is a loss.
+    #expect(MechanicalChecks.missingNumbers(source: "Пришло 19 заявок.", reply: "Пришло 7 заявок.") == ["19"])
+}
+
+@Test func aListOfThreeDigitNumbersIsNotOneLongNumber() {
+    // The grouping reader fused «101,102,103» into 101102103 and then missed it in a reply
+    // that kept all three.
+    #expect(MechanicalChecks.missingNumbers(source: "Кабинеты 101,102,103 закрыты.",
+                                            reply: "Закрыты кабинеты 101, 102 и 103.") == [])
+    #expect(MechanicalChecks.missingNumbers(source: "Кабинеты 101,102,103 закрыты.",
+                                            reply: "Закрыты кабинеты 101 и 103.") == ["101102103"])
+}
+
+@Test func aNumericFactIsAWholeNumberAndNotASubstring() {
+    // The same defect `missingNumbers` was written to avoid, one function over: «64» inside
+    // «1964», «500» inside «5000».
+    let facts = [ItemMeta.Fact(id: "seats", kind: .literal, note: "64 workstations", anyOf: ["64"]),
+                 ItemMeta.Fact(id: "line", kind: .literal, note: "a 500 Mbit line", anyOf: ["500"])]
+    #expect(MechanicalChecks.missingFacts(facts, in: "Офис 1964 года, канал 5000 Мбит.") == ["seats", "line"])
+    #expect(MechanicalChecks.missingFacts(facts, in: "64 места, канал 500 Мбит.") == [])
+}
+
+@Test func aReplyThatDiffersOnlyInsideAFenceIsNotIdle() {
+    // `TextDiff` never compares code, so «no changes» was true of a reply that appended a
+    // whole SQL block — the answered-instruction shape, reported as the model doing nothing.
+    let source = "Напишите запрос, который вернёт всех клиентов."
+    let reply = source + "\n\n```sql\nSELECT * FROM clients;\n```"
+    let m = MechanicalChecks.evaluate(source: source, reply: reply, expectedLanguage: .ru,
+                                      sameLanguage: true, facts: [])
+    #expect(!m.idle)
+}

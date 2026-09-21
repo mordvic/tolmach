@@ -178,3 +178,66 @@ private func record(for cell: Cell, reply: String = "ответ") -> CellRecord 
     try run.write(failed)
     #expect(!run.has(cell))
 }
+
+// MARK: what the review of 2026-09-22 found
+
+@Test func aRecordWrittenBeforeAFieldExistedStillReads() throws {
+    // A run directory is a night of model time. A schema that refuses yesterday's file turns
+    // «a corrected check corrects last night's table» into «a new field deletes it».
+    let dir = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let run = try RunDirectory.open(at: dir, manifest: manifest())
+    let cell = Matrix.cells(items: [item("a")], filter: manifest().filter, temperature: 0.2)[0]
+    try run.write(record(for: cell))
+
+    let file = dir.appendingPathComponent("cells").appendingPathComponent(cell.fileName)
+    var json = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+    json["facts"] = nil
+    json["addedBlocks"] = nil
+    json["mechanics"] = ["flags": ["aFlagFromAnotherEra"]]
+    try JSONSerialization.data(withJSONObject: json).write(to: file)
+
+    let records = try run.records()
+    #expect(records.count == 1)
+    #expect(records[0].facts == [])
+    #expect(records[0].mechanics == nil)
+    #expect(run.has(cell))
+}
+
+@Test func aFileThatIsNotARecordIsCountedAndDoesNotCostTheOthers() throws {
+    let dir = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let run = try RunDirectory.open(at: dir, manifest: manifest())
+    let cell = Matrix.cells(items: [item("a")], filter: manifest().filter, temperature: 0.2)[0]
+    try run.write(record(for: cell))
+    try Data("{ half a file".utf8).write(to: dir.appendingPathComponent("cells/torn.json"))
+    let read = try run.read()
+    #expect(read.records.count == 1)
+    #expect(read.unreadable == ["torn.json"])
+}
+
+@Test func aResumeUnderAnotherLabelOrATrailingSlashIsTheSameRun() throws {
+    // The printed hint says «resume with --into <dir>» and nothing about repeating --label.
+    let dir = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    _ = try RunDirectory.open(at: dir, manifest: manifest(label: "t05"))
+    var resumed = manifest(label: "run")
+    resumed.corpusPath = "quality-corpus/style/"
+    #expect(try RunDirectory.open(at: dir, manifest: resumed).manifest.label == "t05")
+}
+
+@Test func aRefusedResumeNamesWhatDiffers() throws {
+    let dir = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    _ = try RunDirectory.open(at: dir, manifest: manifest(temperature: 0.2))
+    var other = manifest(temperature: 0.5)
+    other.commit = "fffffff"
+    do {
+        _ = try RunDirectory.open(at: dir, manifest: other)
+        Issue.record("a different temperature and commit were accepted")
+    } catch let failure as RunDirectory.Failure {
+        #expect(failure.description.contains("temperature (0.2 → 0.5)"))
+        #expect(failure.description.contains("commit (abc1234 → fffffff)"))
+        #expect(!failure.description.contains("chunk"))
+    }
+}
