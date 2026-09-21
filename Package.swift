@@ -17,6 +17,15 @@ let package = Package(
         .testTarget(name: "LMStudioKitTests", dependencies: ["LMStudioKit", "TranslationCore"], swiftSettings: [.swiftLanguageMode(.v6)]),
         .executableTarget(name: "translate-cli", dependencies: ["TranslationCore", "OllamaKit", "LMStudioKit"], swiftSettings: [.swiftLanguageMode(.v6)]),
         .executableTarget(name: "acceptance", dependencies: ["TranslationCore", "OllamaKit", "LMStudioKit"], swiftSettings: [.swiftLanguageMode(.v6)]),
+        // The `quality` harness, split in two for one reason: `main.swift`'s top-level statements
+        // cannot be linked into a test (`TranslateCLIExplainFlagTests` records that), and every
+        // mechanical check in `QualityKit` is a gate the mutation rule wants pinned. The library
+        // knows `TranslationCore` and nothing else — no transport, so nothing in it can open a
+        // socket — and the executable adds `OllamaKit`, the file system and the clock. See
+        // `docs/design/specs/2026-09-22-quality-harness-design.md`.
+        .target(name: "QualityKit", dependencies: ["TranslationCore"], swiftSettings: [.swiftLanguageMode(.v6)]),
+        .testTarget(name: "QualityKitTests", dependencies: ["QualityKit", "TranslationCore"], swiftSettings: [.swiftLanguageMode(.v6)]),
+        .executableTarget(name: "quality", dependencies: ["QualityKit", "TranslationCore", "OllamaKit"], swiftSettings: [.swiftLanguageMode(.v6)]),
         // The first non-app target to import AppKit, and a deliberate `docs/adr/0007`
         // whitelist edit rather than an oversight: an attributed string *is* AppKit, and the
         // alternative was a second Markdown serialiser inside the app for the rich-copy

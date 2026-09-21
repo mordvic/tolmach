@@ -1,0 +1,58 @@
+{
+  "genre": "internal memo",
+  "language": "en",
+  "register": "dry official",
+  "mirror": "ru-memo-dry",
+  "facts": [
+    {
+      "id": "start",
+      "kind": "literal",
+      "note": "the new procedure starts on 6 October",
+      "anyOf": [
+        "6 октября",
+        "6 October",
+        "October 6"
+      ]
+    },
+    {
+      "id": "contact",
+      "kind": "literal",
+      "note": "the contact is Marina Orlova, extension 2114",
+      "anyOf": [
+        "Орлов",
+        "Orlova"
+      ]
+    },
+    {
+      "id": "lead-time",
+      "kind": "semantic",
+      "note": "a request is due no later than 10 working days before departure",
+      "anyOf": []
+    },
+    {
+      "id": "limits",
+      "kind": "semantic",
+      "note": "7 500 roubles a night for accommodation, 1 200 roubles daily allowance",
+      "anyOf": []
+    },
+    {
+      "id": "memo-before",
+      "kind": "semantic",
+      "note": "spending over the limit needs a memo approved BEFORE the trip, not after",
+      "anyOf": []
+    },
+    {
+      "id": "originals",
+      "kind": "semantic",
+      "note": "original receipts only — photographs are not accepted",
+      "anyOf": []
+    },
+    {
+      "id": "report",
+      "kind": "semantic",
+      "note": "the report is due within 3 working days of returning",
+      "anyOf": []
+    }
+  ],
+  "traps": []
+}

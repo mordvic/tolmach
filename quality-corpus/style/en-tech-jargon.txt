@@ -1,0 +1,5 @@
+Following Friday's incident: prod went down at 14:20 because after the 3.8 rollout we started leaking DB connections — the pool was set to 50, and the new sync worker opened a connection per task and never gave them back. In 40 minutes the pool was eaten completely, then timeouts started raining on every endpoint including the healthcheck, and the balancer pulled all three nodes out of rotation at once.
+
+We rolled back to 3.7 at 15:05 and the service was up within two minutes. No data was lost, but 312 background jobs had to be replayed by hand.
+
+What we're doing: first, in the worker we wrap the connection handling in a context so it is guaranteed to go back to the pool. Second, we add an alert on pool utilisation above 80%. Third, the healthcheck stops hitting the database — otherwise any database degradation makes us switch ourselves off. The fix ships in 3.8.1, target is Wednesday.

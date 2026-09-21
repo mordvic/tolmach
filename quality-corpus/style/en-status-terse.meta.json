@@ -1,0 +1,66 @@
+{
+  "genre": "status update",
+  "language": "en",
+  "register": "clipped, telegraphic",
+  "mirror": "ru-status-terse",
+  "facts": [
+    {
+      "id": "address",
+      "kind": "literal",
+      "note": "the new office is at 9 Lesnaya",
+      "anyOf": [
+        "Лесн",
+        "Lesnaya"
+      ]
+    },
+    {
+      "id": "seats",
+      "kind": "literal",
+      "note": "64 workstations",
+      "anyOf": [
+        "64"
+      ]
+    },
+    {
+      "id": "line",
+      "kind": "literal",
+      "note": "a 500 Mbit line",
+      "anyOf": [
+        "500"
+      ]
+    },
+    {
+      "id": "budget",
+      "kind": "literal",
+      "note": "a contingency budget of 180 thousand roubles",
+      "anyOf": [
+        "180"
+      ]
+    },
+    {
+      "id": "keys",
+      "kind": "semantic",
+      "note": "keys on 1 October, internet on 3 October",
+      "anyOf": []
+    },
+    {
+      "id": "lift",
+      "kind": "semantic",
+      "note": "the freight lift is under repair until 10 October; the move is 11–12 October, so there is one day of slack",
+      "anyOf": []
+    },
+    {
+      "id": "cost-of-slip",
+      "kind": "semantic",
+      "note": "a slip means a week's delay and seven extra days of rent on both offices",
+      "anyOf": []
+    },
+    {
+      "id": "ask",
+      "kind": "semantic",
+      "note": "management must approve the contingency budget by Wednesday",
+      "anyOf": []
+    }
+  ],
+  "traps": []
+}

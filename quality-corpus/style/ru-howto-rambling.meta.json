@@ -1,0 +1,66 @@
+{
+  "genre": "how-to for colleagues",
+  "language": "ru",
+  "register": "wordy, rambling, repetitive",
+  "mirror": "en-howto-rambling",
+  "facts": [
+    {
+      "id": "url",
+      "kind": "literal",
+      "note": "the portal address",
+      "anyOf": [
+        "https://portal.corp.example/access"
+      ]
+    },
+    {
+      "id": "validity",
+      "kind": "literal",
+      "note": "the temporary password lives 24 hours",
+      "anyOf": [
+        "24"
+      ]
+    },
+    {
+      "id": "term",
+      "kind": "literal",
+      "note": "access lasts 90 days",
+      "anyOf": [
+        "90"
+      ]
+    },
+    {
+      "id": "vpn-first",
+      "kind": "semantic",
+      "note": "the VPN must be set up first — without it the environment does not open",
+      "anyOf": []
+    },
+    {
+      "id": "approval",
+      "kind": "semantic",
+      "note": "approval usually takes one working day",
+      "anyOf": []
+    },
+    {
+      "id": "consequence",
+      "kind": "semantic",
+      "note": "an unchanged temporary password means filing the request again",
+      "anyOf": []
+    },
+    {
+      "id": "renew-early",
+      "kind": "semantic",
+      "note": "renew about five days ahead, not on the last day",
+      "anyOf": []
+    }
+  ],
+  "traps": [
+    {
+      "kind": "identifier",
+      "text": "the URL must survive byte for byte"
+    },
+    {
+      "kind": "register",
+      "text": "«простой и ясный» should roughly halve this; the length band is deliberately wide enough for that"
+    }
+  ]
+}
