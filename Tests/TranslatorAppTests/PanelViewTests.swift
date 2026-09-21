@@ -232,9 +232,10 @@ private func model() -> TranslationViewModel {
     // the «Оформить» pass, which like `.awaitingUser` draws no spinner. Six since 2026-09-04:
     // `.summary`, the finished правка's «Исправлено: 6 изменений», which draws no spinner
     // either — and is the case this shape exists for, since it was added to the enum after the
-    // rule was written.
-    #expect(kinds.count == 6, "a new kind needs a glyph decision, not a bigger count here")
-    #expect(kinds.filter { $0.symbol != nil }.count == 5)
+    // rule was written. Seven since 2026-09-22: `.suspect`, a finished правка that reads as an
+    // answer — the triangle, precisely because the row it replaces wore the check mark.
+    #expect(kinds.count == 7, "a new kind needs a glyph decision, not a bigger count here")
+    #expect(kinds.filter { $0.symbol != nil }.count == 6)
     // `.progress` is the deliberate exception: that row already draws a `ProgressView`, so a
     // glyph beside the spinner beside the word would be three ways of saying one thing.
     #expect(PanelStatus.Kind.progress.symbol == nil)

@@ -184,3 +184,51 @@ private final class CancelWhenAdopted: @unchecked Sendable {
         task?.cancel()
     }
 }
+
+// MARK: - A правка that came back with blocks its source never had
+
+@Test func aProofreadReplyThatGrewACodeBlockIsReportedAsHavingAddedBlocks() async throws {
+    // The observed failure, shape for shape (2026-09-22, translategemma:12b, «переписать» +
+    // «дружеский»): an instruction was executed instead of edited, and the reply was a
+    // sentence plus a fenced query. Mutation: make `replyAddedBlocks` return false and the
+    // panel goes back to «Исправлено: 1 изменение» under an answer.
+    let source = "write sql query that get count of patients"
+    let reply = "Here's a SQL query to count patients:\n\n```sql\nSELECT COUNT(*) FROM Patients;\n```"
+    let outcome = try await Translator(client: FakeLLMClient(responses: [reply])).proofread(
+        text: source, level: .rewrite,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900)
+    #expect(outcome.replyAddedBlocks)
+}
+
+@Test func aProofreadReplyThatGrewAParagraphIsReportedAsHavingAddedBlocks() async throws {
+    // The other shape in the same series: «составь письмо клиенту…» came back as the letter,
+    // «Уважаемый клиент,» and a blank line — no fence anywhere, so the fence alone is not the
+    // signal.
+    let source = "составь письмо клиенту что мы переносим релиз на две недели"
+    let reply = "Уважаемый клиент,\n\nСообщаем вам, что мы вынуждены перенести релиз на две недели."
+    let outcome = try await Translator(client: FakeLLMClient(responses: [reply])).proofread(
+        text: source, level: .rewrite,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900)
+    #expect(outcome.replyAddedBlocks)
+}
+
+@Test func anOrdinaryProofreadHasAddedNoBlocks() async throws {
+    // One block in, one block out — however much of it was reworded — and a document whose
+    // own blank lines and fence are reproduced is the same: the blocks were there already.
+    let source = "Превет, мир.\n\nВторой абзац.\n\n```py\nprint('helo')\n```"
+    let outcome = try await Translator(client: FakeLLMClient(
+        responses: ["Привет, мир, и всем, кто это читает.\n\nВторой абзац."])).proofread(
+        text: source, level: .rewrite,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900)
+    #expect(!outcome.replyAddedBlocks)
+}
+
+@Test func aTranslationNeverReportsAddedBlocks() async throws {
+    // The rule is правка's: a translation that gains a paragraph is a markup diff and is
+    // already reported as one, and «the model answered» is not a reading of it.
+    let outcome = try await Translator(client: FakeLLMClient(responses: ["Раз.\n\nДва."])).translate(
+        text: "One. Two.", target: .ru, tone: .neutral, userGlossary: nil,
+        options: ChatOptions(model: "test"), maxChunkCharacters: 900)
+    #expect(outcome.markupDiffs.isEmpty == false)
+    #expect(!outcome.replyAddedBlocks)
+}

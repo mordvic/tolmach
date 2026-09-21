@@ -429,3 +429,47 @@ private func measured(_ view: some View, at width: CGFloat) -> (ideal: CGFloat, 
                                     adoptionRefusal: .targetBusy, fillsPanel: false), at: 300)
     #expect(abs(failed.height - 170) <= 2, "failed + «окно занято» measured \(failed.height)")
 }
+
+// MARK: - A правка that looks like an answer
+
+/// «Исправлено: 1 изменение» with a check mark, under a reply that carried the text out instead
+/// of editing it, is what the panel said on 2026-09-22 — a claim about work done, over work that
+/// was not. `TranslationOutcome.replyAddedBlocks` is the measured signal; this is what the row
+/// says when it is set.
+///
+/// Mutations watched: ignoring `answered` in `.finished` (the first line fails), letting it
+/// reach a перевод or a run with no change set (the two nils fail), and drawing it as `.summary`
+/// — whose glyph is the check mark the sentence contradicts (the kind line fails).
+@Test func aProofreadThatLooksLikeAnAnswerDoesNotClaimToHaveCorrectedAnything() {
+    let one = ChangeSet(changes: [TextChange(scope: .block, block: 0, insertedTokens: 0..<1,
+                                             removed: "было", inserted: "стало")],
+                        blocks: [], notCompared: nil)
+    let suspect = PanelView.status(for: .finished, operation: .proofread,
+                                   changes: one, answered: true)
+    #expect(suspect?.message == "Похоже, модель ответила на текст, а не исправила его")
+    #expect(suspect?.kind == .suspect)
+    #expect(suspect?.offersRetry == false)
+    // The same set without the signal is the sentence it always was.
+    #expect(PanelView.status(for: .finished, operation: .proofread, changes: one)?.message
+            == "Исправлено: 1 изменение")
+    // And the signal alone draws nothing: it is a reading of a finished правка, not a state.
+    #expect(PanelView.status(for: .finished, operation: .translate,
+                             changes: nil, answered: true) == nil)
+    #expect(PanelView.status(for: .finished, operation: .proofread,
+                             changes: nil, answered: true) == nil)
+    #expect(PanelView.status(for: .running, operation: .proofread,
+                             changes: nil, answered: true)?.kind == .progress)
+    // What a VoiceOver user hears at the settle follows the row.
+    #expect(PanelView.announcement(for: .finished, operation: .proofread,
+                                   changes: one, answered: true)
+            == "Правка готова, но похоже на ответ, а не на правку")
+    #expect(PanelView.announcement(for: .finished, operation: .proofread, changes: one)
+            == "Правка готова, 1 изменение")
+}
+
+/// The suspect row is a warning and is drawn as one: the triangle «Основные» and the interrupted
+/// row already use, never the check mark.
+@Test func theSuspectRowWearsTheWarningGlyph() {
+    #expect(PanelStatus.Kind.suspect.symbol == "exclamationmark.triangle.fill")
+    #expect(PanelStatus.Kind.suspect.showsSpinner == false)
+}

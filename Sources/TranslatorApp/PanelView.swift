@@ -14,7 +14,7 @@ struct PanelStatus: Equatable {
     /// not — `.awaitingUser` was added to this enum and never to that list, so the one case
     /// whose glyph rule is least obvious was the one nothing checked.
     enum Kind: Equatable, CaseIterable {
-        case progress, awaitingUser, formatting, summary, interrupted, failure
+        case progress, awaitingUser, formatting, summary, suspect, interrupted, failure
 
         /// Whether this row's state means *the machine* is working.
         ///
@@ -59,6 +59,10 @@ struct PanelStatus: Equatable {
             // «Исправлено: 6 изменений». `checkmark.circle` is the symbol «Основные» already
             // puts beside «предоставлен», which is the vocabulary rule the two below follow.
             case .summary: "checkmark.circle"
+            // A finished правка that reads as an answer. The triangle and not the check mark,
+            // which is the whole of the change: «✓» over a reply that carried the text out
+            // instead of editing it was the row vouching for it.
+            case .suspect: "exclamationmark.triangle.fill"
             case .interrupted: "exclamationmark.triangle.fill"
             case .failure: "xmark.octagon.fill"
             }
@@ -904,7 +908,8 @@ struct PanelView: View {
                                     // Gated on `.finished` by the model itself, which is why
                                     // the running branch above has nothing to pass: a summary
                                     // is a sentence about a run that ended.
-                                    changes: model.changes)
+                                    changes: model.changes,
+                                    answered: model.outcome?.replyAddedBlocks ?? false)
     }
 
     @ViewBuilder private var statusLine: some View {
@@ -940,7 +945,7 @@ struct PanelView: View {
         // `.summary` is secondary with the other three: it is the panel saying what it did,
         // not a warning about it, and `StatusColour` is reserved for the two rows that are.
         case .progress, .awaitingUser, .formatting, .summary: .secondary
-        case .interrupted: StatusColour.warning
+        case .suspect, .interrupted: StatusColour.warning
         case .failure: StatusColour.failure
         }
     }
@@ -1003,11 +1008,16 @@ struct PanelView: View {
     ///   two surfaces cannot come to count differently.
     nonisolated static func announcement(for state: TranslationState,
                                          operation: TextOperation = .translate,
-                                         changes: ChangeSet? = nil) -> String? {
+                                         changes: ChangeSet? = nil,
+                                         answered: Bool = false) -> String? {
         switch state {
         case .idle, .running: nil
         case .finished: operation != .proofread ? "Перевод готов"
-            : changes.map { "Правка готова, \(RussianCopy.changeSummary($0))" } ?? "Правка готова"
+            // The row's own rule, in the row's own order: a правка with a set that reads as an
+            // answer says so instead of counting.
+            : changes.map { answered ? RussianCopy.proofreadLooksAnsweredAnnouncement
+                                     : "Правка готова, \(RussianCopy.changeSummary($0))" }
+                ?? "Правка готова"
         case .interrupted: operation == .proofread
             ? "Правка прервана, показана пришедшая часть"
             : "Перевод прерван, показана пришедшая часть"
@@ -1147,11 +1157,14 @@ struct PanelView: View {
     ///   «Изменений нет» — because the underlines above it are otherwise the whole report, and
     ///   a clean «только ошибки» run has nothing to underline and would look like a run that
     ///   did not happen (story 8).
+    /// - Parameter answered: `TranslationOutcome.replyAddedBlocks` for the run on screen. It
+    ///   turns a finished правка's summary into a warning and does nothing anywhere else.
     nonisolated static func status(for state: TranslationState,
                                    awaitingTerms: Bool = false,
                                    operation: TextOperation = .translate,
                                    formatting: Bool = false,
-                                   changes: ChangeSet? = nil) -> PanelStatus? {
+                                   changes: ChangeSet? = nil,
+                                   answered: Bool = false) -> PanelStatus? {
         switch state {
         case .idle:
             // Nothing to add. The panel opens on a translation and closes on Esc; a caption
@@ -1162,6 +1175,13 @@ struct PanelView: View {
             // set to describe: `RussianCopy.proofreadSummary` is a sentence about a diff, and
             // there is no honest one to write without it.
             guard operation == .proofread, let changes else { return nil }
+            // `TranslationOutcome.replyAddedBlocks`. Inside the same guard as the summary it
+            // replaces, so it can only ever stand where «Исправлено: …» would have stood — a
+            // row already booked, which is why the panel's measured heights do not move.
+            if answered {
+                return PanelStatus(kind: .suspect, message: RussianCopy.proofreadLooksAnswered,
+                                   offersRetry: false)
+            }
             return PanelStatus(kind: .summary, message: RussianCopy.proofreadSummary(changes),
                                offersRetry: false)
         case .running:

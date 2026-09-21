@@ -176,3 +176,17 @@ private func quietOutcome(documentGlossary: [GlossaryEntry] = [],
     #expect(refused.warningCount == 1)
     #expect(refused.hasWarnings)
 }
+
+/// The explanation lives in `WarningsView` so the window and the panel say it in the same words
+/// — and it is counted, or the window's «N предупреждений» and the disclosure under it disagree.
+///
+/// Mutation: leave `answered` out of `warningCount` and a правка whose only trouble is this one
+/// has `hasContent == false` — the section exists and nothing ever draws it.
+@MainActor
+@Test func aProofreadThatLooksLikeAnAnswerIsOneMoreWarning() {
+    let quiet = WarningsView(checks: [], markupDiffs: [], documentGlossary: [])
+    let suspect = WarningsView(checks: [], markupDiffs: [], documentGlossary: [], answered: true)
+    #expect(quiet.warningCount == 0)
+    #expect(suspect.warningCount == 1)
+    #expect(suspect.hasContent)
+}
