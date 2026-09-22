@@ -92,9 +92,23 @@ public struct Verdict: Codable, Sendable, Equatable {
         return problems
     }
 
+    /// Compared with every width of space and hyphen read as the plain one: `gpt-oss:20b`
+    /// writes «24\u{202F}Mira Avenue» and «58‑4417» (U+2011), and a judge copies what it sees.
     static func holds(_ failure: Failure, in packet: Packet) -> Bool {
-        let quote = failure.quote.trimmingCharacters(in: .whitespacesAndNewlines)
+        let quote = plain(failure.quote).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !quote.isEmpty else { return false }
-        return (failure.side == .x ? packet.x : packet.y).contains(quote)
+        return plain(failure.side == .x ? packet.x : packet.y).contains(quote)
+    }
+
+    private static func plain(_ text: String) -> String {
+        String(text.unicodeScalars.map { scalar -> Character in
+            switch scalar {
+            case "\u{00A0}", "\u{202F}", "\u{2009}": " "
+            case "\u{2010}", "\u{2011}", "\u{2012}", "\u{2013}", "\u{2014}": "-"
+            case "\u{2018}", "\u{2019}": "'"
+            case "\u{201C}", "\u{201D}", "«", "»": "\""
+            default: Character(scalar)
+            }
+        })
     }
 }

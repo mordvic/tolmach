@@ -151,3 +151,13 @@ private func key(_ pairs: [(String, String, String)]) -> PacketKey {
         #expect(text.contains("`\(category.rawValue)`"), "the rubric does not list \(category.rawValue)")
     }
 }
+
+@Test func aQuotationHoldsAcrossTheSpacesAndHyphensAModelWrites() {
+    // `gpt-oss:20b` writes «on 24\u{202F}Mira Avenue» and «58‑4417» with U+2011; a judge
+    // copies what it sees, which is a plain space and a hyphen — 5 verdicts of 24 were
+    // discarded for that before this existed.
+    let p = Packet(id: "p1", item: "i", language: "en", operation: "proofread", level: "rewrite", requestedStyle: "friendly",
+                   source: "s", facts: [], x: "keys received on\u{202F}1\u{202F}October, order 58\u{2011}4417", y: "y")
+    let v = verdict("p1", failures: [.init(side: .x, category: .grammar, quote: "on 1 October, order 58-4417")])
+    #expect(v.problems(against: p) == [])
+}
