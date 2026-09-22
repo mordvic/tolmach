@@ -194,10 +194,16 @@ public enum MechanicalChecks {
         TextTokenizer.tokens(of: text).reduce(0) { $0 + ($1.kind == .word ? 1 : 0) }
     }
 
+    /// Spaces and hyphens of every width read as the plain ones: `gpt-oss:20b` writes a
+    /// non-breaking hyphen (U+2011) inside «58‑4417», and a sidecar cannot list every dash.
     private static func normalised(_ text: String) -> String {
-        text.replacingOccurrences(of: "\u{00A0}", with: " ")
-            .replacingOccurrences(of: "\u{202F}", with: " ")
-            .lowercased()
+        String(text.unicodeScalars.map { scalar -> Character in
+            switch scalar {
+            case "\u{00A0}", "\u{202F}": " "
+            case "\u{2010}", "\u{2011}", "\u{2012}", "\u{2013}", "\u{2014}": "-"
+            default: Character(scalar)
+            }
+        }).lowercased()
     }
 
     struct Number {
@@ -287,7 +293,9 @@ public enum MechanicalChecks {
     /// «два» as a prefix would accept «двадцать» for a lost «2».
     private static let numberWords: [Int: Set<String>] = [
         0: ["zero", "ноль", "нуля"],
-        1: ["one", "один", "одна", "одно", "одного", "одной", "одну", "одним", "одном"],
+        // «a»/«an»: «1 month» → «an extra month» is the number in the article (`gemma4:26b`,
+        // 3 of 3). English only; «на месяц» cannot be told from a lost «на 1 месяц».
+        1: ["one", "a", "an", "один", "одна", "одно", "одного", "одной", "одну", "одним", "одном"],
         2: ["two", "два", "две", "двух", "двум", "двумя", "двое"],
         3: ["three", "три", "трёх", "трех", "трём", "трем", "тремя", "трое"],
         4: ["four", "четыре", "четырёх", "четырех", "четырём", "четырем", "четырьмя", "четверо"],

@@ -243,3 +243,21 @@ private let facts = [
     #expect(MechanicalChecks.missingNumbers(source: "Revenue 4.2 million, CRM 3.8 million.",
                                             reply: "Выручка 4,2 миллиона, в CRM — 3,8.") == [])
 }
+
+// MARK: what stage 2 taught it (four more models, 1 200 cells)
+
+@Test func aNonBreakingHyphenIsAHyphen() {
+    // `gpt-oss:20b` writes «58‑4417» with U+2011 and «16‑го» likewise — 30 of 30 replies to
+    // one text were reported to have lost the order number they kept.
+    let facts = [ItemMeta.Fact(id: "order", kind: .literal, note: "order 58-4417", anyOf: ["58-4417"])]
+    #expect(MechanicalChecks.missingFacts(facts, in: "заказ 58\u{2011}4417") == [])
+    #expect(MechanicalChecks.missingFacts(facts, in: "заказ 58\u{2013}4417") == [])
+}
+
+@Test func anEnglishOneMayBecomeAnArticle() {
+    // «extended by 1 month» → «an extra month» (`gemma4:26b`, 3 of 3 under «дружеский»): the
+    // number is in the article. English only — Russian has no article to carry it, and «на
+    // месяц» cannot be told from a lost «на 1 месяц» by mechanics.
+    #expect(MechanicalChecks.missingNumbers(source: "Extended by 1 month.", reply: "We added an extra month.") == [])
+    #expect(MechanicalChecks.missingNumbers(source: "Extended by 1 month.", reply: "We extended it.") == ["1"])
+}
