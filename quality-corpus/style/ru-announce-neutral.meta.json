@@ -1,0 +1,71 @@
+{
+  "genre": "public announcement",
+  "language": "ru",
+  "register": "neutral, informational",
+  "mirror": "en-announce-neutral",
+  "facts": [
+    {
+      "id": "closes",
+      "kind": "literal",
+      "note": "closes from 3 November",
+      "anyOf": [
+        "3 ноября",
+        "3 November",
+        "November 3"
+      ]
+    },
+    {
+      "id": "extended",
+      "kind": "literal",
+      "note": "returns are extended to 15 February",
+      "anyOf": [
+        "15 февраля",
+        "15 February",
+        "February 15"
+      ]
+    },
+    {
+      "id": "club-time",
+      "kind": "literal",
+      "note": "the reading club meets on Wednesdays at 16:30",
+      "anyOf": [
+        "16:30",
+        "4:30"
+      ]
+    },
+    {
+      "id": "venue",
+      "kind": "literal",
+      "note": "the club moves to the Zarya community centre",
+      "anyOf": [
+        "Заря",
+        "Zarya"
+      ]
+    },
+    {
+      "id": "branch",
+      "kind": "semantic",
+      "note": "books go to the branch at 24 Mira Avenue, open Tuesday–Saturday 10:00–19:00",
+      "anyOf": []
+    },
+    {
+      "id": "no-fines",
+      "kind": "semantic",
+      "note": "no fines for the extended period",
+      "anyOf": []
+    },
+    {
+      "id": "reopening",
+      "kind": "semantic",
+      "note": "the reopening date is NOT known yet — end of January is when the work ends",
+      "anyOf": []
+    },
+    {
+      "id": "closed-parts",
+      "kind": "semantic",
+      "note": "the reading room and the children's section do not operate during the renovation",
+      "anyOf": []
+    }
+  ],
+  "traps": []
+}
