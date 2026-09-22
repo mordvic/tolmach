@@ -129,19 +129,24 @@ public enum MechanicalChecks {
     /// parts all survive separately («101,102,103» → «101, 102 и 103») is a list, not a loss.
     public static func missingNumbers(source: String, reply: String) -> [String] {
         let replyNumbers = numbers(in: reply)
-        let grouped = Set(replyNumbers.map(\.value))
+        // A unit the source left unsaid may be said by the reply, and the other way round:
+        // «в CRM — 3,8» beside «4,2 миллиона» is «3.8 million», and 60 of 60 replies said so.
+        let grouped = Set(replyNumbers.map(\.value)).union(replyNumbers.map(\.unscaled))
         let raw = Set(replyNumbers.flatMap(\.parts))
         let words = Set(TextTokenizer.tokens(of: reply).filter { $0.kind == .word }.map { $0.text.lowercased() })
 
         var seen = Set<String>()
         return numbers(in: source).filter { number in
-            if grouped.contains(number.value) || raw.contains(number.value) { return false }
+            if grouped.contains(number.value) || grouped.contains(number.unscaled) || raw.contains(number.value) { return false }
             if number.parts.count > 1, number.parts.allSatisfy(raw.contains) { return false }
             if let small = Int(number.value), let spellings = numberWords[small], !words.isDisjoint(with: spellings) {
                 return false
             }
-            if number.isHour, let hour = Int(number.value), (13...23).contains(hour) || hour == 0,
-               raw.contains(String(hour == 0 ? 12 : hour - 12)) { return false }
+            if number.isHour, let hour = Int(number.value), (13...23).contains(hour) || hour == 0 {
+                let twelveHour = hour == 0 ? 12 : hour - 12
+                if raw.contains(String(twelveHour)) { return false }
+                if let spellings = numberWords[twelveHour], !words.isDisjoint(with: spellings) { return false }
+            }
             if number.isMinutes, Int(number.value) == 0 { return false }
             return true
         }.map(\.value).filter { seen.insert($0).inserted }
@@ -164,20 +169,18 @@ public enum MechanicalChecks {
 
     /// Sidecar `literal` facts absent from the reply in every one of their spellings.
     ///
-    /// A spelling that is **only a number** («64», «7 500») is looked for as a whole number,
-    /// for the reason `missingNumbers` is: «64» is not present in «1964». Any other spelling is
+    /// A spelling that is **only a number** («64», «7 500», «14:20») is looked for the way
+    /// `missingNumbers` looks — as a whole number, under the same allowances: «64» is not
+    /// present in «1964», and «14:20» is present in «2:20 PM». Any other spelling is
     /// a case-insensitive substring, deliberately — «Лесн» is how a sidecar says «Лесная, Лесной,
     /// Лесную» without listing a declension.
     public static func missingFacts(_ facts: [ItemMeta.Fact], in reply: String) -> [String] {
         let haystack = normalised(reply)
-        let replyNumbers = numbers(in: reply)
-        let present = Set(replyNumbers.map(\.value)).union(replyNumbers.flatMap(\.parts))
         func survives(_ spelling: String) -> Bool {
             let numeric = spelling.unicodeScalars.allSatisfy {
-                ("0"..."9").contains($0) || [" ", "\u{00A0}", "\u{202F}", ",", "."].contains($0)
+                ("0"..."9").contains($0) || [" ", "\u{00A0}", "\u{202F}", ",", ".", ":"].contains($0)
             }
-            let wanted = numbers(in: spelling)
-            if numeric, !wanted.isEmpty { return wanted.allSatisfy { present.contains($0.value) } }
+            if numeric, !numbers(in: spelling).isEmpty { return missingNumbers(source: spelling, reply: reply).isEmpty }
             return haystack.contains(normalised(spelling))
         }
         return facts.filter { $0.kind == .literal && !$0.anyOf.contains(where: survives) }.map(\.id)
@@ -202,6 +205,9 @@ public enum MechanicalChecks {
         let value: String
         /// The digit runs it was read from — more than one only for a grouped reading.
         let parts: [String]
+        /// The number before its word scaled it: «3.8» of «3.8 million». Equal to `value` when
+        /// no word did.
+        let unscaled: String
         /// Written as the hour of a clock time: a run directly followed by «:» and a digit.
         let isHour: Bool
         /// Written as the minutes of one: a run directly preceded by «:» after an hour.
@@ -209,8 +215,8 @@ public enum MechanicalChecks {
     }
 
     /// Digit runs, with a run of three-digit groups read as one number: «10 000», «10,000»
-    /// and «10.000» are all `10000`. A decimal («3.5») is two runs, which is as strict as this
-    /// needs to be — both halves still have to survive.
+    /// and «10.000» are all `10000`; «3.8» and «3,8» are the decimal `3.8`, and «3.8 million»
+    /// is `3800000`.
     static func numbers(in text: String) -> [Number] {
         var found: [Number] = []
         let scalars = Array(text.unicodeScalars)
@@ -243,11 +249,39 @@ public enum MechanicalChecks {
             }
             let isHour = parts.count == 1 && i + 1 < scalars.count && scalars[i] == ":" && isDigit(scalars[i + 1])
             let isMinutes = previousWasHour && start > 0 && scalars[start - 1] == ":"
-            found.append(Number(value: canonical(run), parts: parts, isHour: isHour, isMinutes: isMinutes))
+            // A decimal: «3.8» or «3,8» — one or two digits after the point, never three, which
+            // is a thousands group. Read as one number, so «3.8 million» is not «8 million».
+            var fraction = ""
+            if parts.count == 1, i + 1 < scalars.count, scalars[i] == "." || scalars[i] == ",", isDigit(scalars[i + 1]) {
+                var k = i + 1
+                while k < scalars.count, isDigit(scalars[k]) { fraction.unicodeScalars.append(scalars[k]); k += 1 }
+                if (1...2).contains(fraction.count) { i = k } else { fraction = "" }
+            }
+            // «180 тысяч» / «2 million» is the number the digits and the word make together —
+            // «180,000» in a reply is a rewriting of it, not an invention (27 of 30 replies to
+            // one text said so before this existed). The bare digits stay in `parts`, so a
+            // reply that keeps «180 thousand» as it is still matches.
+            var value = canonical(run)
+            if !fraction.isEmpty { value += "." + fraction }
+            let unscaled = value
+            var j = i
+            while j < scalars.count, scalars[j] == " " || scalars[j] == "\u{00A0}" { j += 1 }
+            var word = ""
+            while j < scalars.count, CharacterSet.letters.contains(scalars[j]) { word.unicodeScalars.append(scalars[j]); j += 1 }
+            if let zeros = multipliers[word.lowercased()], value != "0" || !fraction.isEmpty {
+                let scaled = fraction.count <= zeros ? fraction + String(repeating: "0", count: zeros - fraction.count) : fraction
+                value = canonical(canonical(run) + scaled)
+            }
+            found.append(Number(value: value, parts: parts, unscaled: unscaled, isHour: isHour, isMinutes: isMinutes))
             previousWasHour = isHour
         }
         return found
     }
+
+    private static let multipliers: [String: Int] = [
+        "thousand": 3, "thousands": 3, "тысяч": 3, "тысячи": 3, "тысяча": 3, "тыс": 3,
+        "million": 6, "millions": 6, "миллион": 6, "миллиона": 6, "миллионов": 6, "млн": 6,
+    ]
 
     /// Zero to twelve, in the forms a rewrite actually produces. Whole words, never prefixes:
     /// «два» as a prefix would accept «двадцать» for a lost «2».

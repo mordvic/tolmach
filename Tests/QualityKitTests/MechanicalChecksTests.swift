@@ -192,3 +192,54 @@ private let facts = [
     // But a small number with no word behind it is added like any other.
     #expect(MechanicalChecks.addedNumbers(source: "Several attempts.", reply: "4 attempts.") == ["4"])
 }
+
+// MARK: what the full first run taught it (600 cells)
+
+@Test func aThousandWrittenAsAWordIsTheSameNumberAsItsDigits() {
+    // «180 тысяч рублей» → «180,000 rubles» was flagged as an invented number in 27 of 30 replies
+    // to one text — in both languages, under every style, including «как в оригинале».
+    #expect(MechanicalChecks.addedNumbers(source: "Резерв 180 тысяч рублей и 2 млн на год.",
+                                          reply: "A contingency of 180,000 roubles and 2,000,000 a year.") == [])
+    #expect(MechanicalChecks.missingNumbers(source: "A contingency of 180 thousand roubles.",
+                                            reply: "Резерв 180 000 рублей.") == [])
+    #expect(MechanicalChecks.missingNumbers(source: "180 тысяч", reply: "18 000") == ["180000"])
+}
+
+@Test func anHourSpelledOutInTheSourceMayComeBackOnTheClock() {
+    // «я сегодня до семи на связи» → «на связи до 19:00» — 12 of 12 replies under «деловой»
+    // and «профессиональный», and the right edit.
+    #expect(MechanicalChecks.addedNumbers(source: "Я сегодня до семи на связи.",
+                                          reply: "Я на связи до 19:00 сегодня.") == [])
+    #expect(MechanicalChecks.addedNumbers(source: "I'm around until seven today.",
+                                          reply: "I am available until 7 p.m. today.") == [])
+}
+
+@Test func aNumericFactSurvivesUnderTheSameAllowancesAsANumber() {
+    // «14:20» → «2:20 PM» was reported as a lost fact 6 of 6 while the number column, with its
+    // twelve-hour allowance, said nothing — two readers of one rule, disagreeing.
+    let facts = [ItemMeta.Fact(id: "down-at", kind: .literal, note: "the outage began at 14:20", anyOf: ["14:20"])]
+    #expect(MechanicalChecks.missingFacts(facts, in: "The system went down at 2:20 PM.") == [])
+    #expect(MechanicalChecks.missingFacts(facts, in: "The system went down at 3:05 PM.") == ["down-at"])
+}
+
+@Test func aDecimalIsOneNumberAndScalesWithItsWord() {
+    // «3.8 million» was read as «3» and «8 million» = 8 000 000 — an invented number in 60 of
+    // 60 replies to the two chatty texts. «4,2 миллиона» and «4.2 million» are one number.
+    #expect(MechanicalChecks.addedNumbers(source: "Выручка 4,2 миллиона, в CRM — 3,8.",
+                                          reply: "Revenue is 4.2 million; the CRM says 3.8.") == [])
+    #expect(MechanicalChecks.missingNumbers(source: "Revenue is 4.2 million.", reply: "Выручка 4 200 000.") == [])
+    #expect(MechanicalChecks.missingNumbers(source: "Revenue is 4.2 million.", reply: "Выручка 4,3 миллиона.") == ["4200000"])
+    // A version stays a version: «3.8.1» and «3.8» differ.
+    #expect(MechanicalChecks.missingNumbers(source: "Fix ships in 3.8.1.", reply: "Fix ships in 3.8.") == ["1"])
+}
+
+@Test func aUnitTheSourceLeftUnsaidMayBeSaidByTheReply() {
+    // «выручка 4,2 миллиона, а в CRM — 3,8» → «3.8 million»: the second number's unit was
+    // implied and the reply made it explicit — 60 of 60 replies, and the right edit.
+    #expect(MechanicalChecks.addedNumbers(source: "Выручка 4,2 миллиона, а в CRM — 3,8.",
+                                          reply: "Revenue is 4.2 million, the CRM says 3.8 million.") == [])
+    #expect(MechanicalChecks.missingNumbers(source: "Выручка 4,2 миллиона, а в CRM — 3,8.",
+                                            reply: "Revenue is 4.2 million, the CRM says 3.8 million.") == [])
+    #expect(MechanicalChecks.missingNumbers(source: "Revenue 4.2 million, CRM 3.8 million.",
+                                            reply: "Выручка 4,2 миллиона, в CRM — 3,8.") == [])
+}
