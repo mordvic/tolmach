@@ -302,10 +302,29 @@ difference is the temperature talking.
 → `MechanicalChecks.shift`, `ReportRow.noiseFloor`
 _Avoid_: дельта, расстояние
 
-**Пакет**, **вердикт**, **рубрика** — *packet, verdict, rubric*
-A blind pair handed to a judge; the judge's decision on it; the versioned document of axes and
-failure categories whose version is written into every verdict. Reserved — they arrive with
-the judging step (issue #94, PR 2).
+**Пакет** — *packet*
+What a judge is handed: a source, what was asked, the facts that had to survive, and two replies
+called X and Y. It names no model, temperature, label or commit; every pair is two packets with
+the order swapped.
+→ `Packet`, `Packets.build`; the key that says which side X was is `PacketKey`, never the judge's
+_Avoid_: задание (that is a queue file), пара (a pair is two packets)
+
+**Вердикт** — *verdict*
+One judge's decision on one packet: x / y / tie on each axis, the facts each side lost, and
+failures from a closed list — each with a quotation the scorer must find in the text.
+→ `Verdict`, `Scoring`
+_Avoid_: оценка, балл (there is no score)
+
+**Рубрика** — *rubric*
+The versioned document a judge follows, `docs/reference/QUALITY-RUBRIC.md`. Its version is in
+every verdict, and verdicts under two versions are never tallied together.
+→ `Rubric.version`
+_Avoid_: инструкция, промпт судьи (the prompt is `docs/agents/quality-judge.md`; the rubric is what it points at)
+
+**Калибровка** — *calibration*
+A person judging the same blind packets. A judge is calibrated on an axis at ≥ 80 % agreement
+over ≥ 20 pairs neither called a tie; until then a judged table opens «JUDGE UNCALIBRATED».
+→ `JudgedReport`, `quality judge --human`
 
 The three axes are **смысл**, **стиль**, **естественность**, reported separately. There is no
 single «качество» number and there must not be one: a stylish text that lost a fact is a

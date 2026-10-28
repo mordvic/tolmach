@@ -99,6 +99,16 @@ build.
 
 ---
 
+## Perishable — see `docs/reference/QUALITY.md`
+
+Whether a правка style is applied at all (idle against the control), how far it moves the text
+(shift against its noise floor), what a reply loses or invents, and — when a judge has read the
+pairs — which of two configurations is better on смысл, стиль and естественность, are measured
+by `swift run quality` and recorded there, dated, with the model, temperature, corpus hash,
+commit and rubric version. The allowances the number check makes (a number spelled out, the
+twelve-hour clock, a thousand written as a word, a decimal, a unit left unsaid) were each read
+off the first live run and are recorded at `MechanicalChecks.missingNumbers` with the counts.
+
 ## Perishable — see `docs/reference/BASELINE.md`
 
 Terminology adherence per corpus file, time to first token, and the markup diffs the model

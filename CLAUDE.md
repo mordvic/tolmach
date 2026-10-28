@@ -49,6 +49,9 @@ swift run acceptance --model translategemma:12b --chunk 4000   # any installed m
 swift run acceptance --engine lmstudio --model google/gemma-4-e4b   # the other engine; both gates go info-only
 swift run -c release quality run --corpus quality-corpus/style --models translategemma:12b --temperature 0.5 --label t05   # live: style × level × 3 runs → build/quality-runs/…; resumable with --into <dir>
 swift run -c release quality report build/quality-runs/<dir> [<dir> …]   # the mechanics table: idle/src, idle/ctl, shift, noise floor, flags
+swift run -c release quality blind <run-a> <run-b> --into build/quality-runs/<cmp> --sample 24   # blind packets for a judge; refuses an external corpus; key.json is not for the judge
+swift run -c release quality judge --human build/quality-runs/<cmp>   # the calibration: the same packets, three letters each (смысл стиль естественность: x / y / =)
+swift run -c release quality judged build/quality-runs/<cmp>   # tallies per axis, vetoes, flips, failure categories, agreement «N of M»; first line is the calibration status
 ```
 
 **On the macOS 27 SDK every command above needs an Xcode toolchain, not the Command Line
@@ -146,8 +149,19 @@ TranslationCore ← QualityKit ← quality (+ OllamaKit)
   row's `noise`: the shift between two control runs of the same text. It is a comparison stand
   and a diagnostic, **not a gate** — no exit 1 on a threshold — and its table says «mechanics
   only» on its second line until a judge exists. A corpus not wholly tracked
-  by git *and unmodified* is stamped `external: true` — any doubt reads as external — which is
-  the flag the blind-packet step (issue #94, PR 2; **not in the code yet**) keys its refusal on. See
+  by git *and unmodified* is stamped `external: true` — any doubt reads as external — and
+  `Packets.build` throws on such a run **before a packet exists**: committed text is already
+  public, a user's working texts are not, and a packet is what a cloud judge is handed.
+  **Prose is judged by a session, not by code** (`docs/adr/0013`): `quality blind` pairs two
+  runs' cells into packets that name no model, temperature, label or commit — each pair twice,
+  order swapped, and a preference that flips is a tie — a *fresh* sub-agent that never sees
+  `key.json` writes verdicts under `docs/reference/QUALITY-RUBRIC.md` (the protocol is
+  `docs/agents/quality-judge.md`), and `quality judged` tallies them on three axes — смысл (a
+  veto), стиль, естественность, never one score — discarding any failure whose quotation is
+  not in the text it blames. Its first line is **«JUDGE UNCALIBRATED»** until a person's
+  `quality judge --human` verdicts agree ≥ 80 % over ≥ 20 decided pairs on an axis; below the
+  bar the rubric changes and the calibration is repeated on new pairs. `Rubric.version` is
+  held to the document by a test, and verdicts under two versions are never tallied together. See
   `docs/design/specs/2026-09-22-quality-harness-design.md` and issue #94.
 - `TextCapture` — every fragile macOS API, isolated on purpose: Carbon hotkey registration,
   the Accessibility read, the synthetic ⌘C fallback, the whole-pasteboard snapshot, the permission gate.
