@@ -1,0 +1,7 @@
+I'd like to say a little about how the process of getting access to the test environment works here, because questions about it come up fairly regularly, and it seems to me it would be useful for this to be written down somewhere.
+
+So, in order to get access, first of all it is necessary for you to have the VPN set up, because without the VPN the environment simply will not open, and this is probably the most common reason why things don't work for people. Once the VPN is set up, you need to go to the internal portal at https://portal.corp.example/access and create a request there, choosing the "Test environment" item in the list.
+
+The request is, as a rule, approved within one working day, although sometimes it happens faster. After approval you will receive an e-mail with a temporary password, and here is an important point: this password is valid for only 24 hours, and if you don't change it in that time, you will have to create the request all over again, which, you'll agree, is rather annoying.
+
+And one more point that people often forget: access is granted for 90 days, after which it needs to be renewed, and it is better to renew it in advance, about five days ahead, rather than on the last day.

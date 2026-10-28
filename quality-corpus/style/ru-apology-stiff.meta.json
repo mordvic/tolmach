@@ -1,0 +1,59 @@
+{
+  "genre": "support reply",
+  "language": "ru",
+  "register": "stiff, scripted, impersonal",
+  "mirror": "en-apology-stiff",
+  "facts": [
+    {
+      "id": "ticket",
+      "kind": "literal",
+      "note": "request No. 90213",
+      "anyOf": [
+        "90213"
+      ]
+    },
+    {
+      "id": "amount",
+      "kind": "literal",
+      "note": "499 roubles was charged twice",
+      "anyOf": [
+        "499"
+      ]
+    },
+    {
+      "id": "fallback-date",
+      "kind": "literal",
+      "note": "write again if nothing arrives by 17 September",
+      "anyOf": [
+        "17 сентября",
+        "17 September",
+        "September 17"
+      ]
+    },
+    {
+      "id": "cause",
+      "kind": "semantic",
+      "note": "a failure at the payment provider, not the customer's mistake",
+      "anyOf": []
+    },
+    {
+      "id": "refund",
+      "kind": "semantic",
+      "note": "the refund was started on 10 September and takes up to 5 working days, depending on the bank",
+      "anyOf": []
+    },
+    {
+      "id": "gift",
+      "kind": "semantic",
+      "note": "the subscription is extended by one month free of charge",
+      "anyOf": []
+    },
+    {
+      "id": "quote-number",
+      "kind": "semantic",
+      "note": "when writing again the customer should quote this request's number",
+      "anyOf": []
+    }
+  ],
+  "traps": []
+}

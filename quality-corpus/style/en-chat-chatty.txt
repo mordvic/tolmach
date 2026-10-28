@@ -1,0 +1,7 @@
+Hey! So listen, here's the thing — I spent half of yesterday evening on that September sales report, and, long story short, the numbers just don't add up. Kostya's spreadsheet says revenue is 4.2 million, and the CRM export says 3.8. That's a 400 thousand gap, which is not exactly pocket change!
+
+At first I figured the refunds weren't counted, but no, refunds only come to 60 thousand. Then I went digging by region — and here's the fun part: Kazan got doubled. All of it, the whole thing, all 27 deals counted twice.
+
+Anyway, I've already messaged Kostya, but he's on holiday until Thursday. Do you know who else could fix the export? Because our presentation is on Friday at 11:00, and honestly I'm not really up for walking in there with numbers like these.
+
+If anything — I'm around until seven today, then I'm off.

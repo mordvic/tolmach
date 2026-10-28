@@ -266,3 +266,48 @@ beside it on first use — that is what the rest of the documentation does.
 
 Russian UI labels for domain enums live in `Sources/TranslatorApp/RussianCopy.swift`, exhaustive
 with no `default:`, so a new case fails to compile rather than silently rendering nothing.
+
+---
+
+## Measuring prose — the `quality` harness
+
+**Прогон** — *run*
+One execution of a matrix into one directory under `build/quality-runs/`, with a manifest that
+says whether it is comparable with another.
+→ `RunDirectory`, `RunManifest`
+_Avoid_: запуск, сессия, замер
+
+**Ячейка** — *cell*
+One text under one configuration at one run index — one request's worth of result, one JSON file.
+→ `Cell`, `CellRecord`
+_Avoid_: кейс, тест, пример
+
+**Контроль** — *control*
+The same request under «как в оригинале». Every named style is measured against it, which is
+why it is always in the matrix and never counted as a style under test.
+→ `Configuration.control`, `Matrix.cells`
+_Avoid_: база, эталон (there are no reference texts here, and «эталон» promises one)
+
+**Холостой ход** — *idle*
+A reply with no token-level change. Against the source: the model did nothing. Against the
+control: **the style was not applied** — the finding of 2026-08-10, where «дружеский» came back
+byte-identical to «как в оригинале».
+→ `Mechanics.idle`, `ReportRow.idleControl`
+_Avoid_: no-op (in Russian prose), пустой ответ (that is `emptyReply`, a different failure)
+
+**Сдвиг** — *shift*
+Changed tokens over all tokens between two texts, from `TextDiff`'s own block pairs. Read
+against the **шумовой пол** — the shift between two runs of the control — below which a
+difference is the temperature talking.
+→ `MechanicalChecks.shift`, `ReportRow.noiseFloor`
+_Avoid_: дельта, расстояние
+
+**Пакет**, **вердикт**, **рубрика** — *packet, verdict, rubric*
+A blind pair handed to a judge; the judge's decision on it; the versioned document of axes and
+failure categories whose version is written into every verdict. Reserved — they arrive with
+the judging step (issue #94, PR 2).
+
+The three axes are **смысл**, **стиль**, **естественность**, reported separately. There is no
+single «качество» number and there must not be one: a stylish text that lost a fact is a
+failure, and an average would hide exactly that.
+

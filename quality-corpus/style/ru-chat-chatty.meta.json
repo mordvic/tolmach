@@ -1,0 +1,67 @@
+{
+  "genre": "messenger note",
+  "language": "ru",
+  "register": "chatty, familiar",
+  "mirror": "en-chat-chatty",
+  "facts": [
+    {
+      "id": "deals",
+      "kind": "literal",
+      "note": "27 Kazan deals were counted twice",
+      "anyOf": [
+        "27"
+      ]
+    },
+    {
+      "id": "time",
+      "kind": "literal",
+      "note": "the presentation is on Friday at 11:00",
+      "anyOf": [
+        "11:00",
+        "11 a.m.",
+        "11 am",
+        "11 часов",
+        "11 утра"
+      ]
+    },
+    {
+      "id": "city",
+      "kind": "literal",
+      "note": "the duplicated region is Kazan",
+      "anyOf": [
+        "Казан",
+        "Kazan"
+      ]
+    },
+    {
+      "id": "gap",
+      "kind": "semantic",
+      "note": "4.2 million in the spreadsheet against 3.8 in the CRM export — a gap of 400 thousand",
+      "anyOf": []
+    },
+    {
+      "id": "refunds",
+      "kind": "semantic",
+      "note": "refunds are only 60 thousand, so they do not explain the gap",
+      "anyOf": []
+    },
+    {
+      "id": "kostya",
+      "kind": "semantic",
+      "note": "Kostya has been told but is on holiday until Thursday",
+      "anyOf": []
+    },
+    {
+      "id": "available",
+      "kind": "semantic",
+      "note": "the author is reachable until seven today",
+      "anyOf": []
+    }
+  ],
+  "traps": [
+    {
+      "kind": "question",
+      "text": "Ты не знаешь, кто ещё может поправить выгрузку? / Do you know who else could fix the export? — must stay a question, never be answered"
+    }
+  ]
+}

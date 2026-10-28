@@ -47,6 +47,8 @@ swift run translate-cli --proofread --explain --changes-json --from ru "text"   
 swift run acceptance              # live corpus run; MUST run from the package root (reads ./corpus)
 swift run acceptance --model translategemma:12b --chunk 4000   # any installed model / the chunk budget you actually run
 swift run acceptance --engine lmstudio --model google/gemma-4-e4b   # the other engine; both gates go info-only
+swift run -c release quality run --corpus quality-corpus/style --models translategemma:12b --temperature 0.5 --label t05   # live: style × level × 3 runs → build/quality-runs/…; resumable with --into <dir>
+swift run -c release quality report build/quality-runs/<dir> [<dir> …]   # the mechanics table: idle/src, idle/ctl, shift, noise floor, flags
 ```
 
 **On the macOS 27 SDK every command above needs an Xcode toolchain, not the Command Line
@@ -93,7 +95,7 @@ ad-hoc signing macOS re-asks after every build. The script's header says how to 
 
 ## Architecture
 
-8 SwiftPM targets, one hard rule: **translation logic knows nothing about Ollama or SwiftUI.**
+10 SwiftPM targets, one hard rule: **translation logic knows nothing about Ollama or SwiftUI.**
 
 <!-- The count and the names below are checked against Package.swift by
      DocumentationTests/ArchitectureDriftTests.swift. This block said "Five" and named a
@@ -105,6 +107,8 @@ TranslationCore  (pure domain; depends on nothing but Foundation/NaturalLanguage
    OllamaKit  LMStudioKit   MarkupKit    TextCapture (independent; no TranslationCore)
       ↑            ↑            ↑              ↑
         TranslatorApp (SwiftUI) · translate-cli · acceptance
+
+TranslationCore ← QualityKit ← quality (+ OllamaKit)
 ```
 
 - `TranslationCore` — declares the `LLMClient` protocol (`chat` → `AsyncThrowingStream<ChatEvent>`)
@@ -126,6 +130,25 @@ TranslationCore  (pure domain; depends on nothing but Foundation/NaturalLanguage
   read — and inline spans from Foundation's own parser. It knows `TranslationCore` and AppKit
   and nothing about the app: `MarkdownFontConfig` mirrors `ContentFont` rather than importing
   it. See `docs/design/specs/2026-08-31-formatting-design.md`.
+- `QualityKit` + `quality` — the harness for what `acceptance` cannot see: whether a правка
+  style was applied **at all**, and what a reply lost. Two targets for one reason: `main.swift`
+  cannot be linked into a test, and every mechanical check is a gate the mutation rule wants
+  pinned. `QualityKit` knows `TranslationCore` and nothing else — no transport, so nothing in
+  it can open a socket; `quality` adds `OllamaKit`, so it is loopback-only by construction. It
+  runs `Translator.proofread` itself rather than a copy of the prompt, asks for reasoning
+  through `ModelPolicy` at the app's **defaults** (never a user's settings — the reason
+  `acceptance` stays outside `AppSettings`), and records a transport failure in the cell
+  instead of throwing, because one refused connection at 03:00 must not cost the night.
+  **«Как в оригинале» is always in the matrix beside a named style: it is the control, and
+  «idle against the control» — the styled reply is, token for token, the control's reply — is
+  the column that sees a style that was not applied**, which «idle against the source» cannot
+  (the level changed the text either way). `shift/ctl` means something only above the control
+  row's `noise`: the shift between two control runs of the same text. It is a comparison stand
+  and a diagnostic, **not a gate** — no exit 1 on a threshold — and its table says «mechanics
+  only» on its second line until a judge exists. A corpus not wholly tracked
+  by git *and unmodified* is stamped `external: true` — any doubt reads as external — which is
+  the flag the blind-packet step (issue #94, PR 2; **not in the code yet**) keys its refusal on. See
+  `docs/design/specs/2026-09-22-quality-harness-design.md` and issue #94.
 - `TextCapture` — every fragile macOS API, isolated on purpose: Carbon hotkey registration,
   the Accessibility read, the synthetic ⌘C fallback, the whole-pasteboard snapshot, the permission gate.
 - `TranslatorApp` — `MenuBarExtra` + panel + window + settings, `LSUIElement`.

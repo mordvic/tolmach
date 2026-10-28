@@ -1,0 +1,66 @@
+{
+  "genre": "customer complaint",
+  "language": "en",
+  "register": "angry, emotional, colloquial",
+  "mirror": "ru-complaint-emotional",
+  "facts": [
+    {
+      "id": "order",
+      "kind": "literal",
+      "note": "order number 58-4417",
+      "anyOf": [
+        "58-4417"
+      ]
+    },
+    {
+      "id": "ordered",
+      "kind": "literal",
+      "note": "ordered on 12 September",
+      "anyOf": [
+        "12 сентября",
+        "12 September",
+        "September 12"
+      ]
+    },
+    {
+      "id": "missed",
+      "kind": "semantic",
+      "note": "delivery was promised for the 16th and then the 19th, and missed both times",
+      "anyOf": []
+    },
+    {
+      "id": "dent",
+      "kind": "semantic",
+      "note": "the machine arrived with a palm-sized dent in the side panel",
+      "anyOf": []
+    },
+    {
+      "id": "refused",
+      "kind": "semantic",
+      "note": "the customer REFUSED to sign the delivery note",
+      "anyOf": []
+    },
+    {
+      "id": "demand",
+      "kind": "semantic",
+      "note": "replacement within a week OR a full refund of 46 990 roubles including delivery",
+      "anyOf": []
+    },
+    {
+      "id": "callbacks",
+      "kind": "semantic",
+      "note": "three promised callbacks, none made",
+      "anyOf": []
+    }
+  ],
+  "traps": [
+    {
+      "kind": "question",
+      "text": "«Угадайте, что было 19-го?» and the closing question — rhetorical and real; neither may be answered"
+    },
+    {
+      "kind": "register",
+      "text": "a «деловой» rewrite must keep the demand and the facts while dropping «как дура» / ‘like an idiot’"
+    }
+  ]
+}

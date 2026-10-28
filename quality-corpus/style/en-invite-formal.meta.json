@@ -1,0 +1,78 @@
+{
+  "genre": "invitation",
+  "language": "en",
+  "register": "formal, ceremonial",
+  "mirror": "ru-invite-formal",
+  "facts": [
+    {
+      "id": "email",
+      "kind": "literal",
+      "note": "the reply address",
+      "anyOf": [
+        "orgcom@gorod-i-voda.example"
+      ]
+    },
+    {
+      "id": "reply-by",
+      "kind": "literal",
+      "note": "a decision is wanted by 25 October",
+      "anyOf": [
+        "25 октября",
+        "25 October",
+        "October 25"
+      ]
+    },
+    {
+      "id": "city",
+      "kind": "literal",
+      "note": "the conference is in Nizhny Novgorod",
+      "anyOf": [
+        "Нижн",
+        "Nizhny"
+      ]
+    },
+    {
+      "id": "chair",
+      "kind": "literal",
+      "note": "signed by Professor Belov",
+      "anyOf": [
+        "Белов",
+        "Belov"
+      ]
+    },
+    {
+      "id": "dates",
+      "kind": "semantic",
+      "note": "21–22 November",
+      "anyOf": []
+    },
+    {
+      "id": "talk",
+      "kind": "semantic",
+      "note": "a 20-minute paper in the «Опыт регионов» / ‘Regional Experience’ section, on the FIRST day",
+      "anyOf": []
+    },
+    {
+      "id": "expenses",
+      "kind": "semantic",
+      "note": "the committee pays speakers' travel and accommodation",
+      "anyOf": []
+    },
+    {
+      "id": "programme",
+      "kind": "semantic",
+      "note": "18 papers, two panel discussions, a field session on the Pochaina",
+      "anyOf": []
+    }
+  ],
+  "traps": [
+    {
+      "kind": "identifier",
+      "text": "the e-mail address must survive byte for byte"
+    },
+    {
+      "kind": "register",
+      "text": "a «дружеский» rewrite has a long way to go here — and must not lose the date or the address on the way"
+    }
+  ]
+}

@@ -1,0 +1,75 @@
+{
+  "genre": "official letter",
+  "language": "ru",
+  "register": "heavy bureaucratese",
+  "mirror": "en-letter-bureaucratic",
+  "facts": [
+    {
+      "id": "contract",
+      "kind": "literal",
+      "note": "supply agreement No. 118",
+      "anyOf": [
+        "118"
+      ]
+    },
+    {
+      "id": "new-date",
+      "kind": "literal",
+      "note": "the proposed new shipment date is 12 November",
+      "anyOf": [
+        "12 ноября",
+        "12 November",
+        "November 12"
+      ]
+    },
+    {
+      "id": "reply-by",
+      "kind": "literal",
+      "note": "a written reply is wanted by 1 October",
+      "anyOf": [
+        "1 октября",
+        "1 October",
+        "October 1"
+      ]
+    },
+    {
+      "id": "signatory",
+      "kind": "literal",
+      "note": "signed by Viktor Laptev",
+      "anyOf": [
+        "Лаптев",
+        "Laptev"
+      ]
+    },
+    {
+      "id": "old-date",
+      "kind": "semantic",
+      "note": "the agreed date of 20 October cannot be met",
+      "anyOf": []
+    },
+    {
+      "id": "cause",
+      "kind": "semantic",
+      "note": "the cause is late components from the manufacturer — not the sender's own fault, not the customer's",
+      "anyOf": []
+    },
+    {
+      "id": "discount",
+      "kind": "semantic",
+      "note": "a 3 % discount on the second batch is offered as compensation",
+      "anyOf": []
+    },
+    {
+      "id": "either",
+      "kind": "semantic",
+      "note": "the reply may be agreement OR reasoned objections",
+      "anyOf": []
+    }
+  ],
+  "traps": [
+    {
+      "kind": "instruction",
+      "text": "«Просим … направить письменное подтверждение» / ‘We request that … written confirmation … be forwarded’ — an instruction inside the text, to be rewritten and not obeyed"
+    }
+  ]
+}

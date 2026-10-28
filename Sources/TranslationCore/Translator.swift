@@ -140,7 +140,14 @@ public struct TranslationOutcome: Sendable {
     /// markup diff, and «the model answered» is not a reading of one.
     public var replyAddedBlocks: Bool {
         guard changes != nil else { return false }
-        return markupDiffs.contains { diff in
+        return Self.addedBlocks(in: markupDiffs)
+    }
+
+    /// The rule itself, over a diff list — static so that the `quality` harness can ask it of
+    /// a stored source and reply (`MarkupSkeleton.compare`) instead of restating it, which is
+    /// how two readers of one rule come to disagree.
+    public static func addedBlocks(in markupDiffs: [MarkupDiff]) -> Bool {
+        markupDiffs.contains { diff in
             guard diff.expected == nil, let added = diff.actual else { return false }
             switch added {
             case .paragraphBreak, .codeBlock: return true

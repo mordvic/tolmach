@@ -1,0 +1,65 @@
+{
+  "genre": "engineering update",
+  "language": "en",
+  "register": "dense jargon, insider shorthand",
+  "mirror": "ru-tech-jargon",
+  "facts": [
+    {
+      "id": "down-at",
+      "kind": "literal",
+      "note": "the outage began at 14:20",
+      "anyOf": [
+        "14:20"
+      ]
+    },
+    {
+      "id": "rollback-at",
+      "kind": "literal",
+      "note": "the rollback to 3.7 was at 15:05",
+      "anyOf": [
+        "15:05"
+      ]
+    },
+    {
+      "id": "jobs",
+      "kind": "literal",
+      "note": "312 background jobs were replayed by hand",
+      "anyOf": [
+        "312"
+      ]
+    },
+    {
+      "id": "fix-version",
+      "kind": "literal",
+      "note": "the fix ships in 3.8.1",
+      "anyOf": [
+        "3.8.1"
+      ]
+    },
+    {
+      "id": "cause",
+      "kind": "semantic",
+      "note": "the new sync worker opened a connection per task and never returned it; the pool of 50 was exhausted in 40 minutes",
+      "anyOf": []
+    },
+    {
+      "id": "cascade",
+      "kind": "semantic",
+      "note": "the healthcheck timed out too, so the balancer removed all three nodes at once",
+      "anyOf": []
+    },
+    {
+      "id": "no-loss",
+      "kind": "semantic",
+      "note": "no data was lost",
+      "anyOf": []
+    },
+    {
+      "id": "three-actions",
+      "kind": "semantic",
+      "note": "three actions: return connections via a context, alert above 80 % pool utilisation, healthcheck no longer touches the database",
+      "anyOf": []
+    }
+  ],
+  "traps": []
+}
