@@ -68,7 +68,24 @@ final class TranslationViewModel {
     /// Whether this run reached the review point at all. See `documentTermsUnavailable`.
     private var raisedTermsSheet = false
 
-    var sourceText = ""
+    var sourceText = "" {
+        didSet {
+            // Any edit — typed, pasted, dropped, swapped in, or the «Оформить» pass's — makes
+            // the detected language a statement about a text that is gone.
+            guard sourceText != oldValue else { return }
+            sourceGeneration &+= 1
+            detectedSourceOnScreen = nil
+        }
+    }
+    /// Counts the edits to `sourceText`, so a run can tell at its end whether the text it
+    /// detected is still the one on screen. A counter rather than a copy of the text: comparing
+    /// up to 256 KB at the end of every run to answer a yes-or-no question is the wrong price.
+    @ObservationIgnored private var sourceGeneration = 0
+    /// The language the last перевод detected in the text that is on screen now, or nil — no
+    /// run yet, «Из» was stated rather than detected, the detector gave up, or the text has
+    /// changed since. What the исходник sheet's header names when nothing is chosen
+    /// (`LanguageMenu.resolved`): «Английский» over a text the run read as English.
+    private(set) var detectedSourceOnScreen: Language?
     var translatedText = ""
     var state: TranslationState = .idle
     var outcome: TranslationOutcome?
@@ -243,6 +260,8 @@ final class TranslationViewModel {
     func adopt(from other: TranslationViewModel) -> Bool {
         guard adoptionRefusal(from: other) == nil else { return false }
         sourceText = other.sourceText
+        // After `sourceText`, whose edit clears it: the panel's run detected this same text.
+        detectedSourceOnScreen = other.detectedSourceOnScreen
         translatedText = other.translatedText
         outcome = other.outcome
         // The panel's own «Вернуть» edits travel with it — `other.translatedText` above is
@@ -506,6 +525,9 @@ final class TranslationViewModel {
 
         let text = sourceText
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        // Which edit of the source this run reads, taken with the text itself: an edit made
+        // while the language is being detected is an edit to a text the detector never saw.
+        var generation = sourceGeneration
 
         // **Claimed before the first suspension**, and that ordering is load-bearing rather
         // than tidy. Detection moved off the main actor below, which makes this function
@@ -533,12 +555,18 @@ final class TranslationViewModel {
         // language is the answer, and scanning to confirm it would be the second full read of
         // the same text that `translate(source:)` exists to avoid.
         let detected: Language?
+        // What the scan found, as distinct from what was stated: only this may be shown as the
+        // text's language later (`detectedSourceOnScreen`). Decided here, at the run's start,
+        // so changing «Из» while the run streams cannot relabel what the scan found.
+        let scanned: Language?
         if let sourceOverride {
             detected = sourceOverride
+            scanned = nil
         } else {
             detected = await Task.detached(priority: .userInitiated) {
                 LanguageDetector.detect(text)
             }.value
+            scanned = detected
         }
         let target = targetOverride ?? settings.targetLanguage(forDetected: detected)
         let tone = toneOverride ?? settings.defaultTone
@@ -572,6 +600,9 @@ final class TranslationViewModel {
         // and the run is already `.interrupted`.
         guard let runText = await reconstructIfWanted(text, language: detected, options: options,
                                                       translator: translator) else { return }
+        // The «Оформить» pass's own replacement is the one edit that keeps the detection true:
+        // it is the detected text with structure added, and it overwrites the editor whole.
+        if sourceWasReconstructed { generation = sourceGeneration }
         await execute(start: { onToken in
             Task { [translator, glossary, settings] in
                 try await translator.translate(
@@ -614,6 +645,9 @@ final class TranslationViewModel {
             resolvedProofreadingLevel = nil
             resolvedRewriteStyle = nil
             outcome = result
+            // Only a language the detector found — a stated «Из» is shown by its own menu —
+            // and only while the text is the one it was found in.
+            detectedSourceOnScreen = generation == sourceGeneration ? scanned : nil
             revertedChanges = nil
             changeCursor = nil
             // The one place the engine's swallowed document-glossary failure is recorded. The

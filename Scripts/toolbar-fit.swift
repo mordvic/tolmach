@@ -13,8 +13,18 @@
 //     V=current-long /tmp/toolbar-fit       # …with the longest names selected («-proofread-long» too)
 //     PRIO=0 V=current /tmp/toolbar-fit     # without the visibility priorities the app sets
 //     SHOT=/some/dir V=current /tmp/toolbar-fit   # also screenshot the window at 700 pt
+//     V=grouped-hstack /tmp/toolbar-fit       # the macOS 26+ row the app builds: three groups
+//     V=grouped /tmp/toolbar-fit              # …with a ToolbarItemGroup instead (three capsules)
+//     SHOTW=700,1100 SHOT=dir V=… /tmp/toolbar-fit   # photograph several widths
+//     P=automatic V=grouped… /tmp/toolbar-fit  # the primary action as `.automatic` (same place)
+//     V=sheet /tmp/toolbar-fit                # the row with the languages moved onto the sheets
+//     V=sheet-mode /tmp/toolbar-fit           # …and «Текст | Файлы» moved into it («-proofread», «-long»)
 //
-// **The `current` variants are what `MainWindowView.toolbar` is today** — the operation switch,
+// **`V=sheet-mode` is what `MainWindowView.toolbar` builds on macOS 26+ since 2026-10-29**, the
+// languages on the sheets: перевод fits from 590 pt (580 longest), правка from 810 (830).
+// `V=current` is the separate row of macOS 14–25 as it stood before that, kept for the record.
+//
+// **The `current` variants were what `MainWindowView.toolbar` was on 2026-09-22** — the operation switch,
 // the menus, the ⇄, the prominent primary button, the items a hidden control leaves empty,
 // the title hidden, and the `visibilityPriority` pair — and they are why this file was
 // reopened on 2026-09-22. macOS 27.0 (26A428), SDK 27.0, one run: перевод fits from 770 pt
@@ -76,7 +86,12 @@ var langs: [String] { variant.contains("short") ? shortLanguages : languages }
 var size: ControlSize { variant.contains("small") ? .small : .regular }
 var forced: Bool { variant.contains("small") || variant.contains("regular") }
 
-var isCurrent: Bool { variant.hasPrefix("current") }
+var isCurrent: Bool { variant.hasPrefix("current") || variant.hasPrefix("grouped") || variant.hasPrefix("sheet") }
+var isGrouped: Bool { variant.hasPrefix("grouped") }
+var isSheet: Bool { variant.hasPrefix("sheet") }
+/// Where the grouped row's primary action is declared: `primaryAction` (today's placement) or
+/// `automatic`, each after a flexible spacer.
+var primaryPlacement: String { ProcessInfo.processInfo.environment["P"] ?? "primaryAction" }
 var isProofread: Bool { variant.contains("proofread") }
 var setsPriorities: Bool { ProcessInfo.processInfo.environment["PRIO"] != "0" }
 
@@ -150,8 +165,116 @@ struct Probe: App {
         .fixedSize()
     }
 
+    /// The proposed row (2026-10-29): three groups — the operation, the direction, the primary
+    /// action — the direction's three controls sharing one background, «Тон» a fixed space
+    /// apart, and the primary action pushed to the trailing edge by a flexible space, which is
+    /// where HIG puts the one prominent action. macOS 26+: `ToolbarSpacer` exists from there.
+    @ToolbarContentBuilder var groupedBar: some ToolbarContent {
+        let long = variant.contains("long")
+        ToolbarItem(placement: .navigation) {
+            Picker("", selection: $operation) { Text("Перевод").tag(0); Text("Правка").tag(1) }
+                .pickerStyle(.segmented).labelsHidden().controlSize(.small).fixedSize()
+        }
+        if #available(macOS 26, *) {
+            if !isProofread, variant.contains("hstack") {
+                // One item, so one capsule: the menus and the ⇄ drawn without bezels of their
+                // own inside it — the direction read as one phrase.
+                ToolbarItem(placement: .navigation) {
+                    HStack(spacing: 2) {
+                        title("Из", long ? "португальский" : "Определить").buttonStyle(.borderless)
+                        Button { } label: { Image(systemName: "arrow.left.arrow.right") }
+                            .buttonStyle(.borderless)
+                        title("В", long ? "португальский" : "По правилу").buttonStyle(.borderless)
+                    }
+                    .padding(.horizontal, 6)
+                }
+                ToolbarSpacer(.fixed, placement: .navigation)
+                ToolbarItem(placement: .navigation) {
+                    title("Тон", long ? "нейтральный" : "По умолчанию")
+                }
+                .overflowing(last: false)
+            } else if !isProofread {
+                ToolbarItemGroup(placement: .navigation) {
+                    title("Из", long ? "португальский" : "Определить")
+                    Button { } label: { Image(systemName: "arrow.left.arrow.right") }
+                    title("В", long ? "португальский" : "По правилу")
+                }
+                ToolbarSpacer(.fixed, placement: .navigation)
+                ToolbarItem(placement: .navigation) {
+                    title("Тон", long ? "нейтральный" : "По умолчанию")
+                }
+                .overflowing(last: false)
+            } else {
+                ToolbarItemGroup(placement: .navigation) {
+                    title("Степень", long ? "ошибки и стиль" : "По умолчанию")
+                    title("Стиль", long ? "профессиональный" : "По умолчанию")
+                }
+                .overflowing(last: false)
+            }
+            ToolbarSpacer(.flexible)
+            if primaryPlacement == "automatic" {
+                ToolbarItem(placement: .automatic) {
+                    Button { } label: { Text(isProofread ? "Исправить" : "Перевести") }
+                        .buttonStyle(.borderedProminent)
+                }
+                .overflowing(last: true)
+            } else {
+                ToolbarItem(placement: .primaryAction) {
+                    Button { } label: { Text(isProofread ? "Исправить" : "Перевести") }
+                        .buttonStyle(.borderedProminent)
+                }
+                .overflowing(last: true)
+            }
+        }
+    }
+
+    /// The row of the framed-sheet window (2026-10-29): «Из ⇄ В» are on the sheets, so what stays
+    /// is the operation, how to translate or edit, and the primary action — plus, under
+    /// `V=sheet-mode`, the «Текст | Файлы» switch moved up from the исходник sheet's header.
+    @ToolbarContentBuilder var sheetBar: some ToolbarContent {
+        let long = variant.contains("long")
+        if #available(macOS 26, *) {
+            if variant.contains("mode") {
+                ToolbarItem(placement: .navigation) {
+                    Picker("", selection: .constant(0)) { Text("Текст").tag(0); Text("Файлы").tag(1) }
+                        .pickerStyle(.segmented).labelsHidden().controlSize(.small).fixedSize()
+                }
+            }
+            ToolbarItem(placement: .navigation) {
+                Picker("", selection: $operation) { Text("Перевод").tag(0); Text("Правка").tag(1) }
+                    .pickerStyle(.segmented).labelsHidden().controlSize(.small).fixedSize()
+            }
+            ToolbarSpacer(.fixed, placement: .navigation)
+            if !isProofread {
+                ToolbarItem(placement: .navigation) {
+                    title("Тон", long ? "нейтральный" : "по умолчанию")
+                }
+                .overflowing(last: false)
+            } else {
+                ToolbarItem(placement: .navigation) {
+                    HStack(spacing: 2) {
+                        title("Степень", long ? "ошибки и стиль" : "только ошибки").buttonStyle(.borderless)
+                        title("Стиль", long ? "профессиональный" : "как в оригинале").buttonStyle(.borderless)
+                    }
+                    .padding(.horizontal, 6)
+                }
+                .overflowing(last: false)
+            }
+            ToolbarSpacer(.flexible)
+            ToolbarItem(placement: .primaryAction) {
+                Button { } label: { Text(isProofread ? "Исправить" : "Перевести") }
+                    .buttonStyle(.borderedProminent)
+            }
+            .overflowing(last: true)
+        }
+    }
+
     @ToolbarContentBuilder var bar: some ToolbarContent {
-        if isCurrent {
+        if isSheet {
+            sheetBar
+        } else if isGrouped {
+            groupedBar
+        } else if isCurrent {
             currentBar
         } else {
             legacyBar
@@ -262,12 +385,20 @@ struct Probe: App {
             print("  at 700 pt: \(tb.visibleItems?.count ?? -1) of \(tb.items.count) visible"
                   + (setsPriorities ? ", priorities set" : ", no priorities"))
             if let dir = ProcessInfo.processInfo.environment["SHOT"] {
-                let shot = Process()
-                shot.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-                shot.arguments = ["-x", "-o", "-l", "\(w.windowNumber)",
-                                  "\(dir)/toolbar-\(variant)\(setsPriorities ? "" : "-noprio")-700.png"]
-                try? shot.run()
-                shot.waitUntilExit()
+                // `SHOTW=700,1100` photographs each width; 700 alone by default.
+                let widths = (ProcessInfo.processInfo.environment["SHOTW"] ?? "700")
+                    .split(separator: ",").compactMap { Double($0) }
+                for width in widths {
+                    w.setContentSize(NSSize(width: width, height: 400))
+                    try? await Task.sleep(for: .milliseconds(400))
+                    let shot = Process()
+                    shot.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+                    let tag = isGrouped ? "-\(primaryPlacement)" : ""
+                    shot.arguments = ["-x", "-o", "-l", "\(w.windowNumber)",
+                                      "\(dir)/toolbar-\(variant)\(tag)\(setsPriorities ? "" : "-noprio")-\(Int(width)).png"]
+                    try? shot.run()
+                    shot.waitUntilExit()
+                }
             }
         }
         NSApp.terminate(nil)

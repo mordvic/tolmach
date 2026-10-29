@@ -132,8 +132,9 @@ struct MainWindowView: View {
     let onRunFinished: () async -> Void
     /// The third model, owned by `TranslatorApp` beside the window's and the panel's.
     ///
-    /// `@Bindable` since the toolbar's «Из», «В» and «Тон» became the queue's own in «Файлы»:
-    /// the pickers write straight into whichever model owns the visible mode.
+    /// `@Bindable` since the languages and «Тон» became the queue's own in «Файлы»: the menus
+    /// — on the sheets for the languages, in the toolbar for «Тон» — write straight into
+    /// whichever model owns the visible mode.
     @Bindable var queue: FileQueueModel
     /// The ⌥⌘T panel's model. Read for one thing only: its terms sheet, which is presented
     /// here rather than in the panel — see `TranslatorApp`'s escalation.
@@ -204,63 +205,34 @@ struct MainWindowView: View {
         let sourceRendering = PaneRendering.of(model.sourceText,
                                                showsRenderedMarkup: settings.showsRenderedMarkup)
         VStack(spacing: 0) {
-            HSplitView {
-                VStack(alignment: .leading, spacing: 0) {
-                    // The switch replaces the «Исходник» caption rather than sitting above
-                    // it, so both panes still read as one row of chrome — which is what
-                    // `PaneHeader.height` is pinned for.
-                    PaneHeader(title: nil) {
-                        Picker("", selection: $mode) {
-                            ForEach(SourceMode.allCases) { Text($0.label).tag($0) }
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .controlSize(.small)
-                        .fixedSize()
-                        .help("Что переводить: набранный текст или очередь файлов")
-                        // The drawing's «Файлы · 3». Only in that mode and only when there
-                        // is something to count: «Файлы · 0» beside an empty pane says
-                        // nothing the pane is not already saying louder.
-                        // `translatable`, not `jobs`: `statusLine` right below counts the
-                        // same way, and counting `.unreadable` rows here put «Файлы · 5»
-                        // directly above «Перевожу 1-й файл из 3» — two counts for one
-                        // queue, on screen at once.
-                        if mode == .files, queue.translatableCount > 0 {
-                            Text("· \(queue.translatableCount)")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        if mode == .text {
-                            // Through `PrimaryAction`, like the menu item it mirrors. Read
-                            // directly, this button stayed live during a run while «Очистить
-                            // исходник» in the menu was disabled — so it emptied the editor
-                            // under a translation still streaming into the pane beside it,
-                            // with no undo. That is the gap the type was introduced to close.
-                            Button("Очистить", action: action.clear)
-                                .buttonStyle(.link)
-                                .disabled(!action.canClear)
-                        } else {
-                            Button("Добавить…", action: addFiles)
-                                .buttonStyle(.link)
-                                .disabled(!queue.canChangeMode)
-                        }
-                    }
-                    if mode == .text {
-                        SourceEditor(model: model, font: settings.contentFont,
-                                     paneMode: SourcePaneMode.of(sourceRendering))
-                    } else {
-                        FileQueuePane(queue: queue, canStart: status.isHealthy && action.canStart)
-                    }
-                }
+            // Two sheets on a frame, the gap between them the handle — `PaneSplit` says why it is
+            // not `HSplitView` any more. ⇄ sits on the gap at the headers' height, between the
+            // two languages it exchanges, and only where there are two languages.
+            PaneSplit(leadingMinWidth: SourceEditor.minWidth,
+                      trailingMinWidth: TranslationPane.minWidth) {
+                sourceSheet(sourceRendering)
+            } trailing: {
                 // Dispatches on mode like the primary action does. Wiring this to the text
                 // model in «Файлы» — or to the queue's live stream rather than its selection
                 // — puts one document's text under another document's name.
-                TranslationPane(title: mode == .text
-                                    ? (model.operation == .proofread ? "Правка" : "Перевод")
-                                    : queue.selectedTitle,
+                TranslationPane(title: "Правка",
                                 text: mode == .text ? model.translatedText : queue.selectedText,
                                 isRunning: mode == .text ? action.isRunning : queue.selectedIsRunning,
                                 onCopy: { Task { await action.copy(richFlavour()) } },
+                                // The target over the text that is in it. Nil in правка, which
+                                // has no target and names the sheet instead. `resolved` is the
+                                // run on screen's own target, so the name is true of the text
+                                // under it — the queue's, of the selected file — and it is shown
+                                // plainly, «Русский», as the design draws it.
+                                language: showsTranslationControls
+                                    ? LanguageMenu(selection: mode == .files ? $queue.targetOverride
+                                                                             : $model.targetOverride,
+                                                   placeholder: "По правилу",
+                                                   resolved: mode == .files ? queue.selectedTarget
+                                                                            : model.resolvedTarget,
+                                                   help: "На какой язык переводить")
+                                    : nil,
+                                detail: mode == .files ? queue.selectedFileName : nil,
                                 // Not while the queue is running, the same guard `canStart`
                                 // already applies: one model lives in Ollama's memory, and
                                 // «Ещё вариант» is a second run just as much as the toolbar
@@ -295,15 +267,20 @@ struct MainWindowView: View {
                                 onRevertChange: { index, undoManager in
                                     model.revertChange(at: index, undoManager: undoManager)
                                 })
+                    .paneSheet()
+            } bridge: {
+                if showsTranslationControls { swapButton }
             }
-            Divider()
             RunStatusBar(model: model, status: status, engineName: engineName,
                          hasModel: !settings.hasNoTranslationModel,
+                         modelName: runModelName,
                          queue: mode == .files ? queue : nil,
                          glossaryProblem: glossary.lastProblem,
                          onMute: mute,
                          onRetry: { Task { await action.start() } })
         }
+        .padding([.top, .horizontal], PaneSheet.gap)
+        .background(PaneSheet.frame)
         // The drawing's own 700, restored. It was raised to 840 when the toolbar held three
         // `Picker`s each sized to its longest menu row and a separate `Text` beside it; with
         // the labels folded into `Menu` titles the row fits from 650 pt as it usually stands
@@ -405,12 +382,30 @@ struct MainWindowView: View {
         // beside a control is a form. So the label goes *into* the control, which is what
         // Xcode's own scheme selector does, and each item then has the shape the two items
         // that always looked right already had — the ⇄ button and «Перевести», both one
-        // control filling their 36 pt.
+        // control filling their 36 pt. (⇄ and the languages have since moved onto the sheets;
+        // «Тон», «Степень» and «Стиль» still have this shape.)
         //
         // `Menu` rather than `Picker` because only a menu lets the button title differ from
-        // the selection: the rows must read «русский», while the button reads «В русский».
+        // the selection: the rows must read «деловой», while the button reads «Тон деловой».
         // The selection itself is still a `Picker`, inline, so the menu keeps its check mark
         // and the binding stays exactly what it was.
+        //
+        // «Текст | Файлы» — what to translate — first, and in the toolbar since 2026-10-29: it
+        // used to stand in the исходник pane's header, which is where that sheet's language is
+        // now. DeepL and Google Translate put the same choice in the same place, above both
+        // texts, with the languages over each. It changes what the whole window does — which
+        // model the primary action drives, which pane the right sheet reads — so it belongs with
+        // the window's controls rather than with one sheet's.
+        ToolbarItem(placement: .navigation) {
+            Picker("", selection: $mode) {
+                ForEach(SourceMode.allCases) { Text($0.label).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .controlSize(.small)
+            .fixedSize()
+            .help("Что переводить: набранный текст или очередь файлов")
+        }
         // The operation switch — «Перевод»/«Правка». Text mode only: «Файлы» is
         // translation-only (spec §6), and the switch answers a question that mode never asks.
         ToolbarItem(placement: .navigation) {
@@ -426,100 +421,14 @@ struct MainWindowView: View {
                 .disabled(action.isRunning)
             }
         }
-        // The four translation controls, hidden — not disabled — under «Правка»: they answer
-        // questions правка does not ask (spec §6). «Файлы» keeps them always, being
-        // translation-only.
-        ToolbarItem(placement: .navigation) {
-            if mode == .files || model.operation == .translate {
-                // Bound to whichever model owns the visible mode's run. The pickers look like
-                // one control across both modes and are not: «Файлы» configures a queue that
-                // writes to disk, «Текст» configures the pane below. One binding for both is
-                // how a hand-off into «Текст» silently reset a queue's language.
-                languageMenu(label: "Из",
-                             selection: mode == .files ? $queue.sourceOverride
-                                                       : $model.sourceOverride,
-                             placeholder: "Определить", help: "С какого языка переводить")
-            }
+        // «Тон» under перевод, «Степень» and «Стиль» under правка — hidden, not disabled, where
+        // they answer a question the operation does not ask (spec §6). The languages are not
+        // here: they are on the sheets (`LanguageMenu`).
+        if #available(macOS 26, *) {
+            groupedSettings
+        } else {
+            separateSettings
         }
-        ToolbarItem(placement: .navigation) {
-            if mode == .files || model.operation == .translate {
-                Button {
-                    action.swap()
-                } label: {
-                    Image(systemName: "arrow.left.arrow.right")
-                }
-                .disabled(!action.canSwap)
-                .help("Перевести в обратную сторону")
-            }
-        }
-        ToolbarItem(placement: .navigation) {
-            if mode == .files || model.operation == .translate {
-                languageMenu(label: "В",
-                             selection: mode == .files ? $queue.targetOverride
-                                                       : $model.targetOverride,
-                             placeholder: "По правилу", help: "На какой язык переводить")
-            }
-        }
-        ToolbarItem(placement: .navigation) {
-            // The tone picker is not a language picker: its rows are `Tone`, and folding the
-            // two into one generic helper would buy a type parameter and cost the reader the
-            // one line that says which enum this control chooses from.
-            if mode == .files || model.operation == .translate {
-                directionMenu(label: "Тон",
-                              value: (mode == .files ? queue.toneOverride : model.toneOverride)?
-                                  .russianName ?? Self.toneDefault,
-                              help: "Насколько вольно переводить") {
-                    Picker("Тон", selection: mode == .files ? $queue.toneOverride
-                                                            : $model.toneOverride) {
-                        Text(Self.toneDefault).tag(Tone?.none)
-                        ForEach(Tone.allCases, id: \.self) {
-                            Text($0.russianName).tag(Tone?.some($0))
-                        }
-                    }
-                    .pickerStyle(.inline)
-                    .labelsHidden()
-                }
-            }
-        }
-        .overflowing(.first)
-        // The two правка menus, text mode's «Правка» only.
-        ToolbarItem(placement: .navigation) {
-            if mode == .text, model.operation == .proofread {
-                directionMenu(label: "Степень",
-                              value: model.proofreadingLevelOverride?.russianName ?? Self.toneDefault,
-                              help: "Насколько свободно менять формулировки") {
-                    Picker("Степень", selection: $model.proofreadingLevelOverride) {
-                        Text(Self.toneDefault).tag(ProofreadingLevel?.none)
-                        ForEach(ProofreadingLevel.allCases, id: \.self) {
-                            Text($0.russianName).tag(ProofreadingLevel?.some($0))
-                        }
-                    }
-                    .pickerStyle(.inline)
-                    .labelsHidden()
-                }
-            }
-        }
-        ToolbarItem(placement: .navigation) {
-            if mode == .text, model.operation == .proofread {
-                directionMenu(label: "Стиль",
-                              value: model.rewriteStyleOverride?.russianName ?? Self.toneDefault,
-                              help: "В какой стиль переписать; недоступно при «только ошибки»") {
-                    Picker("Стиль", selection: $model.rewriteStyleOverride) {
-                        Text(Self.toneDefault).tag(RewriteStyle?.none)
-                        ForEach(RewriteStyle.allCases, id: \.self) { style in
-                            Text(style.russianName).tag(RewriteStyle?.some(style))
-                                .help(style.russianDescription ?? "")
-                        }
-                    }
-                    .pickerStyle(.inline)
-                    .labelsHidden()
-                }
-                // Disabled, not hidden: the DeepL/Apple rule — an inapplicable control says
-                // so instead of silently ignoring input (spec §3, §6).
-                .disabled(!model.rewriteStyleSelectable)
-            }
-        }
-        .overflowing(.first)
 
         // Neither button declares a keyboard shortcut any more, and that is the point of the
         // change rather than a side effect. ⌘↩ and ⌘. now live once, in the «Перевод» menu
@@ -564,32 +473,180 @@ struct MainWindowView: View {
         .overflowing(.last)
     }
 
-    /// «По умолчанию» — written once, read by the button's title and by the row it selects.
+    /// **The row as three groups, macOS 26+ — what and which operation, how, and the primary
+    /// action at the trailing edge** (2026-10-29). HIG's toolbar guidance: group items by
+    /// function, «aim for a maximum of three» groups, and put the one prominent action «on the
+    /// trailing side». With the languages on the sheets the row is the window's own controls
+    /// alone.
     ///
-    /// The two used to be separate literals a few lines apart, which is the shape where a
-    /// reworded placeholder reaches the menu row and not the button above it.
-    private static let toneDefault = "По умолчанию"
+    /// Measured with `V=sheet-mode Scripts/toolbar-fit.swift` on macOS 27 (2026-10-29): the
+    /// перевод row fits from 590 pt (580 with the longest names) and the правка row from 810
+    /// (830) — against 750 / 780 and 670 / 710 when «Из ⇄ В» were here and «Текст | Файлы» was
+    /// not. So перевод fits the window's 700 pt minimum with room to spare, and правка, which
+    /// gained the mode switch and lost nothing, fits the 900 pt the window opens at; narrower,
+    /// «Степень» and «Стиль» go into » together and «Исправить» stays. (810 with «Степень» and
+    /// «Стиль» titled by the setting's value, «только ошибки» / «как в оригинале», as the design
+    /// writes them; 800 when both read «По умолчанию».)
+    ///
+    /// «Степень» and «Стиль» are **one item**, so one capsule, drawn borderless inside it — the
+    /// double-chrome rule the comment at the top of `toolbar` records, kept. A
+    /// `ToolbarItemGroup` gives each menu with a text title its own capsule.
+    ///
+    /// `ToolbarSpacer` is what makes this macOS 26+: the macOS 26 and 26.5 SDKs declare it (the
+    /// CI builds on one), so the system check is the only gate it needs.
+    @available(macOS 26, *)
+    @ToolbarContentBuilder private var groupedSettings: some ToolbarContent {
+        ToolbarSpacer(.fixed, placement: .navigation)
+        ToolbarItem(placement: .navigation) {
+            if showsTranslationControls { toneMenu }
+        }
+        .overflowing(.first)
+        ToolbarItem(placement: .navigation) {
+            if showsProofreadingControls {
+                HStack(spacing: 2) {
+                    levelMenu
+                    styleMenu
+                }
+                .buttonStyle(.borderless)
+                .padding(.horizontal, 6)
+            }
+        }
+        .overflowing(.first)
+        ToolbarSpacer(.flexible)
+    }
 
-    /// The two language controls, which differed only in their label, their binding and their
-    /// «no override» word — and were otherwise the same twenty lines twice.
+    /// The row before macOS 26: one item per control, which is what the system before
+    /// `ToolbarSpacer` can lay out.
+    @ToolbarContentBuilder private var separateSettings: some ToolbarContent {
+        ToolbarItem(placement: .navigation) {
+            if showsTranslationControls { toneMenu }
+        }
+        .overflowing(.first)
+        ToolbarItem(placement: .navigation) {
+            if showsProofreadingControls { levelMenu }
+        }
+        ToolbarItem(placement: .navigation) {
+            if showsProofreadingControls { styleMenu }
+        }
+        .overflowing(.first)
+    }
+
+    /// The two languages, ⇄ and «Тон»: a translation's questions, asked in «Файлы» always and
+    /// in «Текст» under «Перевод».
+    private var showsTranslationControls: Bool { mode == .files || model.operation == .translate }
+    /// «Степень», «Стиль»: «Текст» under «Правка» only.
+    private var showsProofreadingControls: Bool { mode == .text && model.operation == .proofread }
+
+    /// The исходник sheet: its language over the text, or — in «Файлы» — over the queue.
     ///
-    /// The placeholder is passed once and used for both the button's title and the row that
-    /// clears the override, so the toolbar cannot come to show one word while the menu under
-    /// it offers another.
-    @ViewBuilder private func languageMenu(label: String,
-                                           selection: Binding<Language?>,
-                                           placeholder: String,
-                                           help: String) -> some View {
-        directionMenu(label: label,
-                      value: selection.wrappedValue?.russianName ?? placeholder,
-                      help: help) {
-            Picker(label, selection: selection) {
-                Text(placeholder).tag(Language?.none)
-                // `russianName`, not `shortCode`. The settings name these languages in words
-                // and this window used to name them in codes — one vocabulary under two names,
-                // which is exactly what `CONTEXT.md` exists to prevent.
-                ForEach(Language.allCases, id: \.self) {
-                    Text($0.russianName).tag(Language?.some($0))
+    /// Under правка it names itself «Оригинал», the panel's word for the text before правка,
+    /// and not «Исходник», which in this window already means a pane's raw Markdown (`CONTEXT.md`).
+    /// Правка has no source language to choose: the picker was hidden there in the toolbar too.
+    @ViewBuilder private func sourceSheet(_ rendering: PaneRendering) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            PaneHeader {
+                if showsTranslationControls {
+                    // Bound to whichever model owns the visible mode's run. The two menus look
+                    // like one control across both modes and are not: «Файлы» configures a queue
+                    // that writes to disk, «Текст» the sheet below. One binding for both is how a
+                    // hand-off into «Текст» silently reset a queue's language.
+                    // `resolved`: the language the last перевод found in the text that is still
+                    // here, so a translated English text reads «Английский» as the design draws
+                    // it. Nil in «Файлы», where the sheet is a queue of files in their own
+                    // languages and no one name is true of it.
+                    LanguageMenu(selection: mode == .files ? $queue.sourceOverride
+                                                           : $model.sourceOverride,
+                                 placeholder: "Определить язык",
+                                 resolved: mode == .files ? nil : model.detectedSourceOnScreen,
+                                 help: "С какого языка переводить")
+                } else {
+                    PaneTitle("Оригинал")
+                }
+            } trailing: {
+                if mode == .text {
+                    // «207 символов · 3 части», where the design puts it. The narrower forms
+                    // are what a sheet near its 280 pt floor has room for: the count of parts
+                    // goes first, then the count itself — never the language or ✕.
+                    ViewThatFits(in: .horizontal) {
+                        SourceCount(model: model)
+                        SourceCount(model: model, showsChunks: false)
+                        EmptyView()
+                    }
+                    // Through `PrimaryAction`, like the menu item it mirrors. Read directly,
+                    // this button stayed live during a run while «Очистить исходник» in the
+                    // menu was disabled — so it emptied the editor under a translation still
+                    // streaming into the pane beside it, with no undo. That is the gap the
+                    // type was introduced to close.
+                    PaneIconButton(title: "Очистить", systemImage: "xmark.circle",
+                                   action: action.clear)
+                        .disabled(!action.canClear)
+                } else {
+                    // «3 файла», where «Файлы · 3» stood beside the old switch. Only when there
+                    // is something to count: «0 файлов» over an empty queue says nothing the
+                    // sheet is not already saying louder. `translatableCount`, not `jobs`:
+                    // `statusLine` below counts the same way, and counting `.unreadable` rows
+                    // here put «5» directly above «Перевожу 1-й файл из 3» — two counts for
+                    // one queue, on screen at once.
+                    if queue.translatableCount > 0 {
+                        Text("\(queue.translatableCount) "
+                             + RussianCopy.plural(queue.translatableCount, "файл", "файла", "файлов"))
+                            .foregroundStyle(.secondary)
+                    }
+                    Button("Добавить…", action: addFiles)
+                        .buttonStyle(.borderless)
+                        .disabled(!queue.canChangeMode)
+                }
+            }
+            if mode == .text {
+                SourceEditor(model: model, font: settings.contentFont,
+                             paneMode: SourcePaneMode.of(rendering))
+            } else {
+                FileQueuePane(queue: queue, canStart: status.isHealthy && action.canStart)
+            }
+        }
+        .paneSheet()
+    }
+
+    /// ⇄, on the gap between the two sheets' headers. A bordered circle, so it reads as one
+    /// object bridging the two languages rather than as an action of either sheet.
+    private var swapButton: some View {
+        Button {
+            action.swap()
+        } label: {
+            Label("Поменять языки местами", systemImage: "arrow.left.arrow.right")
+                .labelStyle(.iconOnly)
+                .font(.system(size: 12, weight: .medium))
+        }
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.circle)
+        .controlSize(.small)
+        .disabled(!action.canSwap)
+        .help("Перевести в обратную сторону")
+    }
+
+    /// The model the visible mode runs on, for the status bar's «Локально · …»: the queue's in
+    /// «Файлы», правка's under «Правка», the interactive one otherwise — the three the runs
+    /// themselves read (`FileQueueModel`, `TranslationViewModel.proofread` and `.translate`).
+    /// Nil where there is none, which LM Studio allows.
+    private var runModelName: String? {
+        let name = mode == .files ? settings.resolvedBatchModel
+            : model.operation == .proofread ? settings.resolvedProofreadModel
+            : settings.interactiveModel
+        return name.isEmpty ? nil : name
+    }
+
+    // The tone picker is not a language picker: its rows are `Tone`, and folding the two into one
+    // generic helper would buy a type parameter and cost the reader the one line that says which
+    // enum this control chooses from.
+    private var toneMenu: some View {
+        directionMenu(label: "Тон",
+                      value: (mode == .files ? queue.toneOverride : model.toneOverride)?
+                          .russianName ?? Self.toneDefault,
+                      help: "Насколько вольно переводить") {
+            Picker("Тон", selection: mode == .files ? $queue.toneOverride : $model.toneOverride) {
+                Text(Self.toneDefault).tag(Tone?.none)
+                ForEach(Tone.allCases, id: \.self) {
+                    Text($0.russianName).tag(Tone?.some($0))
                 }
             }
             .pickerStyle(.inline)
@@ -597,7 +654,54 @@ struct MainWindowView: View {
         }
     }
 
-    /// One toolbar control: «Из русский», the label in secondary and the value after it.
+    private var levelMenu: some View {
+        // With no override the title names what «по умолчанию» resolves to — the setting the
+        // run will read — as the chosen design draws it: «Степень только ошибки».
+        directionMenu(label: "Степень",
+                      value: (model.proofreadingLevelOverride ?? settings.defaultProofreadingLevel)
+                          .russianName,
+                      help: "Насколько свободно менять формулировки") {
+            Picker("Степень", selection: $model.proofreadingLevelOverride) {
+                Text(Self.toneDefault).tag(ProofreadingLevel?.none)
+                ForEach(ProofreadingLevel.allCases, id: \.self) {
+                    Text($0.russianName).tag(ProofreadingLevel?.some($0))
+                }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        }
+    }
+
+    private var styleMenu: some View {
+        directionMenu(label: "Стиль",
+                      value: (model.rewriteStyleOverride ?? settings.defaultRewriteStyle).russianName,
+                      help: "В какой стиль переписать; недоступно при «только ошибки»") {
+            Picker("Стиль", selection: $model.rewriteStyleOverride) {
+                Text(Self.toneDefault).tag(RewriteStyle?.none)
+                ForEach(RewriteStyle.allCases, id: \.self) { style in
+                    Text(style.russianName).tag(RewriteStyle?.some(style))
+                        .help(style.russianDescription ?? "")
+                }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        }
+        // Disabled, not hidden: the DeepL/Apple rule — an inapplicable control says so instead
+        // of silently ignoring input (spec §3, §6).
+        .disabled(!model.rewriteStyleSelectable)
+    }
+
+    /// «по умолчанию» — written once, read by «Тон»'s title and by the row that clears each of
+    /// the three menus' overrides. Lower-case, like the rows beside it («нейтральный», «только
+    /// ошибки») and like the design's «Тон по умолчанию»: it was «По умолчанию», a capital in the
+    /// middle of «Тон По умолчанию».
+    ///
+    /// «Степень» and «Стиль» title themselves with the setting's value instead (see
+    /// `levelMenu`). Title and row used to be separate literals a few lines apart, which is the
+    /// shape where a reworded placeholder reaches the menu row and not the button above it.
+    private static let toneDefault = "по умолчанию"
+
+    /// One toolbar control: «Тон деловой», the label in secondary and the value after it.
     ///
     /// Concatenated `Text` rather than an `HStack`, and that is the whole point of this
     /// helper — an `HStack` would be two views inside the item, which is the arrangement

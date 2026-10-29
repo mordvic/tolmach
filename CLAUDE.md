@@ -28,11 +28,11 @@ swift Scripts/colour-contrast.swift               # re-measure the status colour
 swiftc -O -o /tmp/ac Scripts/accent-contrast.swift && /tmp/ac   # white on every accent macOS offers
 swiftc -O -o /tmp/wt Scripts/window-title.swift && /tmp/wt   # why the window title needs re-asserting
 swiftc -O -o /tmp/tf Scripts/toolbar-fit.swift && /tmp/tf   # narrowest width the toolbar fits in
-V=current /tmp/tf   # …today's row as the app builds it; PRIO=0 without the priorities, SHOT=dir to look
+V=sheet-mode /tmp/tf   # …the row the app builds on macOS 26+ («-proofread», «-long»); PRIO=0 without the priorities, SHOT=dir SHOTW=700,1100 to look
 swiftc -O -o /tmp/tbh Scripts/toolbar-height.swift && /tmp/tbh   # what the toolbar band costs, per style
 swiftc -O -o /tmp/cf Scripts/content-font.swift && /tmp/cf   # every measurement behind «Шрифт текста»
 swiftc -O -o /tmp/vm Scripts/view-menu.swift && /tmp/vm   # which menu the размер items land in, and how ⌘+ is stored
-swiftc -O -o /tmp/phf Scripts/pane-header-fit.swift && /tmp/phf   # what the перевод pane's header wants at its narrowest, per picker shape
+swiftc -O -o /tmp/phf Scripts/pane-header-fit.swift && /tmp/phf   # what the перевод sheet's header wants at its narrowest, per picker shape; V=two-menu-file sets the floor
 RENDER_PREVIEW_CHANGES=/tmp/preview swift test --filter renderChangesPreview   # draw a правка's marks at 13 and 22 pt, both views, both appearances
 RENDER_PREVIEW_CODE=/tmp/preview swift test --filter renderCodePreview   # word- vs char-wrapped code cards at 560/300 pt, both appearances
 RENDER_PREVIEW_TABLE=/tmp/preview swift test --filter renderTablePreview   # a 4-column table at 300/430/560 pt, through the panel's own measuring path
@@ -40,6 +40,7 @@ TEXT_DIFF_COST=1 swift test --filter textDiffCost   # what TextDiff costs at the
 ./Scripts/change-density.sh docs/proofreading-gate   # live: where densityThreshold sits, per степень; needs the release CLI
 ./Scripts/explanation-quality.sh docs/proofreading-gate   # live: the gate's acceptance rate per model, per степень; needs the release CLI
 RENDER_PREVIEW=/tmp/preview swift test --filter renderPreview   # draw the rendered pane to light/dark PNGs and look
+RENDER_PREVIEW_WINDOW=/tmp/preview swift test --filter renderWindowPreview   # the whole main window, real models: перевод, правка, «Файлы», empty, at 1100 and 700 pt, light/dark; shows a window for a few seconds
 swift run translate-cli --to ru --tone technical "text"   # needs a live engine; reads stdin if no text
 swift run translate-cli --engine lmstudio --model qwen/qwen3.8-27b --to ru "text"   # the other engine
 swift run translate-cli --proofread --level rewrite --style business --from ru "text"   # правка route; --to/--tone are refused here, --level/--style only here
@@ -493,11 +494,18 @@ not cosmetic — **the safe direction is inverted**. See
   empties a menu but does not remove it, so `pruneEmptyMenus()` takes away whatever is left
   with no items.
 - **The primary action overflows last, by statement.** `NSToolbar` overflows from the trailing
-  end and `.primaryAction` *is* the trailing end; on macOS 27 the перевод row wants 770–800 pt
-  against the window's 700 minimum, and «Перевести» was in » (probe, 2026-09-22).
+  end and `.primaryAction` *is* the trailing end; on macOS 27 the перевод row of 2026-09-22
+  wanted 770–800 pt against the window's 700 minimum, and «Перевести» was in » (probe).
   `ToolbarContent.overflowing(_:)` wraps `visibilityPriority` (macOS 26.1+): `.last` on the
   primary action, `.first` on «Тон» and «Стиль». The bundle re-measure is owed in
-  `docs/reference/OPEN-ITEMS.md`.
+  `docs/reference/OPEN-ITEMS.md`. **The toolbar holds the window's own controls and nothing
+  about either text, since 2026-10-29** (`docs/adr/0014`): «Текст | Файлы», «Перевод | Правка»,
+  «Тон» (or «Степень · Стиль» as one capsule), and on macOS 26+ the primary action pushed to the
+  trailing edge by a `ToolbarSpacer(.flexible)` — HIG's «one prominent action, on the trailing
+  side». The languages and ⇄ are on the sheets. Measured (`V=sheet-mode`): перевод fits from
+  590 pt, правка from 810 (830 with the longest names) — so below 810 «Степень · Стиль» go into
+  » and «Исправить» stays; the window opens at 900. One item with borderless controls, not a
+  `ToolbarItemGroup`, makes one capsule — `docs/reference/PLATFORM-TRAPS.md`.
 - **A run must not straddle two servers.** The router reads «Движок» on every call, which is
   what makes the radio button take effect without a relaunch — but a translation is many calls,
   so each run freezes its target at the start through `LLMClient.pinnedForRun()` (defaulting to
@@ -514,9 +522,9 @@ not cosmetic — **the safe direction is inverted**. See
   and runs off the main actor while that class is `@Observable`. `ClientPool` holds one client
   per engine per port for the life of the process. They must not be merged: a hotkey translation must never overwrite the window, and
   the re-entrancy guard is per instance. All three are built in `TranslatorApp.init` — the app
-  owns the models, the scenes read them. **The toolbar's «Из», «В» and «Тон» belong to whichever
-  model owns the visible mode** — `FileQueueModel`'s own in «Файлы», the text model's in
-  «Текст». One owner for both modes let `adopt(from:)` reset the language a queue was
+  owns the models, the scenes read them. **The sheets' two languages and the toolbar's «Тон»
+  belong to whichever model owns the visible mode** — `FileQueueModel`'s own in «Файлы», the
+  text model's in «Текст». One owner for both modes let `adopt(from:)` reset the language a queue was
   configured with, and the next «Перевести» wrote every file in the settings-default one.
 - **The window's left pane has two modes and the primary action follows the visible one.**
   `PrimaryAction.forMode` is that rule, and the toolbar button, ⌘↩ and ⌘. all read it — never
@@ -630,8 +638,20 @@ not cosmetic — **the safe direction is inverted**. See
   pairs, 427 give a different script — same count and same multiset, different order — which is
   why both consumers are order-independent by construction and a test keeps the old algorithm
   beside the new one.
-- The main window is a toolbar plus `SourceEditor`/`FileQueuePane` | `TranslationPane` over a
-  collapsible `RunStatusBar`. **The translation side draws Markdown when the translation has
+- The main window is a toolbar plus **two sheets on a tinted frame** — `SourceEditor`/
+  `FileQueuePane` | `TranslationPane`, each `.paneSheet()` — over a collapsible `RunStatusBar`
+  that lies on the frame and ends in «Локально · движок · модель» (since 2026-10-29,
+  `docs/adr/0014`). Each sheet's 40 pt header names its language as a `LanguageMenu` (`PaneTitle`
+  «Оригинал» / «Правка» under правка, which has none) — the chosen one, else the language the
+  text is in: the rule's target over the перевод, and over the исходник what the last run
+  detected, **only while that text is unchanged** (`TranslationViewModel.detectedSourceOnScreen`,
+  cleared by any edit, a run's own edit count compared at its end). The исходник header also
+  carries «207 символов · 3 части» (`SourceCount`), and ⇄ sits on the gap between the headers.
+  **`PaneSplit`, not `HSplitView`**: the gap is the divider — dragged, column-resize pointer,
+  adjustable for VoiceOver — because `HSplitView` draws a hairline of its own between the
+  sheets in a colour SwiftUI does not expose. Every edge inside a sheet reads `PaneSheet`
+  (`contentInset` 14, `textInset` 9 — the editor's, the rendered view's and the header's text
+  start on one line, measured on `renderWindowPreview`'s images). **The translation side draws Markdown when the translation has
   any**, and is a read-only `Text` when it has none — never a `TextEditor`, deliberately,
   because the one it replaced took a caret and discarded typing. The settings are **four**
   tabs — «Основные», «Модели», «Глоссарий», «Файлы» («Дополнительно» was folded into «Модели»
@@ -697,13 +717,14 @@ not cosmetic — **the safe direction is inverted**. See
   detail alone), and the pane hosts `RenderedTextView` whenever there are changes, markup or
   not. One picker rather than two, because this control governs *both* panes and a second one
   is the shape `Scripts/toolbar-fit.swift` exists to refuse. **The picker is segmented where
-  it fits and a `.menu` where it does not, and the pane's floor is 360 pt** — measured
-  (`Scripts/pane-header-fit.swift`, 2026-09-04): three segments want 495 pt, перевод's two
-  397, the menu form 352, and the old 280 pt floor clipped «Скопировать» in every operation
-  since the toggle arrived. `ViewThatFits` holds both pickers over one binding and one item
-  list, so the menu cannot say anything the segments do not; 360 is the first round number
-  past the narrowest form, and the исходник pane keeps 280 (its header is the mode switch
-  alone), so the two panes want 640 of the window's 700.
+  it fits and a `.menu` where it does not, and the sheet's floor is 360 pt** — measured on the
+  40 pt sheet header (`Scripts/pane-header-fit.swift`, 2026-10-29): three segments want 440 pt,
+  перевод's two under the longest language 337, правка's menu form 297, перевод's 284, and the
+  queue's — the same with the file name squeezed — fits from 340. (360 since the caption header
+  of 2026-09-04; 280 before that clipped «Скопировать» in every operation.)
+  `ViewThatFits` holds both pickers over one binding and one item list, so the menu cannot say
+  anything the segments do not; the исходник sheet keeps 280 (its header drops the count of
+  parts there, `V=source`), so the sheets, the gap and the frame want 664 of the window's 700.
 - Capture order is Accessibility first, synthetic ⌘C fallback second, and the fallback must restore
   the *whole* pasteboard. **One exception since 2026-09-02: a selection inside web content —
   an `AXWebArea` in the focused element's ancestry — skips the Accessibility tier**, because
@@ -851,6 +872,8 @@ to the code. `docs/reference/PLATFORM-TRAPS.md` has the same list with the facts
 - `NSPanel` framing, sizing, key status → `TranslatorApp/TranslationPanel.swift`, `PanelSizer.swift`
 - Hosting an `NSTextView`, TextKit 1 vs 2, `NSTextTable`, glyph rects →
   `TranslatorApp/RenderedTextView.swift`
+- The window's sheets, where text starts inside them, the split between them →
+  `TranslatorApp/PaneSplit.swift`, `LanguageMenu.swift`
 - Measuring SwiftUI content, `NSHostingView`/`NSHostingController` → `PanelController.measure` in
   `TranslatorApp/TranslationPanel.swift`
 - App activation, scene order → `TranslatorApp/TranslatorApp.swift`

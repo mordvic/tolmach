@@ -67,6 +67,9 @@ struct FileQueuePane: View {
                     }
                 }
                 .listStyle(.inset)
+                // The sheet is the ground: an inset list paints its own, a shade off the sheet's
+                // in the dark appearance, with square corners inside a rounded sheet.
+                .scrollContentBackground(.hidden)
                 if canStart, let hint = queue.startHint {
                     Text(hint)
                         .font(.caption).foregroundStyle(.secondary)
@@ -76,7 +79,7 @@ struct FileQueuePane: View {
                 dropTarget
             }
         }
-        .frame(minWidth: 280)
+        .frame(minWidth: SourceEditor.minWidth)
         // Refusing returns `false`, which springs every item back — the same and only
         // error channel `SourceEditor` uses. It happens only when nothing in the drop was
         // plausible: a mixed drop is accepted and its refusals become visible rows, so the

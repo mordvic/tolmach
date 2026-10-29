@@ -395,7 +395,36 @@ inside it renders a `SwiftUIPopupButton` that is *also* 36 pt with `isBordered =
 a pill inside a pill, which is what it looks like. The shape to aim for is host size == control
 size, which is what the plain `Button` items in the same toolbar already have. Folding the
 label into a `Menu`'s title gets there: 124 × 36 host holding a 124 × 36 control.
+
+**Several controls in one capsule: one item, borderless controls — not a `ToolbarItemGroup`.**
+Looked at on macOS 27 with `V=grouped Scripts/toolbar-fit.swift` (2026-10-29): a
+`ToolbarItemGroup` of «Из», ⇄ and «В» still drew three capsules, because each `Menu` with a text
+title gets its own. One `ToolbarItem` holding an `HStack` of the three, each with
+`.buttonStyle(.borderless)`, draws one capsule with no bezel inside it — the rule above kept,
+since the inner controls have no chrome of their own (`V=grouped-hstack`). A `ToolbarSpacer
+(.flexible)` before the `.primaryAction` item puts it at the trailing edge; at the window's
+minimum, where the space collapses, it sits after the leading items and stays out of ».
+(«Из ⇄ В» have since moved onto the sheets; «Степень · Стиль» is the item that keeps this shape.)
 → the toolbar in `Sources/TranslatorApp/MainWindowView.swift`
+
+**A borderless `Menu` draws its title 3 pt in from its own leading edge.** Measured 2026-10-29 by
+rendering a `Text` and a borderless `Menu` with the same title, one above the other at the same
+leading edge, to a bitmap: first ink at 21 pt and 24 pt, with `.menuStyle(.button)` or without.
+A menu that heads a column of text therefore stands 3 pt right of it, and of a plain-`Text`
+title in the same place — which is what the sheet header showed until it was pulled back.
+→ `LanguageMenu` in `Sources/TranslatorApp/LanguageMenu.swift`
+
+**An explicit `.foregroundStyle` on a borderless button takes away its disabled look.** Measured
+2026-10-29 on `renderWindowPreview`'s images: «Очистить» and «Скопировать», drawn
+`.foregroundStyle(.secondary)`, were #929292 both enabled and disabled. Read
+`@Environment(\.isEnabled)` inside the button and pick the style from it.
+→ `PaneIconButton` in `Sources/TranslatorApp/SourceEditor.swift`
+
+**`HSplitView` draws its own divider, in a colour SwiftUI does not expose.** Between two panes
+that carry borders of their own — the window's sheets — its hairline is a third line in the gap.
+There is no modifier for its colour or thickness; the window's split is `PaneSplit`, where the
+gap itself is the handle.
+→ `PaneSplit` in `Sources/TranslatorApp/PaneSplit.swift`
 
 **A `ToolbarItemGroup`'s children are separate toolbar items.** Measured through
 `NSToolbar.items`: a group holding three labels, three pickers and a button reports 7 items, not

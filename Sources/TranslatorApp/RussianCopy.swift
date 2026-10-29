@@ -66,6 +66,10 @@ extension Language {
         case .ja: "японский"
         }
     }
+
+    /// The name standing alone — a sheet's header, a row in its menu — with the first letter up,
+    /// as a Russian label is written. `russianName` stays lowercase for running text.
+    var russianTitle: String { russianName.prefix(1).uppercased() + russianName.dropFirst() }
 }
 
 extension ProofreadingLevel {

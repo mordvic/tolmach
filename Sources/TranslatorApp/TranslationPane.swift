@@ -57,12 +57,17 @@ struct PaneRendering {
 /// like. The toggle and the rendering therefore reach the queue's pane for free, which is the
 /// point.
 struct TranslationPane: View {
-    /// «Перевод», or «Перевод · techdoc-en.md» in the queue. A parameter and not a constant
-    /// because the queue names the file whose translation is showing.
+    /// The sheet's name where it has no language to name — «Правка». Перевод and the queue name
+    /// a language instead (`language`), and this is not drawn.
     let title: String
     let text: String
     let isRunning: Bool
     let onCopy: () -> Void
+    /// The target language's menu, over the text that is in it — nil in правка, which has no
+    /// target. Drawn in place of `title`.
+    var language: LanguageMenu? = nil
+    /// The file whose translation is showing, after the language, in the queue.
+    var detail: String? = nil
     /// «Ещё вариант» — present only when the window offers it (a finished правка whose
     /// степень was «ошибки и стиль», spec §6). Nil hides the button entirely, so the
     /// queue's use of this pane never shows it.
@@ -99,6 +104,17 @@ struct TranslationPane: View {
     /// «Вернуть» was pressed for a change.
     var onRevertChange: (Int, UndoManager?) -> Void = { _, _ in }
 
+    /// The header's narrowest form has to fit, or «Скопировать» on its trailing edge clips.
+    /// `Scripts/pane-header-fit.swift` on the sheet header (2026-10-29, 40 pt, the language in
+    /// the body size with no note): правка's `.menu` form with «Ещё вариант» wants 297 pt,
+    /// перевод's under the longest name («Португальский») 284, and the queue's — the same plus
+    /// the file name squeezed to its ellipsis — fits from 340. So 360, the floor this pane has had
+    /// since 2026-09-04 (it was 380 for the few hours the language carried «по правилу», and 280
+    /// before 2026-09-04, which clipped «Скопировать» in every operation). The исходник sheet
+    /// keeps 280, so the two sheets, the gap and the frame want 664 of the window's 700 pt.
+    /// `PaneSplit` holds the boundary to it.
+    static let minWidth: CGFloat = 360
+
     /// The one rule for whether «Разметка | Исходник» is drawn. A function so a test can pin
     /// it without rendering the header.
     static func offersToggle(translationHasMarkup: Bool, sourceHasMarkup: Bool) -> Bool {
@@ -126,7 +142,14 @@ struct TranslationPane: View {
         let offersSource = Self.offersToggle(translationHasMarkup: rendering.hasMarkup,
                                              sourceHasMarkup: sourceHasMarkup)
         VStack(alignment: .leading, spacing: 0) {
-            PaneHeader(title: title) {
+            PaneHeader {
+                if let language { language } else { PaneTitle(title) }
+                if let detail {
+                    Text(detail)
+                        .font(.caption).foregroundStyle(.secondary)
+                        .lineLimit(1).truncationMode(.middle)
+                }
+            } trailing: {
                 // Only when there is something to choose between. With no markup and no правка
                 // the header is exactly what it was, which is what keeps a plain translation
                 // from growing a control that would do nothing.
@@ -146,11 +169,13 @@ struct TranslationPane: View {
                     // had been since the toggle arrived. Two things fix that together:
                     // `ViewThatFits` offers the segmented picker first and the same picker as a
                     // `.menu` when the header's leftover width is short of it, so nothing is
-                    // ever clipped; and the floor below is 360 pt, the first round number past
-                    // the 352 the menu form needs with «Ещё вариант» showing. Between 360 and
-                    // 397 (перевод) or 495 (правка) the picker is therefore a menu, deliberately.
-                    // The two pickers share one binding and one item list, so the menu cannot
-                    // say something the segments do not.
+                    // ever clipped; and the floor was raised past what the menu form needs
+                    // (`minWidth` below has today's figures). On the sheet header (2026-10-29)
+                    // three segments want 440 pt and two, under the longest language, 337 — so
+                    // правка's picker is a menu below 440, deliberately, and перевод's is
+                    // segmented at every width the sheet can have. The two pickers share one
+                    // binding and one item list, so the menu cannot say something the segments
+                    // do not.
                     let selection = Binding(
                         get: {
                             PaneViewChoice.current(
@@ -193,10 +218,9 @@ struct TranslationPane: View {
                 }
                 if let onAnotherVariant {
                     Button("Ещё вариант", action: onAnotherVariant)
-                        .buttonStyle(.link)
+                        .buttonStyle(.borderless)
                 }
-                Button("Скопировать", action: onCopy)
-                    .buttonStyle(.link)
+                PaneIconButton(title: "Скопировать", systemImage: "doc.on.doc", action: onCopy)
                     // Enabled the moment the first token lands, not only at the end: an
                     // interrupted run leaves partial output the app keeps on purpose, and
                     // keeping it while refusing to copy it would be pointless. Same rule as
@@ -232,14 +256,11 @@ struct TranslationPane: View {
                         .font(font.font)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(8)
+                        .padding(.horizontal, PaneSheet.contentInset)
+                        .padding(.vertical, PaneSheet.textTopInset)
                 }
             }
         }
-        // 360 and not 280: the header's `.menu` form with «Ещё вариант» showing measures 352 pt
-        // (`Scripts/pane-header-fit.swift`), and 280 clipped «Скопировать» in every operation.
-        // The исходник pane keeps 280 — its header is the mode switch alone — so the two panes
-        // together want 640 of the window's 700 pt minimum.
-        .frame(minWidth: 360)
+        .frame(minWidth: Self.minWidth)
     }
 }
