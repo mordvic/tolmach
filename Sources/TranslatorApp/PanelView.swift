@@ -428,10 +428,21 @@ struct PanelView: View {
     /// reports `scrolls == false`, so the flat layout is always the one measured. That case is
     /// pinned by three existing tests; mutating it to `true` puts every panel at the ceiling,
     /// short and long alike, and all three fail.
+    /// How far left of the reply's text its change bars reach: 7 pt to the bar's left edge, plus
+    /// a point. See `RenderedReplyView.makeNSView` and `scrollingMiddle`.
+    static let changeBarReach: CGFloat = 8
+
     @ViewBuilder private func scrollingMiddle<Content: View>(
         @ViewBuilder _ middle: () -> Content) -> some View {
         if scrolls {
+            // The scroll region reaches 8 pt into the padding and its content is pushed back by
+            // the same 8, so the text sits exactly where the flat layout puts it — and the change
+            // bars the reply draws 7 pt left of its text are inside the scroll view's clip
+            // instead of cut off by it (measured 2026-10-29: a `ScrollView` clips a hosted view's
+            // drawing at its own bounds; the flat layout does not).
             ScrollView { middle() }
+                .contentMargins(.leading, Self.changeBarReach, for: .scrollContent)
+                .padding(.leading, -Self.changeBarReach)
         } else {
             middle()
         }
@@ -679,6 +690,7 @@ struct PanelView: View {
                                     showsRenderedMarkup: showsRenderedMarkup),
                                 changes: model.changes,
                                 showsChangeDetail: replyView == .changes,
+                                increasedContrast: DisplayContrast.shared.isIncreased,
                                 original: shownOriginal,
                                 onChangeSelected: { model.selectChange($0) },
                                 canRevertChange: { model.canRevertChange(at: $0) },

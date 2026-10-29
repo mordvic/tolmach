@@ -25,7 +25,8 @@ swift test --filter TranslationCoreTests   # one test target
 ./Scripts/make-app-bundle.sh      # assemble build/LocalTranslator.app (debug); pass "release" for release
 swift Scripts/make-icon.swift build/AppIcon.icns   # redraw the icon; make-app-bundle.sh does this itself
 swift Scripts/colour-contrast.swift               # re-measure the status colours against both appearances
-swiftc -O -o /tmp/ac Scripts/accent-contrast.swift && /tmp/ac   # white on every accent macOS offers
+swiftc -O -o /tmp/ac Scripts/accent-contrast.swift && /tmp/ac   # white on every accent macOS offers; the change marks against the measured grounds
+swiftc -O -o /tmp/cg Scripts/change-grounds.swift && /tmp/cg   # the window, panel and card grounds the marks are held to; opens windows on screen
 swiftc -O -o /tmp/wt Scripts/window-title.swift && /tmp/wt   # why the window title needs re-asserting
 swiftc -O -o /tmp/tf Scripts/toolbar-fit.swift && /tmp/tf   # narrowest width the toolbar fits in
 V=current /tmp/tf   # …today's row as the app builds it; PRIO=0 without the priorities, SHOT=dir to look
@@ -60,20 +61,22 @@ Tools** — `@State` is a macro there and the CLT ships no `SwiftUIMacros` plug-
 in front of the command is enough; `docs/reference/RUNBOOK.md` §2 has the error text.
 
 No test count here on purpose: it went stale twice in one review cycle, and a number nothing
-checks is a contract nobody can keep. The suite is offline and reads **~2.8 s** (2026-08-26;
-it read ~2.1 s before that day's review work), so there is no reason not to run it. Most of
+checks is a contract nobody can keep. The suite is offline and reads **~3.0 s** (2026-10-29;
+~2.8 s before that day's change-mark tests, ~2.1 s before 2026-08-26's review work), so there is
+no reason not to run it. Most of
 that is **two** tests that spend real time on purpose:
 
 - `aFileInterruptedFromTheTermsSheetDoesNotReportTheReadersDeliberation` sleeps a deliberate
   second — the property it pins, that a reader's time in the terms sheet is not reported as the
   machine's, can only be seen by letting real time pass. Alone it reads ~1.13 s, stretched to
-  ~2.7 s by contention with `TranslationPanelTests`' real `NSPanel`s.
+  ~3.0 s by contention with `TranslationPanelTests`' real `NSPanel`s and, since 2026-10-29, the
+  change-mark tests' text views and hosting views (each ≤ 0.07 s alone; 2.7 s before them).
 - `acancelDuringLanguageDetectionStillStopsTheRun` translates a 150 KB source so the detector
   runs long enough for its poll to land inside the window it is about — with a short string the
   window closes in microseconds and the test passes with the fix removed, which was measured
   rather than guessed.
 
-Watch those two figures, not the total; if the suite reads much above ~2.8 s, suspect the
+Watch those two figures, not the total; if the suite reads much above ~3.0 s, suspect the
 machine before the code — a leaked load generator once made the same commit measure 0.87 s and
 3.0 s on the same hardware.
 
@@ -322,12 +325,21 @@ Facts that will bite you if you "tidy" them:
   unmarked with the count untouched (a guessed underline is worse than none). They are
   **attributes** — `.underlineStyle`, `.underlineColor`, `ChangeMarks.changeKey` — in
   «Результат», and the «Изменения» view splices the removed words in as characters, struck
-  through in the secondary colour: a second document, like «Исходник» is. **The mark is a
-  dotted underline in the accent, darkened 35 % in the light appearance, everywhere** —
-  measured (`Scripts/accent-contrast.swift`, 2026-09-04): `linkColor` against the blue accent
-  is 1.49:1 light / 1.14:1 dark, so a solid accent line *was* the link's underline, and bare,
-  three of the eight accents fall under the 3:1 non-text floor on the white pane (жёлтый
-  1.51:1); `ChangeMarksColourTests` holds all sixteen cells. `docs/adr/0012` is the decision.
+  through in the removed colour: a second document, like «Исходник» is. **The mark is a
+  dotted underline in the accent, everywhere** — dotted because `linkColor` against the blue
+  accent is 1.49:1 light / 1.14:1 dark (measured 2026-09-04), so a solid accent line *was* the
+  link's underline. **Its colour is a floor, not a blend, since 2026-10-29**: the accent moved
+  toward the ink only as far as it needs to clear 3.5:1 (4.5:1 under Increase Contrast) against
+  every ground the marks are drawn on — the window, the hotkey panel's material and the change
+  card, measured **on the screen** by `Scripts/change-grounds.swift`, because `NSColor` resolves
+  the dark window to #1e1e1e offscreen while the screen shows #31302d and the card #4d4c48, and
+  against those the old 35 % blend left five dark accents under 3:1. Removed text is
+  `ChangeMarks.removedColour` (≥ 4.5:1, not `secondaryLabelColor`'s 3.84), its strike follows the
+  underline's weight, and the spaces a splice adds are not struck. A pure removal leaves a caret
+  on its gap in «Результат», an inserted comma is drawn in the mark's colour, and a rewritten
+  block carries no underline — so every counted change has something to step to.
+  `ChangeMarksColourTests` holds every preset in both appearances against every ground;
+  `docs/adr/0012` and its 2026-10-29 amendment are the decision.
   **Nothing about the marks reaches the pasteboard or «Заменить»**: `PaneRendering.rtf` and
   both `richFlavour()` sites take no change set, pinned by a test. In the window the count and
   a ‹ › stepper sit in `RunStatusBar`'s finished line («Готово за N мс · 6 изменений»,

@@ -45,10 +45,24 @@ private func struck(_ rendering: MarkdownToAttributed.Rendering) -> [String] {
     return found
 }
 
+/// A dynamic colour's sRGB components under one appearance, rounded to a byte — two dynamic
+/// colours are never `==`, but what they draw can be.
+private func resolvedComponents(_ colour: NSColor?, _ appearance: NSAppearance.Name) -> [Int]? {
+    guard let colour else { return nil }
+    var out: [Int]?
+    NSAppearance(named: appearance)!.performAsCurrentDrawingAppearance {
+        guard let c = colour.usingColorSpace(.sRGB) else { return }
+        out = [c.redComponent, c.greenComponent, c.blueComponent, c.alphaComponent]
+            .map { Int(($0 * 255).rounded()) }
+    }
+    return out
+}
+
 /// The set, the clean rendering and the marked one for one source/result pair — every fixture
 /// below goes through the real `TextDiff`, so the two modules are exercised as they will run.
 private func fixture(source: String, result: String, detail: ChangeMarks.Detail = .result,
-                     raw: Bool = false)
+                     raw: Bool = false, config: MarkdownFontConfig = config,
+                     increasedContrast: Bool = false)
     -> (set: ChangeSet, clean: MarkdownToAttributed.Rendering,
         marked: MarkdownToAttributed.Rendering) {
     let set = TextDiff.changes(source: source, result: result)
@@ -56,7 +70,21 @@ private func fixture(source: String, result: String, detail: ChangeMarks.Detail 
         ? MarkdownToAttributed.plainRendering(of: result, config: config)
         : MarkdownToAttributed.rendering(of: result, config: config)
     return (set, clean, ChangeMarks.apply(set, to: clean, resultMarkdown: result,
-                                          detail: detail, config: config))
+                                          detail: detail, config: config,
+                                          increasedContrast: increasedContrast))
+}
+
+/// Every run carrying `key`, as (value, text) — `marks` for any of the change keys.
+private func runs(_ rendering: MarkdownToAttributed.Rendering,
+                  _ key: NSAttributedString.Key) -> [(index: Int, text: String)] {
+    var found: [(Int, String)] = []
+    let string = rendering.attributed.string as NSString
+    rendering.attributed.enumerateAttribute(
+        key, in: NSRange(location: 0, length: rendering.attributed.length), options: []) { value, range, _ in
+        guard let index = value as? Int else { return }
+        found.append((index, string.substring(with: range)))
+    }
+    return found
 }
 
 // MARK: - Block ranges
@@ -237,16 +265,24 @@ private func fixture(source: String, result: String, detail: ChangeMarks.Detail 
     let (_, _, marked) = fixture(source: "Отчет за август готов.",
                                  result: "Отчёт за август готов.", detail: .changes)
     #expect(marked.attributed.string == "Отчет Отчёт за август готов.\n")
-    #expect(struck(marked) == ["Отчет "])
+    // The space `padded` adds is a separator: the strike ends at «т» (2026-10-29 — it used to
+    // run on to «Отчёт» and read as striking it too).
+    #expect(struck(marked) == ["Отчет"])
     #expect(marks(marked).map(\.text) == ["Отчёт"])
 }
 
-@Test func theRemovedTextIsSecondaryAndCarriesNoneOfTheAnchorsDecorations() {
+@Test func theRemovedTextTakesTheRemovedColourAndCarriesNoneOfTheAnchorsDecorations() {
     let (_, _, marked) = fixture(source: "Отчет за **август** готов.",
                                  result: "Отчёт за **август** готов.", detail: .changes)
     let colour = marked.attributed.attribute(.foregroundColor, at: 0,
                                              effectiveRange: nil) as? NSColor
-    #expect(colour == .secondaryLabelColor)
+    let strike = marked.attributed.attribute(.strikethroughColor, at: 0,
+                                             effectiveRange: nil) as? NSColor
+    for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+        #expect(resolvedComponents(colour, appearance)
+                == resolvedComponents(ChangeMarks.removedColour(), appearance))
+        #expect(resolvedComponents(strike, appearance) == resolvedComponents(colour, appearance))
+    }
     #expect(marked.attributed.attribute(ChangeMarks.changeKey, at: 0,
                                         effectiveRange: nil) == nil)
 }
@@ -259,7 +295,7 @@ private func fixture(source: String, result: String, detail: ChangeMarks.Detail 
     // The removal sat before the full stop, so it takes the space the document does not have
     // in front of it and not one behind: «готовуже .» is what the spec's fixed side produces.
     #expect(marked.attributed.string == "Отчёт за август готов уже.\n")
-    #expect(struck(marked) == [" уже"])
+    #expect(struck(marked) == ["уже"])
 }
 
 @Test func aRemovedWordAtTheVeryEndOfABlockIsStruckThroughAfterItsLastWord() {
@@ -271,7 +307,7 @@ private func fixture(source: String, result: String, detail: ChangeMarks.Detail 
     #expect(set.changes.count == 1)
     #expect(set.changes[0].insertedTokens == 2..<2)
     #expect(marked.attributed.string == "Отчёт готов уже\n")
-    #expect(struck(marked) == [" уже"])
+    #expect(struck(marked) == ["уже"])
 }
 
 @Test func everyCodeRegionAfterASplicedRemovalShiftsByExactlyItsLength() {
@@ -359,6 +395,132 @@ private func fixture(source: String, result: String, detail: ChangeMarks.Detail 
                                    to: MarkdownToAttributed.rendering(of: result, config: large),
                                    resultMarkdown: result, detail: .result, config: large)
     #expect(underlineStyle(marked, under: "Отчёт") == [.thick, .patternDot])
+}
+
+@Test func underIncreaseContrastEveryLineIsThickAtEverySize() {
+    #expect(ChangeMarks.underlineStyle(for: 11, increasedContrast: true) == .thick)
+    #expect(ChangeMarks.underlineStyle(for: 13, increasedContrast: true) == .thick)
+    let (_, _, marked) = fixture(source: "Отчет за август готов.", result: "Отчёт за август готов.",
+                                 detail: .changes, increasedContrast: true)
+    #expect(underlineStyle(marked, under: "Отчёт") == [.thick, .patternDot])
+    let strike = marked.attributed.attribute(.strikethroughStyle, at: 0, effectiveRange: nil) as? Int
+    #expect(strike == NSUnderlineStyle.thick.rawValue)
+}
+
+@Test func theStrikeTakesTheUnderlinesWeight() {
+    let large = MarkdownFontConfig(baseSize: 22, typeface: .system)
+    let (_, _, marked) = fixture(source: "Отчет за август готов.", result: "Отчёт за август готов.",
+                                 detail: .changes, config: large)
+    let strike = marked.attributed.attribute(.strikethroughStyle, at: 0, effectiveRange: nil) as? Int
+    #expect(strike == NSUnderlineStyle.thick.rawValue)
+}
+
+// MARK: - What every shape of change leaves to see
+
+@Test func theRemovedTextCarriesItsIndexAndTheSpacesAroundItDoNot() {
+    let (_, _, marked) = fixture(source: "Отчет за август готов.", result: "Отчёт за август готов.",
+                                 detail: .changes)
+    #expect(runs(marked, ChangeMarks.removedKey).map(\.text) == ["Отчет"])
+    #expect(runs(marked, ChangeMarks.removedKey).map(\.index) == [0])
+    let space = (marked.attributed.string as NSString).range(of: " Отчёт").location
+    #expect(marked.attributed.attribute(.strikethroughStyle, at: space, effectiveRange: nil) == nil)
+}
+
+@Test func aPureRemovalInResultCarriesItsIndexOnTheGapWhereTheWordsStood() {
+    let (set, _, marked) = fixture(source: "Мы закончили закончили миграцию базы.",
+                                   result: "Мы закончили миграцию базы.")
+    #expect(set.changes.count == 1 && set.changes[0].inserted.isEmpty)
+    #expect(marks(marked).map(\.text) == [" "])
+    let gap = (marked.attributed.string as NSString).range(of: " миграцию").location
+    #expect(marked.attributed.attribute(ChangeMarks.changeKey, at: gap, effectiveRange: nil) as? Int == 0)
+    #expect(marked.attributed.attribute(.underlineStyle, at: gap, effectiveRange: nil) == nil)
+}
+
+@Test func aPureRemovalInTheRawSourceViewCarriesItsIndexOnTheGapToo() {
+    // «Исходник» is the raw Markdown through `plainRendering`; the same anchor, the same gap.
+    let (_, _, marked) = fixture(source: "Мы **закончили** закончили миграцию.",
+                                 result: "Мы **закончили** миграцию.", raw: true)
+    #expect(marks(marked).map(\.text) == [" "])
+}
+
+@Test func aPureRemovalBeforePunctuationStandsOnThePunctuation() {
+    let (_, _, marked) = fixture(source: "Сроки сдвигаются на неделю на неделю.",
+                                 result: "Сроки сдвигаются на неделю.")
+    #expect(marks(marked).map(\.text) == ["."])
+}
+
+@Test func aPureRemovalAtTheEndOfABlockStandsOnItsLastCharacter() {
+    let (_, _, marked) = fixture(source: "Отчёт готов уже", result: "Отчёт готов")
+    #expect(marks(marked).map(\.text) == ["в"])
+}
+
+@Test func aRemovedParagraphLeavesItsIndexOnTheNextBlocksFirstCharacter() {
+    let (set, _, marked) = fixture(source: "Раз.\n\nДва.\n\nТри.", result: "Раз.\n\nТри.")
+    #expect(set.changes.count == 1 && set.changes[0].inserted.isEmpty)
+    #expect(marks(marked).map(\.text) == ["Т"])
+}
+
+@Test func aParagraphRemovedFromTheEndLeavesItsIndexOnTheLastCharacter() {
+    let (_, _, marked) = fixture(source: "Раз.\n\nДва.\n\nТри.", result: "Раз.\n\nДва.")
+    #expect(marks(marked).map(\.text) == ["."])
+}
+
+@Test func everyShapeOfChangeLeavesSomethingInResultToStepTo() {
+    // The spec's six shapes: a substitution, a pure insertion, a pure removal, an inserted comma,
+    // a change inside a link and a rewritten block. Before 2026-10-29 the removal had nothing.
+    let source = """
+        Мы закончили закончили миграцию и обновили документацию для команды. \
+        Подробности на [сайт](https://example.org).
+
+        Если что-то непонятно пишите в чат.
+
+        > Отчет будет в пятницу.
+
+        Короче говоря проект идёт нормально но есть проблемы с тестами которые надо решить побыстрее.
+        """
+    let result = """
+        Мы закончили миграцию и обновили документацию для всей команды. \
+        Подробности на [сайте](https://example.org).
+
+        Если что-то непонятно, пишите в чат.
+
+        > Отчёт будет в пятницу.
+
+        В целом проект идёт по плану, но тесты пока нестабильны, и их нужно исправить в первую очередь.
+        """
+    let (set, _, marked) = fixture(source: source, result: result)
+    #expect(set.changes.count == 6, "\(set.changes.map { ($0.removed, $0.inserted) })")
+    #expect(Set(marks(marked).map(\.index)) == Set(0..<set.changes.count))
+}
+
+@Test func anInsertionWithNoWordInItIsDrawnInTheMarksColour() {
+    let (_, _, marked) = fixture(source: "Если что-то непонятно пишите в чат.",
+                                 result: "Если что-то непонятно, пишите в чат.")
+    #expect(marks(marked).map(\.text) == [","])
+    let comma = (marked.attributed.string as NSString).range(of: ",").location
+    let colour = marked.attributed.attribute(.foregroundColor, at: comma, effectiveRange: nil) as? NSColor
+    for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+        #expect(resolvedComponents(colour, appearance)
+                == resolvedComponents(ChangeMarks.markColour(), appearance))
+    }
+    // A word keeps the text's own colour: only the punctuation-only case is tinted.
+    let (_, _, word) = fixture(source: "Отчет готов.", result: "Отчёт готов.")
+    #expect(word.attributed.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+            !== ChangeMarks.markColour())
+    #expect(ChangeMarks.isPunctuationOnly(",") && ChangeMarks.isPunctuationOnly(" — ")
+            && !ChangeMarks.isPunctuationOnly("4 %") && !ChangeMarks.isPunctuationOnly(""))
+}
+
+@Test func aRewrittenBlockCarriesItsIndexButNoUnderline() {
+    let source = "Первый абзац.\n\nСовершенно другой текст здесь."
+    let result = "Первый абзац.\n\nПолностью иные слова тут."
+    for detail in [ChangeMarks.Detail.result, .changes] {
+        let (set, _, marked) = fixture(source: source, result: result, detail: detail)
+        #expect(set.changes.count == 1 && set.changes[0].scope == .block)
+        #expect(marks(marked).map(\.text) == ["Полностью иные слова тут."])
+        let at = (marked.attributed.string as NSString).range(of: "Полностью").location
+        #expect(marked.attributed.attribute(.underlineStyle, at: at, effectiveRange: nil) == nil)
+    }
 }
 
 // MARK: - Refusals

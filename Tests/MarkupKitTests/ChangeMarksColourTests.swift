@@ -2,27 +2,27 @@ import AppKit
 import Testing
 @testable import MarkupKit
 
-// `ChangeMarks.markColour`'s doc comment carries a contrast table; this is what keeps it true —
-// the same arithmetic and the same discipline as `SyntaxPaletteTests` and `StatusColourTests`.
-// The mark is a hairline in the accent on the pane's own ground, so the floor is WCAG's 3:1 for
-// a non-text indicator, not the 4.5:1 text takes; the eight accents are the presets macOS lets
-// a user choose between, walked by their system colours the way `Scripts/accent-contrast.swift`
-// walks them, because `controlAccentColor` in a test process is only ever the one this machine
-// is set to.
+// `ChangeMarks.markColour(increasedContrast:)` and `removedColour(increasedContrast:)` carry a
+// contrast table in their doc comments; this is what keeps it true — the same arithmetic and the
+// same discipline as `SyntaxPaletteTests` and `StatusColourTests`. The grounds are the screen's
+// own (`Scripts/change-grounds.swift`): the window's pane, the hotkey panel's material and the
+// change card, per appearance. The mark is a hairline, so its floor is a non-text one (3:1 plus a
+// step, 3.5); removed text is text, so its floor is 4.5:1. The eight accents are the presets macOS
+// lets a user choose between, walked by their system colours the way `Scripts/accent-contrast.swift`
+// walks them, because `controlAccentColor` in a test process is only ever this machine's.
 
-private func luminance(_ colour: NSColor) -> Double {
+private typealias RGB = (CGFloat, CGFloat, CGFloat)
+
+private func rgb(_ colour: NSColor) -> RGB {
     let c = colour.usingColorSpace(.sRGB)!
-    func channel(_ v: CGFloat) -> Double {
-        let v = Double(v)
-        return v <= 0.03928 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4)
-    }
-    return 0.2126 * channel(c.redComponent) + 0.7152 * channel(c.greenComponent)
-        + 0.0722 * channel(c.blueComponent)
+    return (c.redComponent, c.greenComponent, c.blueComponent)
 }
 
-private func contrast(_ a: NSColor, _ b: NSColor) -> Double {
-    let (l1, l2) = (luminance(a), luminance(b))
-    return (max(l1, l2) + 0.05) / (min(l1, l2) + 0.05)
+private func composite(_ colour: NSColor, over ground: RGB) -> RGB {
+    let c = colour.usingColorSpace(.sRGB)!
+    let a = c.alphaComponent
+    return (c.redComponent * a + ground.0 * (1 - a), c.greenComponent * a + ground.1 * (1 - a),
+            c.blueComponent * a + ground.2 * (1 - a))
 }
 
 private let accents: [(String, NSColor)] = [
@@ -31,60 +31,142 @@ private let accents: [(String, NSColor)] = [
     ("зелёный", .systemGreen), ("графит", .systemGray),
 ]
 
-private func resolved(_ colour: NSColor, in appearance: NSAppearance.Name) -> NSColor {
+private func resolved(_ colour: NSColor, dark: Bool) -> NSColor {
     var out = colour
-    NSAppearance(named: appearance)!.performAsCurrentDrawingAppearance {
+    NSAppearance(named: dark ? .darkAqua : .aqua)!.performAsCurrentDrawingAppearance {
         out = colour.usingColorSpace(.sRGB) ?? colour
     }
     return out
 }
 
-@Test func everyAccentClearsTheNonTextFloorAsALightMark() {
-    // The white pane. Bare, three accents are under 3:1 (жёлтый 1.51); blended by
-    // `lightBlend` every one is over it. Both halves are asserted so that dropping the blend
-    // — or setting it to a fraction that only saves the blue this machine happens to use —
-    // fails here rather than on a user's yellow accent.
-    let pane = NSColor.white
-    var bareFailures = 0
-    for (name, accent) in accents {
-        let bare = resolved(accent, in: .aqua)
-        if contrast(bare, pane) < 3 { bareFailures += 1 }
-        let mark = ChangeMarks.blendedTowardBlack(bare, by: ChangeMarks.lightBlend)
-        #expect(contrast(mark, pane) >= 3, "\(name): \(contrast(mark, pane))")
-    }
-    #expect(bareFailures == 3, "the blend exists because three bare accents fail; \(bareFailures) did")
+private func grounds(dark: Bool) -> [RGB] {
+    (dark ? ChangeMarks.darkGrounds : ChangeMarks.lightGrounds).map(ChangeMarks.srgb)
 }
 
-@Test func everyAccentClearsTheNonTextFloorAsADarkMarkUnblended() {
-    // The dark pane is the preview's 0.12 grey. No blend is applied there and none is needed:
-    // the worst accent measured 4.59:1. Pinned so that a future «blend both appearances» does
-    // not quietly dim the marks where they were already fine.
-    let pane = NSColor(calibratedWhite: 0.12, alpha: 1)
-    for (name, accent) in accents {
-        let mark = resolved(accent, in: .darkAqua)
-        #expect(contrast(mark, pane) >= 3, "\(name): \(contrast(mark, pane))")
+private func worst(_ colour: RGB, dark: Bool) -> Double {
+    grounds(dark: dark).map { ChangeMarks.contrast(colour, $0) }.min()!
+}
+
+// MARK: - The mark
+
+@Test func everyAccentClearsThreePointFiveAgainstEveryGroundOfItsAppearance() {
+    for dark in [false, true] {
+        for (name, accent) in accents {
+            let mark = ChangeMarks.floored(resolved(accent, dark: dark), dark: dark,
+                                           increasedContrast: false)
+            let ratio = worst(rgb(mark), dark: dark)
+            #expect(ratio >= 3.5, "\(name), dark \(dark): \(ratio)")
+        }
     }
 }
 
-@Test func theLightBlendIsTheFirstStepWithMarginPastTheFloor() {
-    // 0.30 is the first fraction that clears 3:1 for every accent (жёлтый 3.08:1) and 0.35 is
-    // one step of margin. Asserting the neighbour below fails keeps the constant from drifting
-    // *down* while staying green: a smaller fraction that still passed the previous test would
-    // mean the accents moved, and the comment would be wrong.
-    let pane = NSColor.white
-    let yellow = resolved(.systemYellow, in: .aqua)
-    #expect(contrast(ChangeMarks.blendedTowardBlack(yellow, by: 0.25), pane) < 3)
-    #expect(contrast(ChangeMarks.blendedTowardBlack(yellow, by: ChangeMarks.lightBlend), pane) >= 3.4)
+@Test func underIncreaseContrastEveryAccentClearsFourPointFive() {
+    for dark in [false, true] {
+        for (name, accent) in accents {
+            let mark = ChangeMarks.floored(resolved(accent, dark: dark), dark: dark,
+                                           increasedContrast: true)
+            let ratio = worst(rgb(mark), dark: dark)
+            #expect(ratio >= 4.5, "\(name), dark \(dark): \(ratio)")
+        }
+    }
 }
 
-@Test func theMarkColourResolvesToTheAccentInDarkAndToTheBlendInLight() {
-    // `markColour` is dynamic; resolve it under each appearance and compare against the rule
-    // applied to the same accent by hand. Whatever this machine's accent is, the two must agree.
-    let light = resolved(ChangeMarks.markColour, in: .aqua)
-    let expectedLight = ChangeMarks.blendedTowardBlack(resolved(.controlAccentColor, in: .aqua),
-                                                       by: ChangeMarks.lightBlend)
-    #expect(abs(luminance(light) - luminance(expectedLight)) < 0.001)
-    let dark = resolved(ChangeMarks.markColour, in: .darkAqua)
-    let expectedDark = resolved(.controlAccentColor, in: .darkAqua)
-    #expect(abs(luminance(dark) - luminance(expectedDark)) < 0.001)
+@Test func theFloorMovesEachAccentNoFurtherThanItNeeds() {
+    // One step short of the chosen fraction must fail somewhere: a rule that added margin of its
+    // own would pass every floor test above and still darken синий back toward the text, which is
+    // the defect the floor replaced.
+    for dark in [false, true] {
+        for (name, accent) in accents {
+            let bare = resolved(accent, dark: dark)
+            let fraction = ChangeMarks.floorFraction(bare, dark: dark, increasedContrast: false)
+            guard fraction > 0 else { continue }
+            let short = ChangeMarks.moved(bare, dark: dark, by: fraction - 0.01)
+            #expect(worst(short, dark: dark) < 3.5, "\(name), dark \(dark)")
+        }
+    }
+}
+
+@Test func anAccentThatAlreadyClearsTheFloorIsDrawnUnchanged() {
+    // фиолетовый on the light grounds is 3.51:1 bare (`Scripts/accent-contrast.swift`).
+    let purple = resolved(.systemPurple, dark: false)
+    #expect(ChangeMarks.floorFraction(purple, dark: false, increasedContrast: false) == 0)
+    let mark = rgb(ChangeMarks.floored(purple, dark: false, increasedContrast: false))
+    let bare = rgb(purple)
+    #expect(abs(mark.0 - bare.0) < 0.001 && abs(mark.1 - bare.1) < 0.001
+            && abs(mark.2 - bare.2) < 0.001)
+}
+
+@Test func theBareDarkAccentsFailedOnThePanelAndTheCard() {
+    // Why the dark marks are moved at all: against the screen's dark grounds five of the eight
+    // presets are under 3:1 bare (синий 2.66, фиолетовый 2.37, розовый 2.44, красный 2.50,
+    // графит 2.99). Pinned so that a re-measured ground that made this untrue is noticed, and
+    // the doc comment's figures with it.
+    let failing = accents.filter { worst(rgb(resolved($0.1, dark: true)), dark: true) < 3 }
+    #expect(failing.map(\.0) == ["синий", "фиолетовый", "розовый", "красный", "графит"])
+}
+
+@Test func theLightMarkSitsAsFarFromTheTextAsFromTheGround() {
+    // The 35 % blend left синий 2.12:1 from the text over it; the floor rule puts every preset
+    // at ≥ 3.5:1 from `labelColor` (black at 0.85) on every light ground.
+    for (name, accent) in accents {
+        let mark = rgb(ChangeMarks.floored(resolved(accent, dark: false), dark: false,
+                                           increasedContrast: false))
+        let ink = grounds(dark: false).map { ground in
+            ChangeMarks.contrast(mark, composite(NSColor(white: 0, alpha: 0.85), over: ground))
+        }.min()!
+        #expect(ink >= 3.5, "\(name): \(ink)")
+    }
+}
+
+@Test func theMarkColourResolvesToTheFloorRuleOverThisMachinesAccent() {
+    for dark in [false, true] {
+        for high in [false, true] {
+            let mark = rgb(resolved(ChangeMarks.markColour(increasedContrast: high), dark: dark))
+            let expected = rgb(ChangeMarks.floored(resolved(.controlAccentColor, dark: dark),
+                                                   dark: dark, increasedContrast: high))
+            #expect(abs(mark.0 - expected.0) < 0.001 && abs(mark.1 - expected.1) < 0.001
+                    && abs(mark.2 - expected.2) < 0.001, "dark \(dark), high \(high)")
+        }
+    }
+}
+
+// MARK: - Removed text
+
+@Test func removedTextClearsFourPointFiveOnEveryGround() {
+    for dark in [false, true] {
+        let colour = resolved(ChangeMarks.removedColour(), dark: dark)
+        for ground in grounds(dark: dark) {
+            let ratio = ChangeMarks.contrast(composite(colour, over: ground), ground)
+            #expect(ratio >= 4.5, "dark \(dark): \(ratio)")
+        }
+    }
+}
+
+@Test func underIncreaseContrastRemovedTextClearsSix() {
+    for dark in [false, true] {
+        let colour = resolved(ChangeMarks.removedColour(increasedContrast: true), dark: dark)
+        for ground in grounds(dark: dark) {
+            let ratio = ChangeMarks.contrast(composite(colour, over: ground), ground)
+            #expect(ratio >= 6, "dark \(dark): \(ratio)")
+        }
+    }
+}
+
+@Test func theRemovedAlphasAreTheSmallestStepThatClearsWithHeadroom() {
+    // Each alpha clears its floor by 0.2 on the worst ground, and 0.05 less does not — or the
+    // comment's «smallest» is wrong and the removed text is darker than it needs to be, closer to
+    // the body text it has to stay under.
+    for dark in [false, true] {
+        for high in [false, true] {
+            let alpha = ChangeMarks.removedAlpha(dark: dark, increasedContrast: high)
+            let floor = high ? 6.0 : 4.5
+            func worstRatio(_ a: CGFloat) -> Double {
+                let ink = NSColor(white: dark ? 1 : 0, alpha: a)
+                return grounds(dark: dark).map { ChangeMarks.contrast(composite(ink, over: $0), $0) }.min()!
+            }
+            #expect(worstRatio(alpha) >= floor + 0.2, "dark \(dark), high \(high)")
+            #expect(worstRatio(alpha - 0.05) < floor + 0.2, "dark \(dark), high \(high)")
+            #expect(alpha < 0.85, "removed text must stay lighter than the body text")
+        }
+    }
 }

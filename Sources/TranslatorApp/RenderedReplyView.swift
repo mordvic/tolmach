@@ -50,6 +50,9 @@ struct RenderedReplyView: NSViewRepresentable {
     /// «изменения» rather than «результат»: the removed words spliced in, struck through,
     /// before what replaced them. Meaningless without `changes`.
     var showsChangeDetail = false
+    /// The system's Increase Contrast — `DisplayContrast.shared.isIncreased`, read by the caller
+    /// in its `body`. Part of the coordinator's key, for `RenderedTextView`'s reason.
+    var increasedContrast = false
     /// The text the user selected, when «Вид» is on «оригинал» — drawn **instead of** `text`
     /// and never marked, whatever `changes` says.
     ///
@@ -93,7 +96,8 @@ struct RenderedReplyView: NSViewRepresentable {
     /// panel is never sized for one document and shown another.
     private func rendering(_ coordinator: Coordinator) -> MarkdownToAttributed.Rendering {
         coordinator.rendering(of: shown, config: font.markdownConfig,
-                              rendersMarkup: rendersMarkup, changes: marks, detail: detail)
+                              rendersMarkup: rendersMarkup, changes: marks, detail: detail,
+                              increasedContrast: increasedContrast)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -101,6 +105,12 @@ struct RenderedReplyView: NSViewRepresentable {
     func makeNSView(context: Context) -> PanelReplyTextView {
         let textView = PanelReplyTextView(textKit1Inset: Self.inset,
                                           lineFragmentPadding: Self.lineFragmentPadding)
+        // The change bars stand 7 pt left of the text, in the panel's own 14 pt padding — the
+        // reply starts at x = 0 by measurement (`inset`), so there is no gutter inside the view.
+        // Measured 2026-10-29 with a probe: with `clipsToBounds` off, a hosted view's drawing at
+        // negative x reaches the SwiftUI padding around it; inside a `ScrollView` it is clipped,
+        // which is why `PanelView.scrollingMiddle` extends the scroll region into the padding.
+        textView.clipsToBounds = false
         // Neither resizable dimension, and no `autoresizingMask`: this view's height is
         // whatever `sizeThatFits` said, and SwiftUI sets the frame. The pane's copy needs the
         // vertical pair because a scroll view sizes its document view from the layout; here the
@@ -117,6 +127,7 @@ struct RenderedReplyView: NSViewRepresentable {
         // holds characters «результат» does not, and «оригинал» is another text entirely. The
         // `Rendering` behind it is memoised for the *measuring* host's sake, which asks for the
         // same content several times per fit.
+        textView.increasedContrast = increasedContrast
         textView.textStorage?.setAttributedString(rendering.attributed)
         textView.codeRegions = rendering.codeRegions
         // `marks` and not `changes`: while «Вид» shows «оригинал» the storage carries no marks
@@ -206,16 +217,18 @@ struct RenderedReplyView: NSViewRepresentable {
             let rendersMarkup: Bool
             let changes: ChangeSet?
             let detail: ChangeMarks.Detail
+            let increasedContrast: Bool
         }
 
         private var key: Key?
         private var cached: MarkdownToAttributed.Rendering?
 
         func rendering(of text: String, config: MarkdownFontConfig, rendersMarkup: Bool,
-                       changes: ChangeSet?,
-                       detail: ChangeMarks.Detail) -> MarkdownToAttributed.Rendering {
+                       changes: ChangeSet?, detail: ChangeMarks.Detail,
+                       increasedContrast: Bool = false) -> MarkdownToAttributed.Rendering {
             let wanted = Key(text: text, config: config, rendersMarkup: rendersMarkup,
-                             changes: changes, detail: detail)
+                             changes: changes, detail: detail,
+                             increasedContrast: increasedContrast)
             if key == wanted, let cached { return cached }
             // The same two lines the pane's coordinator runs, and deliberately the same order:
             // `plainRendering` and not `plain`, because prose still needs the block ranges the
@@ -226,7 +239,8 @@ struct RenderedReplyView: NSViewRepresentable {
                 : MarkdownToAttributed.plainRendering(of: text, config: config)
             if let changes {
                 made = ChangeMarks.apply(changes, to: made, resultMarkdown: text,
-                                         detail: detail, config: config)
+                                         detail: detail, config: config,
+                                         increasedContrast: increasedContrast)
             }
             key = wanted
             cached = made
@@ -261,6 +275,8 @@ struct RenderedReplyView: NSViewRepresentable {
 /// where SwiftUI declines the equivalent and the event arrives here; ⌘⇧↩ is forwarded for that
 /// case, and the panel swallows it exactly as it does today.
 final class PanelReplyTextView: CodeBlockTextView {
+    override var drawsChangeBarsOutsideBounds: Bool { true }
+
     override func keyDown(with event: NSEvent) {
         // Return (36) and the numeric pad's Enter (76), bare or ⌘⇧ — spelled the way
         // `TranslationPanel.keyDown` spells them, because a forward that disagreed with the

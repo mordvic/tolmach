@@ -100,10 +100,14 @@ private let previewDocument = """
 ///
 ///     RENDER_PREVIEW_CHANGES=/tmp/preview swift test --filter renderChangesPreview
 ///
-/// Eight images: «Результат» and «Изменения», at 13 and 22 pt, light and dark. The fixture puts
-/// a link beside a corrected word on purpose — the two underlines are what the 1.49:1 figure in
-/// that script is about — and carries one change of every kind the locator handles: a word in a
-/// paragraph, a word in a list item, a cell in a table, a paragraph rewritten past the threshold.
+/// Sixteen images: «Результат» and «Изменения», at 13 and 22 pt, light and dark, on two grounds —
+/// the window's pane (#ffffff / #31302d) and the worst ground the marks are held against (the
+/// panel's material #edebea, the card's #4d4c48), all measured on the screen by
+/// `Scripts/change-grounds.swift`. The fixture puts a link beside a corrected word on purpose —
+/// the two underlines are what the 1.49:1 figure in that script is about — and carries one
+/// change of every kind the locator handles: a word in a paragraph, a word in a list item, a cell
+/// in a table, a pure removal (its caret), an inserted comma (drawn in the mark's colour) and a
+/// paragraph rewritten past the threshold (one continuous bar, no underline).
 @MainActor
 @Test(.enabled(if: ProcessInfo.processInfo.environment["RENDER_PREVIEW_CHANGES"] != nil))
 func renderChangesPreview() throws {
@@ -124,6 +128,10 @@ func renderChangesPreview() throws {
         | Юг | отстование |
 
         Если что то будет непонятно то пишите, я на связи.
+
+        Мы закончили закончили миграцию базы, если что-то непонятно пишите в чат.
+
+        Короче говоря проект идёт нормально но есть проблемы с тестами которые надо решить побыстрее.
         """
     let result = """
         # Отчёт за август
@@ -140,8 +148,19 @@ func renderChangesPreview() throws {
         | Юг | отставание |
 
         Если возникнут вопросы, напишите мне, я на связи.
+
+        Мы закончили миграцию базы, если что-то непонятно, пишите в чат.
+
+        В целом проект идёт по плану, но тесты пока нестабильны, и их нужно исправить в первую очередь.
         """
     let changes = TextDiff.changes(source: source, result: result)
+    let grounds: [(String, NSColor, NSColor)] = [
+        ("window", NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 1),
+         NSColor(srgbRed: 0x31 / 255.0, green: 0x30 / 255.0, blue: 0x2d / 255.0, alpha: 1)),
+        ("worst", NSColor(srgbRed: 0xed / 255.0, green: 0xeb / 255.0, blue: 0xea / 255.0, alpha: 1),
+         NSColor(srgbRed: 0x4d / 255.0, green: 0x4c / 255.0, blue: 0x48 / 255.0, alpha: 1)),
+    ]
+    for (groundName, lightGround, darkGround) in grounds {
     for size in [CGFloat(13), 22] {
         for detail in [false, true] {
             for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
@@ -163,7 +182,7 @@ func renderChangesPreview() throws {
                                     height: ceil(layout.usedRect(for: container).height) + 16)
                 view.layout()
                 view.drawsBackground = true
-                view.backgroundColor = appearance == .aqua ? .white : NSColor(calibratedWhite: 0.12, alpha: 1)
+                view.backgroundColor = appearance == .aqua ? lightGround : darkGround
                 guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
                     Issue.record("no bitmap"); return
                 }
@@ -173,10 +192,11 @@ func renderChangesPreview() throws {
                 guard let png = rep.representation(using: .png, properties: [:]) else {
                     Issue.record("no png"); return
                 }
-                let file = "changes-\(detail ? "detail" : "result")-\(Int(size))pt-\(name).png"
+                let file = "changes-\(groundName)-\(detail ? "detail" : "result")-\(Int(size))pt-\(name).png"
                 try png.write(to: directory.appendingPathComponent(file))
             }
         }
+    }
     }
 }
 
