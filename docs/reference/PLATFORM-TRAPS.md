@@ -141,6 +141,19 @@ older one's presses — measured, and a foreign signature ran the closure too.
 
 ## Windows and views
 
+**The SDK a binary claims decides which design macOS draws it in, and SwiftPM claims the wrong
+one.** `vtool -show-build` on every bundle `make-app-bundle.sh` made through 2026-10-29 read
+«minos 14.0, sdk 14.0»: SwiftPM 6.4's default build system writes the deployment target into the
+SDK field, where `--build-system native` and a plain `swiftc` write 27.0 from the same toolchain.
+macOS 26+ draws a binary that claims an SDK older than 26 in its compatibility appearance — the
+pre-26 toolbar, a grey window ground, flat segmented controls and bordered buttons. Tests,
+`Scripts/*.swift` probes and `renderWindowPreview` run in hosts linked against the real SDK and
+draw the new design, so for as long as the stamp was wrong **what the probes measured and what
+the installed app showed were two different designs**, and nothing failed. The script now writes
+the real SDK back with `vtool -set-build-version … -replace` before `codesign`. Check a bundle
+with `vtool -show-build build/LocalTranslator.app/Contents/MacOS/TranslatorApp | grep sdk`.
+→ `Scripts/make-app-bundle.sh`
+
 **`NSHostingView` as a window's `contentView` publishes compressed constraints.** AppKit then
 shrinks the window to satisfy them: measured, the panel opened 380 × 120 regardless of content
 because a `ScrollView` compresses to nothing, truncating the permission prompt to one line.
