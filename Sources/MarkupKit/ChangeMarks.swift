@@ -38,6 +38,17 @@ public enum ChangeMarks {
     /// can carry into another application.
     public static let changeKey = NSAttributedString.Key("tolmach.change")
 
+    /// The change's index on the removed text «Изменения» splices in — and only there, never on
+    /// the spaces around it.
+    ///
+    /// A key of its own rather than `changeKey`, because the stepper and the click read
+    /// `changeKey` and must land on the *new* text of a substitution, not on the struck one
+    /// before it; and rather than reading `.strikethroughStyle`, because the user's own
+    /// `~~strike~~` is drawn with that attribute too and is not a change. The view reads it for
+    /// the change bars, and the stepper falls back to it for a pure removal, which has nothing
+    /// else in «Изменения».
+    public static let removedKey = NSAttributedString.Key("tolmach.change.removed")
+
     /// Where the underline becomes `.thick`.
     ///
     /// 17 pt is the size at which the system's own text stops being «small», and a 1 pt line
@@ -49,8 +60,13 @@ public enum ChangeMarks {
     /// own boundary.
     static let thickFromSize: CGFloat = 17
 
-    public static func underlineStyle(for baseSize: CGFloat) -> NSUnderlineStyle {
-        baseSize >= thickFromSize ? .thick : .single
+    /// The weight of every line a mark draws — the underline and, since 2026-10-29, the strike
+    /// through removed text, so the two never disagree beside each other. `.thick` at every size
+    /// under Increase Contrast: a hairline's weight is half of how visible it is, and the colour
+    /// alone cannot give the «significantly higher» differentiation HIG asks of that setting.
+    public static func underlineStyle(for baseSize: CGFloat,
+                                      increasedContrast: Bool = false) -> NSUnderlineStyle {
+        increasedContrast || baseSize >= thickFromSize ? .thick : .single
     }
 
     /// The pattern every change mark wears, on top of its weight: `.patternDot`.
@@ -66,41 +82,139 @@ public enum ChangeMarks {
     /// rendered diffs use for the same «low-key, this changed» reading.
     static let pattern: NSUnderlineStyle = .patternDot
 
-    /// The colour under the mark: the accent, darkened in the light appearance.
-    ///
-    /// **The bare accent fails on the light pane — measured, `Scripts/accent-contrast.swift`,
-    /// 2026-09-04.** A change mark is a hairline in the accent on the pane's own ground, and a
-    /// non-text indicator wants 3:1 to be perceived. Against white, three of the eight accents
-    /// macOS offers are under it: оранжевый 2.31:1, зелёный 2.22:1, жёлтый 1.51:1 (синий 3.52,
-    /// графит 3.26 are the narrowest passes). On the dark pane every accent clears it (worst
-    /// 4.59:1, фиолетовый), so the dark value is the accent itself.
-    ///
-    /// The light value is the accent blended **35 %** toward black: the same script walked the
-    /// fraction in steps of 0.05 and 0.30 is the first that clears the floor for all eight
-    /// (жёлтый 3.08:1); 0.35 (жёлтый 3.53:1) is one step of margin for an accent the user may
-    /// have tinted, the way `StatusColour` keeps its light values a step past the line.
-    /// `ChangeMarksColourTests` holds all sixteen cells to the floor, the same discipline as
-    /// `SyntaxPaletteTests`.
-    ///
-    /// A dynamic colour rather than two literals, because the accent is the user's and can
-    /// change under a running app; `NSColor(name:dynamicProvider:)` re-resolves per appearance
-    /// and per draw.
-    public static let lightBlend: CGFloat = 0.35
+    // MARK: - Colour
 
-    public static var markColour: NSColor {
+    /// The grounds every mark is held against, per appearance — screen pixels, not resolved
+    /// `NSColor`s, because the two differ.
+    ///
+    /// **Measured, `Scripts/change-grounds.swift`, 2026-10-29, two identical runs:** the window's
+    /// pane #ffffff / #31302d; the hotkey panel's `.regularMaterial` over white, black, grey,
+    /// blue and orange backdrops #edebea…#f1f0ee / #3c3937…#494845; the change card's glass
+    /// popover #f5f5f5 / #4d4c48. The marks used to be held against white and #1e1e1e — what
+    /// `windowBackgroundColor` resolves to offscreen — and on the dark panel and card they were
+    /// 2.14–2.99:1, under the floor. One colour held against *all* of an appearance's grounds is
+    /// what lets one dynamic colour serve the window, the panel and the card without knowing
+    /// which it is drawn on; the darkest light ground and the lightest dark one decide it.
+    static let lightGrounds: [Int] = [0xffffff, 0xedebea, 0xf1f0ee, 0xf5f5f5]
+    static let darkGrounds: [Int] = [0x31302d, 0x494845, 0x3c3937, 0x4d4c48]
+
+    /// What a mark must reach against every ground: 3.5:1, and 4.5:1 under Increase Contrast.
+    ///
+    /// 3:1 is WCAG's floor for a non-text indicator, which a hairline under a word is; 3.5 is one
+    /// step of margin, `StatusColour`'s discipline. 4.5 is the text floor — the «significantly
+    /// higher» differentiation HIG asks of a custom colour's increased-contrast variant.
+    static let markFloor = 3.5
+    static let markFloorIncreasedContrast = 4.5
+
+    /// The colour under the mark: the user's accent, moved toward the ink only as far as it needs.
+    ///
+    /// **The rule is a floor, not a blend — measured, `Scripts/accent-contrast.swift`,
+    /// 2026-10-29.** The 35 % blend toward black this replaced was sized so that жёлтый cleared
+    /// 3:1 on white, and it darkened every accent by the same amount: синий became #0058a6, 2.12:1
+    /// from the text above it, and фиолетовый 1.86:1 — a hairline in the tone of its own letters.
+    /// In the dark it did nothing, where the panel needed the accent *lighter*. Moving each accent
+    /// toward the ink (black in light, white in dark) in steps of 0.01 until it clears the floor
+    /// against every ground leaves an accent that already clears it untouched (фиолетовый in light)
+    /// and puts the others between the ground and the text: light 3.50–3.56:1 to the ground and
+    /// 3.56–3.63:1 to the ink for all eight presets, dark ≥ 3.51:1 (синий #40adff). Under Increase
+    /// Contrast every preset clears 4.50–4.64:1. `ChangeMarksColourTests` holds every preset in
+    /// both appearances against every ground.
+    ///
+    /// A dynamic colour rather than literals, because the accent is the user's and can change under
+    /// a running app; `NSColor(name:dynamicProvider:)` re-resolves per appearance and per draw. At
+    /// most 95 steps of four contrasts per resolve — cheap enough that nothing caches it.
+    ///
+    /// - Parameter increasedContrast: `NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast`,
+    ///   read by the caller. Not read from the appearance, because it cannot be:
+    ///   `NSAppearance(named: .accessibilityHighContrastAqua)` answers `.aqua` to `bestMatch(from:)`
+    ///   offscreen and resolves every system colour as `.aqua` does (measured 2026-10-29), so a
+    ///   branch keyed on the name could be neither tested nor trusted.
+    public static func markColour(increasedContrast: Bool = false) -> NSColor {
         NSColor(name: nil) { appearance in
-            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            return isDark ? .controlAccentColor : blendedTowardBlack(.controlAccentColor, by: lightBlend)
+            floored(.controlAccentColor, dark: isDark(appearance), increasedContrast: increasedContrast)
         }
     }
 
-    /// The light-appearance rule as a function over any colour, so the test can walk every
-    /// accent preset the way the script does rather than only the one this machine is set to.
-    static func blendedTowardBlack(_ colour: NSColor, by fraction: CGFloat) -> NSColor {
-        guard let c = colour.usingColorSpace(.sRGB) else { return colour }
-        return NSColor(srgbRed: c.redComponent * (1 - fraction),
-                       green: c.greenComponent * (1 - fraction),
-                       blue: c.blueComponent * (1 - fraction), alpha: c.alphaComponent)
+    /// The rule as a function over any colour, so a test can walk every accent preset rather than
+    /// only the one this machine is set to — and so the script and the code cannot drift apart
+    /// without one of them failing the other's figures.
+    static func floored(_ accent: NSColor, dark: Bool, increasedContrast: Bool) -> NSColor {
+        guard let c = accent.usingColorSpace(.sRGB) else { return accent }
+        let m = moved(c, dark: dark,
+                      by: floorFraction(c, dark: dark, increasedContrast: increasedContrast))
+        return NSColor(srgbRed: m.0, green: m.1, blue: m.2, alpha: c.alphaComponent)
+    }
+
+    /// How far toward the ink `floored` moves an accent: the first step of 0.01 that clears the
+    /// floor on every ground. Separate so a test can show one step less does not.
+    static func floorFraction(_ accent: NSColor, dark: Bool, increasedContrast: Bool) -> CGFloat {
+        guard let c = accent.usingColorSpace(.sRGB) else { return 0 }
+        let grounds = (dark ? darkGrounds : lightGrounds).map(srgb)
+        let floor = increasedContrast ? markFloorIncreasedContrast : markFloor
+        var steps = 0
+        while steps < 95,
+              grounds.contains(where: { contrast(moved(c, dark: dark, by: CGFloat(steps) / 100), $0) < floor }) {
+            steps += 1
+        }
+        return CGFloat(steps) / 100
+    }
+
+    static func moved(_ c: NSColor, dark: Bool, by fraction: CGFloat) -> (CGFloat, CGFloat, CGFloat) {
+        let ink: CGFloat = dark ? 1 : 0
+        return (c.redComponent + (ink - c.redComponent) * fraction,
+                c.greenComponent + (ink - c.greenComponent) * fraction,
+                c.blueComponent + (ink - c.blueComponent) * fraction)
+    }
+
+    /// Removed text and the strike through it: the label's own hue at an alpha that clears 4.5:1
+    /// on every ground — 6:1 under Increase Contrast — and stays under the body text's 0.85.
+    ///
+    /// **Measured, `Scripts/accent-contrast.swift`, 2026-10-29.** `secondaryLabelColor`, which
+    /// this replaced, was 3.84–3.98:1 on every light ground and 3.89:1 on the dark card — under
+    /// the 4.5:1 HIG sets for text up to 17 pt, and a strike through the middle of the letters
+    /// costs more. The alphas are the smallest in steps of 0.05 that clear the floor on the worst
+    /// ground by at least 0.2 — headroom for a material that moves with what is behind it, the
+    /// way the mark's 3.5 sits over 3: 0.60 → 5.44:1 light, 0.65 → 4.74:1 dark; under Increase
+    /// Contrast 0.65 → 6.54:1, 0.80 → 6.22:1. (0.55 in light is 4.56:1, inside that headroom.)
+    public static func removedColour(increasedContrast: Bool = false) -> NSColor {
+        NSColor(name: nil) { appearance in
+            let dark = isDark(appearance)
+            return (dark ? NSColor.white : NSColor.black)
+                .withAlphaComponent(removedAlpha(dark: dark, increasedContrast: increasedContrast))
+        }
+    }
+
+    static func removedAlpha(dark: Bool, increasedContrast: Bool) -> CGFloat {
+        switch (dark, increasedContrast) {
+        case (false, false): 0.60
+        case (true, false): 0.65
+        case (false, true): 0.65
+        case (true, true): 0.80
+        }
+    }
+
+    /// `bestMatch(from:)` rather than a comparison by name, for `StatusColour`'s reason: a view may
+    /// draw in a vibrant or accessibility variant, and `bestMatch` maps each onto the nearer one.
+    private static func isDark(_ appearance: NSAppearance) -> Bool {
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+    }
+
+    static func srgb(_ hex: Int) -> (CGFloat, CGFloat, CGFloat) {
+        (CGFloat((hex >> 16) & 0xff) / 255, CGFloat((hex >> 8) & 0xff) / 255, CGFloat(hex & 0xff) / 255)
+    }
+
+    /// WCAG relative luminance and contrast — the arithmetic `Scripts/accent-contrast.swift` and the
+    /// tests use, so the three agree to the digit.
+    static func contrast(_ a: (CGFloat, CGFloat, CGFloat), _ b: (CGFloat, CGFloat, CGFloat)) -> Double {
+        func channel(_ v: CGFloat) -> Double {
+            let v = Double(v)
+            return v <= 0.03928 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4)
+        }
+        func luminance(_ c: (CGFloat, CGFloat, CGFloat)) -> Double {
+            0.2126 * channel(c.0) + 0.7152 * channel(c.1) + 0.0722 * channel(c.2)
+        }
+        let (x, y) = (luminance(a), luminance(b))
+        return (max(x, y) + 0.05) / (min(x, y) + 0.05)
     }
 
     /// The marked rendering. The input is never mutated.
@@ -114,10 +228,16 @@ public enum ChangeMarks {
     ///   - detail: whether the removed text is spliced in.
     ///   - config: the same one the rendering was built with — the underline's weight and the
     ///     fallback font of a spliced removal come from it.
+    ///   - increasedContrast: the system's Increase Contrast, read by the caller (see
+    ///     `markColour(increasedContrast:)` for why it is passed rather than read from the
+    ///     appearance). It decides the lines' weight, which is an attribute and not a dynamic
+    ///     colour, so a change of the setting needs a new call — the views make one.
     public static func apply(_ set: ChangeSet, to rendering: MarkdownToAttributed.Rendering,
                              resultMarkdown: String, detail: Detail,
-                             config: MarkdownFontConfig) -> MarkdownToAttributed.Rendering {
+                             config: MarkdownFontConfig,
+                             increasedContrast: Bool = false) -> MarkdownToAttributed.Rendering {
         guard !set.changes.isEmpty else { return rendering }
+        let drawing = Drawing(config: config, increasedContrast: increasedContrast)
         let blocks = MarkdownBlockScanner.blocks(of: resultMarkdown)
         // A rendering of some other document, or one assembled without block ranges: there is
         // nothing to locate against, and marking it against a block list it does not match
@@ -158,9 +278,13 @@ public enum ChangeMarks {
                 // result block». Nothing to underline; in «Изменения» it is a struck paragraph
                 // after everything else.
                 if detail == .changes, !change.removed.isEmpty {
-                    spliceParagraph(change.removed, at: storage.length, into: storage,
-                                    codeRegions: &codeRegions, blockRanges: &blockRanges,
-                                    config: config)
+                    spliceParagraph(change.removed, index: index, at: storage.length,
+                                    into: storage, codeRegions: &codeRegions,
+                                    blockRanges: &blockRanges, drawing: drawing)
+                } else if detail == .result {
+                    // The removed paragraph sat after everything: its caret goes under the
+                    // document's last character, the one place «after the end» can be shown.
+                    anchorRemoval(index, at: storage.length, in: storage)
                 }
                 continue
             }
@@ -178,41 +302,56 @@ public enum ChangeMarks {
             // there is nothing to align and nothing to underline.
             if change.scope == .block, change.insertedTokens.isEmpty {
                 if detail == .changes, !change.removed.isEmpty {
-                    spliceParagraph(change.removed, at: blockRange.location, into: storage,
-                                    codeRegions: &codeRegions, blockRanges: &blockRanges,
-                                    config: config)
+                    spliceParagraph(change.removed, index: index, at: blockRange.location,
+                                    into: storage, codeRegions: &codeRegions,
+                                    blockRanges: &blockRanges, drawing: drawing)
+                } else if detail == .result {
+                    // A removed paragraph sat in front of this block: its caret goes under the
+                    // block's first character.
+                    anchorRemoval(index, at: blockRange.location, in: storage)
                 }
                 continue
             }
             guard let alignment = alignments[change.block] else { continue }
 
             if change.insertedTokens.isEmpty {
-                guard detail == .changes, !change.removed.isEmpty,
+                guard !change.removed.isEmpty,
                       let anchor = anchor(for: change, in: alignment,
                                           blockRange: blockRange) else { continue }
-                splice(padded(change.removed, at: anchor, in: storage.string as NSString),
-                       at: anchor, into: storage, codeRegions: &codeRegions,
-                       blockRanges: &blockRanges, config: config)
+                if detail == .changes {
+                    spliceRemoval(change.removed, index: index, at: anchor, into: storage,
+                                  codeRegions: &codeRegions, blockRanges: &blockRanges,
+                                  drawing: drawing)
+                } else {
+                    anchorRemoval(index, at: anchor, in: storage)
+                }
                 continue
             }
 
             guard let marked = located(change, in: alignment,
                                        blockRange: blockRange) else { continue }
             storage.addAttributes(
-                marks(index: index, config: config),
+                marks(index: index, scope: change.scope, drawing: drawing),
                 range: marked)
+            if change.scope == .words, isPunctuationOnly(change.inserted) {
+                // Two dots under a comma are not a mark anyone sees; the comma in the mark's
+                // colour is. 3.5:1 is under the 4.5:1 text floor, accepted because a comma is
+                // not running text — and Increase Contrast lifts it to 4.5.
+                storage.addAttribute(.foregroundColor,
+                                     value: markColour(increasedContrast: increasedContrast),
+                                     range: marked)
+            }
             guard detail == .changes, !change.removed.isEmpty else { continue }
             if change.scope == .block {
                 // A rewritten block: the old one struck through above the new one, not word
                 // by word inside it (story 5).
-                spliceParagraph(change.removed, at: blockRange.location, into: storage,
-                                codeRegions: &codeRegions, blockRanges: &blockRanges,
-                                config: config)
+                spliceParagraph(change.removed, index: index, at: blockRange.location,
+                                into: storage, codeRegions: &codeRegions,
+                                blockRanges: &blockRanges, drawing: drawing)
             } else {
-                splice(padded(change.removed, at: marked.location,
-                              in: storage.string as NSString),
-                       at: marked.location, into: storage, codeRegions: &codeRegions,
-                       blockRanges: &blockRanges, config: config)
+                spliceRemoval(change.removed, index: index, at: marked.location, into: storage,
+                              codeRegions: &codeRegions, blockRanges: &blockRanges,
+                              drawing: drawing)
             }
         }
 
@@ -379,7 +518,9 @@ public enum ChangeMarks {
             + offset(alignment.tokens[last].range.upperBound, in: alignment.text)
     }
 
-    /// The removed text with the spaces the document does not already provide, and no others.
+    /// The removed text with the spaces the document does not already provide, and no others —
+    /// and how many of each it added, because those spaces are separators, not removed text,
+    /// and are not struck.
     ///
     /// The spec puts the space «after it when `inserted` is non-empty, before it when
     /// `inserted` is empty», which glues the struck word to whatever it stands in front of
@@ -390,15 +531,58 @@ public enum ChangeMarks {
     /// when the character after is alphanumeric, which is what «уже» needs before «готов» and
     /// what it must not get before «.».
     private static func padded(_ removed: String, at location: Int,
-                               in string: NSString) -> String {
+                               in string: NSString) -> (text: String, leading: Int, trailing: Int) {
         var text = removed
+        var leading = 0
+        var trailing = 0
         if location > 0, !isMember(.whitespacesAndNewlines, string.character(at: location - 1)) {
             text = " " + text
+            leading = 1
         }
         if location < string.length, isMember(.alphanumerics, string.character(at: location)) {
             text += " "
+            trailing = 1
         }
-        return text
+        return (text, leading, trailing)
+    }
+
+    /// The one character a pure removal's caret stands under in «Результат» and «Исходник».
+    ///
+    /// The separator in front of the token the removal sat before; that token's own first
+    /// character when nothing separates it from what precedes it («неделю» + «.»); or, for a
+    /// removal at the very end of a block, the block's last character. Internal so the tests can
+    /// pin each of the three.
+    static func removalGap(at anchor: Int, in string: NSString) -> NSRange? {
+        guard string.length > 0 else { return nil }
+        if anchor > 0, isMember(.whitespaces, string.character(at: anchor - 1)) {
+            return NSRange(location: anchor - 1, length: 1)
+        }
+        if anchor < string.length, !isMember(.newlines, string.character(at: anchor)) {
+            return NSRange(location: anchor, length: 1)
+        }
+        // The end of a block or of the document: the last character a reader can see, which a
+        // rendering's trailing terminator is not.
+        var last = anchor - 1
+        while last > 0, isMember(.newlines, string.character(at: last)) { last -= 1 }
+        return last >= 0 ? NSRange(location: last, length: 1) : nil
+    }
+
+    /// Nothing was inserted, so nothing can be underlined — and a change the reader cannot see
+    /// is one ‹ › cannot reach either. The gap carries the index with no underline, and the view
+    /// draws the caret under it. A gap another change already marks is left alone: overwriting
+    /// it would take that change's own mark away.
+    private static func anchorRemoval(_ index: Int, at anchor: Int,
+                                      in storage: NSMutableAttributedString) {
+        guard let gap = removalGap(at: anchor, in: storage.string as NSString),
+              storage.attribute(changeKey, at: gap.location, effectiveRange: nil) == nil
+        else { return }
+        storage.addAttribute(changeKey, value: index, range: gap)
+    }
+
+    /// An insertion with no letter or digit in it — a comma, a dash, a quotation mark.
+    static func isPunctuationOnly(_ inserted: String) -> Bool {
+        !inserted.isEmpty
+            && !inserted.unicodeScalars.contains { CharacterSet.alphanumerics.contains($0) }
     }
 
     /// One UTF-16 unit against a character set. A lone surrogate belongs to neither set the
@@ -415,14 +599,31 @@ public enum ChangeMarks {
 
     // MARK: - The attributes
 
+    /// What every private drawing function needs from `apply`'s arguments, so the contrast flag
+    /// travels with the font configuration instead of beside it through five signatures.
+    private struct Drawing {
+        let config: MarkdownFontConfig
+        let increasedContrast: Bool
+
+        var lineStyle: NSUnderlineStyle {
+            underlineStyle(for: config.baseSize, increasedContrast: increasedContrast)
+        }
+    }
+
     /// The weight from the size, the dots always, the colour from the appearance — see the
-    /// three declarations above for the measurement behind each.
-    private static func marks(index: Int,
-                              config: MarkdownFontConfig) -> [NSAttributedString.Key: Any] {
-        var style = underlineStyle(for: config.baseSize)
+    /// declarations above for the measurement behind each.
+    ///
+    /// **A rewritten block carries the index and no underline.** `TextDiff` collapses a block it
+    /// cannot read as word edits into one change, and ADR 0012 reads it as one candidate text;
+    /// a dot under every word on every line said the opposite. The view draws one continuous
+    /// bar beside it instead, reading the scope from the change set.
+    private static func marks(index: Int, scope: TextChange.Scope,
+                              drawing: Drawing) -> [NSAttributedString.Key: Any] {
+        guard scope == .words else { return [changeKey: index] }
+        var style = drawing.lineStyle
         style.insert(pattern)
         return [.underlineStyle: style.rawValue,
-                .underlineColor: markColour,
+                .underlineColor: markColour(increasedContrast: drawing.increasedContrast),
                 changeKey: index]
     }
 
@@ -437,15 +638,26 @@ public enum ChangeMarks {
     ///
     /// A leading terminator when the character before it is not one, because a rendering's
     /// blocks each end in their own `"\n"` but the raw Markdown of «Исходник» need not.
-    private static func spliceParagraph(_ removed: String, at location: Int,
+    private static func spliceParagraph(_ removed: String, index: Int, at location: Int,
                                         into storage: NSMutableAttributedString,
                                         codeRegions: inout [MarkdownToAttributed.CodeRegion],
                                         blockRanges: inout [NSRange],
-                                        config: MarkdownFontConfig) {
+                                        drawing: Drawing) {
         let text = paragraphInsertionText(removed, at: location,
                                           in: storage.string as NSString)
-        splice(text, at: location, into: storage, codeRegions: &codeRegions,
-               blockRanges: &blockRanges, config: config)
+        splice(text, index: index, at: location, into: storage, codeRegions: &codeRegions,
+               blockRanges: &blockRanges, drawing: drawing)
+    }
+
+    /// The removed words inside a block, with the spaces `padded` adds left unstruck.
+    private static func spliceRemoval(_ removed: String, index: Int, at location: Int,
+                                      into storage: NSMutableAttributedString,
+                                      codeRegions: inout [MarkdownToAttributed.CodeRegion],
+                                      blockRanges: inout [NSRange], drawing: Drawing) {
+        let pad = padded(removed, at: location, in: storage.string as NSString)
+        splice(pad.text, index: index, at: location, into: storage, codeRegions: &codeRegions,
+               blockRanges: &blockRanges, drawing: drawing,
+               plainLeading: pad.leading, plainTrailing: pad.trailing)
     }
 
     /// The decision half of `spliceParagraph`, over a plain `NSString` rather than the storage
@@ -472,17 +684,31 @@ public enum ChangeMarks {
     /// insertion lands strictly inside grows. A splice exactly on a block boundary therefore
     /// belongs to neither block — which is what a removed paragraph is, and why `blockRanges`
     /// tile in `.result` and merely bound each block in `.changes`.
-    private static func splice(_ text: String, at location: Int,
+    ///
+    /// The first `plainLeading` and last `plainTrailing` characters are separators the splice
+    /// needed, not removed text: they take the anchor's font and paragraph style and nothing
+    /// else, so the strike ends at the last letter of the removed word (it used to run on into
+    /// the space before the word that replaced it, and read as striking that word too).
+    private static func splice(_ text: String, index: Int, at location: Int,
                                into storage: NSMutableAttributedString,
                                codeRegions: inout [MarkdownToAttributed.CodeRegion],
-                               blockRanges: inout [NSRange], config: MarkdownFontConfig) {
+                               blockRanges: inout [NSRange], drawing: Drawing,
+                               plainLeading: Int = 0, plainTrailing: Int = 0) {
         guard !text.isEmpty, location >= 0, location <= storage.length else { return }
-        let attributed = NSAttributedString(string: text,
-                                            attributes: removedAttributes(at: location,
-                                                                          in: storage,
-                                                                          config: config))
+        var removed = removedAttributes(at: location, in: storage, drawing: drawing)
+        removed[removedKey] = index
+        let attributed = NSMutableAttributedString(string: text, attributes: removed)
+        let length = attributed.length
+        let plain = plainAttributes(of: removed)
+        if plainLeading > 0 {
+            attributed.setAttributes(plain, range: NSRange(location: 0, length: plainLeading))
+        }
+        if plainTrailing > 0 {
+            attributed.setAttributes(plain, range: NSRange(location: length - plainTrailing,
+                                                           length: plainTrailing))
+        }
         storage.insert(attributed, at: location)
-        let delta = attributed.length
+        let delta = length
         codeRegions = codeRegions.map {
             $0.range.location >= location ? $0.offset(by: delta) : $0
         }
@@ -498,21 +724,22 @@ public enum ChangeMarks {
     }
 
     /// The anchor run's `.font` and `.paragraphStyle` and nothing else of it, plus the strike
-    /// and the secondary colour.
+    /// and the removed colour.
     ///
     /// Only those two are taken because everything else a run carries is a claim about the
     /// text: a link's colour and underline, a code span's background, the change mark itself.
     /// The paragraph style is what keeps a removal inside its table cell, its quote bar and
     /// its list indent — it is where this converter puts every block frame it draws.
     private static func removedAttributes(at index: Int, in storage: NSAttributedString,
-                                          config: MarkdownFontConfig)
+                                          drawing: Drawing)
         -> [NSAttributedString.Key: Any] {
+        let colour = removedColour(increasedContrast: drawing.increasedContrast)
         var attributes: [NSAttributedString.Key: Any] = [
-            .font: MarkdownToAttributed.font(size: config.baseSize, weight: .regular,
-                                             config: config),
-            .strikethroughStyle: NSUnderlineStyle.single.rawValue,
-            .strikethroughColor: NSColor.secondaryLabelColor,
-            .foregroundColor: NSColor.secondaryLabelColor,
+            .font: MarkdownToAttributed.font(size: drawing.config.baseSize, weight: .regular,
+                                             config: drawing.config),
+            .strikethroughStyle: drawing.lineStyle.rawValue,
+            .strikethroughColor: colour,
+            .foregroundColor: colour,
         ]
         guard storage.length > 0 else { return attributes }
         let probe = min(max(index, 0), storage.length - 1)
@@ -520,5 +747,11 @@ public enum ChangeMarks {
         if let font = existing[.font] { attributes[.font] = font }
         if let style = existing[.paragraphStyle] { attributes[.paragraphStyle] = style }
         return attributes
+    }
+
+    /// A separator's attributes: the removed text's font and paragraph style, nothing it claims.
+    private static func plainAttributes(of removed: [NSAttributedString.Key: Any])
+        -> [NSAttributedString.Key: Any] {
+        removed.filter { $0.key == .font || $0.key == .paragraphStyle }
     }
 }

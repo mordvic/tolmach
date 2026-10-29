@@ -160,6 +160,25 @@ measurement protocol.
 | **Item 7 — the mark is dotted everywhere and the light tint is the accent blended 35 % toward black.** `Scripts/accent-contrast.swift`: bare accent vs the white pane — синий 3.52:1, фиолетовый 4.17, розовый 3.65, красный 3.57, графит 3.26 pass the 3:1 non-text floor; **оранжевый 2.31, зелёный 2.22, жёлтый 1.51 fail**; vs the 0.12 dark pane all eight pass (worst фиолетовый 4.59). Blending toward black: 0.30 is the first fraction that clears 3:1 for all eight (жёлтый 3.08), 0.35 gives 3.53. `linkColor` against `systemBlue`: **1.49:1 light, 1.14:1 dark** — a solid accent underline is the link's underline, hence the dots. Thickness was looked at, not computed: `renderChangesPreview` at 13 and 22 pt, `.single` below 17 and `.thick` from 17 kept | `ChangeMarks.markColour`, `ChangeMarks.pattern`, `ChangeMarks.thickFromSize`, `Tests/MarkupKitTests/ChangeMarksColourTests.swift`, `Tests/TranslatorAppTests/RenderPreview.swift` |
 | **Item 6 is not taken** — the find indicator and the popover anchor gate phase 2, which is not started | — |
 
+Item 7's tint and its 0.12 dark pane are superseded by the next section; its dots and its
+thickness rule stand. Item 6's find-indicator half was taken on 2026-10-29, also below.
+
+## Durable — change marks on the screen's own grounds (measured 2026-10-29; openspec `improve-change-mark-legibility`)
+
+macOS 27, this machine, accent «multicolor» (`controlAccentColor` resolves to #007aff in both
+appearances). The grounds are screen pixels, not resolved `NSColor`s, because the two differ.
+
+| Fact | Where |
+|---|---|
+| **The grounds.** `Scripts/change-grounds.swift`, two runs, identical: window light #ffffff / dark **#31302d** (not the #1e1e1e `windowBackgroundColor` resolves to offscreen); hotkey panel `.regularMaterial` over white, black, grey, blue and orange backdrops light #edebea…#f1f0ee / dark #3c3937…#494845; change card (`NSPopover`, glass, over a pane-coloured backdrop) light #f5f5f5 / dark **#4d4c48**. Worst for a mark: #edebea (light) and #4d4c48 (dark) | `ChangeMarks.lightGrounds` / `darkGrounds` |
+| **Before the change, the dark marks failed on the panel and the card**: worst ground синий 2.66:1, фиолетовый 2.37, розовый 2.44, красный 2.50, графит 2.99, this machine's #007aff 2.14 — under the 3:1 non-text floor. In light the 35 % blend kept every mark far from the ground (4.26–6.82, жёлтый 2.97 on the panel) and close to the text over it: 1.86–2.27:1 mark-to-ink for синий, фиолетовый, розовый, красный, графит | `Scripts/accent-contrast.swift`, last section |
+| **The floor rule** — the accent moved toward the ink in 0.01 steps until it clears 3.5:1 on every ground of its appearance: light 3.50–3.56:1 to the ground and 3.56–3.63:1 to the ink for all eight presets (синий #007ce8, фиолетовый unchanged); dark ≥ 3.51:1 (синий #40adff, фиолетовый #e87bf7; оранжевый, жёлтый, зелёный unchanged); #007aff → #0078fa light, #5caaff dark. Under Increase Contrast, floor 4.5: every preset 4.50–4.64:1 | `ChangeMarks.markColour(increasedContrast:)`, `ChangeMarksColourTests` |
+| **Removed text.** `secondaryLabelColor` was 3.84–3.98:1 on every light ground and 3.89–5.16:1 on the dark ones, under the 4.5:1 HIG sets for text up to 17 pt. Black / white at an alpha, worst ground — each the smallest 0.05 step that clears its floor by 0.2: 0.60 → 5.44 light, 0.65 → 4.74 dark; under Increase Contrast (6:1) 0.65 → 6.54 light, 0.80 → 6.22 dark. Body text is 0.85 | `ChangeMarks.removedColour(increasedContrast:)`, `ChangeMarksColourTests` |
+| **The change card grew without limit.** `.fixedSize()` on both axes laid a 128-character change out on one line: `fittingSize` 733 × 52 pt | `ChangeCardView`, `ChangeCardTests` |
+| **The find indicator over a mark reads.** Seen on screen at 13 and 32 pt, light and dark: AppKit redraws the word black on yellow and draws no mark inside the bubble | `RenderedTextView.Coordinator.select(change:in:)` |
+| **The dots stay; dashes do not.** Looked at in renders, 13 pt doubled: `.patternDash` breaks per glyph, irregularly, and at 22 pt thick it is blocks; `.patternDot` is even, and unlike the system spelling mark (round, dense, red dots, drawn through `NSLayoutManager`'s `.spellingState` beside it) | `ChangeMarks.pattern` |
+| **Increase Contrast cannot be reached through an appearance offscreen.** `NSAppearance(named: .accessibilityHighContrastAqua)` answers `.aqua` to `bestMatch(from:)` with the four names, and every system colour resolves exactly as under `.aqua` — so the setting is read from `NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast` and passed in, and a test passes the flag | `ChangeMarks`, `RenderedTextView.Coordinator` |
+
 ## Durable — explanations per change (issue #81 phase 3; first half taken 2026-09-04)
 
 `Translator.explain`, `ExplanationGate` and `translate-cli --proofread --explain` are built and

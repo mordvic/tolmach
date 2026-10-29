@@ -360,8 +360,19 @@ the same probe:
   for `minWidth`. Measured 1155 pt for that document, which the sizer clamps to `maxWidth`.
 - The answers are **stable to 0.0000** over ten reads on one reused host and against a fresh one,
   so a pinning test may assert equality.
+- **Drawing outside the reply's view: the flat layout lets it, a `ScrollView` does not.** The
+  change bars stand 7 pt left of the reply's text (2026-10-29), so with no gutter inside the view
+  they are drawn at negative x. Measured with `Scripts/panel-bar-clip.swift` on a real window: a
+  hosted `NSView` with `clipsToBounds = false` draws into the SwiftUI padding around it in a
+  `VStack`; inside a `ScrollView` the same drawing is clipped at the scroll view's edge. Pushing
+  the scroll region 8 pt into the padding (`.contentMargins(.leading, 8, for: .scrollContent)`
+  plus `.padding(.leading, -8)`) shows the bar and **moves no text**: the probe's text starts at
+  14.7 pt in both layouts. The settle swap is untouched — the bars are drawn, not laid out, and
+  the reply's first glyph stays at x = 0 (`ChangeBarsTests`). A click there never reaches the
+  view: AppKit routes it by the subview's frame, so the panel's bars are not clickable.
 
-→ `Sources/TranslatorApp/RenderedReplyView.swift`, `Scripts/panel-rendered-measure.swift`
+→ `Sources/TranslatorApp/RenderedReplyView.swift`, `Scripts/panel-rendered-measure.swift`,
+`Scripts/panel-bar-clip.swift`, `PanelView.scrollingMiddle`
 
 **A selectable `NSTextView` inside the panel takes first responder, and the panel's ⏎ and Esc
 then need two different routes.** `TranslationPanel` handles both on the *window* — which worked

@@ -214,11 +214,19 @@ _Avoid_: «Повторить» — that is the failure retry
 **Изменение** — *a change*
 One range a правка changed: a run of words in a block, or a whole block when more of it
 moved than `densityThreshold` allows. Counted in the status bar («6 изменений»), stepped
-with ‹ › and ⌘G, drawn as a dotted underline in the accent. Computed locally by `TextDiff`,
-never by the model.
+with ‹ › and ⌘G, drawn as a dotted underline in the accent — or, where nothing was inserted, as
+a caret under the gap the words stood in; a whole rewritten block wears no underline, only its
+**полоса изменений**. Computed locally by `TextDiff`, never by the model.
 → `TextChange`, `ChangeSet`, `ChangeMarks`, `TranslationOutcome.changes`
 _Avoid_: диф, правка (that is the operation), исправление (a change under «переписать» is
 not a correction)
+
+**Полоса изменений** — *change bar*
+The thin accent bar at the leading edge of every line that holds an изменение, in both views
+and in the panel. A click on it opens the line's first изменение. Drawn, never a character of
+the text, so nothing copied carries it.
+→ `ChangeBars`, `CodeBlockTextView.changeBars()`
+_Avoid_: маркер, полоска на полях
 
 **«Результат» / «Изменения»** — *the two views of a правка*
 «Результат» is the corrected text with every изменение underlined; «Изменения» is the same

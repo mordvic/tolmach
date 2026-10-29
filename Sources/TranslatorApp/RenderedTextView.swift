@@ -45,6 +45,10 @@ struct RenderedTextView: NSViewRepresentable {
     /// «Изменения» (deletions spliced in, struck through) against «Результат» (underlines
     /// only). Meaningless without `changes`.
     var showsChangeDetail = false
+    /// The system's Increase Contrast — `DisplayContrast.shared.isIncreased`, read by the caller
+    /// in its `body` so a change of the setting re-runs it. Part of the coordinator's mode: the
+    /// marks' weight is an attribute, so the storage is rebuilt rather than merely redrawn.
+    var increasedContrast = false
     /// The change the stepper is standing on, selected and flashed in the view. Not part of the
     /// storage's mode: moving it must not rebuild the document.
     var changeCursor: Int? = nil
@@ -99,7 +103,8 @@ struct RenderedTextView: NSViewRepresentable {
         textView.onRevertChange = onRevertChange
         context.coordinator.apply(text: text, font: font, rendersMarkup: rendersMarkup,
                                   isStreaming: isStreaming, changes: changes,
-                                  showsChangeDetail: showsChangeDetail, to: textView)
+                                  showsChangeDetail: showsChangeDetail,
+                                  increasedContrast: increasedContrast, to: textView)
         context.coordinator.select(change: changeCursor, in: textView)
     }
 
@@ -131,6 +136,7 @@ struct RenderedTextView: NSViewRepresentable {
             /// two would be a second diff nobody asked for.
             let changes: ChangeSet?
             let showsChangeDetail: Bool
+            let increasedContrast: Bool
         }
         /// The change last selected through `select(change:in:)`, so a `body` re-evaluation
         /// that passes the same cursor does not re-select and re-flash it on every token.
@@ -138,7 +144,7 @@ struct RenderedTextView: NSViewRepresentable {
 
         func apply(text: String, font: ContentFont, rendersMarkup: Bool, isStreaming: Bool,
                    changes: ChangeSet? = nil, showsChangeDetail: Bool = false,
-                   to textView: CodeBlockTextView) {
+                   increasedContrast: Bool = false, to textView: CodeBlockTextView) {
             // The pane's promise, checked where it would be broken: a change set is a fact about
             // a *finished* text, and `TranslationPane` passes one only when `state == .finished`.
             assert(changes == nil || !isStreaming,
@@ -146,7 +152,8 @@ struct RenderedTextView: NSViewRepresentable {
             let config = font.markdownConfig
             let wanted = Mode(font: font, rendersMarkup: rendersMarkup,
                               isStreaming: isStreaming, changes: changes,
-                              showsChangeDetail: showsChangeDetail)
+                              showsChangeDetail: showsChangeDetail,
+                              increasedContrast: increasedContrast)
             if mode != wanted {
                 mode = wanted
                 reset(textView)
@@ -165,8 +172,10 @@ struct RenderedTextView: NSViewRepresentable {
                 if let changes, !isStreaming {
                     rendering = ChangeMarks.apply(changes, to: rendering, resultMarkdown: text,
                                                   detail: showsChangeDetail ? .changes : .result,
-                                                  config: config)
+                                                  config: config,
+                                                  increasedContrast: increasedContrast)
                 }
+                textView.increasedContrast = increasedContrast
                 textView.textStorage?.setAttributedString(rendering.attributed)
                 textView.codeRegions = rendering.codeRegions
                 // Not `isStreaming`'s condition again: `changes` is already nil while
@@ -241,22 +250,34 @@ struct RenderedTextView: NSViewRepresentable {
             textView.setSelectedRange(range)
             textView.scrollRangeToVisible(range)
             textView.showFindIndicator(for: range)
+            if let changes = textView.changeSet, index < changes.changes.count,
+               let announcement = ChangeAnnouncement.text(for: changes.changes[index]) {
+                NSAccessibility.post(
+                    element: textView, notification: .announcementRequested,
+                    userInfo: [.announcement: announcement,
+                               .priority: NSAccessibilityPriorityLevel.high.rawValue])
+            }
         }
 
         /// Where change `index` was drawn — the storage is the record, read back through
         /// `ChangeMarks.changeKey`, so this cannot disagree with what is on screen. Nil for a
         /// change the locator left unmarked (spec §«Step 2», «nothing is guessed»).
+        ///
+        /// `ChangeMarks.removedKey` second, for a pure removal in «Изменения»: the struck words
+        /// are all it has there, and before 2026-10-29 stepping onto one selected nothing.
         static func range(ofChange index: Int, in textView: NSTextView) -> NSRange? {
             guard let storage = textView.textStorage, storage.length > 0 else { return nil }
-            var found: NSRange?
-            storage.enumerateAttribute(ChangeMarks.changeKey,
-                                       in: NSRange(location: 0, length: storage.length),
-                                       options: []) { value, range, stop in
-                guard let value = value as? Int, value == index else { return }
-                found = range
-                stop.pointee = true
+            for key in [ChangeMarks.changeKey, ChangeMarks.removedKey] {
+                var found: NSRange?
+                storage.enumerateAttribute(key, in: NSRange(location: 0, length: storage.length),
+                                           options: []) { value, range, stop in
+                    guard let value = value as? Int, value == index else { return }
+                    found = range
+                    stop.pointee = true
+                }
+                if let found { return found }
             }
-            return found
+            return nil
         }
     }
 }
@@ -313,6 +334,11 @@ class CodeBlockTextView: NSTextView {
     /// this popover through the `didSet` above — there is nothing here for this view to undo
     /// on its own account.
     var onRevertChange: ((Int, UndoManager?) -> Void)?
+    /// The system's Increase Contrast, for the bars' and carets' colour and weight — the marks in
+    /// the storage were already built with it.
+    var increasedContrast = false {
+        didSet { if oldValue != increasedContrast { needsDisplay = true } }
+    }
 
     private var changePopover: NSPopover?
     private var scrollBoundsObserver: NSObjectProtocol?
@@ -414,10 +440,99 @@ class CodeBlockTextView: NSTextView {
     /// open the popover over it. Nothing happens off a point with no mark, or with no change
     /// set to read a card from.
     func reportClick(at point: NSPoint) {
-        guard let index = changeIndex(at: point), let changeSet, index < changeSet.changes.count
+        guard let index = changeIndex(at: point), let changeSet, index < changeSet.changes.count,
+              ChangeBars.clickOnTextOpensCard(for: changeSet.changes[index],
+                                              barsAreClickable: !drawsChangeBarsOutsideBounds)
         else { return }
         onChangeSelected?(index)
         presentChangePopover(for: index, change: changeSet.changes[index])
+    }
+
+    // MARK: - Change bars and carets
+
+    /// The left edge of the change bars: 7 pt in from where the text starts, in the gutter the
+    /// inset and the container's padding leave — x = 1 in the window's pane (3 + 5 − 7). Outside
+    /// this view's bounds in the panel, whose text starts at x = 0 by measurement
+    /// (`RenderedReplyView.inset`); the panel draws its bars in its own padding instead.
+    var changeBarX: CGFloat {
+        textContainerOrigin.x + (textContainer?.lineFragmentPadding ?? 0) - 7
+    }
+    static let changeBarWidth: CGFloat = 2.5
+
+    /// True where the gutter lies outside this view's bounds and the bars are drawn there anyway —
+    /// the panel's reply, with `clipsToBounds` off. A click there never reaches this view.
+    var drawsChangeBarsOutsideBounds: Bool { false }
+
+    /// The bars for the current storage, in container coordinates.
+    func changeBars() -> [ChangeBars.Bar] {
+        guard let changeSet, !changeSet.changes.isEmpty, let storage = textStorage,
+              let layoutManager, let textContainer else { return [] }
+        return ChangeBars.bars(in: storage, layoutManager: layoutManager,
+                               container: textContainer, changes: changeSet)
+    }
+
+    /// The change a click at `point` in the gutter opens, or nil off the gutter or a bar.
+    func changeIndex(inGutterAt point: NSPoint) -> Int? {
+        let gutterEnd = textContainerOrigin.x + (textContainer?.lineFragmentPadding ?? 0)
+        guard changeBarX >= 0, !drawsChangeBarsOutsideBounds, point.x < gutterEnd else { return nil }
+        return ChangeBars.change(atY: point.y - textContainerOrigin.y, in: changeBars())
+    }
+
+    /// Behind the text, so a caret under a gap never covers a descender drawn over it.
+    override func drawBackground(in rect: NSRect) {
+        super.drawBackground(in: rect)
+        guard let changeSet, !changeSet.changes.isEmpty else { return }
+        let colour = ChangeMarks.markColour(increasedContrast: increasedContrast)
+        colour.setFill()
+        let origin = textContainerOrigin
+        if changeBarX >= 0 || drawsChangeBarsOutsideBounds {
+            for bar in changeBars() {
+                let height = max(bar.bottom - bar.top - 6, 2)
+                NSBezierPath(roundedRect: NSRect(x: changeBarX, y: origin.y + bar.top + 3,
+                                                 width: Self.changeBarWidth, height: height),
+                             xRadius: Self.changeBarWidth / 2,
+                             yRadius: Self.changeBarWidth / 2).fill()
+            }
+        }
+        colour.setStroke()
+        for caret in removalCarets() {
+            let path = NSBezierPath()
+            path.move(to: caret.left)
+            path.line(to: caret.apex)
+            path.line(to: caret.right)
+            path.lineWidth = caret.lineWidth
+            path.lineCapStyle = .round
+            path.lineJoinStyle = .round
+            path.stroke()
+        }
+    }
+
+    /// One caret per pure removal marked in the storage — only «Результат» and «Исходник» carry
+    /// one; in «Изменения» the struck words stand where the caret would.
+    func removalCarets() -> [ChangeBars.Caret] {
+        guard let changeSet, let storage = textStorage, storage.length > 0,
+              let layoutManager, let textContainer else { return [] }
+        var carets: [ChangeBars.Caret] = []
+        let origin = textContainerOrigin
+        storage.enumerateAttribute(ChangeMarks.changeKey,
+                                   in: NSRange(location: 0, length: storage.length),
+                                   options: []) { value, range, _ in
+            guard let index = value as? Int, index < changeSet.changes.count,
+                  changeSet.changes[index].inserted.isEmpty else { return }
+            let glyphs = layoutManager.glyphRange(forCharacterRange: range,
+                                                  actualCharacterRange: nil)
+            guard glyphs.length > 0 else { return }
+            let box = layoutManager.boundingRect(forGlyphRange: glyphs, in: textContainer)
+            let line = layoutManager.lineFragmentRect(forGlyphAt: glyphs.location,
+                                                      effectiveRange: nil)
+            let baseline = line.minY + layoutManager.location(forGlyphAt: glyphs.location).y
+            let font = storage.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont
+            carets.append(ChangeBars.caret(gapMidX: origin.x + box.midX,
+                                           baseline: origin.y + baseline,
+                                           fontSize: font?.pointSize ?? NSFont.systemFontSize,
+                                           increasedContrast: increasedContrast))
+        }
+        return carets
     }
 
     /// **Only a plain click opens the popover — a drag must still select text.** AppKit's own
@@ -429,6 +544,14 @@ class CodeBlockTextView: NSTextView {
     /// have, and it is what a test can drive without a synthetic drag.
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        // The gutter first: a click on a bar opens its line's first change, and nothing there is
+        // text to select — so it does not go through AppKit's selection tracking at all.
+        if event.clickCount == 1, let index = changeIndex(inGutterAt: point), let changeSet,
+           index < changeSet.changes.count {
+            onChangeSelected?(index)
+            presentChangePopover(for: index, change: changeSet.changes[index])
+            return
+        }
         super.mouseDown(with: event)
         guard event.clickCount == 1, selectedRange().length == 0 else { return }
         reportClick(at: point)
@@ -454,6 +577,7 @@ class CodeBlockTextView: NSTextView {
         let canRevert = canRevertChange?(index) ?? false
         let content = ChangeCardView(
             card: .of(change), typeface: contentFont.typeface,
+            increasedContrast: increasedContrast,
             revertUnavailableReason: canRevert
                 ? nil : "Это изменение нельзя восстановить автоматически",
             onRevert: { [weak self] in

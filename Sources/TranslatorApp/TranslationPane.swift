@@ -246,6 +246,7 @@ struct TranslationPane: View {
                                  isStreaming: isRunning,
                                  changes: isRunning ? nil : changes,
                                  showsChangeDetail: showsChangeDetail.wrappedValue,
+                                 increasedContrast: DisplayContrast.shared.isIncreased,
                                  changeCursor: changeCursor,
                                  onChangeSelected: onChangeSelected,
                                  canRevertChange: canRevertChange,
