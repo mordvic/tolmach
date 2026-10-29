@@ -14,3 +14,16 @@ enum ChangeNavigation {
         mode == .text && (changes?.count ?? 0) > 0
     }
 }
+
+/// What VoiceOver is told when ‹ › lands on a change whose selection reads as nothing.
+///
+/// Stepping selects the change so VoiceOver reads it in its sentence — but a pure removal's
+/// selection is the gap the words stood in, a space or a full stop, and that reads as nothing.
+/// The removed words go to the accessibility API and nowhere else: never to `Log`, which may not
+/// carry anything derived from the user's text.
+enum ChangeAnnouncement {
+    static func text(for change: TextChange) -> String? {
+        guard change.inserted.isEmpty, !change.removed.isEmpty else { return nil }
+        return "Удалено: \(change.removed)"
+    }
+}

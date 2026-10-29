@@ -145,3 +145,64 @@ for f in [0.0, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4] {
     print(String(format: "  %@ %@ → %.2f:1 %@", pad(String(format: "%.2f", f), 10), pad(worst.name, 12),
                  worst.ratio, worst.ratio >= 3 ? "OK" : "low"))
 }
+
+// ---- Change marks against the grounds on the screen (openspec improve-change-mark-legibility) --
+// The sections above hold the mark against white and #1e1e1e, which is what `NSColor` resolves
+// to offscreen. On the screen the pane, the hotkey panel's material and the change card are
+// other colours, measured by `Scripts/change-grounds.swift`; the dark ones are all lighter than
+// #1e1e1e, the panel's by enough that today's dark marks fall under 3:1. This section prints
+// today's rule beside the floor rule `ChangeMarks.markColour` follows now: move the accent toward
+// the ink — black in light, white in dark — in steps of 0.01 until it clears the floor against
+// every ground of its appearance, 3.5:1, or 4.5:1 under Increase Contrast.
+func rgb(_ hex: Int) -> (Double, Double, Double) {
+    (Double((hex >> 16) & 0xff) / 255, Double((hex >> 8) & 0xff) / 255, Double(hex & 0xff) / 255)
+}
+let lightGrounds = [0xffffff, 0xedebea, 0xf1f0ee, 0xf5f5f5].map(rgb)
+let darkGrounds = [0x31302d, 0x494845, 0x3c3937, 0x4d4c48].map(rgb)
+func worstContrast(_ c: (Double, Double, Double), _ grounds: [(Double, Double, Double)]) -> Double {
+    grounds.map { contrast(c, $0) }.min()!
+}
+func toward(_ c: (Double, Double, Double), _ ink: Double, by f: Double) -> (Double, Double, Double) {
+    (c.0 + (ink - c.0) * f, c.1 + (ink - c.1) * f, c.2 + (ink - c.2) * f)
+}
+func floored(_ c: (Double, Double, Double), dark: Bool, floor: Double) -> ((Double, Double, Double), Double) {
+    let grounds = dark ? darkGrounds : lightGrounds
+    var f = 0.0
+    while f < 0.95, worstContrast(toward(c, dark ? 1 : 0, by: f), grounds) < floor { f += 0.01 }
+    return (toward(c, dark ? 1 : 0, by: f), f)
+}
+/// The body text over a ground: `labelColor` is black or white at 0.85.
+func ink(over g: (Double, Double, Double), dark: Bool) -> (Double, Double, Double) {
+    toward(g, dark ? 1 : 0, by: 0.85)
+}
+func worstInk(_ c: (Double, Double, Double), dark: Bool) -> Double {
+    (dark ? darkGrounds : lightGrounds).map { contrast(c, ink(over: $0, dark: dark)) }.min()!
+}
+
+print("\n== change marks against the measured grounds: worst ground / worst ink ==")
+print("  " + pad("accent", 12) + pad("light today", 26) + pad("light, floor 3.5", 30)
+      + pad("dark today", 18) + "dark, floor 3.5")
+for (name, col) in choices {
+    let l = srgb(col, light), d = srgb(col, dark)
+    let todayLight = (l.0 * 0.65, l.1 * 0.65, l.2 * 0.65)
+    let (newLight, fl) = floored(l, dark: false, floor: 3.5)
+    let (newDark, fd) = floored(d, dark: true, floor: 3.5)
+    print("  " + pad(name, 12)
+          + pad(String(format: "%@ %.2f / %.2f", hex(todayLight), worstContrast(todayLight, lightGrounds), worstInk(todayLight, dark: false)), 26)
+          + pad(String(format: "%@ (%.2f) %.2f / %.2f", hex(newLight), fl, worstContrast(newLight, lightGrounds), worstInk(newLight, dark: false)), 30)
+          + pad(String(format: "%@ %.2f", hex(d), worstContrast(d, darkGrounds)), 18)
+          + String(format: "%@ (%.2f) %.2f / %.2f", hex(newDark), fd, worstContrast(newDark, darkGrounds), worstInk(newDark, dark: true)))
+}
+print("\n== the same under Increase Contrast, floor 4.5 ==")
+for (name, col) in choices {
+    let (l, fl) = floored(srgb(col, light), dark: false, floor: 4.5)
+    let (d, fd) = floored(srgb(col, dark), dark: true, floor: 4.5)
+    print("  " + pad(name, 12) + pad(String(format: "%@ (%.2f) %.2f", hex(l), fl, worstContrast(l, lightGrounds)), 26)
+          + String(format: "%@ (%.2f) %.2f", hex(d), fd, worstContrast(d, darkGrounds)))
+}
+print("\n== removed text: black or white at alpha, worst ground (4.5:1, 6:1 under Increase Contrast) ==")
+for a in stride(from: 0.50, through: 0.85, by: 0.05) {
+    let lw = lightGrounds.map { contrast(toward($0, 0, by: a), $0) }.min()!
+    let dw = darkGrounds.map { contrast(toward($0, 1, by: a), $0) }.min()!
+    print(String(format: "  α %.2f   light %.2f   dark %.2f", a, lw, dw))
+}
