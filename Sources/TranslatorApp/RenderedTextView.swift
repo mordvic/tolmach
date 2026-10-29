@@ -451,7 +451,8 @@ class CodeBlockTextView: NSTextView {
     // MARK: - Change bars and carets
 
     /// The left edge of the change bars: 7 pt in from where the text starts, in the gutter the
-    /// inset and the container's padding leave — x = 1 in the window's pane (3 + 5 − 7). Outside
+    /// inset and the container's padding leave — x = 7 in the window's sheet
+    /// (`PaneSheet.textInset` 9 + 5 − 7), halfway between the sheet's edge and its text. Outside
     /// this view's bounds in the panel, whose text starts at x = 0 by measurement
     /// (`RenderedReplyView.inset`); the panel draws its bars in its own padding instead.
     var changeBarX: CGFloat {
