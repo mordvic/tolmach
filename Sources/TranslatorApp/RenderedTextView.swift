@@ -64,11 +64,14 @@ struct RenderedTextView: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> NSScrollView {
-        // `{3, 8}` because this view's text has to land where the pane's `Text` used to, and
-        // that one carried `.padding(8)`: 8 vertically, and 3 horizontally because the
-        // container's own `lineFragmentPadding` already contributes 5. The panel's reply has no
-        // padding of its own and therefore takes a different inset — see `RenderedReplyView`.
-        let textView = CodeBlockTextView(textKit1Inset: NSSize(width: 3, height: 8))
+        // The sheet's text insets, because this view's text has to land where the pane's
+        // plain-prose `Text` and the editor beside it land — `PaneSheet.contentInset` across,
+        // `PaneSheet.textTopInset` down — and the container's own `lineFragmentPadding` already
+        // contributes 5 of the first. The
+        // panel's reply has no padding of its own and therefore takes a different inset — see
+        // `RenderedReplyView`.
+        let textView = CodeBlockTextView(textKit1Inset: NSSize(width: PaneSheet.textInset,
+                                                            height: PaneSheet.textTopInset))
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
@@ -448,7 +451,8 @@ class CodeBlockTextView: NSTextView {
     // MARK: - Change bars and carets
 
     /// The left edge of the change bars: 7 pt in from where the text starts, in the gutter the
-    /// inset and the container's padding leave — x = 1 in the window's pane (3 + 5 − 7). Outside
+    /// inset and the container's padding leave — x = 7 in the window's sheet
+    /// (`PaneSheet.textInset` 9 + 5 − 7), halfway between the sheet's edge and its text. Outside
     /// this view's bounds in the panel, whose text starts at x = 0 by measurement
     /// (`RenderedReplyView.inset`); the panel draws its bars in its own padding instead.
     var changeBarX: CGFloat {

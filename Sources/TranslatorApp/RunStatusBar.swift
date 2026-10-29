@@ -19,6 +19,9 @@ struct RunStatusBar: View {
     /// Whether the selected engine has a model to translate with. False turns the idle line
     /// into the one instruction that unblocks the window — see `RussianCopy.idleLine`.
     let hasModel: Bool
+    /// The model the visible mode runs on, named on the trailing edge after «Локально» and the
+    /// engine. Nil where there is none, and the line then names the engine alone.
+    var modelName: String? = nil
     /// Non-nil when the window is showing «Файлы». The bar then reports the queue rather
     /// than the text model — one row, two sources, chosen here so neither pane has to grow
     /// a status bar of its own.
@@ -45,8 +48,12 @@ struct RunStatusBar: View {
                     .accessibilityLabel(expanded ? "Свернуть предупреждения" : "Показать предупреждения")
                 }
                 line
-                Spacer(minLength: 0)
+                Spacer(minLength: 8)
+                locality
             }
+            // The design's 18 pt status line: a caption is shorter, and a row that took the
+            // caption's own height made the band under the sheets thinner than drawn.
+            .frame(minHeight: 18)
             // §6.6's other half. The engine goes on swallowing a failed term-list call —
             // right when nobody asked — but the user who turned the gate on is waiting for
             // something that will never appear, and the run's terminology quietly differs
@@ -93,9 +100,35 @@ struct RunStatusBar: View {
                 .padding(.leading, 16)
             }
         }
-        .padding(.horizontal, 12).padding(.vertical, 8)
+        // The sheets' content inset, inside the frame's own gap: the summary starts on the line
+        // the sheets' headers and text start on. It was 12, a third left edge in one column.
+        // No band of its own any more (2026-10-29): the row lies on the window's frame, under
+        // the sheets, and the frame is the band — 8 above the line and 6 below it, the chosen
+        // design's figures, so the sheets end 33 pt above the window's bottom edge as drawn.
+        .padding(.horizontal, PaneSheet.contentInset)
+        .padding(.top, 8).padding(.bottom, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.25))
+    }
+
+    /// «Локально · Ollama · aya-expanse:8b» — the one promise this app makes that no other
+    /// translator can, said where the run is reported, with the engine and the model it is kept
+    /// by, as the chosen design writes it. True by construction rather than by setting: the
+    /// host is loopback in code (`docs/adr/0009`), so the line needs no condition. It gives way
+    /// to the status line when the window is narrow — that one carries the failures.
+    private var locality: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "lock.fill").imageScale(.small)
+            Text(Self.localityLine(engineName: engineName, modelName: modelName))
+                .lineLimit(1).truncationMode(.middle)
+        }
+        .font(.caption).foregroundStyle(.secondary)
+        .layoutPriority(-1)
+        .accessibilityElement(children: .combine)
+        .help("Текст не покидает этот Mac: \(engineName) работает на нём же")
+    }
+
+    static func localityLine(engineName: String, modelName: String?) -> String {
+        (["Локально", engineName] + [modelName].compactMap { $0 }).joined(separator: " · ")
     }
 
     private var summary: String? {
@@ -227,11 +260,20 @@ struct RunStatusBar: View {
                 // Word's Next/Previous both draw. Disabled rather than hidden at zero, so the
                 // row keeps its shape between a clean run and a marked one.
                 if model.changes != nil {
+                    // Each glyph is a caption-sized character, so its own frame was a target
+                    // about 5 × 12 pt; the frame below gives each a 20 × 16 pt hit area without
+                    // changing what is drawn (2026-10-29).
                     HStack(spacing: 2) {
-                        Button("‹") { model.stepChange(by: -1) }
-                            .accessibilityLabel("Предыдущее изменение")
-                        Button("›") { model.stepChange(by: 1) }
-                            .accessibilityLabel("Следующее изменение")
+                        Button { model.stepChange(by: -1) } label: {
+                            Text("‹").frame(minWidth: 20, minHeight: 16).contentShape(Rectangle())
+                        }
+                        .accessibilityLabel("Предыдущее изменение")
+                        .help("Предыдущее изменение (⇧⌘G)")
+                        Button { model.stepChange(by: 1) } label: {
+                            Text("›").frame(minWidth: 20, minHeight: 16).contentShape(Rectangle())
+                        }
+                        .accessibilityLabel("Следующее изменение")
+                        .help("Следующее изменение (⌘G)")
                     }
                     .buttonStyle(.borderless)
                     .controlSize(.small)

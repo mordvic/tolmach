@@ -60,6 +60,12 @@ The app is `LSUIElement`: no Dock icon, no window at launch, just the menu-bar i
 deliberate and the scene order in `TranslatorApp.swift` is what enforces it — the comment there
 says why, and it is load-bearing.
 
+**Check the bundle's SDK stamp after building**:
+`vtool -show-build build/LocalTranslator.app/Contents/MacOS/TranslatorApp | grep sdk` should read
+the SDK you built with (27.0 on Xcode 27), not 14.0. At 14.0 macOS draws the app in its pre-26
+compatibility appearance. `make-app-bundle.sh` corrects SwiftPM's stamp; a bundle assembled any
+other way has to do the same (`docs/reference/PLATFORM-TRAPS.md`, «Windows and views»).
+
 Two harnesses need a live Ollama and are not part of `swift test`:
 
 ```bash

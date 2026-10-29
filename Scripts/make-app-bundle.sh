@@ -19,6 +19,19 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 cp "$ROOT/Sources/TranslatorApp/Info.plist" "$APP/Contents/Info.plist"
 cp "$BIN" "$APP/Contents/MacOS/TranslatorApp"
+# The SDK a binary says it was linked against decides which design macOS draws it in, and
+# SwiftPM's default build system writes the deployment target there instead: `vtool -show-build`
+# read «minos 14.0, sdk 14.0» on every bundle this script had made, the 2026-09-22 one included,
+# while `--build-system native` and a plain `swiftc` read «sdk 27.0» from the same toolchain
+# (measured 2026-10-29, SwiftPM 6.4, Xcode 27 beta). macOS 26+ draws a binary that claims an SDK
+# older than 26 in its compatibility appearance — the pre-26 toolbar, a grey window, flat
+# segmented controls — which is not what the app's tests, probes and `renderWindowPreview` show:
+# those run in hosts linked against the real SDK. So the real SDK is written back, before
+# codesign, which has to seal the binary as it will run.
+SDK_VERSION="$(xcrun --show-sdk-version)"
+MIN_OS="$(vtool -show-build "$APP/Contents/MacOS/TranslatorApp" | awk '/minos/ { print $2; exit }')"
+vtool -set-build-version macos "$MIN_OS" "$SDK_VERSION" -replace \
+  -output "$APP/Contents/MacOS/TranslatorApp" "$APP/Contents/MacOS/TranslatorApp"
 # The signature covers Contents/Resources, so the icon has to be in place before codesign runs:
 # a resource added afterwards leaves the seal broken, and a broken seal costs the Accessibility
 # grant this script's signing identity exists to preserve.

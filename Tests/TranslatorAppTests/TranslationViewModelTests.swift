@@ -1131,3 +1131,68 @@ private func waitForSheet(_ model: TranslationViewModel,
     model.cancel()
     await run.value
 }
+
+// MARK: - The detected language the исходник sheet names
+
+/// Long enough for `NLLanguageRecognizer` to be sure of; «Ready» alone is not.
+private let englishSource = "I am sending you the August report, please have a look before Friday. "
+    + "The details are on the website, and the comments are at the bottom."
+
+@MainActor
+@Test func theSourceSheetNamesTheLanguageItsTextWasDetectedIn() async {
+    let model = makeModel(ScriptedClient(responses: ["Высылаю отчёт"]))
+    model.sourceText = englishSource
+    #expect(model.detectedSourceOnScreen == nil)
+    await model.translate()
+    #expect(model.detectedSourceOnScreen == .en)
+}
+
+@MainActor
+@Test func anEditToTheSourceForgetsTheDetectedLanguage() async {
+    // The header must not name the language of a text that is no longer there.
+    // Mutation: the `didSet` on `sourceText` dropped → still `.en` here.
+    let model = makeModel(ScriptedClient(responses: ["Высылаю отчёт"]))
+    model.sourceText = englishSource
+    await model.translate()
+    model.sourceText += " Thanks."
+    #expect(model.detectedSourceOnScreen == nil)
+}
+
+@MainActor
+@Test func anEditWhileTheRunStreamsLeavesNoLanguageBehindIt() async {
+    // The run detected the text it started with; an edit before it finished means the text on
+    // screen is not that one. Mutation: the generation check in `finish` dropped → `.en` here.
+    let client = ScriptedClient(responses: ["Высылаю отчёт"], held: true)
+    let model = makeModel(client)
+    model.sourceText = englishSource
+    let run = Task { await model.translate() }
+    await waitUntil("the run is streaming") { model.state == .running }
+    model.sourceText += " Thanks."
+    client.release()
+    await run.value
+    #expect(model.state == .finished)
+    #expect(model.detectedSourceOnScreen == nil)
+}
+
+@MainActor
+@Test func aStatedSourceIsNotShownAsADetectedOne() async {
+    // «Из» names itself in the header; a language nobody scanned for is not «detected».
+    let model = makeModel(ScriptedClient(responses: ["Высылаю отчёт"]))
+    model.sourceText = englishSource
+    model.sourceOverride = .en
+    await model.translate()
+    #expect(model.detectedSourceOnScreen == nil)
+}
+
+@MainActor
+@Test func swappingForgetsTheDetectedLanguage() async {
+    // The translation moves into the source pane, so the detected English describes nothing on
+    // screen any more.
+    let model = makeModel(ScriptedClient(responses: ["Высылаю отчёт"]))
+    model.sourceText = englishSource
+    await model.translate()
+    model.targetOverride = .ru
+    model.swapLanguages()
+    #expect(model.sourceText == "Высылаю отчёт")
+    #expect(model.detectedSourceOnScreen == nil)
+}

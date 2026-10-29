@@ -525,17 +525,17 @@ private func makeTextModel(_ prefix: String,
 
     model.selection = model.jobs[0].id
     #expect(model.selectedText == "первый перевод")
-    #expect(model.selectedTitle == "Перевод · a.md")
+    #expect(model.selectedFileName == "a.md")
 
     model.selection = model.jobs[1].id
     #expect(model.selectedText == "второй перевод")
-    #expect(model.selectedTitle == "Перевод · b.md")
+    #expect(model.selectedFileName == "b.md")
 }
 
-@MainActor @Test func theRightPaneFallsBackToTheHeaderWithNothingSelected() {
+@MainActor @Test func theRightPaneNamesNoFileWithNothingSelected() {
     let model = makeQueueModel(QueueClient(replies: []), prefix: "queue-right-pane-empty")
     #expect(model.selectedText.isEmpty)
-    #expect(model.selectedTitle == "Перевод")
+    #expect(model.selectedFileName == nil)
 }
 
 @MainActor @Test func theStatusLineCountsFilesAndPartsAcrossTheWholeQueue() async {

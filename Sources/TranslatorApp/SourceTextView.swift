@@ -126,15 +126,22 @@ struct SourceEditorView: NSViewRepresentable {
     /// read as a flag, so two requests in a row both land.
     let focusRequest: Int
 
-    /// The vertical inset, shared with the placeholder in `SourceEditor`.
-    static let topInset: CGFloat = 8
+    /// The vertical inset, shared with the placeholder in `SourceEditor`: the sheet's
+    /// `PaneSheet.textTopInset`, which the rendered views read too.
+    static let topInset: CGFloat = PaneSheet.textTopInset
+    /// The horizontal inset: `PaneSheet.textInset`, so the text — with the container's 5 pt
+    /// `lineFragmentPadding` — starts where the sheet header's controls, the перевод sheet's text
+    /// and this sheet's own «Разметка» view (`RenderedTextView`, the same inset) start. At 0 it
+    /// started five points in, left of everything above and beside it, and jumped at the
+    /// «Разметка | Исходник» toggle (2026-10-29).
+    static let leadingInset: CGFloat = PaneSheet.textInset
 
     func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
 
     func makeNSView(context: Context) -> NSScrollView {
         let textView = SourceTextView.make()
         textView.delegate = context.coordinator
-        textView.textContainerInset = NSSize(width: 0, height: Self.topInset)
+        textView.textContainerInset = NSSize(width: Self.leadingInset, height: Self.topInset)
         textView.font = font.nsFont
         textView.textColor = .labelColor
         let scroll = NSScrollView()

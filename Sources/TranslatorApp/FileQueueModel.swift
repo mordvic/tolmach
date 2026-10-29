@@ -347,10 +347,9 @@ final class FileQueueModel {
         return true
     }
 
-    /// «Перевод · techdoc-en.md», or the plain header with nothing selected.
-    var selectedTitle: String {
-        selectedJob.map { "Перевод · \($0.url.lastPathComponent)" } ?? "Перевод"
-    }
+    /// «techdoc-en.md», after the target language in the перевод sheet's header; nil with
+    /// nothing selected, when the header names the language alone.
+    var selectedFileName: String? { selectedJob?.url.lastPathComponent }
 
     /// What the right pane shows: the live stream when the selected задание is the one
     /// running, its stored result otherwise.

@@ -2,7 +2,8 @@
 //
 // Named for `SourceEditor` since the window's left half became two modes. `PaneHeader`
 // lives here rather than in a file of its own because both panes use it and it was already
-// shared before the split; `SourceFooter` is private to the editor.
+// shared before the split; `SourceCount`, which the исходник sheet's header shows, lives here
+// beside the editor whose text it counts.
 import SwiftUI
 import TranslationCore
 
@@ -48,10 +49,13 @@ struct SourceEditor: View {
     /// rather than a flag: see `SourceEditorView.focusRequest`.
     @State private var focusRequest = 0
 
-    /// The drawing's 8 pt top margin for this pane, applied to the editor **and** to the
-    /// placeholder from one place. Two copies of it is exactly how the caret and the grey
-    /// text came to sit 8 pt apart.
+    /// The sheet's top margin for its text (`PaneSheet.textTopInset`), applied to the editor
+    /// **and** to the placeholder from one place. Two copies of it is exactly how the caret and
+    /// the grey text came to sit 8 pt apart.
     private static let textTopInset: CGFloat = SourceEditorView.topInset
+    /// The исходник sheet's floor — the editor's and the file queue's, which take the same
+    /// slot. `PaneSplit` holds the boundary to it.
+    static let minWidth: CGFloat = 280
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -82,18 +86,17 @@ struct SourceEditor: View {
                         // different baseline from the caret in front of it — the same defect the
                         // 8 pt inset above was written to fix, arriving through the font instead.
                         .font(font.font).foregroundStyle(.tertiary)
-                        // The same constant the editor is inset by, so the two cannot drift.
+                        // The same constants the editor is inset by, so the two cannot drift.
                         // The 5 is `lineFragmentPadding`, measured, not chosen.
-                        .padding(.top, Self.textTopInset).padding(.leading, 5)
+                        .padding(.top, Self.textTopInset)
+                        .padding(.leading, SourceEditorView.leadingInset + 5)
                         // A click on the placeholder is a click into the empty editor.
                         .onTapGesture { focusRequest += 1 }
                 }
             }
             }
         }
-        // Over whichever view the mode chose: the count describes the text, not the editor.
-        .overlay(alignment: .bottomTrailing) { SourceFooter(model: model).padding(6) }
-        .frame(minWidth: 280)
+        .frame(minWidth: Self.minWidth)
         // A translator window that cannot take a dropped file is a translator window that
         // makes the user open the file elsewhere, select all, copy, and paste. What may be
         // dropped and what is read out of it is `DroppedDocument`; this closure only decides
@@ -122,6 +125,10 @@ struct SourceEditor: View {
     }
 }
 
+/// «207 символов · 3 части» — in the исходник sheet's header since 2026-10-29, where the chosen
+/// design puts it; it was an overlay in the editor's bottom corner. `showsChunks: false` is the
+/// header's narrower form, for a sheet with no room for both.
+///
 /// A `View` of its own rather than a computed property, and that is the whole point of the
 /// type.
 ///
@@ -142,14 +149,15 @@ struct SourceEditor: View {
 /// type was deleted when the window was rebuilt around this pane, and this doc comment is the
 /// only place the reasoning still lives, which is why the inputs are named here: without them
 /// the claim that they cannot change mid-run is not checkable from the comment.
-private struct SourceFooter: View {
+struct SourceCount: View {
     let model: TranslationViewModel
+    var showsChunks = true
 
     var body: some View {
         // Read once each. An earlier version read `expectedChunkCount` twice — once for the
         // test and once for the label — and so paid for chunking twice on every pass.
         let characters = model.sourceText.count
-        let chunks = model.expectedChunkCount
+        let chunks = showsChunks ? model.expectedChunkCount : 0
         HStack(spacing: 6) {
             if characters > 0 {
                 Text(RussianCopy.characterCount(characters))
@@ -159,44 +167,76 @@ private struct SourceFooter: View {
                 Text(RussianCopy.chunkCount(chunks))
             }
         }
-        .font(.caption).foregroundStyle(.secondary)
+        // Tertiary, as the chosen design draws it: a count is read when wanted, and in the
+        // header it stands beside the language, which is what the eye should land on first.
+        .font(.caption).foregroundStyle(.tertiary)
     }
 }
 
-/// One row, one title, one action. Shared by both panes so they cannot drift apart.
-struct PaneHeader<Action: View>: View {
-    /// Optional because the left pane's header is a mode switch rather than a caption,
-    /// while the right pane's is still a caption. One type, two contents.
-    let title: String?
-    @ViewBuilder var action: () -> Action
-
-    /// Both panes' headers are pinned to this, and that is the point of the constant.
-    /// The row used to size itself from a caption plus 4 pt of padding; the left one now
-    /// holds a `.small` segmented control, which is taller. Two headers a few points
-    /// apart put a visible step in the divider between the panes.
-    ///
-    /// The number is **not** measured — nothing in this environment can see a screen. It
-    /// is the smallest value that should fit a `.small` segmented control with the
-    /// padding this row already had, and `docs/reference/OPEN-ITEMS.md` carries it as owed to a
-    /// pair of eyes.
-    static var height: CGFloat { 28 }
+/// One sheet's header: what the sheet holds on the leading edge — its language, or its name
+/// where it has none — and its actions on the trailing one. Shared by both sheets so they
+/// cannot drift apart.
+///
+/// **Its actions are borderless, never `.link`** (2026-10-29). «Очистить», «Скопировать», «Ещё
+/// вариант» and «Добавить…» are actions, and drawn as links they put the accent on chrome in up
+/// to three places, reading as web links. HIG: do not give a colour two meanings; the accent
+/// here means the primary action and the change marks. «Очистить» and «Скопировать» are
+/// symbols — `PaneIconButton`, the platform's own glyphs, named for VoiceOver and in a tooltip.
+///
+/// **No band and no rule under it any more.** The header used to be a 28 pt grey strip over a
+/// divider; on a sheet the sheet's own edge says where the pane starts, and a second band inside
+/// it said it twice. Both sheets pin `PaneSheet.headerHeight`, so the two rows still line up
+/// across the gap — which is what the old constant was for.
+struct PaneHeader<Leading: View, Trailing: View>: View {
+    @ViewBuilder var leading: () -> Leading
+    @ViewBuilder var trailing: () -> Trailing
 
     var body: some View {
-        HStack {
-            // The spacer belongs to the *title*, and only to it: it is what pushes the
-            // action to the trailing edge. With no title — the left pane's header, which is
-            // a mode switch — two equally flexible spacers split the free width between
-            // them and the switch floated a quarter of the way in, instead of sitting where
-            // the caption it replaced used to be.
-            if let title {
-                Text(title).font(.caption).foregroundStyle(.secondary)
-                Spacer()
-            }
-            action().font(.caption)
+        HStack(spacing: 10) {
+            leading()
+            Spacer(minLength: 0)
+            trailing().font(.caption)
         }
-        .padding(.horizontal, 8)
-        .frame(height: Self.height)
-        .background(.quaternary.opacity(0.25))
-        Divider()
+        .padding(.horizontal, PaneSheet.contentInset)
+        .frame(height: PaneSheet.headerHeight)
+    }
+}
+
+/// A sheet's name, where it has no language to name: «Оригинал» and «Правка». Set as the chosen
+/// design sets them — the subheadline size, semibold — a step quieter than a language menu,
+/// which is a control and takes the body size.
+struct PaneTitle: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+    var body: some View {
+        Text(text).font(.subheadline.weight(.semibold))
+    }
+}
+
+/// «Очистить», «Скопировать»: a symbol in the secondary colour, its name for VoiceOver and the
+/// tooltip. A `Label` with `.iconOnly` rather than a bare `Image`, so the button has a name
+/// without a separate accessibility modifier that could come to say something else.
+struct PaneIconButton: View {
+    let title: String
+    let systemImage: String
+    let action: () -> Void
+
+    /// Read so a disabled button looks it. The explicit `.secondary` below overrides the
+    /// dimming a borderless button gets for free: measured 2026-10-29 on `renderWindowPreview`'s
+    /// images, «Очистить» over an empty editor and «Скопировать» over an empty перевод drew
+    /// #929292 — the same grey as when they work.
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .labelStyle(.iconOnly)
+                .font(.system(size: 13))
+                .frame(minWidth: 20, minHeight: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .foregroundStyle(isEnabled ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+        .help(title)
     }
 }

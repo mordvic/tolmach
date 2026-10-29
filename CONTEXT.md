@@ -242,17 +242,29 @@ The first two write `showsChangeDetail`; the third is a per-presentation peek.
 → `PanelReplyView`, `HotkeyCoordinator.showsOriginal`
 _Avoid_: «режим», «вкладка»
 
-**Оригинал** — *the text before правка, as the panel shows it*
-The selection a press captured, shown in the panel's reply area with no marks. **Not
+**Оригинал** — *the text before правка*
+The selection a press captured, shown in the panel's reply area with no marks; and, since
+2026-10-29, the name of the window's left sheet under правка, which holds the same thing. **Not
 «исходник»**: «Исходник» already means the *raw form* of a pane's text (the Markdown under
-«Разметка»), and the panel has no such pane — what it lacks is the text before the operation,
-which is what Apple's own «Original» button names.
-→ `PanelReplyView.original`
+«Разметка»), and in the window the segment beside «Результат» says so — what this names is the
+text before the operation, which is what Apple's own «Original» button names.
+→ `PanelReplyView.original`, `MainWindowView.sourceSheet`
 _Avoid_: исходник, источник, «было»
 
 ---
 
 ## Вид
+
+**Лист** — *a sheet*
+One of the window's two text surfaces — the text the user brought on the left, what came back
+on the right — drawn as a bordered sheet on a frame one tone off it. Its header names the
+language its text is in — chosen, or found: «Английский» over a text the last перевод detected
+as English while that text is unchanged, «Русский» over a translation the rule sent into
+Russian — and «Определить язык» / «По правилу» while nothing is known; or, where there is no
+language to choose, the sheet itself («Оригинал», «Правка»). Not the modal sheet
+(«Термины документа»), which is a sheet in AppKit's sense and is called by its name.
+→ `PaneSheet`, `PaneSplit`, `PaneHeader`, `LanguageMenu`
+_Avoid_: панель (that is the ⌥⌘T panel), карточка (the code card and the change card)
 
 **Шрифт текста** — *content font*
 The typeface and size the *user's own text* is drawn in: the исходник, the перевод, and the text
