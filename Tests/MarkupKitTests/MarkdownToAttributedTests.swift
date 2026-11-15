@@ -44,7 +44,7 @@ private func runDump(_ attributed: NSAttributedString) -> String {
     return lines.joined(separator: " · ")
 }
 
-@MainActor @Test func headingsScaleBySizeAndAreSemibold() {
+@MarkupTestActor @Test func headingsScaleBySizeAndAreSemibold() {
     let text = "# Первый\n\n## Второй\n\n### Третий\n\n#### Четвёртый\n\nАбзац.\n"
     let rendered = MarkdownToAttributed.rendering(of: text, config: config).attributed
     let sizes = ["Первый", "Второй", "Третий", "Четвёртый", "Абзац."].map {
@@ -57,7 +57,7 @@ private func runDump(_ attributed: NSAttributedString) -> String {
     #expect(!traits(fontOf(rendered, containing: "Абзац.")).contains(.bold))
 }
 
-@MainActor @Test func headingsScaleWithTheContentFontRatherThanWithAConstant() {
+@MarkupTestActor @Test func headingsScaleWithTheContentFontRatherThanWithAConstant() {
     // `docs/adr/0008`: «Шрифт текста» governs every rendered run, headings included. A
     // heading built from a literal point size would keep 21 pt here.
     let large = MarkdownFontConfig(baseSize: 26, typeface: .system)
@@ -66,7 +66,7 @@ private func runDump(_ attributed: NSAttributedString) -> String {
     #expect(fontOf(rendered.attributed, containing: "Абзац.")?.pointSize == 26)
 }
 
-@MainActor @Test func inlineBoldItalicAndCodeReachTheirRuns() {
+@MarkupTestActor @Test func inlineBoldItalicAndCodeReachTheirRuns() {
     let rendered = MarkdownToAttributed.rendering(
         of: "Абзац с **жирным**, *курсивом* и `кодом` внутри.\n", config: config).attributed
     #expect(traits(fontOf(rendered, containing: "жирным")).contains(.bold))
@@ -89,7 +89,7 @@ private func runDump(_ attributed: NSAttributedString) -> String {
     #expect(!rendered.string.contains("**"))
 }
 
-@MainActor @Test func aLinkCarriesItsDestination() {
+@MarkupTestActor @Test func aLinkCarriesItsDestination() {
     let rendered = MarkdownToAttributed.rendering(
         of: "Смотри [тут](https://x.org) внимательно.\n", config: config).attributed
     var found: URL?
@@ -102,7 +102,7 @@ private func runDump(_ attributed: NSAttributedString) -> String {
     #expect(!rendered.string.contains("https://x.org"))
 }
 
-@MainActor @Test func aCodeBlockCarriesItsSourceBytesVerbatim() {
+@MarkupTestActor @Test func aCodeBlockCarriesItsSourceBytesVerbatim() {
     let text = "Текст\n\n```swift\nlet a = 1\n\tlet b = 2\n```\n\nЕщё.\n"
     let rendered = MarkdownToAttributed.rendering(of: text, config: config)
     #expect(rendered.codeRegions.count == 1)
@@ -119,7 +119,7 @@ private func runDump(_ attributed: NSAttributedString) -> String {
     #expect(!rendered.attributed.string.contains("```"))
 }
 
-@MainActor @Test func aCodeBlockIsNeverHandedToTheInlineParser() {
+@MarkupTestActor @Test func aCodeBlockIsNeverHandedToTheInlineParser() {
     // Measured (`Scripts/markup-render.swift` §4): `inlineOnlyPreservingWhitespace` reads a
     // ``` line as one inline code run, so a fence routed through `inline` comes back with its
     // markers eaten and its content restyled. Emphasis markers inside code are the cheapest
@@ -133,7 +133,7 @@ private func runDump(_ attributed: NSAttributedString) -> String {
             == "printf(\"**%s**\", s);\n_underscored_ = 1;")
 }
 
-@MainActor @Test func tableCellsBecomeTextTableBlocksAtTheirOwnRowAndColumn() {
+@MarkupTestActor @Test func tableCellsBecomeTextTableBlocksAtTheirOwnRowAndColumn() {
     let text = "| Колонка | Значение |\n|:---|---:|\n| a | 1 |\n\nПосле.\n"
     let rendered = MarkdownToAttributed.rendering(of: text, config: config).attributed
     var cells: [(row: Int, column: Int, text: String, alignment: NSTextAlignment)] = []
@@ -162,7 +162,7 @@ private func runDump(_ attributed: NSAttributedString) -> String {
     #expect(!rendered.string.contains("---"))
 }
 
-@MainActor @Test func listItemsCarryATextListAndAHangingIndent() {
+@MarkupTestActor @Test func listItemsCarryATextListAndAHangingIndent() {
     let text = "- первый\n- второй\n  - вложенный\n\nПосле.\n"
     let rendered = MarkdownToAttributed.rendering(of: text, config: config).attributed
     var styles: [NSParagraphStyle] = []
@@ -182,7 +182,7 @@ private func runDump(_ attributed: NSAttributedString) -> String {
     #expect(rendered.string.contains("•\tпервый"))
 }
 
-@MainActor @Test func anOrderedListKeepsItsOwnNumbers() {
+@MarkupTestActor @Test func anOrderedListKeepsItsOwnNumbers() {
     let rendered = MarkdownToAttributed.rendering(of: "3. третий\n4. четвёртый\n\nx\n",
                                                   config: config).attributed
     // The document's numbers, not a renumbering from one: a translation that starts a list at
@@ -191,7 +191,7 @@ private func runDump(_ attributed: NSAttributedString) -> String {
     #expect(rendered.string.contains("4.\tчетвёртый"))
 }
 
-@MainActor @Test func aBlockquoteWearsALeftBarAndIsSecondary() {
+@MarkupTestActor @Test func aBlockquoteWearsALeftBarAndIsSecondary() {
     let rendered = MarkdownToAttributed.rendering(of: "> цитата\n\n> > глубже\n\nАбзац.\n",
                                                   config: config).attributed
     var quoteColour: NSColor?
@@ -218,7 +218,7 @@ private func runDump(_ attributed: NSAttributedString) -> String {
 
 /// Rules between rows and a filled header, not a grid: how GitHub, ChatGPT and Claude draw a
 /// table, and the reason a full grid was replaced — it read as a spreadsheet.
-@MainActor @Test func aTableHasAFilledHeaderRowAndHorizontalRulesOnly() {
+@MarkupTestActor @Test func aTableHasAFilledHeaderRowAndHorizontalRulesOnly() {
     let rendered = MarkdownToAttributed.rendering(of: "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\nПосле.",
                                                   config: config).attributed
     var header: [NSTextTableBlock] = []
@@ -249,7 +249,7 @@ private func runDump(_ attributed: NSAttributedString) -> String {
 /// The newline that ends a block carries no run decoration. It used to copy the last run's
 /// background, and a list item ending in inline code wore a grey bar to the right edge of the
 /// pane — AppKit paints a newline's background from the last glyph to the line's end.
-@MainActor @Test func theBlockTerminatorCarriesNoBackgroundOrLinkFromTheLastRun() {
+@MarkupTestActor @Test func theBlockTerminatorCarriesNoBackgroundOrLinkFromTheLastRun() {
     let rendered = MarkdownToAttributed.rendering(of: "- пункт с `кодом`\n\nсм. [сайт](https://x.org)\n",
                                                   config: config).attributed
     let string = rendered.string as NSString
@@ -265,7 +265,7 @@ private func runDump(_ attributed: NSAttributedString) -> String {
     }
 }
 
-@MainActor @Test func renderingSomeBlocksConcatenatesIntoTheSameDocumentAsRenderingAllOfThem() {
+@MarkupTestActor @Test func renderingSomeBlocksConcatenatesIntoTheSameDocumentAsRenderingAllOfThem() {
     // The property the streaming path rests on: the pane renders the settled prefix now and
     // the rest later, and the result must be what one call would have produced. A block whose
     // spacing came from a blank line of text instead of a paragraph style would break it.
@@ -289,14 +289,14 @@ private func runDump(_ attributed: NSAttributedString) -> String {
     #expect(shape(joined) == shape(whole.attributed))
 }
 
-@MainActor @Test func aCodeRegionShiftsWithTheTextItIsAppendedAfter() {
+@MarkupTestActor @Test func aCodeRegionShiftsWithTheTextItIsAppendedAfter() {
     let region = MarkdownToAttributed.CodeRegion(range: NSRange(location: 4, length: 9),
                                                  source: "let x = 1")
     #expect(region.offset(by: 100).range == NSRange(location: 104, length: 9))
     #expect(region.offset(by: 100).source == "let x = 1")
 }
 
-@MainActor @Test func theSourceModeIsTheSameCharactersInOneFont() {
+@MarkupTestActor @Test func theSourceModeIsTheSameCharactersInOneFont() {
     // «Исходник»: the same string, no conversion — today's pane, byte for byte.
     let text = "# Заголовок\n\nАбзац с **жирным**.\n"
     let plain = MarkdownToAttributed.plain(text, config: config)
@@ -305,7 +305,7 @@ private func runDump(_ attributed: NSAttributedString) -> String {
     #expect(runs(plain)[0].font?.pointSize == 13)
 }
 
-@MainActor @Test func theRenderedDocumentSurvivesTheRTFRoundTripTheCopyPathUses() {
+@MarkupTestActor @Test func theRenderedDocumentSurvivesTheRTFRoundTripTheCopyPathUses() {
     let text = "# Заголовок\n\nАбзац с **жирным**.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"
     let rendered = MarkdownToAttributed.rendering(of: text, config: config)
     guard let rtf = rendered.rtf else { Issue.record("no rtf produced"); return }
@@ -325,7 +325,7 @@ private func runDump(_ attributed: NSAttributedString) -> String {
     #expect(tableCells == 4)
 }
 
-@MainActor @Test func aHalfArrivedBlockRendersRatherThanThrowing() {
+@MarkupTestActor @Test func aHalfArrivedBlockRendersRatherThanThrowing() {
     // `returnPartiallyParsedIfPossible` plus a `try?`: half a heading is the normal state of a
     // stream, and the pane may not lose its text to it.
     for fragment in ["# Заголово", "Текст с **незакрытым", "| a | b", "```swift\nlet x = 1"] {
@@ -339,7 +339,7 @@ private func runDump(_ attributed: NSAttributedString) -> String {
 /// A code block is a card: a bordered text block, the way every table cell already is, so the
 /// frame is part of the attributed string and rides into the RTF flavour — and the language the
 /// fence named travels on the region, for the overlay label, never as characters.
-@MainActor @Test func aCodeBlockIsABorderedCardAndItsLanguageRidesOnTheRegionNotInTheText() {
+@MarkupTestActor @Test func aCodeBlockIsABorderedCardAndItsLanguageRidesOnTheRegionNotInTheText() {
     let text = "Текст\n\n```swift\nlet a = 1\n```\n\n```\nплоский\n```\n"
     let rendered = MarkdownToAttributed.rendering(of: text, config: config)
     #expect(rendered.codeRegions.map(\.language) == ["swift", nil])
@@ -358,7 +358,7 @@ private func runDump(_ attributed: NSAttributedString) -> String {
     #expect(block.width(for: .padding, edge: .minY) >= MarkdownToAttributed.codeCardHeaderHeight)
 }
 
-@MainActor @Test func theCodeCardSurvivesTheRTFRoundTrip() {
+@MarkupTestActor @Test func theCodeCardSurvivesTheRTFRoundTrip() {
     let rendered = MarkdownToAttributed.rendering(of: "```sh\nswift build\n```\n", config: config)
     guard let rtf = rendered.rtf,
           let reread = NSAttributedString(rtf: rtf, documentAttributes: nil) else {
@@ -380,7 +380,7 @@ private func runDump(_ attributed: NSAttributedString) -> String {
 
 /// The renderer draws «•»-lines as the list they are, through the same `listItem` path a
 /// Markdown list takes; «Исходник» — `plain` — still shows the characters the user gave.
-@MainActor @Test func plainBulletLinesAreDrawnAsAListAndLeftAloneInTheSourceMode() {
+@MarkupTestActor @Test func plainBulletLinesAreDrawnAsAListAndLeftAloneInTheSourceMode() {
     let text = "Список:\n\n• раз\n• два\n\nПосле."
     let rendered = MarkdownToAttributed.rendering(of: text, config: config).attributed
     var listed = 0
@@ -399,7 +399,7 @@ private func runDump(_ attributed: NSAttributedString) -> String {
 /// A fence that names a language gets its keywords, strings and comments coloured; a bare fence
 /// stays in the label colour. The bytes are untouched either way — `CodeRegion.source` is the
 /// promise the per-block «Скопировать» rests on.
-@MainActor @Test func aNamedFenceIsColouredAndABareOneIsNot() {
+@MarkupTestActor @Test func aNamedFenceIsColouredAndABareOneIsNot() {
     let named = MarkdownToAttributed.rendering(of: "```swift\nlet x = \"a\" // c\n```\n", config: config)
     let bare = MarkdownToAttributed.rendering(of: "```\nlet x = \"a\" // c\n```\n", config: config)
     #expect(named.codeRegions.first?.source == "let x = \"a\" // c")

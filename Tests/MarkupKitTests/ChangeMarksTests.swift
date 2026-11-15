@@ -89,7 +89,7 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
 
 // MARK: - Block ranges
 
-@MainActor @Test func everyBlockGetsARangeAndTheRangesTileTheRenderedDocument() {
+@MarkupTestActor @Test func everyBlockGetsARangeAndTheRangesTileTheRenderedDocument() {
     let text = """
     # Заголовок
 
@@ -126,7 +126,7 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
     #expect(next == rendering.attributed.length)
 }
 
-@MainActor @Test func aBlockRangeOfTheRenderedDocumentCoversThatBlocksOwnCharacters() {
+@MarkupTestActor @Test func aBlockRangeOfTheRenderedDocumentCoversThatBlocksOwnCharacters() {
     let text = "# Заголовок\n\nАбзац с текстом.\n"
     let rendering = MarkdownToAttributed.rendering(of: text, config: config)
     let string = rendering.attributed.string as NSString
@@ -135,7 +135,7 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
     #expect(string.substring(with: rendering.blockRanges[1]) == "Абзац с текстом.\n")
 }
 
-@MainActor @Test func thePlainRenderingLocatesEachBlockInTheDocumentsOwnCharacters() {
+@MarkupTestActor @Test func thePlainRenderingLocatesEachBlockInTheDocumentsOwnCharacters() {
     let text = "# Заголовок\n\nАбзац с **текстом**.\n\n- пункт\n"
     let rendering = MarkdownToAttributed.plainRendering(of: text, config: config)
     #expect(rendering.attributed.string == text)
@@ -148,7 +148,7 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
 
 // MARK: - «Результат»: the underlines
 
-@MainActor @Test func aCorrectedWordInAParagraphIsUnderlinedAndNothingIsInserted() {
+@MarkupTestActor @Test func aCorrectedWordInAParagraphIsUnderlinedAndNothingIsInserted() {
     let (set, clean, marked) = fixture(source: "Отчет за август готов.",
                                        result: "Отчёт за август готов.")
     #expect(set.changes.count == 1)
@@ -161,7 +161,7 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
     #expect(underlineStyle(marked, under: "Отчёт") == [.single, .patternDot])
 }
 
-@MainActor @Test func aCorrectedWordInAHeadingIsUnderlinedInTheHeadingsOwnRun() {
+@MarkupTestActor @Test func aCorrectedWordInAHeadingIsUnderlinedInTheHeadingsOwnRun() {
     let (set, _, marked) = fixture(source: "# Отчет за август\n\nТекст.",
                                    result: "# Отчёт за август\n\nТекст.")
     #expect(set.changes.count == 1)
@@ -169,7 +169,7 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
     #expect(marks(marked).map(\.text) == ["Отчёт"])
 }
 
-@MainActor @Test func aCorrectedWordInAListItemIsUnderlinedWithADottedLine() {
+@MarkupTestActor @Test func aCorrectedWordInAListItemIsUnderlinedWithADottedLine() {
     let (_, _, marked) = fixture(source: "- первый пункт\n- второй пункт\n",
                                  result: "- первый пункт\n- второй пунктик\n")
     #expect(marks(marked).map(\.text) == ["пунктик"])
@@ -180,7 +180,7 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
     #expect(underlineStyle(marked, under: "пунктик") == [.single, .patternDot])
 }
 
-@MainActor @Test func aCorrectedWordInATableCellIsUnderlinedWithADottedLine() {
+@MarkupTestActor @Test func aCorrectedWordInATableCellIsUnderlinedWithADottedLine() {
     let source = "| Товар | Цена |\n| --- | --- |\n| Хлеб | 10 |\n"
     let result = "| Товар | Цена |\n| --- | --- |\n| Хлеба | 10 |\n"
     let (set, _, marked) = fixture(source: source, result: result)
@@ -189,7 +189,7 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
     #expect(underlineStyle(marked, under: "Хлеба") == [.single, .patternDot])
 }
 
-@MainActor @Test func aCorrectedWordIsUnderlinedInTheRawSourceRenderingPastItsMarkers() {
+@MarkupTestActor @Test func aCorrectedWordIsUnderlinedInTheRawSourceRenderingPastItsMarkers() {
     // Story 6: «Исходник» must not cost the marks. The aligner has to walk past the `**` the
     // projection does not have, which is the whole reason it skips unmatched shown tokens.
     let (set, clean, marked) = fixture(source: "Отчет за **август** готов.",
@@ -200,7 +200,7 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
     #expect(marks(marked).map(\.text) == ["Отчёт"])
 }
 
-@MainActor @Test func aCorrectedWordInsideBoldMarkersIsUnderlinedInTheRawSourceRendering() {
+@MarkupTestActor @Test func aCorrectedWordInsideBoldMarkersIsUnderlinedInTheRawSourceRendering() {
     // Two changes far enough apart that `mergeGap` leaves them two, so the second one has to
     // be located past the `**` the projection does not have — a single merged change would
     // span the markers and prove nothing about the walk.
@@ -210,7 +210,7 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
     #expect(marks(marked).map(\.text) == ["Отчёт", "август"])
 }
 
-@MainActor @Test func aCorrectedWordInAPlainSourceListIsUnderlinedDespiteTheSynthesisedLabel() {
+@MarkupTestActor @Test func aCorrectedWordInAPlainSourceListIsUnderlinedDespiteTheSynthesisedLabel() {
     // The projection gives a list item a «• » the source's own «- » never carries, so the
     // aligner's second attempt — the label skipped — is what keeps the raw view marked.
     let (_, _, marked) = fixture(source: "- первый пункт\n- второй пункт\n",
@@ -218,7 +218,7 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
     #expect(marks(marked).map(\.text) == ["пунктик"])
 }
 
-@MainActor @Test func aRewrittenBlockIsUnderlinedWholeRatherThanWordByWord() {
+@MarkupTestActor @Test func aRewrittenBlockIsUnderlinedWholeRatherThanWordByWord() {
     let (set, _, marked) = fixture(
         source: "Первый абзац.\n\nСовершенно другой текст здесь.",
         result: "Первый абзац.\n\nПолностью иные слова тут.")
@@ -227,7 +227,7 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
     #expect(marks(marked).map(\.text) == ["Полностью иные слова тут."])
 }
 
-@MainActor @Test func noMarkIsEverDrawnInsideACodeBlock() {
+@MarkupTestActor @Test func noMarkIsEverDrawnInsideACodeBlock() {
     // Story 17. The bytes went through `Chunk.passthrough` and the model never saw them, so
     // the mark would be a claim about a text nothing changed.
     let (set, _, marked) = fixture(source: "Отчет готов.\n\n```swift\nlet a = 1\n```\n",
@@ -240,7 +240,7 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
                                         effectiveRange: nil) == nil)
 }
 
-@MainActor @Test func aBlockWhoseWordsTheRenderingDoesNotCarryIsLeftUnmarkedWhileItsNeighbourIsMarked() {
+@MarkupTestActor @Test func aBlockWhoseWordsTheRenderingDoesNotCarryIsLeftUnmarkedWhileItsNeighbourIsMarked() {
     // The projection and the rendering disagree on purpose: the marked rendering is built
     // from a text whose second block says something else. The first change is locatable in
     // both blocks — it is each block's first token — so an aligner that kept whatever it had
@@ -261,7 +261,7 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
 
 // MARK: - «Изменения»: the removed text
 
-@MainActor @Test func theRemovedWordAppearsStruckThroughImmediatelyBeforeTheWordThatReplacedIt() {
+@MarkupTestActor @Test func theRemovedWordAppearsStruckThroughImmediatelyBeforeTheWordThatReplacedIt() {
     let (_, _, marked) = fixture(source: "Отчет за август готов.",
                                  result: "Отчёт за август готов.", detail: .changes)
     #expect(marked.attributed.string == "Отчет Отчёт за август готов.\n")
@@ -271,7 +271,7 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
     #expect(marks(marked).map(\.text) == ["Отчёт"])
 }
 
-@MainActor @Test func theRemovedTextTakesTheRemovedColourAndCarriesNoneOfTheAnchorsDecorations() {
+@MarkupTestActor @Test func theRemovedTextTakesTheRemovedColourAndCarriesNoneOfTheAnchorsDecorations() {
     let (_, _, marked) = fixture(source: "Отчет за **август** готов.",
                                  result: "Отчёт за **август** готов.", detail: .changes)
     let colour = marked.attributed.attribute(.foregroundColor, at: 0,
@@ -287,7 +287,7 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
                                         effectiveRange: nil) == nil)
 }
 
-@MainActor @Test func aRemovedWordIsStruckThroughWhereItStoodAndGluesToNeitherNeighbourNorPunctuation() {
+@MarkupTestActor @Test func aRemovedWordIsStruckThroughWhereItStoodAndGluesToNeitherNeighbourNorPunctuation() {
     let (set, _, marked) = fixture(source: "Отчёт за август готов уже.",
                                    result: "Отчёт за август готов.", detail: .changes)
     #expect(set.changes.count == 1)
@@ -298,7 +298,7 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
     #expect(struck(marked) == ["уже"])
 }
 
-@MainActor @Test func aRemovedWordAtTheVeryEndOfABlockIsStruckThroughAfterItsLastWord() {
+@MarkupTestActor @Test func aRemovedWordAtTheVeryEndOfABlockIsStruckThroughAfterItsLastWord() {
     // `insertedTokens.lowerBound == the block's token count` — the anchor that stands after
     // the last token rather than before the next one, and the one that indexes out of the map
     // if it is not special-cased.
@@ -310,7 +310,7 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
     #expect(struck(marked) == ["уже"])
 }
 
-@MainActor @Test func everyCodeRegionAfterASplicedRemovalShiftsByExactlyItsLength() {
+@MarkupTestActor @Test func everyCodeRegionAfterASplicedRemovalShiftsByExactlyItsLength() {
     let (_, clean, marked) = fixture(source: "Отчет готов.\n\n```swift\nlet a = 1\n```\n",
                                      result: "Отчёт готов.\n\n```swift\nlet a = 1\n```\n",
                                      detail: .changes)
@@ -322,7 +322,7 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
         == clean.codeRegions[0].source)
 }
 
-@MainActor @Test func aRewrittenBlocksOldTextBecomesItsOwnParagraphAboveTheNewOne() {
+@MarkupTestActor @Test func aRewrittenBlocksOldTextBecomesItsOwnParagraphAboveTheNewOne() {
     let (_, _, marked) = fixture(
         source: "Первый абзац.\n\nСовершенно другой текст здесь.",
         result: "Первый абзац.\n\nПолностью иные слова тут.", detail: .changes)
@@ -331,7 +331,7 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
     #expect(struck(marked) == ["Совершенно другой текст здесь.\n"])
 }
 
-@MainActor @Test func aBlockRemovedFromTheEndOfTheDocumentIsStruckThroughAfterTheLastBlock() {
+@MarkupTestActor @Test func aBlockRemovedFromTheEndOfTheDocumentIsStruckThroughAfterTheLastBlock() {
     // `TextChange.block` is one past the last result block here — the one anchor that names no
     // block at all, and the case that indexes out of `blockRanges` if it is not special-cased.
     let (set, _, marked) = fixture(source: "Раз.\n\nДва.\n\nТри.", result: "Раз.\n\nДва.",
@@ -344,7 +344,7 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
 
 // MARK: - The copy path
 
-@MainActor @Test func theCleanRenderingsRTFIsUnaffectedByHavingBeenMarked() {
+@MarkupTestActor @Test func theCleanRenderingsRTFIsUnaffectedByHavingBeenMarked() {
     // Story 10: a правка must never arrive in Word wearing review marks. The flavour is built
     // from the clean rendering and nothing in the copy path calls `apply` — pinned here by
     // taking the bytes before and after, because `PaneRendering` lives in the app target and
@@ -366,7 +366,7 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
     #expect(String(data: marked.rtf ?? Data(), encoding: .utf8)?.contains("\\strike") == true)
 }
 
-@MainActor @Test func applyReturnsANewRenderingAndLeavesTheOneItWasGivenAlone() {
+@MarkupTestActor @Test func applyReturnsANewRenderingAndLeavesTheOneItWasGivenAlone() {
     let source = "Отчет за август готов."
     let result = "Отчёт за август готов."
     let clean = MarkdownToAttributed.rendering(of: result, config: config)
@@ -380,14 +380,14 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
 
 // MARK: - The underline's weight
 
-@MainActor @Test func theUnderlineThickensAtSeventeenPoints() {
+@MarkupTestActor @Test func theUnderlineThickensAtSeventeenPoints() {
     #expect(ChangeMarks.underlineStyle(for: 16) == .single)
     #expect(ChangeMarks.underlineStyle(for: 17) == .thick)
     #expect(ChangeMarks.underlineStyle(for: 32) == .thick)
     #expect(ChangeMarks.underlineStyle(for: 11) == .single)
 }
 
-@MainActor @Test func theMarkTakesItsWeightFromTheContentFont() {
+@MarkupTestActor @Test func theMarkTakesItsWeightFromTheContentFont() {
     let large = MarkdownFontConfig(baseSize: 22, typeface: .system)
     let result = "Отчёт за август готов."
     let set = TextDiff.changes(source: "Отчет за август готов.", result: result)
@@ -397,7 +397,7 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
     #expect(underlineStyle(marked, under: "Отчёт") == [.thick, .patternDot])
 }
 
-@MainActor @Test func underIncreaseContrastEveryLineIsThickAtEverySize() {
+@MarkupTestActor @Test func underIncreaseContrastEveryLineIsThickAtEverySize() {
     #expect(ChangeMarks.underlineStyle(for: 11, increasedContrast: true) == .thick)
     #expect(ChangeMarks.underlineStyle(for: 13, increasedContrast: true) == .thick)
     let (_, _, marked) = fixture(source: "Отчет за август готов.", result: "Отчёт за август готов.",
@@ -407,7 +407,7 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
     #expect(strike == NSUnderlineStyle.thick.rawValue)
 }
 
-@MainActor @Test func theStrikeTakesTheUnderlinesWeight() {
+@MarkupTestActor @Test func theStrikeTakesTheUnderlinesWeight() {
     let large = MarkdownFontConfig(baseSize: 22, typeface: .system)
     let (_, _, marked) = fixture(source: "Отчет за август готов.", result: "Отчёт за август готов.",
                                  detail: .changes, config: large)
@@ -417,7 +417,7 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
 
 // MARK: - What every shape of change leaves to see
 
-@MainActor @Test func theRemovedTextCarriesItsIndexAndTheSpacesAroundItDoNot() {
+@MarkupTestActor @Test func theRemovedTextCarriesItsIndexAndTheSpacesAroundItDoNot() {
     let (_, _, marked) = fixture(source: "Отчет за август готов.", result: "Отчёт за август готов.",
                                  detail: .changes)
     #expect(runs(marked, ChangeMarks.removedKey).map(\.text) == ["Отчет"])
@@ -426,7 +426,7 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
     #expect(marked.attributed.attribute(.strikethroughStyle, at: space, effectiveRange: nil) == nil)
 }
 
-@MainActor @Test func aPureRemovalInResultCarriesItsIndexOnTheGapWhereTheWordsStood() {
+@MarkupTestActor @Test func aPureRemovalInResultCarriesItsIndexOnTheGapWhereTheWordsStood() {
     let (set, _, marked) = fixture(source: "Мы закончили закончили миграцию базы.",
                                    result: "Мы закончили миграцию базы.")
     #expect(set.changes.count == 1 && set.changes[0].inserted.isEmpty)
@@ -436,36 +436,36 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
     #expect(marked.attributed.attribute(.underlineStyle, at: gap, effectiveRange: nil) == nil)
 }
 
-@MainActor @Test func aPureRemovalInTheRawSourceViewCarriesItsIndexOnTheGapToo() {
+@MarkupTestActor @Test func aPureRemovalInTheRawSourceViewCarriesItsIndexOnTheGapToo() {
     // «Исходник» is the raw Markdown through `plainRendering`; the same anchor, the same gap.
     let (_, _, marked) = fixture(source: "Мы **закончили** закончили миграцию.",
                                  result: "Мы **закончили** миграцию.", raw: true)
     #expect(marks(marked).map(\.text) == [" "])
 }
 
-@MainActor @Test func aPureRemovalBeforePunctuationStandsOnThePunctuation() {
+@MarkupTestActor @Test func aPureRemovalBeforePunctuationStandsOnThePunctuation() {
     let (_, _, marked) = fixture(source: "Сроки сдвигаются на неделю на неделю.",
                                  result: "Сроки сдвигаются на неделю.")
     #expect(marks(marked).map(\.text) == ["."])
 }
 
-@MainActor @Test func aPureRemovalAtTheEndOfABlockStandsOnItsLastCharacter() {
+@MarkupTestActor @Test func aPureRemovalAtTheEndOfABlockStandsOnItsLastCharacter() {
     let (_, _, marked) = fixture(source: "Отчёт готов уже", result: "Отчёт готов")
     #expect(marks(marked).map(\.text) == ["в"])
 }
 
-@MainActor @Test func aRemovedParagraphLeavesItsIndexOnTheNextBlocksFirstCharacter() {
+@MarkupTestActor @Test func aRemovedParagraphLeavesItsIndexOnTheNextBlocksFirstCharacter() {
     let (set, _, marked) = fixture(source: "Раз.\n\nДва.\n\nТри.", result: "Раз.\n\nТри.")
     #expect(set.changes.count == 1 && set.changes[0].inserted.isEmpty)
     #expect(marks(marked).map(\.text) == ["Т"])
 }
 
-@MainActor @Test func aParagraphRemovedFromTheEndLeavesItsIndexOnTheLastCharacter() {
+@MarkupTestActor @Test func aParagraphRemovedFromTheEndLeavesItsIndexOnTheLastCharacter() {
     let (_, _, marked) = fixture(source: "Раз.\n\nДва.\n\nТри.", result: "Раз.\n\nДва.")
     #expect(marks(marked).map(\.text) == ["."])
 }
 
-@MainActor @Test func everyShapeOfChangeLeavesSomethingInResultToStepTo() {
+@MarkupTestActor @Test func everyShapeOfChangeLeavesSomethingInResultToStepTo() {
     // The spec's six shapes: a substitution, a pure insertion, a pure removal, an inserted comma,
     // a change inside a link and a rewritten block. Before 2026-10-29 the removal had nothing.
     let source = """
@@ -493,7 +493,7 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
     #expect(Set(marks(marked).map(\.index)) == Set(0..<set.changes.count))
 }
 
-@MainActor @Test func anInsertionWithNoWordInItIsDrawnInTheMarksColour() {
+@MarkupTestActor @Test func anInsertionWithNoWordInItIsDrawnInTheMarksColour() {
     let (_, _, marked) = fixture(source: "Если что-то непонятно пишите в чат.",
                                  result: "Если что-то непонятно, пишите в чат.")
     #expect(marks(marked).map(\.text) == [","])
@@ -511,7 +511,7 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
             && !ChangeMarks.isPunctuationOnly("4 %") && !ChangeMarks.isPunctuationOnly(""))
 }
 
-@MainActor @Test func aRewrittenBlockCarriesItsIndexButNoUnderline() {
+@MarkupTestActor @Test func aRewrittenBlockCarriesItsIndexButNoUnderline() {
     let source = "Первый абзац.\n\nСовершенно другой текст здесь."
     let result = "Первый абзац.\n\nПолностью иные слова тут."
     for detail in [ChangeMarks.Detail.result, .changes] {
@@ -525,7 +525,7 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
 
 // MARK: - Refusals
 
-@MainActor @Test func aRenderingWithNoBlockRangesIsReturnedUnmarked() {
+@MarkupTestActor @Test func aRenderingWithNoBlockRangesIsReturnedUnmarked() {
     // The app's hand-assembled plain rendering and the streaming tail have no block list to
     // name; marking them against one read from the text would put underlines under whatever
     // words happened to sit at those offsets.
@@ -539,7 +539,7 @@ private func runs(_ rendering: MarkdownToAttributed.Rendering,
     #expect(marks(marked).isEmpty)
 }
 
-@MainActor @Test func anEmptyChangeSetLeavesTheRenderingExactlyAsItWas() {
+@MarkupTestActor @Test func anEmptyChangeSetLeavesTheRenderingExactlyAsItWas() {
     let text = "Отчёт за август готов."
     let clean = MarkdownToAttributed.rendering(of: text, config: config)
     let marked = ChangeMarks.apply(TextDiff.changes(source: text, result: text), to: clean,
@@ -556,7 +556,7 @@ private func reverted(_ edit: ChangeMarks.RevertEdit, in text: String) -> String
     (text as NSString).replacingCharacters(in: edit.range, with: edit.replacement)
 }
 
-@MainActor @Test func revertingAWordLevelSubstitutionRestoresExactlyTheSourceWord() {
+@MarkupTestActor @Test func revertingAWordLevelSubstitutionRestoresExactlyTheSourceWord() {
     let source = "Отчет за август готов."
     let result = "Отчёт за август готов."
     let set = TextDiff.changes(source: source, result: result)
@@ -576,7 +576,7 @@ private func reverted(_ edit: ChangeMarks.RevertEdit, in text: String) -> String
 // there is nothing to restore it from without guessing — `revertEdit`'s own doc comment carries
 // the reasoning, these two tests pin the refusal it settled on.
 
-@MainActor @Test func revertEditRefusesAPureRemovalRatherThanGuessTheSeparator() {
+@MarkupTestActor @Test func revertEditRefusesAPureRemovalRatherThanGuessTheSeparator() {
     let source = "Смотрите, пожалуйста, повнимательнее."
     let result = "Смотрите повнимательнее."
     let set = TextDiff.changes(source: source, result: result)
@@ -585,7 +585,7 @@ private func reverted(_ edit: ChangeMarks.RevertEdit, in text: String) -> String
     #expect(ChangeMarks.revertEdit(for: set.changes[0], in: result) == nil)
 }
 
-@MainActor @Test func revertEditRefusesAPureInsertionRatherThanLeaveAnOrphanedSpace() {
+@MarkupTestActor @Test func revertEditRefusesAPureInsertionRatherThanLeaveAnOrphanedSpace() {
     let source = "Готово."
     let result = "Готово уже."
     let set = TextDiff.changes(source: source, result: result)
@@ -594,7 +594,7 @@ private func reverted(_ edit: ChangeMarks.RevertEdit, in text: String) -> String
     #expect(ChangeMarks.revertEdit(for: set.changes[0], in: result) == nil)
 }
 
-@MainActor @Test func revertingABlockScopeChangeRestoresTheWholeParagraphNotJustAWord() {
+@MarkupTestActor @Test func revertingABlockScopeChangeRestoresTheWholeParagraphNotJustAWord() {
     let source = "Абзац с несколькими словами, который модель полностью переписала целиком."
     let result = "Совершенно другой абзац, переписанный моделью с нуля от начала и до конца."
     let set = TextDiff.changes(source: source, result: result)
@@ -607,7 +607,7 @@ private func reverted(_ edit: ChangeMarks.RevertEdit, in text: String) -> String
     #expect(reverted(edit, in: result) == source)
 }
 
-@MainActor @Test func revertEditRefusesABlockRemovedMidDocument() {
+@MarkupTestActor @Test func revertEditRefusesABlockRemovedMidDocument() {
     // A pure removal at block scope — nothing in the result stands where the paragraph did,
     // the same shape and the same reason a word-level pure removal refuses.
     let source = """
@@ -628,7 +628,7 @@ private func reverted(_ edit: ChangeMarks.RevertEdit, in text: String) -> String
     #expect(ChangeMarks.revertEdit(for: removal, in: result) == nil)
 }
 
-@MainActor @Test func revertEditRefusesABlockRemovedFromTheEnd() {
+@MarkupTestActor @Test func revertEditRefusesABlockRemovedFromTheEnd() {
     let source = """
     Первый абзац.
 
@@ -640,7 +640,7 @@ private func reverted(_ edit: ChangeMarks.RevertEdit, in text: String) -> String
     #expect(ChangeMarks.revertEdit(for: set.changes[0], in: result) == nil)
 }
 
-@MainActor @Test func revertEditIsNilForAChangeTheAlignerCannotLocate() {
+@MarkupTestActor @Test func revertEditIsNilForAChangeTheAlignerCannotLocate() {
     // A change whose block index and token range describe a result this text does not carry
     // at all: the aligner cannot walk it onto anything, and «Вернуть» must refuse rather than
     // guess an offset.
@@ -649,7 +649,7 @@ private func reverted(_ edit: ChangeMarks.RevertEdit, in text: String) -> String
     #expect(ChangeMarks.revertEdit(for: bogus, in: "Единственный короткий абзац.") == nil)
 }
 
-@MainActor @Test func revertEditIsNilForAChangeInsideACodeBlock() {
+@MarkupTestActor @Test func revertEditIsNilForAChangeInsideACodeBlock() {
     // Step 1's own guarantee (`isDiffable`) means `TextDiff` never produces this change, but
     // the locator refuses it independently rather than trusting the caller — the same
     // discipline `apply`'s `assertionFailure` pins from the drawing side.
@@ -665,7 +665,7 @@ private func reverted(_ edit: ChangeMarks.RevertEdit, in text: String) -> String
     #expect(ChangeMarks.revertEdit(for: change, in: result) == nil)
 }
 
-@MainActor @Test func aSecondRevertOnTheAlreadyEditedTextFindsTheNextChangeCorrectly() {
+@MarkupTestActor @Test func aSecondRevertOnTheAlreadyEditedTextFindsTheNextChangeCorrectly() {
     // The rule the view model relies on: revert edits the text, then a fresh `TextDiff` run
     // against the edited text is what the next revert locates against — never a second
     // `revertEdit` call against the original result with stale offsets.
