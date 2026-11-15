@@ -32,10 +32,14 @@ final class ScriptedClient: LLMClient, @unchecked Sendable {
     /// arrives later, proceeds.
     private let gate: AsyncStream<Void>?
     private let gateContinuation: AsyncStream<Void>.Continuation?
+    /// The first call, by zero-based index, that a held client holds; the ones before it answer
+    /// at once. For a test that needs one run to finish before the one it holds.
+    private let firstHeldCall: Int
     init(responses: [String], delayPerToken: Duration = .zero, failCallAtIndex: Int? = nil,
-         held: Bool = false) {
+         held: Bool = false, holdingFromCall firstHeldCall: Int = 0) {
         self.responses = responses; self.delayPerToken = delayPerToken
         self.failCallAtIndex = failCallAtIndex
+        self.firstHeldCall = firstHeldCall
         if held {
             let (stream, continuation) = AsyncStream<Void>.makeStream()
             gate = stream; gateContinuation = continuation
@@ -51,7 +55,7 @@ final class ScriptedClient: LLMClient, @unchecked Sendable {
         receivedMessages.append(messages)
         let reply = responses.isEmpty ? "" : responses.removeFirst()
         let delay = delayPerToken
-        let gate = self.gate
+        let gate = index >= firstHeldCall ? self.gate : nil
         if index == failCallAtIndex {
             return AsyncThrowingStream { $0.finish(throwing: ScriptedFailure()) }
         }

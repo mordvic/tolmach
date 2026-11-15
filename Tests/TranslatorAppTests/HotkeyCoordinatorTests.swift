@@ -18,28 +18,51 @@ import AppKit
 /// blocking by design (up to 0.25 s of Accessibility messaging plus 0.5 s of polling), and the
 /// coordinator is meant to keep that off the main actor; a reader that returned instantly
 /// could not tell a coordinator that gets this right from one that does not.
+///
+/// `held` blocks the *first* read until `release()`, so a press is still inside its read for as
+/// long as the test needs it to be. Only the first: a coordinator that wrongly let a second
+/// press read must have that read come back, so the test fails on the count instead of hanging
+/// on a second held read it cannot release until the second press returns. A delay cannot promise that, and nor can the main actor alone:
+/// `await Task.detached { … }.value` does not suspend when the task has already finished, so a
+/// read that completed while the main thread was pre-empted let the press run straight on to
+/// `.running` before the test got the actor back (measured under load: 3 runs in 10). A held
+/// read never blocks *on the main thread* — a coordinator that read there would otherwise
+/// freeze the test that is meant to catch it; it returns at once and is recorded instead.
 private final class ScriptedReader: @unchecked Sendable {
-    private let lock = NSLock()
+    private let condition = NSCondition()
     private var values: [String?]
     private var calls = 0
     private var onMainThread = false
+    private var isHeld: Bool
     private let delay: TimeInterval
 
-    init(_ values: [String?], delay: TimeInterval = 0) {
+    init(_ values: [String?], delay: TimeInterval = 0, held: Bool = false) {
         self.values = values
         self.delay = delay
+        self.isHeld = held
     }
 
-    var callCount: Int { lock.lock(); defer { lock.unlock() }; return calls }
+    var callCount: Int { condition.lock(); defer { condition.unlock() }; return calls }
     /// Whether any read ran on the main thread — the one the panel draws on.
-    var readOnMainThread: Bool { lock.lock(); defer { lock.unlock() }; return onMainThread }
+    var readOnMainThread: Bool { condition.lock(); defer { condition.unlock() }; return onMainThread }
+
+    /// Lets the held read through. Idempotent.
+    func release() {
+        condition.lock()
+        isHeld = false
+        condition.broadcast()
+        condition.unlock()
+    }
 
     func next() -> String? {
-        lock.lock()
+        condition.lock()
         calls += 1
-        if Thread.isMainThread { onMainThread = true }
+        let onMain = Thread.isMainThread
+        if onMain { onMainThread = true }
         let value = values.isEmpty ? nil : values.removeFirst()
-        lock.unlock()
+        let holdsThisOne = calls == 1
+        while isHeld, holdsThisOne, !onMain { condition.wait() }
+        condition.unlock()
         if delay > 0 { Thread.sleep(forTimeInterval: delay) }
         return value
     }
@@ -100,6 +123,8 @@ private func makeCoordinator(reader: ScriptedReader,
                              /// Hold every reply until the test calls `release()` on the
                              /// returned client — see `ScriptedClient.held`.
                              held: Bool = false,
+                             /// The first call a held client holds; earlier ones answer.
+                             holdingFromCall firstHeldCall: Int = 0,
                              settings: AppSettings? = nil,
                              pasteboard: NSPasteboard? = nil,
                              selectionWriter: SelectionWriter? = nil,
@@ -112,7 +137,7 @@ private func makeCoordinator(reader: ScriptedReader,
     let glossary = GlossaryStore(url: FileManager.default.temporaryDirectory
         .appendingPathComponent("hk-\(UUID().uuidString).json"))
     try? glossary.load()
-    let client = ScriptedClient(responses: replies, held: held)
+    let client = ScriptedClient(responses: replies, held: held, holdingFromCall: firstHeldCall)
     let coordinator = HotkeyCoordinator(
         settings: settings ?? AppSettings(defaults: InMemoryDefaults(prefix: "hk")),
         glossary: glossary,
@@ -147,7 +172,10 @@ private func makeCoordinator(reader: ScriptedReader,
 /// The press opens the signal from a hook it calls on the main actor and carries on to its next
 /// suspension; the test's resumption was queued on the main actor before anything that ends
 /// that suspension can be, so the test runs first. Whatever the press does next — take a read's
-/// result, finish a run — waits for the main actor, and the test is holding it.
+/// result, finish a run — waits for the main actor, and the test is holding it. «Its next
+/// suspension» is only where the code says if what it awaits is still outstanding: an `await`
+/// on a task that has already finished does not suspend. So the tests also hold the read or
+/// the reply they need the press stopped at — see `ScriptedReader.held`.
 /// `opening(_:)` also opens on the way out of the press, so a press that never reaches the hook
 /// lets the test run into its assertions and fail there rather than hang.
 @MainActor
@@ -278,11 +306,12 @@ private final class Signal {
     // with two whole-pasteboard destroy-and-restore cycles racing over one board.
     //
     // The test is let in by `willCapture`, after the press has been accepted and before it
-    // reads; the read's result can only come back through the main actor this test is
-    // holding, so the second press lands inside the read however long the machine stalls.
-    // A 0.2 s reader and a poll for its first call used to stand in for that window, and a
-    // poll that woke late found the read already over (PR #108's CI run).
-    let reader = ScriptedReader(["Первый", "Второй"])
+    // reads, and the read is *held* until the test has pressed again, so the second press
+    // lands inside the read however long the machine stalls. A 0.2 s reader and a poll for
+    // its first call used to stand in for that window, and a poll that woke late found the
+    // read already over (PR #108's CI run); an unheld reader without the delay can finish
+    // before the press even awaits it — see `ScriptedReader`.
+    let reader = ScriptedReader(["Первый", "Второй"], held: true)
     let (coordinator, _) = makeCoordinator(reader: reader, replies: ["Один", "Два"])
     let accepted = Signal()
     let first = accepted.opening { await coordinator.handlePress(willCapture: { accepted.open() }) }
@@ -291,6 +320,7 @@ private final class Signal {
 
     await coordinator.handlePress()
 
+    reader.release()
     await first.value
     // One read for two presses: the dropped one never asked. Counted here rather than
     // straight after the second press, where the first press's own read may or may not have
@@ -305,17 +335,18 @@ private final class Signal {
     // The window the capture guard cannot cover. «Повторить» is not a press, so a press
     // landing on top of a running retry finds nothing held — and would read a fresh
     // selection and reassign `sourceText` under a translation already in flight.
+    // The retry's call — the second — is held, the press's is not.
     let reader = ScriptedReader(["Первый", "Второй"])
-    let (coordinator, _) = makeCoordinator(reader: reader,
-                                           replies: ["Один", "Двадцать два"])
+    let (coordinator, client) = makeCoordinator(reader: reader,
+                                                replies: ["Один", "Двадцать два"],
+                                                held: true, holdingFromCall: 1)
     await coordinator.handlePress()
     #expect(coordinator.panelModel.state == .finished)
 
-    // One yield lets the retry start — it was queued on the main actor first — and run to its
-    // first suspension, which is after `state = .running`. Everything after that suspension
-    // needs the main actor this test then holds, so the retry is still running when the press
-    // below lands. A token delay and a poll for `.running` used to make that window, and a
-    // poll that woke after the last token found nothing running.
+    // One yield lets the retry start — it was queued on the main actor first — and run on
+    // past `state = .running`; its reply is held, so it is still running when the press below
+    // lands. A token delay and a poll for `.running` used to make that window, and a poll that
+    // woke after the last token found nothing running.
     let retry = Task { await coordinator.retry() }
     await Task.yield()
     #expect(coordinator.panelModel.state == .running)
@@ -324,6 +355,7 @@ private final class Signal {
     #expect(reader.callCount == 1)
     #expect(coordinator.panelModel.sourceText == "Первый")
 
+    client.release()
     await retry.value
     #expect(coordinator.panelModel.translatedText == "Двадцать два")
 }
@@ -342,13 +374,17 @@ private final class Signal {
     // `willCapture`, before the read: a coordinator that blocked the main actor for the read
     // — reading in place, or waiting on the main thread for a background read — has assigned
     // the selection by the time this test runs again, and one that hopped back onto the main
-    // actor to read (a bare `Task {}`, which inherits it) is caught by the reader itself.
-    let reader = ScriptedReader(["Первый"])
+    // actor to read (a bare `Task {}`, which inherits it) is caught by the reader itself. The
+    // read is held, so a read done off the main actor cannot have finished and been taken
+    // before the test looks; on the main thread the reader does not hold, so a coordinator
+    // that reads there fails this test rather than freezing it.
+    let reader = ScriptedReader(["Первый"], held: true)
     let (coordinator, _) = makeCoordinator(reader: reader, replies: ["Один"])
     let accepted = Signal()
     let press = accepted.opening { await coordinator.handlePress(willCapture: { accepted.open() }) }
     await accepted.wait()
     #expect(coordinator.selection == .empty, "the main actor was blocked for the whole of the read")
+    reader.release()
     await press.value
     #expect(reader.callCount == 1)
     #expect(!reader.readOnMainThread, "the selection was read on the main thread")
@@ -395,8 +431,9 @@ private final class Signal {
     // it, a stray second press would blank a translation that is still streaming.
     // Let in by `afterCapture`, so the first run has started and cannot have finished — see
     // `Signal`. A token delay and a poll for `.running` used to hold that window open.
+    // The reply is held, so the run is still going when the second press lands.
     let reader = ScriptedReader(["Первый", "Второй"])
-    let (coordinator, _) = makeCoordinator(reader: reader, replies: ["Один", "Два"])
+    let (coordinator, client) = makeCoordinator(reader: reader, replies: ["Один", "Два"], held: true)
     var hides = 0
     let captured = Signal()
     let first = captured.opening {
@@ -407,6 +444,7 @@ private final class Signal {
 
     await coordinator.handlePress(willCapture: { hides += 1 })
     #expect(hides == 1)
+    client.release()
     await first.value
 }
 
@@ -751,8 +789,8 @@ private func makePressedCoordinator(responses: [String]) async -> PressHarness {
     // `isCapturing` is per coordinator, and this is what that buys: two shortcuts cannot put
     // two synthetic ⌘C fallbacks into the user's application over one pasteboard.
     // Let in by `willCapture`, inside the read — the same shape, and the same reason, as
-    // `aPressArrivingWhileTheSelectionIsStillBeingReadIsDropped`.
-    let reader = ScriptedReader(["Первый", "Второй"])
+    // `aPressArrivingWhileTheSelectionIsStillBeingReadIsDropped`, read held as there.
+    let reader = ScriptedReader(["Первый", "Второй"], held: true)
     let (coordinator, _) = makeCoordinator(reader: reader, replies: ["Один", "Два"])
     let accepted = Signal()
     let first = accepted.opening { await coordinator.handlePress(willCapture: { accepted.open() }) }
@@ -761,6 +799,7 @@ private func makePressedCoordinator(responses: [String]) async -> PressHarness {
 
     await coordinator.handlePress(operation: .proofread)
 
+    reader.release()
     await first.value
     #expect(reader.callCount == 1)
     #expect(coordinator.selection == .text("Первый"))
