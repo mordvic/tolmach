@@ -1,0 +1,3 @@
+# Test files, one shell case pattern per line ("*" also crosses "/").
+# The agent harness (merge.sh) refuses a ticket that deletes one of these or adds a skip marker to one.
+Tests/*
