@@ -1101,9 +1101,14 @@ private func waitForSheet(_ model: TranslationViewModel,
     model.sourceText = String(repeating: "Одна строка прозы про сервер и ресурс. ", count: 4000)
 
     let run = Task { await model.translate() }
-    // Cancel as soon as the model reports itself busy — which is now *before* the model has
-    // been asked anything, i.e. exactly the window this guards.
-    await waitUntil("the model has claimed the run") { model.state == .running }
+    // One yield lets the run start (the test and the run share the main actor, and the run was
+    // queued first) and stop at its first suspension, the detector. The detector's result can
+    // only be delivered through the main actor, which this test keeps until it next suspends —
+    // so the run is guaranteed to still be before its first call here, however long the
+    // machine stalls. A poll (`waitUntil`) cannot promise that: if it wakes after the detector
+    // has finished, the run has already called the model and the window is gone.
+    await Task.yield()
+    #expect(model.state == .running, "the run should have claimed the model and be inside detection")
     #expect(client.callCount == 0, "the point of this test is the window before the first call")
     model.cancel()
     await run.value
