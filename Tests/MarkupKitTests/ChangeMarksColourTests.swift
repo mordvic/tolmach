@@ -49,7 +49,7 @@ private func worst(_ colour: RGB, dark: Bool) -> Double {
 
 // MARK: - The mark
 
-@Test func everyAccentClearsThreePointFiveAgainstEveryGroundOfItsAppearance() {
+@MainActor @Test func everyAccentClearsThreePointFiveAgainstEveryGroundOfItsAppearance() {
     for dark in [false, true] {
         for (name, accent) in accents {
             let mark = ChangeMarks.floored(resolved(accent, dark: dark), dark: dark,
@@ -60,7 +60,7 @@ private func worst(_ colour: RGB, dark: Bool) -> Double {
     }
 }
 
-@Test func underIncreaseContrastEveryAccentClearsFourPointFive() {
+@MainActor @Test func underIncreaseContrastEveryAccentClearsFourPointFive() {
     for dark in [false, true] {
         for (name, accent) in accents {
             let mark = ChangeMarks.floored(resolved(accent, dark: dark), dark: dark,
@@ -71,7 +71,7 @@ private func worst(_ colour: RGB, dark: Bool) -> Double {
     }
 }
 
-@Test func theFloorMovesEachAccentNoFurtherThanItNeeds() {
+@MainActor @Test func theFloorMovesEachAccentNoFurtherThanItNeeds() {
     // One step short of the chosen fraction must fail somewhere: a rule that added margin of its
     // own would pass every floor test above and still darken синий back toward the text, which is
     // the defect the floor replaced.
@@ -86,7 +86,7 @@ private func worst(_ colour: RGB, dark: Bool) -> Double {
     }
 }
 
-@Test func anAccentThatAlreadyClearsTheFloorIsDrawnUnchanged() {
+@MainActor @Test func anAccentThatAlreadyClearsTheFloorIsDrawnUnchanged() {
     // фиолетовый on the light grounds is 3.51:1 bare (`Scripts/accent-contrast.swift`).
     let purple = resolved(.systemPurple, dark: false)
     #expect(ChangeMarks.floorFraction(purple, dark: false, increasedContrast: false) == 0)
@@ -96,7 +96,7 @@ private func worst(_ colour: RGB, dark: Bool) -> Double {
             && abs(mark.2 - bare.2) < 0.001)
 }
 
-@Test func theBareDarkAccentsFailedOnThePanelAndTheCard() {
+@MainActor @Test func theBareDarkAccentsFailedOnThePanelAndTheCard() {
     // Why the dark marks are moved at all: against the screen's dark grounds five of the eight
     // presets are under 3:1 bare (синий 2.66, фиолетовый 2.37, розовый 2.44, красный 2.50,
     // графит 2.99). Pinned so that a re-measured ground that made this untrue is noticed, and
@@ -105,7 +105,7 @@ private func worst(_ colour: RGB, dark: Bool) -> Double {
     #expect(failing.map(\.0) == ["синий", "фиолетовый", "розовый", "красный", "графит"])
 }
 
-@Test func theLightMarkSitsAsFarFromTheTextAsFromTheGround() {
+@MainActor @Test func theLightMarkSitsAsFarFromTheTextAsFromTheGround() {
     // The 35 % blend left синий 2.12:1 from the text over it; the floor rule puts every preset
     // at ≥ 3.5:1 from `labelColor` (black at 0.85) on every light ground.
     for (name, accent) in accents {
@@ -118,7 +118,7 @@ private func worst(_ colour: RGB, dark: Bool) -> Double {
     }
 }
 
-@Test func theMarkColourResolvesToTheFloorRuleOverThisMachinesAccent() {
+@MainActor @Test func theMarkColourResolvesToTheFloorRuleOverThisMachinesAccent() {
     for dark in [false, true] {
         for high in [false, true] {
             let mark = rgb(resolved(ChangeMarks.markColour(increasedContrast: high), dark: dark))
@@ -132,7 +132,7 @@ private func worst(_ colour: RGB, dark: Bool) -> Double {
 
 // MARK: - Removed text
 
-@Test func removedTextClearsFourPointFiveOnEveryGround() {
+@MainActor @Test func removedTextClearsFourPointFiveOnEveryGround() {
     for dark in [false, true] {
         let colour = resolved(ChangeMarks.removedColour(), dark: dark)
         for ground in grounds(dark: dark) {
@@ -142,7 +142,7 @@ private func worst(_ colour: RGB, dark: Bool) -> Double {
     }
 }
 
-@Test func underIncreaseContrastRemovedTextClearsSix() {
+@MainActor @Test func underIncreaseContrastRemovedTextClearsSix() {
     for dark in [false, true] {
         let colour = resolved(ChangeMarks.removedColour(increasedContrast: true), dark: dark)
         for ground in grounds(dark: dark) {
@@ -152,7 +152,7 @@ private func worst(_ colour: RGB, dark: Bool) -> Double {
     }
 }
 
-@Test func theRemovedAlphasAreTheSmallestStepThatClearsWithHeadroom() {
+@MainActor @Test func theRemovedAlphasAreTheSmallestStepThatClearsWithHeadroom() {
     // Each alpha clears its floor by 0.2 on the worst ground, and 0.05 less does not — or the
     // comment's «smallest» is wrong and the removed text is darker than it needs to be, closer to
     // the body text it has to stay under.

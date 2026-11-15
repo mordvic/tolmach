@@ -65,7 +65,7 @@ private func bodyParagraph() -> NSAttributedString {
 
 // MARK: - Inline runs
 
-@Test func boldAndItalicRunsBecomeTheirMarkers() {
+@MainActor @Test func boldAndItalicRunsBecomeTheirMarkers() {
     let text = document([bodyParagraph(),
                          paragraph([("Совсем ", [.font: body()]),
                                     ("жирный", [.font: bold()]),
@@ -76,7 +76,7 @@ private func bodyParagraph() -> NSAttributedString {
         "Совсем **жирный** и *курсивный* текст"))
 }
 
-@Test func adjacentRunsOfTheSameFormattingAreOneSpan() {
+@MainActor @Test func adjacentRunsOfTheSameFormattingAreOneSpan() {
     // An importer splits a string at every attribute change of any kind — a kerning value, a
     // colour — and two adjacent bold runs written separately come out `**раз****два**`, four
     // literal asterisks in the text handed to the model.
@@ -86,7 +86,7 @@ private func bodyParagraph() -> NSAttributedString {
     #expect(AttributedToMarkdown.markdown(from: text).hasSuffix("**раздва**"))
 }
 
-@Test func aMonospacedRunBecomesInlineCode() {
+@MainActor @Test func aMonospacedRunBecomesInlineCode() {
     let text = document([bodyParagraph(),
                          paragraph([("Вызовите ", [.font: body()]),
                                     ("read()", [.font: mono()]),
@@ -94,7 +94,7 @@ private func bodyParagraph() -> NSAttributedString {
     #expect(AttributedToMarkdown.markdown(from: text).hasSuffix("Вызовите `read()` первым"))
 }
 
-@Test func aLinkBecomesAMarkdownLinkOnlyForAURLTarget() {
+@MainActor @Test func aLinkBecomesAMarkdownLinkOnlyForAURLTarget() {
     let url = document([bodyParagraph(),
                         paragraph([("см. ", [.font: body()]),
                                    ("сайт", [.font: body(),
@@ -111,7 +111,7 @@ private func bodyParagraph() -> NSAttributedString {
 
 // MARK: - Code blocks
 
-@Test func aWhollyMonospacedParagraphBecomesAFenceAndConsecutiveOnesBecomeOne() {
+@MainActor @Test func aWhollyMonospacedParagraphBecomesAFenceAndConsecutiveOnesBecomeOne() {
     let text = document([bodyParagraph(),
                          paragraph([("let x = 1", [.font: mono()])]),
                          paragraph([("    return x", [.font: mono()])])])
@@ -119,7 +119,7 @@ private func bodyParagraph() -> NSAttributedString {
         "```\nlet x = 1\n    return x\n```"))
 }
 
-@Test func aCodeBlockKeepsItsIndentationAndTakesNoInlineMarkers() {
+@MainActor @Test func aCodeBlockKeepsItsIndentationAndTakesNoInlineMarkers() {
     // Verbatim: no collapsing, no trimming, and no backticks inside the fence — the whole
     // paragraph is already code.
     let text = document([bodyParagraph(),
@@ -143,7 +143,7 @@ private func listStyle(_ formats: [NSTextList.MarkerFormat], indent: CGFloat = 0
     return style
 }
 
-@Test func aTextListParagraphBecomesAListItemWithoutItsMarkerCharacters() {
+@MainActor @Test func aTextListParagraphBecomesAListItemWithoutItsMarkerCharacters() {
     let text = document([bodyParagraph(),
                          paragraph([("\t•\tпервый", [.font: body()])],
                                    style: listStyle([.disc])),
@@ -152,7 +152,7 @@ private func listStyle(_ formats: [NSTextList.MarkerFormat], indent: CGFloat = 0
     #expect(AttributedToMarkdown.markdown(from: text).hasSuffix("- первый\n- второй"))
 }
 
-@Test func nestingBecomesIndentation() {
+@MainActor @Test func nestingBecomesIndentation() {
     let text = document([bodyParagraph(),
                          paragraph([("\t•\tснаружи", [.font: body()])],
                                    style: listStyle([.disc])),
@@ -161,7 +161,7 @@ private func listStyle(_ formats: [NSTextList.MarkerFormat], indent: CGFloat = 0
     #expect(AttributedToMarkdown.markdown(from: text).hasSuffix("- снаружи\n  - внутри"))
 }
 
-@Test func anOrderedListKeepsTheDocumentsOwnNumbers() {
+@MainActor @Test func anOrderedListKeepsTheDocumentsOwnNumbers() {
     // The document's numbers, not a counter kept here: an item numbered 4 in a list the user
     // selected from the middle is still item 4, and renumbering it from 1 edits their document.
     let text = document([bodyParagraph(),
@@ -172,7 +172,7 @@ private func listStyle(_ formats: [NSTextList.MarkerFormat], indent: CGFloat = 0
     #expect(AttributedToMarkdown.markdown(from: text).hasSuffix("4. четвёртый\n5. пятый"))
 }
 
-@Test func aListItemWithNoMarkerCharactersFallsBackToItsMarkerFormat() {
+@MainActor @Test func aListItemWithNoMarkerCharactersFallsBackToItsMarkerFormat() {
     let bullet = document([bodyParagraph(),
                            paragraph([("первый", [.font: body()])], style: listStyle([.disc]))])
     #expect(AttributedToMarkdown.markdown(from: bullet).hasSuffix("- первый"))
@@ -183,7 +183,7 @@ private func listStyle(_ formats: [NSTextList.MarkerFormat], indent: CGFloat = 0
     #expect(AttributedToMarkdown.markdown(from: ordered).hasSuffix("1. первый"))
 }
 
-@Test func aTabFurtherIntoALineIsTheAuthorsOwnTab() {
+@MainActor @Test func aTabFurtherIntoALineIsTheAuthorsOwnTab() {
     // Only the marker region is searched. A tab in the middle of the item's text belongs to the
     // user, and eating everything up to it would silently delete their words.
     let text = document([bodyParagraph(),
@@ -201,7 +201,7 @@ private func cellStyle(_ table: NSTextTable, row: Int, column: Int) -> NSParagra
     return style
 }
 
-@Test func textTableBlocksBecomePipeRowsWithNoInventedHeader() {
+@MainActor @Test func textTableBlocksBecomePipeRowsWithNoInventedHeader() {
     let table = NSTextTable()
     table.numberOfColumns = 2
     let text = document([bodyParagraph(),
@@ -227,7 +227,7 @@ private func cellStyle(_ table: NSTextTable, row: Int, column: Int) -> NSParagra
     #expect(rows.count == 2)
 }
 
-@Test func aCellHoldingTwoParagraphsIsOneCellAndItsPipeIsEscaped() {
+@MainActor @Test func aCellHoldingTwoParagraphsIsOneCellAndItsPipeIsEscaped() {
     let table = NSTextTable()
     table.numberOfColumns = 1
     let text = document([bodyParagraph(),
@@ -240,7 +240,7 @@ private func cellStyle(_ table: NSTextTable, row: Int, column: Int) -> NSParagra
 
 // MARK: - Headings, and what is deliberately not one
 
-@Test func aHeadingsLevelComesFromItsSizeRelativeToTheBody() {
+@MainActor @Test func aHeadingsLevelComesFromItsSizeRelativeToTheBody() {
     // The ladder, at a 12 pt body: ×1.8 → h1, ×1.4 → h2, ×1.15 → h3.
     //
     // The last *line* is compared, not a suffix: `hasSuffix("# Отчёт")` is true of «## Отчёт»
@@ -256,7 +256,7 @@ private func cellStyle(_ table: NSTextTable, row: Int, column: Int) -> NSParagra
     }
 }
 
-@Test func aBoldBodySizedParagraphStaysABoldParagraph() {
+@MainActor @Test func aBoldBodySizedParagraphStaysABoldParagraph() {
     // h4…h6 are at or below body size in AppKit's own rendering of HTML, so they cannot be told
     // from bold prose. The safe direction: the gate refuses a conversion that only added inline
     // markers, so a missed heading costs the capture its rich reading — a fabricated one would
@@ -267,7 +267,7 @@ private func cellStyle(_ table: NSTextTable, row: Int, column: Int) -> NSParagra
     #expect(!markdown.contains("#"))
 }
 
-@Test func aLongParagraphIsNeverAHeadingHoweverLargeItIsSet() {
+@MainActor @Test func aLongParagraphIsNeverAHeadingHoweverLargeItIsSet() {
     // A pull quote set at 1.5× body is a paragraph; `# ` in front of four lines of prose is a
     // worse error than a lost heading.
     //
@@ -283,7 +283,7 @@ private func cellStyle(_ table: NSTextTable, row: Int, column: Int) -> NSParagra
     #expect(!AttributedToMarkdown.markdown(from: text).contains("#"))
 }
 
-@Test func aSelectionThatIsOnlyAHeadingHasNoBodySizeAndComesOutAsAParagraph() {
+@MainActor @Test func aSelectionThatIsOnlyAHeadingHasNoBodySizeAndComesOutAsAParagraph() {
     // Stated as a limit rather than worked around: «relative to the body» has no answer when
     // there is no body, and the alternative — an absolute point-size ladder — makes every
     // paragraph of an 18 pt document a heading.
@@ -291,7 +291,7 @@ private func cellStyle(_ table: NSTextTable, row: Int, column: Int) -> NSParagra
     #expect(AttributedToMarkdown.markdown(from: text) == "**Отчёт**")
 }
 
-@Test func anIndentedParagraphIsNotReadAsAQuote() {
+@MainActor @Test func anIndentedParagraphIsNotReadAsAQuote() {
     // Indentation is prose everywhere in this pipeline — `PromptBuilder.protectionRules` carries
     // that rule with its history — and a `> ` this converter invented is exactly the kind of
     // block token the acceptance gate accepts on. So blockquotes are not derived from RTF at all.
@@ -318,7 +318,7 @@ Body with \b bold\b0  and \f1 code\f0  inside.\par
 }
 """#
 
-@Test func aRealRtfDocumentComesBackThroughTheImporterAsMarkdown() {
+@MainActor @Test func aRealRtfDocumentComesBackThroughTheImporterAsMarkdown() {
     let markdown = AttributedToMarkdown.markdown(fromRTF: Data(rtfFixture.utf8))
     guard let markdown else {
         Issue.record("AppKit refused the RTF fixture")
@@ -334,7 +334,7 @@ Body with \b bold\b0  and \f1 code\f0  inside.\par
     #expect(tokens.contains(.heading(level: 2)))
 }
 
-@Test func theImporterFaceRefusesDataThatIsNotRTF() {
+@MainActor @Test func theImporterFaceRefusesDataThatIsNotRTF() {
     // A refusal costs the capture its markup and nothing else — the plain flavour is what gets
     // translated.
     #expect(AttributedToMarkdown.markdown(fromRTF: Data("не RTF".utf8)) == nil)

@@ -8,7 +8,7 @@ import Foundation
 // instead of the plain flavour, so every marker it lets through rides into every chunk's prompt.
 // «Улучшение или ничего» — a block form the plain flavour lacks, or the plain flavour.
 
-@Test func aConversionThatRecoversABlockFormIsAccepted() {
+@MainActor @Test func aConversionThatRecoversABlockFormIsAccepted() {
     // The case the whole feature exists for: the plain flavour of a heading is a line of prose,
     // and the HTML flavour still says it is a heading.
     let plain = "Отчёт\nПервый абзац."
@@ -17,7 +17,7 @@ import Foundation
                 == "# Отчёт\n\nПервый абзац.")
 }
 
-@Test func aConversionThatRecoversNothingIsRefusedAndThePlainFlavourIsUsed() {
+@MainActor @Test func aConversionThatRecoversNothingIsRefusedAndThePlainFlavourIsUsed() {
     // Two paragraphs of prose have no block form to recover. The conversion is *correct* and
     // still refused: it would replace the user's own bytes with a re-serialisation for nothing.
     let plain = "Первый абзац.\n\nВторой абзац."
@@ -25,7 +25,7 @@ import Foundation
     #expect(RichMarkdown.markdown(html: html, rtf: nil, improvingOn: plain) == nil)
 }
 
-@Test func aConversionWhoseOnlyGainIsInlineMarkersIsRefused() {
+@MainActor @Test func aConversionWhoseOnlyGainIsInlineMarkersIsRefused() {
     // Emphasis is the form the models are measurably worst with (design §2 series B: bold
     // degraded to italic 5/5 on translategemma:12b, emphasis invented 2/3 on aya-expanse:32b),
     // and a bold run recovered from a font weight is the guess most likely to be wrong. So a
@@ -41,7 +41,7 @@ import Foundation
         rtf: nil, improvingOn: "см. сайт") == nil)
 }
 
-@Test func aPlainFlavourThatAlreadyCarriesTheStructureIsKept() {
+@MainActor @Test func aPlainFlavourThatAlreadyCarriesTheStructureIsKept() {
     // The no-op half of the name: a bulleted list copied out of an editor is still `- раз` in
     // plain text, so the conversion adds no block form and the user's own bytes win.
     let plain = "- раз\n- два"
@@ -49,7 +49,7 @@ import Foundation
     #expect(RichMarkdown.markdown(html: html, rtf: nil, improvingOn: plain) == nil)
 }
 
-@Test func aConversionThatAddsMoreOfAFormThePlainFlavourHasIsAccepted() {
+@MainActor @Test func aConversionThatAddsMoreOfAFormThePlainFlavourHasIsAccepted() {
     // «At least one block token the plain flavour lacks» is counted, not merely present: a
     // document whose plain text kept one of its three list items is still missing two.
     let plain = "- раз\nдва\nтри"
@@ -57,7 +57,7 @@ import Foundation
     #expect(RichMarkdown.markdown(html: html, rtf: nil, improvingOn: plain) == "- раз\n- два\n- три")
 }
 
-@Test func everyBlockFormOpensTheGateAndNoInlineFormDoes() {
+@MainActor @Test func everyBlockFormOpensTheGateAndNoInlineFormDoes() {
     // The gate's classification, form by form, so a new `MarkupToken` cannot be added to the
     // wrong side of it silently.
     #expect(RichMarkdown.isImprovement("# Заголовок", over: "Заголовок"))
@@ -73,7 +73,7 @@ import Foundation
     #expect(!RichMarkdown.isImprovement("строка  \nдругая", over: "строка другая"))
 }
 
-@Test func anEmptyConversionIsNeverAnImprovement() {
+@MainActor @Test func anEmptyConversionIsNeverAnImprovement() {
     // An HTML flavour whose content is all `<style>` converts to nothing, and «nothing» must not
     // become the text that gets translated.
     #expect(!RichMarkdown.isImprovement("", over: "текст"))
@@ -84,7 +84,7 @@ import Foundation
 
 // MARK: - Which flavour is read
 
-@Test func theHtmlFlavourIsPreferredOverTheRtfOne() {
+@MainActor @Test func theHtmlFlavourIsPreferredOverTheRtfOne() {
     // Semantics over visuals: `<h2>` says «heading, level two» where RTF says «18 pt bold», and
     // `AttributedToMarkdown` lists what it has to guess for want of that.
     let html = Data("<h2>Из HTML</h2>".utf8)
@@ -93,7 +93,7 @@ import Foundation
                 == "## Из HTML")
 }
 
-@Test func theRtfFlavourIsReadWhenThereIsNoHtmlOne() {
+@MainActor @Test func theRtfFlavourIsReadWhenThereIsNoHtmlOne() {
     let rtf = rtfHeading(text: "Report")
     let markdown = RichMarkdown.markdown(html: nil, rtf: rtf,
                                          improvingOn: "Plain body paragraph, long enough to set "
@@ -101,7 +101,7 @@ import Foundation
     #expect(markdown?.contains("## Report") == true)
 }
 
-@Test func theRtfFlavourIsReadWhenTheHtmlOneCannotBeUsed() {
+@MainActor @Test func theRtfFlavourIsReadWhenTheHtmlOneCannotBeUsed() {
     // Two ways the HTML half can fail — bytes that are not UTF-8, and a conversion the gate
     // refuses — and in both the RTF flavour still gets its turn. Without the fallthrough, an
     // application that writes both would lose its structure to whichever flavour was worse.
@@ -115,7 +115,7 @@ import Foundation
         .contains("## Report") == true)
 }
 
-@Test func noFlavoursAtAllIsNil() {
+@MainActor @Test func noFlavoursAtAllIsNil() {
     #expect(RichMarkdown.markdown(html: nil, rtf: nil, improvingOn: "текст") == nil)
 }
 
