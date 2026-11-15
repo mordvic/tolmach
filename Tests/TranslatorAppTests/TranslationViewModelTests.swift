@@ -1126,7 +1126,11 @@ private func waitForSheet(_ model: TranslationViewModel,
     model.sourceText = "Одна строка прозы."
 
     let run = Task { await model.translate() }
-    await waitUntil("the model has claimed the run") { model.state == .running }
+    // One yield lets the run start and stop at its first suspension, the detector, whose result
+    // can only come back through the main actor this test holds until it next suspends. A poll
+    // could wake after the detector had finished and the first call had been made.
+    await Task.yield()
+    #expect(model.state == .running)
     #expect(client.callCount == 0)
 
     // A second «Перевести» in that window must be refused, exactly as it is later on.
