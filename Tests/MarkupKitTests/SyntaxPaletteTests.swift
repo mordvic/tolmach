@@ -36,7 +36,7 @@ private let kinds: [SyntaxHighlighter.Kind] = [.keyword, .string, .comment, .num
 /// Every token colour clears WCAG AA for body text on the card it is drawn on, in both
 /// appearances. The system accent colours did not (`systemPurple` 3.34:1, `systemTeal`
 /// 1.73:1 in the light appearance — measured 2026-09-02), which is why this palette exists.
-@Test func everyTokenColourClearsAAOnTheCodeCardInBothAppearances() {
+@MarkupTestActor @Test func everyTokenColourClearsAAOnTheCodeCardInBothAppearances() {
     for (appearance, paper) in [(NSAppearance.Name.aqua, NSColor.white),
                                 (.darkAqua, NSColor(calibratedWhite: 0.12, alpha: 1))] {
         NSAppearance(named: appearance)!.performAsCurrentDrawingAppearance {
@@ -53,7 +53,7 @@ private let kinds: [SyntaxHighlighter.Kind] = [.keyword, .string, .comment, .num
 
 /// The dynamic colour resolves to the light value under Aqua and the dark value under Dark
 /// Aqua — the whole reason it is one `NSColor` and not two code paths.
-@Test func theDynamicColourFollowsTheAppearance() {
+@MarkupTestActor @Test func theDynamicColourFollowsTheAppearance() {
     let colour = SyntaxPalette.color(for: .keyword)
     let (light, dark) = SyntaxPalette.values(for: .keyword)
     NSAppearance(named: .aqua)!.performAsCurrentDrawingAppearance {
