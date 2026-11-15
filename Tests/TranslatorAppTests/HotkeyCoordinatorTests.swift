@@ -22,6 +22,7 @@ private final class ScriptedReader: @unchecked Sendable {
     private let lock = NSLock()
     private var values: [String?]
     private var calls = 0
+    private var onMainThread = false
     private let delay: TimeInterval
 
     init(_ values: [String?], delay: TimeInterval = 0) {
@@ -30,10 +31,13 @@ private final class ScriptedReader: @unchecked Sendable {
     }
 
     var callCount: Int { lock.lock(); defer { lock.unlock() }; return calls }
+    /// Whether any read ran on the main thread — the one the panel draws on.
+    var readOnMainThread: Bool { lock.lock(); defer { lock.unlock() }; return onMainThread }
 
     func next() -> String? {
         lock.lock()
         calls += 1
+        if Thread.isMainThread { onMainThread = true }
         let value = values.isEmpty ? nil : values.removeFirst()
         lock.unlock()
         if delay > 0 { Thread.sleep(forTimeInterval: delay) }
@@ -61,7 +65,6 @@ private func scratchPasteboard() -> NSPasteboard {
 private final class RecordingTrigger: @unchecked Sendable {
     private let lock = NSLock()
     private var _callCount = 0
-    private var _entered = false
     private var _textSeenAtTrigger: String?
     private let board: NSPasteboard
     private let delay: TimeInterval
@@ -72,11 +75,9 @@ private final class RecordingTrigger: @unchecked Sendable {
     }
 
     var callCount: Int { lock.lock(); defer { lock.unlock() }; return _callCount }
-    var entered: Bool { lock.lock(); defer { lock.unlock() }; return _entered }
     var textSeenAtTrigger: String? { lock.lock(); defer { lock.unlock() }; return _textSeenAtTrigger }
 
     func fire() {
-        lock.lock(); _entered = true; lock.unlock()
         if delay > 0 { Thread.sleep(forTimeInterval: delay) }
         lock.lock()
         _callCount += 1
@@ -96,7 +97,6 @@ private func combo(_ keyCode: UInt16) -> HotkeyCombo {
 private func makeCoordinator(reader: ScriptedReader,
                              isTrusted: Bool = true,
                              replies: [String] = ["перевод"],
-                             delayPerToken: Duration = .zero,
                              /// Hold every reply until the test calls `release()` on the
                              /// returned client — see `ScriptedClient.held`.
                              held: Bool = false,
@@ -112,7 +112,7 @@ private func makeCoordinator(reader: ScriptedReader,
     let glossary = GlossaryStore(url: FileManager.default.temporaryDirectory
         .appendingPathComponent("hk-\(UUID().uuidString).json"))
     try? glossary.load()
-    let client = ScriptedClient(responses: replies, delayPerToken: delayPerToken, held: held)
+    let client = ScriptedClient(responses: replies, held: held)
     let coordinator = HotkeyCoordinator(
         settings: settings ?? AppSettings(defaults: InMemoryDefaults(prefix: "hk")),
         glossary: glossary,
@@ -133,22 +133,44 @@ private func makeCoordinator(reader: ScriptedReader,
     return (coordinator, client)
 }
 
-/// Waits on the condition the test is about rather than on a duration, with a ceiling so a
-/// regression fails instead of hanging the suite.
+/// Opened once by the code under test, awaited once by the test — the point at which a press
+/// is known to be where the test needs it, instead of a poll for a state and a deadline.
+///
+/// These tests used `waitUntil`, a 2 ms poll with a five-second ceiling, and both halves of it
+/// were bets on the scheduler. `swift test` starts every test of the run at once, so each
+/// `await` back onto the main actor queues behind the whole suite's main-actor work: on the
+/// GitHub runner a test that does nothing but register two hotkeys reported 8.5 s, and every
+/// async test here took most of the run. A press needs several such hops to reach `.running`,
+/// so the ceiling ran out; and a poll that came back seconds late found a 0.2 s read already
+/// over (GitHub runner, 2026-11-15, suite at 11 s; reproduced here under load the same way).
+///
+/// The press opens the signal from a hook it calls on the main actor and carries on to its next
+/// suspension; the test's resumption was queued on the main actor before anything that ends
+/// that suspension can be, so the test runs first. Whatever the press does next — take a read's
+/// result, finish a run — waits for the main actor, and the test is holding it.
+/// `opening(_:)` also opens on the way out of the press, so a press that never reaches the hook
+/// lets the test run into its assertions and fail there rather than hang.
 @MainActor
-private func waitUntil(_ condition: @MainActor () -> Bool,
-                       limit: Duration = .seconds(5),
-                       sourceLocation: SourceLocation = #_sourceLocation) async {
-    let deadline = ContinuousClock.now + limit
-    while !condition(), ContinuousClock.now < deadline {
-        try? await Task.sleep(for: .milliseconds(2))
+private final class Signal {
+    private var isOpen = false
+    private var waiter: CheckedContinuation<Void, Never>?
+
+    func open() {
+        guard !isOpen else { return }
+        isOpen = true
+        waiter?.resume()
+        waiter = nil
     }
-    // Loud, not silent. This used to return quietly at the deadline, and a test whose
-    // condition was never met then went on to assert against whatever state it found —
-    // the shape `docs/reference/TESTING.md` lists as «a timing assertion both branches
-    // satisfy». A wait that gave up is the finding; the assertions after it are noise.
-    if !condition() {
-        Issue.record("waited \(limit) and the condition never held", sourceLocation: sourceLocation)
+
+    func wait() async {
+        guard !isOpen else { return }
+        await withCheckedContinuation { waiter = $0 }
+    }
+
+    /// Runs `body` in a task and opens the signal when it returns, whether or not `body`
+    /// opened it first.
+    func opening(_ body: @escaping @MainActor () async -> Void) -> Task<Void, Never> {
+        Task { await body(); self.open() }
     }
 }
 
@@ -226,12 +248,16 @@ private func waitUntil(_ condition: @MainActor () -> Bool,
     // before this test's poll saw `.running` — the second press then read «Второй» and every
     // assertion below was about the wrong run (GitHub runner, 2026-09-04, suite at 8 s). A
     // held client keeps the run open until the test says so, whatever the machine is doing.
+    // And the test is let in by `afterCapture`, the last thing a press does before it starts
+    // the run, rather than by polling for `.running` — see `Signal`.
     let reader = ScriptedReader(["Первый", "Второй"])
     let (coordinator, client) = makeCoordinator(reader: reader,
                                                 replies: ["Один", "Два"],
                                                 held: true)
-    let first = Task { await coordinator.handlePress() }
-    await waitUntil { coordinator.panelModel.state == .running }
+    let captured = Signal()
+    let first = captured.opening { await coordinator.handlePress(afterCapture: { captured.open() }) }
+    await captured.wait()
+    #expect(coordinator.panelModel.state == .running)
 
     await coordinator.handlePress()
     #expect(coordinator.selection == .text("Первый"))
@@ -250,16 +276,26 @@ private func waitUntil(_ condition: @MainActor () -> Bool,
     // is a long stretch where the model is still `.idle` — and a second press landing there
     // would post a second ⌘C into the user's application while the first is still in flight,
     // with two whole-pasteboard destroy-and-restore cycles racing over one board.
-    let reader = ScriptedReader(["Первый", "Второй"], delay: 0.2)
+    //
+    // The test is let in by `willCapture`, after the press has been accepted and before it
+    // reads; the read's result can only come back through the main actor this test is
+    // holding, so the second press lands inside the read however long the machine stalls.
+    // A 0.2 s reader and a poll for its first call used to stand in for that window, and a
+    // poll that woke late found the read already over (PR #108's CI run).
+    let reader = ScriptedReader(["Первый", "Второй"])
     let (coordinator, _) = makeCoordinator(reader: reader, replies: ["Один", "Два"])
-    let first = Task { await coordinator.handlePress() }
-    await waitUntil { reader.callCount == 1 }
+    let accepted = Signal()
+    let first = accepted.opening { await coordinator.handlePress(willCapture: { accepted.open() }) }
+    await accepted.wait()
     #expect(coordinator.panelModel.state == .idle)   // the read has not returned yet
 
     await coordinator.handlePress()
-    #expect(reader.callCount == 1)
 
     await first.value
+    // One read for two presses: the dropped one never asked. Counted here rather than
+    // straight after the second press, where the first press's own read may or may not have
+    // started yet on its background thread.
+    #expect(reader.callCount == 1)
     #expect(coordinator.selection == .text("Первый"))
     #expect(coordinator.panelModel.translatedText == "Один")
 }
@@ -271,13 +307,18 @@ private func waitUntil(_ condition: @MainActor () -> Bool,
     // selection and reassign `sourceText` under a translation already in flight.
     let reader = ScriptedReader(["Первый", "Второй"])
     let (coordinator, _) = makeCoordinator(reader: reader,
-                                           replies: ["Один", "Двадцать два"],
-                                           delayPerToken: .milliseconds(20))
+                                           replies: ["Один", "Двадцать два"])
     await coordinator.handlePress()
     #expect(coordinator.panelModel.state == .finished)
 
+    // One yield lets the retry start — it was queued on the main actor first — and run to its
+    // first suspension, which is after `state = .running`. Everything after that suspension
+    // needs the main actor this test then holds, so the retry is still running when the press
+    // below lands. A token delay and a poll for `.running` used to make that window, and a
+    // poll that woke after the last token found nothing running.
     let retry = Task { await coordinator.retry() }
-    await waitUntil { coordinator.panelModel.state == .running }
+    await Task.yield()
+    #expect(coordinator.panelModel.state == .running)
 
     await coordinator.handlePress()
     #expect(reader.callCount == 1)
@@ -293,19 +334,24 @@ private func waitUntil(_ condition: @MainActor () -> Bool,
     // caller running it on the main thread. If the coordinator did, the panel it has just
     // shown could not draw and the whole UI would freeze for the length of every press.
     // Measured here as the property that follows: the main actor stays free to run other
-    // work while the read is in flight.
-    let reader = ScriptedReader(["Первый"], delay: 0.3)
+    // work while the read is in flight — and, directly, as the thread the read ran on.
+    //
+    // This counted main-actor turns between a poll seeing the read start and the read's
+    // result landing, and the count was zero whenever the poll woke after a 0.3 s read had
+    // already finished, which under a full suite it can. Now the test is let in by
+    // `willCapture`, before the read: a coordinator that blocked the main actor for the read
+    // — reading in place, or waiting on the main thread for a background read — has assigned
+    // the selection by the time this test runs again, and one that hopped back onto the main
+    // actor to read (a bare `Task {}`, which inherits it) is caught by the reader itself.
+    let reader = ScriptedReader(["Первый"])
     let (coordinator, _) = makeCoordinator(reader: reader, replies: ["Один"])
-    let press = Task { await coordinator.handlePress() }
-    await waitUntil { reader.callCount == 1 }
-
-    var turns = 0
-    while reader.callCount == 1, coordinator.panelModel.state == .idle, turns < 10_000 {
-        turns += 1
-        await Task.yield()
-    }
-    #expect(turns > 0, "the main actor was blocked for the whole of the read")
+    let accepted = Signal()
+    let press = accepted.opening { await coordinator.handlePress(willCapture: { accepted.open() }) }
+    await accepted.wait()
+    #expect(coordinator.selection == .empty, "the main actor was blocked for the whole of the read")
     await press.value
+    #expect(reader.callCount == 1)
+    #expect(!reader.readOnMainThread, "the selection was read on the main thread")
 }
 
 // MARK: - When the panel may be on screen
@@ -347,12 +393,17 @@ private func waitUntil(_ condition: @MainActor () -> Bool,
 @Test func aDroppedPressDoesNotTakeThePanelAwayFromTheRunItInterrupted() async {
     // `willCapture` hides the panel, so it has to sit inside the re-entrancy guard. Outside
     // it, a stray second press would blank a translation that is still streaming.
+    // Let in by `afterCapture`, so the first run has started and cannot have finished — see
+    // `Signal`. A token delay and a poll for `.running` used to hold that window open.
     let reader = ScriptedReader(["Первый", "Второй"])
-    let (coordinator, _) = makeCoordinator(reader: reader, replies: ["Один", "Два"],
-                                           delayPerToken: .milliseconds(20))
+    let (coordinator, _) = makeCoordinator(reader: reader, replies: ["Один", "Два"])
     var hides = 0
-    let first = Task { await coordinator.handlePress(willCapture: { hides += 1 }) }
-    await waitUntil { coordinator.panelModel.state == .running }
+    let captured = Signal()
+    let first = captured.opening {
+        await coordinator.handlePress(willCapture: { hides += 1 }, afterCapture: { captured.open() })
+    }
+    await captured.wait()
+    #expect(coordinator.panelModel.state == .running)
 
     await coordinator.handlePress(willCapture: { hides += 1 })
     #expect(hides == 1)
@@ -699,16 +750,19 @@ private func makePressedCoordinator(responses: [String]) async -> PressHarness {
 @Test func aProofreadPressArrivingWhileATranslationIsCapturingIsDropped() async {
     // `isCapturing` is per coordinator, and this is what that buys: two shortcuts cannot put
     // two synthetic ⌘C fallbacks into the user's application over one pasteboard.
-    let reader = ScriptedReader(["Первый", "Второй"], delay: 0.2)
+    // Let in by `willCapture`, inside the read — the same shape, and the same reason, as
+    // `aPressArrivingWhileTheSelectionIsStillBeingReadIsDropped`.
+    let reader = ScriptedReader(["Первый", "Второй"])
     let (coordinator, _) = makeCoordinator(reader: reader, replies: ["Один", "Два"])
-    let first = Task { await coordinator.handlePress() }
-    await waitUntil { reader.callCount == 1 }
+    let accepted = Signal()
+    let first = accepted.opening { await coordinator.handlePress(willCapture: { accepted.open() }) }
+    await accepted.wait()
     #expect(coordinator.panelModel.state == .idle)   // the read has not returned yet
 
     await coordinator.handlePress(operation: .proofread)
-    #expect(reader.callCount == 1)
 
     await first.value
+    #expect(reader.callCount == 1)
     #expect(coordinator.selection == .text("Первый"))
     #expect(coordinator.panelModel.operation == .translate)
 }
@@ -1072,9 +1126,8 @@ private func makePressedCoordinator(responses: [String]) async -> PressHarness {
 
 @MainActor
 @Test func aSecondReplaceWhileOneIsInFlightIsIgnored() async {
-    // Mirrors `aPressArrivingWhileTheSelectionIsStillBeingReadIsDropped`'s shape: an
-    // artificially slow trigger stands in for the window between the paste being posted and
-    // the pasteboard being restored, and a second call landing in that window must not
+    // Mirrors `aPressArrivingWhileTheSelectionIsStillBeingReadIsDropped`'s shape: a second
+    // call landing between the paste being posted and the pasteboard being restored must not
     // interleave a second snapshot/restore cycle over the same board.
     let board = scratchPasteboard()
     defer { board.releaseGlobally() }
@@ -1086,15 +1139,19 @@ private func makePressedCoordinator(responses: [String]) async -> PressHarness {
     await coordinator.handlePress()
     #expect(coordinator.panelModel.state == .finished)
 
+    // One yield lets the first call start — it was queued on the main actor first — and run to
+    // its first suspension, after `isReplacing` is set; it cannot finish without the main actor
+    // this test then holds, so the second call lands while the first is in flight. A poll for
+    // the trigger used to find that moment, and one that woke late found the first call over.
     let first = Task { await coordinator.replaceInSource() }
-    await waitUntil { trigger.entered }
+    await Task.yield()
 
     await coordinator.replaceInSource()
-    // Still inside the first call's artificial delay: a second call arriving here found
-    // `isReplacing` already true and returned without touching the trigger.
-    #expect(trigger.callCount == 0)
 
     await first.value
+    // One trigger for two calls: the second found `isReplacing` already true and returned
+    // without touching it. Counted once both are done — straight after the second call, the
+    // first call's own trigger may or may not have fired yet on its background thread.
     #expect(trigger.callCount == 1)
 }
 
@@ -1115,8 +1172,9 @@ private func makePressedCoordinator(responses: [String]) async -> PressHarness {
     await coordinator.handlePress()
     #expect(coordinator.panelModel.state == .finished)
 
+    // Started by one yield, as in `aSecondReplaceWhileOneIsInFlightIsIgnored`.
     let replace = Task { await coordinator.replaceInSource() }
-    await waitUntil { trigger.entered }
+    await Task.yield()
 
     var captured = false
     await coordinator.handlePress(afterCapture: { captured = true })
