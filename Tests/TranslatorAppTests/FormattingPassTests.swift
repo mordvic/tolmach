@@ -134,9 +134,9 @@ private func makeModel(replies: [String], surface: TranslationViewModel.Surface 
     let run = Task { await model.run() }
     // Both halves: the flag is raised on the main actor before the pass's task has reached
     // the client, so waiting on the flag alone found `callCount == 0` one run in a few.
-    let deadline = ContinuousClock.now.advanced(by: .seconds(10))
-    while !(model.isFormatting && client.callCount == 1), ContinuousClock.now < deadline {
-        try? await Task.sleep(for: .milliseconds(2))
+    // Woken by the change, not by a 2 ms poll with a ten-second deadline — see `until`.
+    await until("the pass is in flight and has reached the client", while: run) {
+        model.isFormatting && client.callCount == 1
     }
     #expect(model.isFormatting)
     #expect(model.state == .running)
