@@ -33,5 +33,5 @@ schema: spec-driven
 
 rules:
   tasks:
-    - 'Under each "## N." heading write one line "Blocked by: <numbers of the groups that must land first, or none>". Leave the line out when the group needs every group above it.'
+    - 'Under each "## N." heading write one line "Blocked by: <numbers of the groups that must land first, or none>", with an empty line before and after it. Leave the line out when the group needs every group above it.'
     - 'Tag a task that needs a person (a real device, a GUI, an account) with [manual] right after its number.'
