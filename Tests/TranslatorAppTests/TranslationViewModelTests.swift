@@ -1095,9 +1095,9 @@ private func waitForSheet(_ model: TranslationViewModel,
     let client = ScriptedClient(responses: ["перевод"], delayPerToken: .seconds(10))
     let model = makeModel(client)
     // Big enough that the detector takes real time. `NLLanguageRecognizer` has no prefix cap —
-    // measured elsewhere in this project at ~48 ms for 2 MB — and `waitUntil` polls every 2 ms,
-    // so the window this test is about is an order of magnitude wider than the poll that has to
-    // land inside it. A short string closes it in microseconds and the test passes vacuously.
+    // measured elsewhere in this project at ~48 ms for 2 MB — so the window this test is about
+    // is wide enough to cancel inside. A short string closes it in microseconds and the test
+    // passes vacuously.
     model.sourceText = String(repeating: "Одна строка прозы про сервер и ресурс. ", count: 4000)
 
     let run = Task { await model.translate() }
