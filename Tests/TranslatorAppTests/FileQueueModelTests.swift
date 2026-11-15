@@ -1,12 +1,15 @@
 import Foundation
 import AppKit
+import Observation
 import Testing
 import TranslationCore
 @testable import TranslatorApp
 
 /// One scripted reply per model call, in order. `TranslationViewModelTests` has a
 /// `ScriptedClient` of its own; this is a separate one on purpose, because that one is
-/// `private` to its file and sharing it would couple two suites' fixtures.
+/// `private` to its file and sharing it would couple two suites' fixtures. `@Observable` so a
+/// test can wait on `callCount` changing (`until`) instead of polling it.
+@Observable
 final class QueueClient: LLMClient, @unchecked Sendable {
     private let lock = NSLock()
     private var replies: [String]
@@ -123,45 +126,25 @@ func queueJob(_ name: String, _ text: String) -> FileJob {
     FileJob(url: URL(fileURLWithPath: "/tmp/\(name)"), text: text, partsTotal: 1)
 }
 
-/// Polls a condition by yielding, bounded by a **deadline** rather than by a count of yields.
-///
-/// The distinction cost a red CI run to notice. These waits were written as
-/// `for _ in 0..<20_000 { … await Task.yield() }`, which spends a budget of *scheduler turns* —
-/// and a turn is not a unit of time. On a machine with fewer cores and more work in flight,
-/// twenty thousand turns can pass while the task being waited on has not run at all. Measured:
-/// `theStatusLineCountsOnlyWhatActuallyHappened` recorded «the model was never asked» on a
-/// GitHub runner at 809 tests, while the same commit passed locally twice, once with ten busy
-/// shells competing for the cores.
-///
-/// **Yielding rather than sleeping**, unlike the sibling helpers in `HotkeyCoordinatorTests` and
-/// `TranslationViewModelTests`, and that is load-bearing here: the doc comments below promise
-/// that the gap between observing a state and the caller's `cancel()` is a single yield, so a
-/// paced reply cannot land inside it. A 2 ms sleep loop would break that promise.
-///
-/// Ten seconds is not a performance claim — every one of these is satisfied in milliseconds when
-/// the code works. It is the point past which «not yet» has become «never», kept far from the
-/// real duration because a bound near it is the bound that fails on someone else's machine.
-@MainActor
-private func yieldUntil(_ condition: () -> Bool, within seconds: Double = 10) async -> Bool {
-    let deadline = ContinuousClock.now + .seconds(seconds)
-    while ContinuousClock.now < deadline {
-        if condition() { return true }
-        await Task.yield()
-    }
-    // Checked once more past the deadline: the last yield may be what made it true, and failing
-    // in that window would be reporting the clock rather than the code.
-    return condition()
-}
-
 /// Waits until the model has actually been asked for something.
 ///
 /// Stronger than `waitUntilRunning`, which returns as soon as the row's state flips —
 /// before `chat` has been entered. A cancel sent in that window is a different test from
 /// the one intended.
+///
+/// These three waited through `yieldUntil`, a yield loop with a ten-second deadline. Under the
+/// full suite a run can wait longer than that for the main actor, and «not yet» was reported
+/// as «never» (`:164`, reproduced under load) — after which
+/// `turningTheGateOnMidRunDoesNotAccuseTheRunOfLosingItsTerms` went on to turn the gate on
+/// before its run had read it, and hung the suite on a sheet nobody answered. They now wait on
+/// the change and give up only when `run` ends without it: see `until`, which also says why
+/// the gap before the caller's next line is no wider than the single yield it was.
 @MainActor
-private func waitUntilCalled(_ client: QueueClient, _ count: Int = 1) async {
-    if await yieldUntil({ client.callCount >= count }) { return }
-    Issue.record("the model was never asked")
+private func waitUntilCalled<T>(_ client: QueueClient, _ count: Int = 1, while run: Task<T, Never>,
+                                sourceLocation: SourceLocation = #_sourceLocation) async {
+    await until("the model was asked", while: run, sourceLocation: sourceLocation) {
+        client.callCount >= count
+    }
 }
 
 /// Waits until some translated text has actually reached the pane.
@@ -171,9 +154,11 @@ private func waitUntilCalled(_ client: QueueClient, _ count: Int = 1) async {
 /// anything — measured, one run in ten: the cancel landed first and the задание came back
 /// interrupted with nothing in it, which is a different case entirely.
 @MainActor
-private func waitUntilStreaming(_ model: FileQueueModel) async {
-    if await yieldUntil({ !model.streamingText.isEmpty }) { return }
-    Issue.record("no text ever reached the pane")
+private func waitUntilStreaming<T>(_ model: FileQueueModel, while run: Task<T, Never>,
+                                   sourceLocation: SourceLocation = #_sourceLocation) async {
+    await until("text reached the pane", while: run, sourceLocation: sourceLocation) {
+        !model.streamingText.isEmpty
+    }
 }
 
 /// Waits until a задание's row reports it is running.
@@ -191,13 +176,15 @@ private func waitUntilStreaming(_ model: FileQueueModel) async {
 /// lesson in its own doc comment: racing a cancellation against a guessed duration only
 /// ever pins the timing on one machine.
 ///
-/// The gap between observing `.running` and the caller's `cancel()` is a single yield on
-/// the main actor, so the paced reply cannot have landed in it.
+/// The gap between the row turning `.running` and the caller's `cancel()` is no wider than a
+/// single yield on the main actor, so the paced reply cannot have landed in it.
 @MainActor
-private func waitUntilRunning(_ model: FileQueueModel, _ index: Int,
-                              _ comment: Comment = "the задание never started") async {
-    if await yieldUntil({ if case .running = model.jobs[index].state { true } else { false } }) { return }
-    Issue.record(comment)
+private func waitUntilRunning<T>(_ model: FileQueueModel, _ index: Int, while run: Task<T, Never>,
+                                 _ comment: Comment = "the задание started",
+                                 sourceLocation: SourceLocation = #_sourceLocation) async {
+    await until(comment, while: run, sourceLocation: sourceLocation) {
+        if case .running = model.jobs[index].state { true } else { false }
+    }
 }
 
 @MainActor @Test func theQueueTranslatesItsFilesInOrder() async {
@@ -218,7 +205,7 @@ private func waitUntilRunning(_ model: FileQueueModel, _ index: Int,
     model.add([queueJob("a.md", "first"), queueJob("b.md", "second"), queueJob("c.md", "third")])
 
     let run = Task { await model.run() }
-    await waitUntilCalled(client)
+    await waitUntilCalled(client, while: run)
     model.cancel()
     await run.value
 
@@ -234,7 +221,7 @@ private func waitUntilRunning(_ model: FileQueueModel, _ index: Int,
     model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
 
     let first = Task { await model.run() }
-    await waitUntilCalled(client)
+    await waitUntilCalled(client, while: first)
     model.cancel()
     await first.value
     #expect(model.jobs[0].state == .interrupted)
@@ -301,7 +288,7 @@ private func waitUntilRunning(_ model: FileQueueModel, _ index: Int,
     model.add([queueJob("a.md", "first")])
 
     let first = Task { await model.run() }
-    await waitUntilRunning(model, 0)
+    await waitUntilRunning(model, 0, while: first)
     await model.run()   // must return immediately, not start a second pass
     await first.value
 
@@ -404,7 +391,7 @@ private let longSourceWithALink = sourceWithALink + "\n\n" + longEnoughForTwoPar
     #expect(model.canChangeMode)
 
     let run = Task { await model.run() }
-    await waitUntilRunning(model, 0)
+    await waitUntilRunning(model, 0, while: run)
     #expect(!model.canChangeMode)
     await run.value
 
@@ -491,7 +478,7 @@ private func makeTextModel(_ prefix: String,
     let action = PrimaryAction.forMode(.files, text: text, queue: queue)
 
     let run = Task { await action.start() }
-    await waitUntilCalled(client)
+    await waitUntilCalled(client, while: run)
     action.cancel()
     await run.value
 
@@ -506,7 +493,7 @@ private func makeTextModel(_ prefix: String,
 
     #expect(!PrimaryAction.forMode(.files, text: text, queue: queue).isRunning)
     let run = Task { await queue.run() }
-    await waitUntilRunning(queue, 0)
+    await waitUntilRunning(queue, 0, while: run)
     #expect(PrimaryAction.forMode(.files, text: text, queue: queue).isRunning)
     // ...and the text mode is unaffected, which is what stops one toolbar showing
     // «Отмена» for a run the visible pane knows nothing about.
@@ -547,7 +534,7 @@ private func makeTextModel(_ prefix: String,
     #expect(model.statusLine == nil)
 
     let run = Task { await model.run() }
-    await waitUntilRunning(model, 0)
+    await waitUntilRunning(model, 0, while: run)
     let line = model.statusLine
     await run.value
 
@@ -570,21 +557,20 @@ private func makeTextModel(_ prefix: String,
 private let longEnoughForTwoParts = String(
     repeating: "The resource is published by the server and the resource is validated. ", count: 20)
 
-/// Waits for the sheet, with a ceiling.
+/// Waits for the sheet, and gives up when the run ends without one.
 ///
 /// An unbounded `while model.pendingTermsRequest == nil { await Task.yield() }` turns «the
 /// sheet never appeared» into a hung suite instead of a failed test — which is exactly what
 /// happened when this file's fixtures were first written, and is the same rule
-/// `aFileThatFailsIsNotRetriedWithinTheSameRun` exists to keep.
+/// `aFileThatFailsIsNotRetriedWithinTheSameRun` exists to keep. A run that raises no sheet
+/// finishes, and that end is what `until` stops on; the two-second ceiling this had was a bet
+/// on the scheduler.
 @MainActor
-private func waitForSheet(_ model: FileQueueModel,
-                          _ comment: Comment = "the terms sheet never appeared") async -> DocumentTermsRequest? {
-    for _ in 0..<400 {
-        if let request = model.pendingTermsRequest { return request }
-        try? await Task.sleep(for: .milliseconds(5))
-    }
-    Issue.record(comment)
-    return nil
+private func waitForSheet<T>(_ model: FileQueueModel, while run: Task<T, Never>,
+                             _ comment: Comment = "the terms sheet appeared",
+                             sourceLocation: SourceLocation = #_sourceLocation) async -> DocumentTermsRequest? {
+    await until(comment, while: run, sourceLocation: sourceLocation) { model.pendingTermsRequest != nil }
+    return model.pendingTermsRequest
 }
 
 @MainActor @Test func aQueueAsksOnceWhenTheUserSaysNotToAskAgain() async {
@@ -599,7 +585,7 @@ private func waitForSheet(_ model: FileQueueModel,
     model.add([queueJob("a.md", longEnoughForTwoParts), queueJob("b.md", longEnoughForTwoParts)])
 
     let run = Task { await model.run() }
-    let sheet = await waitForSheet(model)
+    let sheet = await waitForSheet(model, while: run)
     sheet?.suppressForRun = true
     sheet?.proceed()
 
@@ -611,12 +597,11 @@ private func waitForSheet(_ model: FileQueueModel,
     // Compared by identity, not by «is one pending»: `proceed()` resolves the continuation
     // but the property is cleared by the code awaiting it, so for a moment the *first*
     // sheet is still there and a naive poll reports the answered one as a new one.
-    var reappeared: DocumentTermsRequest?
-    for _ in 0..<400 {
-        if model.jobs.allSatisfy({ $0.state == .finished }) { break }
-        if let request = model.pendingTermsRequest, request !== sheet { reappeared = request; break }
-        try? await Task.sleep(for: .milliseconds(5))
+    await until("the queue finished or raised a sheet of its own", while: run) {
+        model.jobs.allSatisfy({ $0.state == .finished })
+            || (model.pendingTermsRequest != nil && model.pendingTermsRequest !== sheet)
     }
+    let reappeared = model.pendingTermsRequest.flatMap { $0 !== sheet ? $0 : nil }
     reappeared?.proceed()
     await run.value
 
@@ -633,7 +618,7 @@ private func waitForSheet(_ model: FileQueueModel,
     model.add([queueJob("a.md", longEnoughForTwoParts)])
 
     let first = Task { await model.run() }
-    let sheet = await waitForSheet(model)
+    let sheet = await waitForSheet(model, while: first)
     sheet?.suppressForRun = true
     sheet?.proceed()
     await first.value
@@ -641,7 +626,7 @@ private func waitForSheet(_ model: FileQueueModel,
     model.add([queueJob("b.md", longEnoughForTwoParts)])
     let second = Task { await model.run() }
     // It asks again: the suppression was about that sitting, not a preference.
-    let again = await waitForSheet(model, "the gate did not come back for the next run")
+    let again = await waitForSheet(model, while: second, "the gate came back for the next run")
     again?.proceed()
     await second.value
 
@@ -654,7 +639,7 @@ private func waitForSheet(_ model: FileQueueModel,
     model.add([queueJob("a.md", longEnoughForTwoParts)])
 
     let run = Task { await model.run() }
-    _ = await waitForSheet(model)
+    _ = await waitForSheet(model, while: run)
     model.cancel()
     await run.value
 
@@ -773,7 +758,7 @@ private func savingModel(_ prefix: String,
     model.add([queueJob("a.md", longEnoughForTwoParts)])
 
     let run = Task { await model.run() }
-    let sheet = await waitForSheet(model)
+    let sheet = await waitForSheet(model, while: run)
     #expect(model.isAwaitingTerms)
     sheet?.proceed()
     await run.value
@@ -1029,7 +1014,7 @@ private final class SaveCall: @unchecked Sendable {
     model.add([queueJob("a.md", "first")])
 
     let run = Task { await model.run() }
-    await waitUntilCalled(client)
+    await waitUntilCalled(client, while: run)
     model.cancel()
     await run.value
     #expect(model.jobs[0].state == .interrupted)
@@ -1063,7 +1048,7 @@ private final class SaveCall: @unchecked Sendable {
     model.add([queueJob("a.md", longEnoughForTwoParts)])
 
     let run = Task { await model.run() }
-    await waitForSheet(model)?.proceed()
+    await waitForSheet(model, while: run)?.proceed()
     await run.value
 
     #expect(!model.jobs[0].documentTermsUnavailable)
@@ -1135,7 +1120,7 @@ private final class SaveCall: @unchecked Sendable {
     model.add([queueJob("a.md", "first"), refused, queueJob("b.md", "second")])
 
     let run = Task { await model.run() }
-    await waitUntilCalled(client, 2)          // the first file has failed; the second is up
+    await waitUntilCalled(client, 2, while: run)          // the first file has failed; the second is up
     let line = model.statusLine
     await run.value
 
@@ -1181,7 +1166,7 @@ private final class SaveCall: @unchecked Sendable {
     #expect(model.jobs[1].state == .finished)
 
     let run = Task { await model.run() }          // retries a.md only
-    await waitUntilCalled(client, 3)
+    await waitUntilCalled(client, 3, while: run)
     let line = model.statusLine
     await run.value
 
@@ -1198,7 +1183,7 @@ private final class SaveCall: @unchecked Sendable {
     model.add([queueJob("a.md", "first"), queueJob("b.md", "second")])
 
     let run = Task { await model.run() }
-    await waitUntilCalled(client)
+    await waitUntilCalled(client, while: run)
     model.selection = model.jobs[1].id            // the one still waiting
     #expect(model.isRunning)
     #expect(!model.selectedIsRunning)
@@ -1253,7 +1238,7 @@ private final class SaveCall: @unchecked Sendable {
     model.add([queueJob("a.md", "first")])
 
     let run = Task { await model.run() }
-    await waitUntilStreaming(model)
+    await waitUntilStreaming(model, while: run)
     model.cancel()
     await run.value
 
@@ -1284,7 +1269,7 @@ private final class SaveCall: @unchecked Sendable {
     model.add([queueJob("a.md", "first")])
 
     let run = Task { await model.run() }
-    await waitUntilCalled(client)
+    await waitUntilCalled(client, while: run)
     model.cancel()
     await run.value
 
@@ -1304,7 +1289,7 @@ private final class SaveCall: @unchecked Sendable {
     model.add([queueJob("a.md", longEnoughForTwoParts), queueJob("b.md", longEnoughForTwoParts)])
 
     let run = Task { await model.run() }
-    let sheet = await waitForSheet(model)
+    let sheet = await waitForSheet(model, while: run)
     #expect(model.isAwaitingTerms)
     #expect(model.runningID == model.jobs[0].id)   // the first file, not the queued one
     #expect(model.runningID != model.jobs[1].id)
@@ -1319,12 +1304,11 @@ private final class SaveCall: @unchecked Sendable {
     // minutes with 565 of 602 done. One forever-suspended `@MainActor` test wedges about
     // forty others, so a single unbounded wait costs CI the whole job's timeout rather than
     // a red test. This was the last one in the file.
-    var reappeared: DocumentTermsRequest?
-    for _ in 0..<400 {
-        if model.jobs.allSatisfy({ $0.state == .finished }) { break }
-        if let request = model.pendingTermsRequest, request !== sheet { reappeared = request; break }
-        try? await Task.sleep(for: .milliseconds(5))
+    await until("the queue finished or raised a sheet of its own", while: run) {
+        model.jobs.allSatisfy({ $0.state == .finished })
+            || (model.pendingTermsRequest != nil && model.pendingTermsRequest !== sheet)
     }
+    let reappeared = model.pendingTermsRequest.flatMap { $0 !== sheet ? $0 : nil }
     reappeared?.proceed()
     await run.value
 
@@ -1357,7 +1341,7 @@ private final class SaveCall: @unchecked Sendable {
     model.add([queueJob("a.md", "first")])
 
     let run = Task { await model.run() }
-    await waitUntilCalled(client)
+    await waitUntilCalled(client, while: run)
     model.add([queueJob("b.md", "second")])
     await run.value
 
@@ -1434,7 +1418,7 @@ private final class SaveCall: @unchecked Sendable {
     #expect(!settings.reviewDocumentTerms)
 
     let run = Task { await model.run() }
-    await waitUntilCalled(client)
+    await waitUntilCalled(client, while: run)
     settings.reviewDocumentTerms = true          // mid-flight
     await run.value
 
@@ -1456,7 +1440,7 @@ private final class SaveCall: @unchecked Sendable {
     #expect(PrimaryAction.forMode(.text, text: text, queue: queue).canStart)
 
     let run = Task { await queue.run() }
-    await waitUntilCalled(client)
+    await waitUntilCalled(client, while: run)
     #expect(!PrimaryAction.forMode(.text, text: text, queue: queue).canStart)
     queue.cancel()
     await run.value
@@ -1478,7 +1462,7 @@ private final class SaveCall: @unchecked Sendable {
     #expect(PrimaryAction.forMode(.files, text: text, queue: queue).canStart)
 
     let run = Task { await text.translate() }
-    await waitUntilCalled(held)
+    await waitUntilCalled(held, while: run)
     #expect(!PrimaryAction.forMode(.files, text: text, queue: queue).canStart)
     text.cancel()
     await run.value
@@ -1523,7 +1507,7 @@ private final class SaveCall: @unchecked Sendable {
                queueJob("b.md", longSourceWithALink)])
 
     let first = Task { await model.run() }
-    let sheet = await waitForSheet(model)
+    let sheet = await waitForSheet(model, while: first)
     sheet?.suppressForRun = true
     sheet?.proceed()
     await first.value
@@ -1538,12 +1522,10 @@ private final class SaveCall: @unchecked Sendable {
     // 120-second timeout. So the sheet is watched for, and whatever happens the run is
     // released rather than left waiting.
     let second = Task { await model.run() }
-    var reappeared: DocumentTermsRequest?
-    for _ in 0..<400 {
-        if second.isCancelled || model.jobs.allSatisfy({ $0.state == .finished }) { break }
-        if let request = model.pendingTermsRequest { reappeared = request; break }
-        try? await Task.sleep(for: .milliseconds(5))
+    await until("the queue finished or raised a sheet", while: second) {
+        model.jobs.allSatisfy({ $0.state == .finished }) || model.pendingTermsRequest != nil
     }
+    let reappeared = model.pendingTermsRequest
     if let reappeared { reappeared.proceed() }
     await second.value
 
@@ -1613,7 +1595,7 @@ private final class SaveCall: @unchecked Sendable {
     #expect(model.translatableCount == 1)
 
     let run = Task { await model.run() }
-    await waitUntilRunning(model, 0)
+    await waitUntilRunning(model, 0, while: run)
     let line = model.statusLine
     await run.value
 
@@ -1683,7 +1665,7 @@ private final class SaveCall: @unchecked Sendable {
     model.jobs = [job]
 
     let run = Task { await model.run() }
-    await waitUntilRunning(model, 0)
+    await waitUntilRunning(model, 0, while: run)
     let seeded = model.statusLine
     await run.value
 
@@ -1735,7 +1717,7 @@ private final class SaveCall: @unchecked Sendable {
     #expect(PrimaryAction.forMode(.files, text: text, queue: queue).canSwap)
 
     let run = Task { await queue.run() }
-    await waitUntilCalled(client)
+    await waitUntilCalled(client, while: run)
     #expect(!PrimaryAction.forMode(.files, text: text, queue: queue).canSwap)
     queue.cancel()
     await run.value
@@ -1770,7 +1752,7 @@ private final class SaveCall: @unchecked Sendable {
     let run = Task { await model.run() }
     // The second файл running *and* something of its own already on the stream — the exact
     // window in which a selection can be read while another задание streams.
-    _ = await yieldUntil {
+    await until("the second файл is streaming", while: run) {
         if case .running = model.jobs[1].state, !model.streamingText.isEmpty { true } else { false }
     }
     model.selection = model.jobs[0].id
@@ -1797,7 +1779,7 @@ private final class SaveCall: @unchecked Sendable {
     model.add([queueJob("a.md", "first"), queueJob("b.md", "second"), queueJob("c.md", "third")])
 
     let run = Task { await model.run() }
-    _ = await yieldUntil {
+    await until("the second файл is streaming", while: run) {
         if case .running = model.jobs[1].state, !model.streamingText.isEmpty { true } else { false }
     }
     // `a.md` goes; `b.md` is now at index 0 and `c.md` at index 1.
@@ -1844,7 +1826,7 @@ private final class SaveCall: @unchecked Sendable {
         model.add([queueJob("a.md", longEnoughForTwoParts)])
 
         let run = Task { await model.run() }
-        let sheet = await waitForSheet(model)
+        let sheet = await waitForSheet(model, while: run)
         try await Task.sleep(for: .milliseconds(ms))   // the reader, deliberating
         sheet?.cancel()
         model.cancel()
@@ -1991,7 +1973,7 @@ private actor Prepared {
     model.add([queueJob("a.md", "first")])
 
     let run = Task { await model.run() }
-    await waitUntilCalled(client)
+    await waitUntilCalled(client, while: run)
     #expect(model.isHoldingARunHandle)
 
     model.cancel()

@@ -171,10 +171,10 @@ private func model() -> TranslationViewModel {
     model.sourceText = russian
     let run = Task { await model.translate() }
     // Waits for the state the assertions are about — the new run's output has replaced the
-    // old text — rather than for a duration that could drift into or out of it.
-    let deadline = Date().addingTimeInterval(5)
-    while Date() < deadline, model.translatedText.isEmpty || model.translatedText == "Перевод." {
-        try? await Task.sleep(for: .milliseconds(10))
+    // old text — rather than for a duration that could drift into or out of it, and woken by
+    // that change rather than by a 10 ms poll with a five-second deadline — see `until`.
+    await until("the new run's output has replaced the old text", while: run) {
+        !model.translatedText.isEmpty && model.translatedText != "Перевод."
     }
     #expect(model.state == .running)
     #expect(model.translatedText != "Перевод.")   // the new run is genuinely on screen

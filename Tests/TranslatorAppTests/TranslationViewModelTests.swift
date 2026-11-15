@@ -1,11 +1,14 @@
 import Testing
 import Foundation
 import AppKit
+import Observation
 @testable import TranslatorApp
 @testable import TranslationCore
 
 /// Internal rather than private, because `HotkeyCoordinatorTests` needs the same double and a
-/// second copy would drift from this one.
+/// second copy would drift from this one. `@Observable` so a test can wait on `callCount`
+/// changing (`until`) instead of polling it.
+@Observable
 final class ScriptedClient: LLMClient, @unchecked Sendable {
     private var responses: [String]
     /// How many times the model was actually asked. The coordinator's «do not translate an
@@ -104,19 +107,15 @@ private final class ThrowingClient: LLMClient, @unchecked Sendable {
 /// and it also makes the tests faster, because they now stop as soon as they have what they
 /// need rather than always paying the full sleep.
 ///
-/// The deadline is not a disguised sleep: reaching it records an issue, so a genuine hang
-/// fails the test loudly instead of passing quietly.
+/// It had a ten-second deadline, and that was the same bet one level up: under the full suite
+/// a run waits that long for the main actor (`aCancelledRunAlsoDropsItsHandle`, reproduced under
+/// load). It now waits on the change itself and gives up only when `run` ends without it — see
+/// `until`, which also says why that cannot hang.
 @MainActor
-private func waitUntil(_ description: String, within timeout: Duration = .seconds(10),
-                       _ condition: () -> Bool) async {
-    let deadline = ContinuousClock.now.advanced(by: timeout)
-    while !condition() {
-        guard ContinuousClock.now < deadline else {
-            Issue.record("timed out after \(timeout) waiting until \(description)")
-            return
-        }
-        try? await Task.sleep(for: .milliseconds(2))
-    }
+private func waitUntil<T>(_ description: Comment, while run: Task<T, Never>,
+                          sourceLocation: SourceLocation = #_sourceLocation,
+                          _ condition: @MainActor () -> Bool) async {
+    await until(description, while: run, sourceLocation: sourceLocation, condition)
 }
 
 /// Never `.general`: `copyToPasteboard()` writes for real, and the user's clipboard is not
@@ -258,7 +257,7 @@ private func makeModel(responses: [String], settings: AppSettings) -> ((Translat
     // assertion needs — not after a fixed 150 ms, which was only usually long enough. The
     // reply is 400 tokens at 5 ms, so cancelling at the first one leaves seconds of margin
     // before the run could finish on its own and the state stop being `.interrupted`.
-    await waitUntil("the first token has been rendered") { !model.translatedText.isEmpty }
+    await waitUntil("the first token has been rendered", while: run) { !model.translatedText.isEmpty }
     model.cancel()
     await run.value
     #expect(model.state == .interrupted)
@@ -309,7 +308,7 @@ private func makeModel(responses: [String], settings: AppSettings) -> ((Translat
     let run = Task { await model.translate() }
     // Cancel as soon as more than 30 characters are on screen, which is the floor the last
     // assertion checks. This used to be a flat 500 ms wait.
-    await waitUntil("more than 30 characters have been rendered") { model.translatedText.count > 30 }
+    await waitUntil("more than 30 characters have been rendered", while: run) { model.translatedText.count > 30 }
     model.cancel()
     await run.value
 
@@ -352,7 +351,7 @@ private func makeModel(responses: [String], settings: AppSettings) -> ((Translat
     // the shape `waitUntilRunning`'s own doc comment warns against, and it lost: measured 3
     // failures in ~40 runs at 16× oversubscription, where the second run had not reached the
     // pane when the cancel landed and both assertions below fired on the *first* run's text.
-    await waitUntil("the second run has put its own text on the pane") {
+    await waitUntil("the second run has put its own text on the pane", while: run) {
         !model.translatedText.isEmpty && model.translatedText != "Первый перевод."
     }
     model.cancel()
@@ -572,7 +571,7 @@ private func makeModel(responses: [String], settings: AppSettings) -> ((Translat
     model.targetOverride = .ru
     model.sourceText = "Ready"
     let run = Task { await model.translate() }
-    await waitUntil("the run has started") { model.state == .running }
+    await waitUntil("the run has started", while: run) { model.state == .running }
     #expect(model.canSwapLanguages == false)
     await run.value
 }
@@ -633,21 +632,19 @@ private let longEnoughForTwoParts = String(
         pasteboard: NSPasteboard(name: .init("gate-\(prefix)")))
 }
 
-/// Waits for the sheet, with a ceiling.
+/// Waits for the sheet, and gives up when the run ends without one.
 ///
 /// An unbounded `while model.pendingTermsRequest == nil { await Task.yield() }` turns «the
 /// sheet never appeared» into a hung suite instead of a failed test — and «never appeared»
 /// is a real outcome here: a term-list reply that does not parse leaves no glossary to
-/// review, so the hook is never called.
+/// review, so the hook is never called, and the run goes on to finish without one. That end
+/// is what `until` stops on; the two-second ceiling this had was a bet on the scheduler.
 @MainActor
-private func waitForSheet(_ model: TranslationViewModel,
-                          _ comment: Comment = "the terms sheet never appeared") async -> DocumentTermsRequest? {
-    for _ in 0..<400 {
-        if let request = model.pendingTermsRequest { return request }
-        try? await Task.sleep(for: .milliseconds(5))
-    }
-    Issue.record(comment)
-    return nil
+private func waitForSheet<T>(_ model: TranslationViewModel, while run: Task<T, Never>,
+                             _ comment: Comment = "the terms sheet appeared",
+                             sourceLocation: SourceLocation = #_sourceLocation) async -> DocumentTermsRequest? {
+    await until(comment, while: run, sourceLocation: sourceLocation) { model.pendingTermsRequest != nil }
+    return model.pendingTermsRequest
 }
 
 @MainActor @Test func theTermsGateIsSkippedEntirelyWhenTheSettingIsOff() async {
@@ -668,7 +665,7 @@ private func waitForSheet(_ model: TranslationViewModel,
     model.sourceText = longEnoughForTwoParts
 
     let run = Task { await model.translate() }
-    let sheet = await waitForSheet(model)
+    let sheet = await waitForSheet(model, while: run)
     sheet?.entries = [GlossaryEntry(term: "resource", translations: ["ru": "объект"])]
     sheet?.proceed()
     await run.value
@@ -685,7 +682,7 @@ private func waitForSheet(_ model: TranslationViewModel,
     model.sourceText = longEnoughForTwoParts
 
     let run = Task { await model.translate() }
-    await waitForSheet(model)?.cancel()
+    await waitForSheet(model, while: run)?.cancel()
     await run.value
 
     #expect(model.state == .interrupted)
@@ -702,7 +699,7 @@ private func waitForSheet(_ model: TranslationViewModel,
     model.sourceText = longEnoughForTwoParts
 
     let run = Task { await model.translate() }
-    _ = await waitForSheet(model)
+    _ = await waitForSheet(model, while: run)
     model.cancel()
     await run.value
 
@@ -732,7 +729,7 @@ private func waitForSheet(_ model: TranslationViewModel,
     #expect(model.documentTermsUnavailable)
 
     let run = Task { await model.translate() }
-    await waitForSheet(model)?.proceed()
+    await waitForSheet(model, while: run)?.proceed()
     await run.value
 
     #expect(!model.documentTermsUnavailable)
@@ -745,7 +742,7 @@ private func waitForSheet(_ model: TranslationViewModel,
     #expect(!model.isAwaitingTerms)
 
     let run = Task { await model.translate() }
-    let sheet = await waitForSheet(model)
+    let sheet = await waitForSheet(model, while: run)
     #expect(model.isAwaitingTerms)
     sheet?.proceed()
     await run.value
@@ -1053,7 +1050,7 @@ private func waitForSheet(_ model: TranslationViewModel,
     let run = Task { await model.translate() }
     // The *client* being called, not `state == .running`: the model claims `.running` before it
     // suspends for language detection, so that state no longer means the task exists yet.
-    await waitUntil("the model has been asked") { client.callCount > 0 }
+    await waitUntil("the model has been asked", while: run) { client.callCount > 0 }
     #expect(model.isHoldingARunHandle)
 
     model.cancel()
@@ -1078,7 +1075,7 @@ private func waitForSheet(_ model: TranslationViewModel,
     model.sourceText = "Одна строка прозы."
 
     let run = Task { await model.translate() }
-    await waitUntil("the model has been asked") { client.callCount > 0 }
+    await waitUntil("the model has been asked", while: run) { client.callCount > 0 }
     model.cancel()
     await run.value
 
@@ -1179,7 +1176,7 @@ private let englishSource = "I am sending you the August report, please have a l
     let model = makeModel(client)
     model.sourceText = englishSource
     let run = Task { await model.translate() }
-    await waitUntil("the run is streaming") { model.state == .running }
+    await waitUntil("the run is streaming", while: run) { model.state == .running }
     model.sourceText += " Thanks."
     client.release()
     await run.value
